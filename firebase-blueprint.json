@@ -1,0 +1,170 @@
+{
+  "entities": {
+    "systemConfig": {
+      "title": "System Configuration",
+      "description": "Global ERP configuration including initial owner UID and company settings",
+      "type": "object",
+      "properties": {
+        "ownerUid": { "type": "string", "description": "UID of the registered owner" },
+        "companyName": { "type": "string", "description": "Farm business name" },
+        "currency": { "type": "string", "description": "BDT currency symbol" },
+        "initializedAt": { "type": "string", "description": "ISO timestamp of system bootstrap" }
+      },
+      "required": ["ownerUid", "companyName", "currency", "initializedAt"]
+    },
+    "viewer": {
+      "title": "Viewer Whitelist",
+      "description": "Approved read-only viewer accounts",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "Firebase user UID" },
+        "email": { "type": "string", "description": "Viewer email address" },
+        "phone": { "type": "string", "description": "Viewer phone number" },
+        "name": { "type": "string", "description": "Viewer full name" },
+        "addedBy": { "type": "string", "description": "Owner UID who added this viewer" },
+        "addedAt": { "type": "string", "description": "ISO timestamp added" },
+        "status": { "type": "string", "enum": ["active", "revoked"], "description": "Access status" }
+      },
+      "required": ["uid", "addedBy", "addedAt", "status"]
+    },
+    "account": {
+      "title": "Chart of Account",
+      "description": "Double-entry general ledger account definition",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Account unique code/ID" },
+        "code": { "type": "string", "description": "Numeric code like 1010" },
+        "nameBn": { "type": "string", "description": "Bangla name" },
+        "nameEn": { "type": "string", "description": "English name" },
+        "accountClass": { "type": "string", "enum": ["ASSET", "LIABILITY", "EQUITY", "REVENUE", "COGS", "EXPENSE", "OTHER_INCOME", "OTHER_EXPENSE"] },
+        "parentCode": { "type": "string", "description": "Parent account code" },
+        "normalBalance": { "type": "string", "enum": ["DEBIT", "CREDIT"] },
+        "isSystem": { "type": "boolean", "description": "Whether system account" },
+        "isActive": { "type": "boolean", "description": "Active status" }
+      },
+      "required": ["id", "code", "nameBn", "accountClass", "normalBalance"]
+    },
+    "journalEntry": {
+      "title": "Journal Entry",
+      "description": "Balanced double entry transaction voucher",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Voucher ID" },
+        "voucherNumber": { "type": "string", "description": "Unique voucher sequential number" },
+        "voucherType": { "type": "string", "enum": ["RECEIPT", "PAYMENT", "CONTRA", "JOURNAL", "PURCHASE", "SALES", "PURCHASE_RETURN", "SALES_RETURN", "ADJUSTMENT", "TRANSFER"] },
+        "date": { "type": "string", "description": "ISO date string" },
+        "narration": { "type": "string", "description": "Transaction description" },
+        "lines": { "type": "string", "description": "Serialized balanced debit/credit lines" },
+        "totalDebit": { "type": "number", "description": "Sum of debits" },
+        "totalCredit": { "type": "number", "description": "Sum of credits" },
+        "reference": { "type": "string", "description": "Invoice or source reference" },
+        "createdBy": { "type": "string", "description": "UID of creator" },
+        "createdAt": { "type": "string", "description": "ISO timestamp" }
+      },
+      "required": ["id", "voucherNumber", "voucherType", "date", "totalDebit", "totalCredit"]
+    },
+    "livestockAnimal": {
+      "title": "Livestock Animal",
+      "description": "Individual animal record for cattle or goat",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Animal Tag ID e.g. COW-001" },
+        "species": { "type": "string", "enum": ["CATTLE", "GOAT", "SHEEP", "OTHER"] },
+        "breed": { "type": "string", "description": "Breed name" },
+        "gender": { "type": "string", "enum": ["MALE", "FEMALE"] },
+        "birthDate": { "type": "string", "description": "Birth or acquisition date" },
+        "purchaseCost": { "type": "number", "description": "Acquisition cost" },
+        "currentWeightKg": { "type": "number", "description": "Latest weight" },
+        "status": { "type": "string", "enum": ["ACTIVE", "SOLD", "DECEASED", "TRANSFERRED"] },
+        "location": { "type": "string", "description": "Shed or barn location" },
+        "accumulatedCost": { "type": "number", "description": "Feed + med + direct costs" }
+      },
+      "required": ["id", "species", "gender", "status"]
+    },
+    "fishBatch": {
+      "title": "Fish Batch",
+      "description": "Aquaculture pond fish batch",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Batch ID" },
+        "pondId": { "type": "string", "description": "Pond ID" },
+        "species": { "type": "string", "description": "Fish species e.g. Shing, Shol, Rui" },
+        "stockingDate": { "type": "string", "description": "Date stocked" },
+        "fingerlingQuantity": { "type": "number", "description": "Number of fingerlings stocked" },
+        "fingerlingCost": { "type": "number", "description": "Total cost of fingerlings" },
+        "currentFeedKg": { "type": "number", "description": "Total feed fed in kg" },
+        "mortalityCount": { "type": "number", "description": "Total dead fish" },
+        "harvestedWeightKg": { "type": "number", "description": "Total harvested kg" },
+        "status": { "type": "string", "enum": ["ACTIVE", "HARVESTED", "CLOSED"] }
+      },
+      "required": ["id", "pondId", "species", "stockingDate", "fingerlingQuantity", "status"]
+    },
+    "cropCycle": {
+      "title": "Crop Cycle",
+      "description": "Seasonal crop planting and harvest cycle",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Cycle ID" },
+        "plotId": { "type": "string", "description": "Plot ID" },
+        "cropName": { "type": "string", "description": "Crop name e.g. Paddy, Mustard, Maize" },
+        "plantingDate": { "type": "string", "description": "Planting date" },
+        "areaDecimals": { "type": "number", "description": "Area in decimals" },
+        "totalCost": { "type": "number", "description": "Seeds, fertilizer, irrigation, labour" },
+        "harvestYieldKg": { "type": "number", "description": "Harvested quantity" },
+        "status": { "type": "string", "enum": ["PLANTED", "GROWING", "HARVESTED", "CLOSED"] }
+      },
+      "required": ["id", "plotId", "cropName", "plantingDate", "areaDecimals", "status"]
+    },
+    "auditLog": {
+      "title": "Audit Log",
+      "description": "Immutable security and transaction log",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Audit ID" },
+        "timestamp": { "type": "string", "description": "ISO timestamp" },
+        "userId": { "type": "string", "description": "User UID" },
+        "role": { "type": "string", "description": "User role at action" },
+        "action": { "type": "string", "description": "Action performed" },
+        "module": { "type": "string", "description": "ERP Module" },
+        "recordId": { "type": "string", "description": "Target record ID" },
+        "status": { "type": "string", "description": "SUCCESS or FAILURE" },
+        "details": { "type": "string", "description": "JSON details or summary" }
+      },
+      "required": ["id", "timestamp", "userId", "role", "action", "module", "status"]
+    }
+  },
+  "firestore": {
+    "/system/config": {
+      "schema": "systemConfig",
+      "description": "Global ERP settings and Owner registration"
+    },
+    "/viewers/{viewerId}": {
+      "schema": "viewer",
+      "description": "Approved Viewer whitelist collection"
+    },
+    "/accounts/{accountId}": {
+      "schema": "account",
+      "description": "Chart of accounts"
+    },
+    "/journalEntries/{entryId}": {
+      "schema": "journalEntry",
+      "description": "General journal vouchers"
+    },
+    "/animals/{animalId}": {
+      "schema": "livestockAnimal",
+      "description": "Livestock animals"
+    },
+    "/fishBatches/{batchId}": {
+      "schema": "fishBatch",
+      "description": "Aquaculture fish batches"
+    },
+    "/cropCycles/{cycleId}": {
+      "schema": "cropCycle",
+      "description": "Agricultural crop cycles"
+    },
+    "/auditLogs/{logId}": {
+      "schema": "auditLog",
+      "description": "Security and business transaction audit logs"
+    }
+  }
+}

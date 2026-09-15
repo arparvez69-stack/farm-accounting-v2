@@ -1,0 +1,6 @@
+{
+  "name": "Agro ERP",
+  "description": "Comprehensive farm ERP and double-entry accounting system with automated livestock, fisheries, crops, inventory, and financial reporting.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
