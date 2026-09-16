@@ -117,6 +117,7 @@ export async function verifyOwnerSecretPin(
   }
 
   let customToken: string | null = null;
+  let serverSessionToken: string | null = null;
   let uid = `goted_owner_${normalized.replace(/[^a-zA-Z0-9]/g, '_')}`;
 
   try {
@@ -138,6 +139,7 @@ export async function verifyOwnerSecretPin(
     }
 
     if (data.customToken) customToken = data.customToken;
+    if (data.sessionToken) serverSessionToken = data.sessionToken;
     if (data.uid) uid = data.uid;
   } catch (networkErr) {
     // If request fails or server is offline, show "Cannot verify login while offline" — NEVER fall back to a client-side check
@@ -165,6 +167,7 @@ export async function verifyOwnerSecretPin(
       email: normalized,
       displayName: normalized.split('@')[0],
       role: 'OWNER',
+      sessionToken: serverSessionToken,
       authenticatedAt: new Date().toISOString()
     };
     localStorage.setItem('goted_owner_session', JSON.stringify(verifiedSession));

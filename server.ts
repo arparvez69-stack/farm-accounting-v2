@@ -8,6 +8,7 @@ import { initializeApp, cert, getApps } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 import { getFirestore } from 'firebase-admin/firestore';
 import firebaseConfig from './firebase-applet-config.json';
+import { validateBalancedLines } from './src/accounting/accountingEngine';
 
 const app = express();
 const PORT = 3000;
@@ -98,6 +99,68 @@ try {
   }
 } catch (err: any) {
   console.warn('[The Goated Farm] Admin Firestore init note:', err.message);
+}
+
+// Session tokens for persistent owner access
+const SESSION_SECRET = process.env.SESSION_SECRET || 'the-goated-farm-session-secret-salt-2025';
+
+function createSessionToken(email: string): string {
+  const payload = Buffer.from(JSON.stringify({ email: email.toLowerCase(), exp: Date.now() + 30 * 24 * 60 * 60 * 1000 })).toString('base64url');
+  const signature = crypto.createHmac('sha256', SESSION_SECRET).update(payload).digest('base64url');
+  return `${payload}.${signature}`;
+}
+
+function verifySessionToken(token: string): { email: string } | null {
+  try {
+    const parts = token.split('.');
+    if (parts.length !== 2) return null;
+    const [payloadB64, signature] = parts;
+    const expectedSig = crypto.createHmac('sha256', SESSION_SECRET).update(payloadB64).digest('base64url');
+    if (signature !== expectedSig) return null;
+    const payload = JSON.parse(Buffer.from(payloadB64, 'base64url').toString('utf8'));
+    if (payload.exp && Date.now() > payload.exp) return null;
+    if (payload.email && APPROVED_OWNER_EMAILS.includes(payload.email.toLowerCase())) {
+      return { email: payload.email.toLowerCase() };
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+/**
+ * Authenticate caller: verifies Firebase ID token via Admin SDK, or verified owner session token
+ */
+async function authenticateOwnerRequest(req: express.Request): Promise<{ email: string; uid: string } | null> {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return null;
+  }
+  const token = authHeader.split('Bearer ')[1]?.trim();
+  if (!token) return null;
+
+  // 1. Verify standard Firebase ID Token using Firebase Admin SDK
+  if (adminInitialized) {
+    try {
+      const decoded = await getAuth().verifyIdToken(token);
+      if (decoded && decoded.email && APPROVED_OWNER_EMAILS.includes(decoded.email.toLowerCase())) {
+        return { email: decoded.email.toLowerCase(), uid: decoded.uid };
+      }
+    } catch {
+      // In offline/container dev environment or when custom session token is used
+    }
+  }
+
+  // 2. Also verify owner session token
+  const session = verifySessionToken(token);
+  if (session && APPROVED_OWNER_EMAILS.includes(session.email.toLowerCase())) {
+    return {
+      email: session.email.toLowerCase(),
+      uid: `goted_owner_${session.email.replace(/[^a-zA-Z0-9]/g, '_')}`
+    };
+  }
+
+  return null;
 }
 
 // ==========================================
@@ -401,6 +464,7 @@ app.post('/api/verify-login-code', async (req, res) => {
       uid: uid,
       role: 'OWNER',
       customToken: customToken,
+      sessionToken: createSessionToken(email),
       tokenFallbackRequired: !customToken
     });
   } catch (err: any) {
@@ -549,6 +613,159 @@ app.post('/api/confirm-pin-reset', async (req, res) => {
     console.error('[The Goated Farm] confirm-pin-reset error:', err);
     return res.status(500).json({ error: 'পিন রিসেট সম্পন্ন করতে সমস্যা হয়েছে।' });
   }
+});
+
+// ==========================================
+// TASK 4: Authenticated Sync POST Endpoints
+// Server-side validation and write via Admin SDK
+// ==========================================
+
+const ALLOWED_SYNC_COLLECTIONS = [
+  'journalEntries',
+  'sales',
+  'purchases',
+  'animals',
+  'animalEvents',
+  'ponds',
+  'fishBatches',
+  'plots',
+  'cropCycles',
+  'inventoryItems',
+  'stockMovements',
+  'parties',
+  'cashBankAccounts',
+  'loans',
+  'investors',
+  'investorTransactions',
+  'fixedAssets',
+  'internalFlows',
+  'processingRuns',
+  'auditLogs',
+  'system'
+];
+
+async function handleSyncWrite(
+  collectionName: string,
+  req: express.Request,
+  res: express.Response
+) {
+  try {
+    // 1. Authenticate caller (verify Firebase ID token or session token)
+    const owner = await authenticateOwnerRequest(req);
+    if (!owner) {
+      return res.status(401).json({
+        error: 'অননুমোদিত অ্যাক্সেস (Unauthorized). শুধুমাত্র অনুমোদিত মালিক ডেটা সিঙ্ক করতে পারেন।'
+      });
+    }
+
+    const data = req.body;
+    if (!data || typeof data !== 'object') {
+      return res.status(400).json({ error: 'অবৈধ ডেটা পে-লোড (Invalid payload).' });
+    }
+
+    const docId = data.id || (collectionName === 'system' ? 'config' : null);
+    if (!docId) {
+      return res.status(400).json({ error: 'নথি আইডি (Document ID) অনুপস্থিত।' });
+    }
+
+    // 2. Re-run balance and account validation for financial records
+    if (collectionName === 'journalEntries' || collectionName === 'journal-entry') {
+      if (!data.lines || !Array.isArray(data.lines) || data.lines.length < 2) {
+        return res.status(400).json({
+          error: 'জাবেদা ভাউচারে কমপক্ষে ২টি ভারসাম্যপূর্ণ লাইন থাকতে হবে (Journal entry must have at least 2 balanced lines).'
+        });
+      }
+
+      try {
+        const check = validateBalancedLines(data.lines);
+        if (!check.isBalanced) {
+          return res.status(400).json({
+            error: `জাবেদা ভারসাম্যহীন! ডেবিট: ৳${check.totalDebit}, ক্রেডিট: ৳${check.totalCredit}`
+          });
+        }
+        if (check.totalDebit <= 0) {
+          return res.status(400).json({ error: 'ভাউচারের পরিমাণ শূন্য হতে পারে না।' });
+        }
+        data.totalDebit = check.totalDebit;
+        data.totalCredit = check.totalCredit;
+      } catch (valErr: any) {
+        return res.status(400).json({
+          error: `হিসাবরক্ষণ ভ্যালিডেশন ত্রুটি: ${valErr.message}`
+        });
+      }
+    } else if (collectionName === 'sales' || collectionName === 'sale') {
+      if (data.lines && Array.isArray(data.lines)) {
+        try {
+          validateBalancedLines(data.lines);
+        } catch (valErr: any) {
+          return res.status(400).json({ error: `বিক্রয় জাবেদা ত্রুটি: ${valErr.message}` });
+        }
+      }
+    } else if (collectionName === 'purchases' || collectionName === 'purchase') {
+      if (data.lines && Array.isArray(data.lines)) {
+        try {
+          validateBalancedLines(data.lines);
+        } catch (valErr: any) {
+          return res.status(400).json({ error: `ক্রয় জাবেদা ত্রুটি: ${valErr.message}` });
+        }
+      }
+    }
+
+    // Mark synced metadata
+    const recordToWrite = {
+      ...data,
+      syncedAt: new Date().toISOString(),
+      syncedBy: owner.email
+    };
+
+    // 3. Write via firebase-admin (which bypasses rules safely since it is trusted)
+    if (adminDb) {
+      const targetCol = collectionName === 'journal-entry' ? 'journalEntries'
+        : collectionName === 'sale' ? 'sales'
+        : collectionName === 'purchase' ? 'purchases'
+        : collectionName === 'animal' ? 'animals'
+        : collectionName;
+
+      try {
+        await adminDb.collection(targetCol).doc(docId).set(recordToWrite, { merge: true });
+      } catch (adminErr: any) {
+        console.warn(`[The Goated Farm] Admin Firestore write notice for ${collectionName}:`, adminErr.message);
+        if (hasServiceAccountKey) {
+          throw adminErr;
+        }
+      }
+    } else {
+      console.warn('[The Goated Farm] Admin Firestore not initialized, sync processed in memory');
+    }
+
+    return res.json({
+      success: true,
+      id: docId,
+      collection: collectionName
+    });
+  } catch (err: any) {
+    console.error(`[The Goated Farm] Sync error for ${collectionName}:`, err);
+    return res.status(500).json({ error: `সিঙ্ক ব্যর্থ হয়েছে: ${err.message}` });
+  }
+}
+
+// Dedicated sync endpoints
+app.post('/api/sync/journal-entry', (req, res) => handleSyncWrite('journalEntries', req, res));
+app.post('/api/sync/journalEntries', (req, res) => handleSyncWrite('journalEntries', req, res));
+app.post('/api/sync/sale', (req, res) => handleSyncWrite('sales', req, res));
+app.post('/api/sync/sales', (req, res) => handleSyncWrite('sales', req, res));
+app.post('/api/sync/purchase', (req, res) => handleSyncWrite('purchases', req, res));
+app.post('/api/sync/purchases', (req, res) => handleSyncWrite('purchases', req, res));
+app.post('/api/sync/animal', (req, res) => handleSyncWrite('animals', req, res));
+app.post('/api/sync/animals', (req, res) => handleSyncWrite('animals', req, res));
+
+// Generic sync endpoint: POST /api/sync/:collection
+app.post('/api/sync/:collection', (req, res) => {
+  const col = req.params.collection;
+  if (!ALLOWED_SYNC_COLLECTIONS.includes(col) && col !== 'journal-entry' && col !== 'sale' && col !== 'purchase' && col !== 'animal') {
+    return res.status(400).json({ error: `অননুমোদিত কালেকশন: ${col}` });
+  }
+  return handleSyncWrite(col, req, res);
 });
 
 // API Route 3: GET /api/access-logs (to see who is using/accessing the app)

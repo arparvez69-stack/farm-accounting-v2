@@ -3,7 +3,7 @@
  * Bangladesh Integrated Farm Business ERP
  */
 
-export type UserRole = 'OWNER' | 'VIEWER' | 'UNAUTHENTICATED' | 'UNAPPROVED';
+export type UserRole = 'OWNER' | 'UNAUTHENTICATED' | 'UNAPPROVED';
 
 export interface UserProfile {
   uid: string;
@@ -25,17 +25,6 @@ export interface SystemConfig {
   phone?: string;
   currency: string;
   initializedAt: string;
-  approvedViewers?: string[];
-}
-
-export interface ViewerAccount {
-  uid: string;
-  email?: string;
-  phone?: string;
-  name: string;
-  addedBy: string;
-  addedAt: string;
-  status: 'active' | 'revoked';
 }
 
 export interface AppAccessLog {

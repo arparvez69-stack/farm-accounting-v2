@@ -164,8 +164,8 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
     e.preventDefault();
     setMsg(null);
 
-    if (role === 'VIEWER') {
-      setMsg({ type: 'error', text: 'পরিদর্শক (Viewer) হিসেবে আপনার শুধুমাত্র দেখার অনুমতি রয়েছে।' });
+    if (role !== 'OWNER') {
+      setMsg({ type: 'error', text: 'শুধুমাত্র অনুমোদিত মালিক ভাউচার পোস্ট করতে পারেন।' });
       return;
     }
 
@@ -499,7 +499,7 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
 
             <button
               type="submit"
-              disabled={role === 'VIEWER' || !balanceCheck.isBalanced || balanceCheck.totalDebit <= 0}
+              disabled={role !== 'OWNER' || !balanceCheck.isBalanced || balanceCheck.totalDebit <= 0}
               className="w-full py-3.5 px-4 rounded-xl bg-[#1E5128] hover:bg-[#173F1F] disabled:bg-gray-200 disabled:text-gray-400 text-white font-bold text-[15px] transition-all cursor-pointer shadow-xs min-h-[48px] active:scale-98"
             >
               ভাউচার নিশ্চিত ও পোস্ট করুন (Post Balanced Voucher)

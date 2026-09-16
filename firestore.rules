@@ -2,7 +2,7 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // Single-tenant fixed owner allow-list for "The Goted Farm"
+    // Single-tenant fixed owner allow-list for "The Goated Farm"
     function isApprovedOwner() {
       return request.auth != null &&
         request.auth.token.email in [
@@ -13,10 +13,10 @@ service cloud.firestore {
         ];
     }
 
-    // System configuration for "The Goated Farm"
+    // System configuration for "The Goated Farm" - Server/Admin only write
     match /system/config {
-      allow read, write: if isApprovedOwner();
-      allow delete: if false;
+      allow read: if isApprovedOwner();
+      allow write: if false;
     }
 
     // Server-only auth secrets (bcrypt hashes): Admin SDK only, never accessible by client SDK
@@ -29,99 +29,118 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
-    // Chart of Accounts
+    // Chart of Accounts: Read only for owners; written only via trusted backend
     match /accounts/{accountId} {
-      allow read, write: if isApprovedOwner();
+      allow read: if isApprovedOwner();
+      allow write: if false;
     }
 
-    // General Journal Entries
+    // General Journal Entries: Validated server-side, written via Admin SDK
     match /journalEntries/{entryId} {
-      allow read, write: if isApprovedOwner();
+      allow read: if isApprovedOwner();
+      allow write: if false;
     }
 
-    // Livestock Animals & Events
+    // Livestock Animals & Events: Validated server-side, written via Admin SDK
     match /animals/{animalId} {
-      allow read, write: if isApprovedOwner();
+      allow read: if isApprovedOwner();
+      allow write: if false;
     }
     match /animalEvents/{eventId} {
-      allow read, write: if isApprovedOwner();
+      allow read: if isApprovedOwner();
+      allow write: if false;
     }
 
-    // Aquaculture Ponds & Fish Batches
+    // Aquaculture Ponds & Fish Batches: Validated server-side, written via Admin SDK
     match /ponds/{pondId} {
-      allow read, write: if isApprovedOwner();
+      allow read: if isApprovedOwner();
+      allow write: if false;
     }
     match /fishBatches/{batchId} {
-      allow read, write: if isApprovedOwner();
+      allow read: if isApprovedOwner();
+      allow write: if false;
     }
 
-    // Agriculture Plots & Crop Cycles
+    // Agriculture Plots & Crop Cycles: Validated server-side, written via Admin SDK
     match /plots/{plotId} {
-      allow read, write: if isApprovedOwner();
+      allow read: if isApprovedOwner();
+      allow write: if false;
     }
     match /cropCycles/{cycleId} {
-      allow read, write: if isApprovedOwner();
+      allow read: if isApprovedOwner();
+      allow write: if false;
     }
 
-    // Inventory, Products & Stock Movements
+    // Inventory, Products & Stock Movements: Validated server-side, written via Admin SDK
     match /inventoryItems/{itemId} {
-      allow read, write: if isApprovedOwner();
+      allow read: if isApprovedOwner();
+      allow write: if false;
     }
     match /stockMovements/{movementId} {
-      allow read, write: if isApprovedOwner();
+      allow read: if isApprovedOwner();
+      allow write: if false;
     }
 
-    // Purchases & Sales
+    // Purchases & Sales: Validated server-side, written via Admin SDK
     match /purchases/{purchaseId} {
-      allow read, write: if isApprovedOwner();
+      allow read: if isApprovedOwner();
+      allow write: if false;
     }
     match /sales/{saleId} {
-      allow read, write: if isApprovedOwner();
+      allow read: if isApprovedOwner();
+      allow write: if false;
     }
 
     // Parties (Customers & Suppliers)
     match /parties/{partyId} {
-      allow read, write: if isApprovedOwner();
+      allow read: if isApprovedOwner();
+      allow write: if false;
     }
 
     // Cash & Bank Accounts
     match /cashBankAccounts/{accId} {
-      allow read, write: if isApprovedOwner();
+      allow read: if isApprovedOwner();
+      allow write: if false;
     }
 
     // Loans
     match /loans/{loanId} {
-      allow read, write: if isApprovedOwner();
+      allow read: if isApprovedOwner();
+      allow write: if false;
     }
 
     // Investors & Transactions
     match /investors/{investorId} {
-      allow read, write: if isApprovedOwner();
+      allow read: if isApprovedOwner();
+      allow write: if false;
     }
     match /investorTransactions/{txId} {
-      allow read, write: if isApprovedOwner();
+      allow read: if isApprovedOwner();
+      allow write: if false;
     }
 
     // Fixed Assets
     match /fixedAssets/{assetId} {
-      allow read, write: if isApprovedOwner();
+      allow read: if isApprovedOwner();
+      allow write: if false;
     }
 
     // Permaculture & Internal Resource Flows
     match /internalFlows/{flowId} {
-      allow read, write: if isApprovedOwner();
+      allow read: if isApprovedOwner();
+      allow write: if false;
     }
 
     // Processing & BOM Runs
     match /processingRuns/{runId} {
-      allow read, write: if isApprovedOwner();
+      allow read: if isApprovedOwner();
+      allow write: if false;
     }
 
-    // Audit logs: Append-only by approved owners for immutable audit trail, never update or delete
+    // Audit logs: Read by approved owner, direct client write disabled (written via server-side admin SDK)
     match /auditLogs/{logId} {
       allow read: if isApprovedOwner();
-      allow create: if isApprovedOwner();
-      allow update, delete: if false;
+      allow write: if false;
     }
   }
 }

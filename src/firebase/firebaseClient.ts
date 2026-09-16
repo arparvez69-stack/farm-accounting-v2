@@ -11,7 +11,6 @@ import {
   getFirestore,
   doc,
   getDoc,
-  setDoc,
   collection,
   getDocs,
   writeBatch,
@@ -137,12 +136,7 @@ export async function seedSystemConfigIfNecessary(): Promise<SystemConfig> {
     try {
       const snap = await getDoc(doc(firestore, 'system', 'config'));
       if (!snap.exists()) {
-        await setDoc(doc(firestore, 'system', 'config'), targetConfig);
-      } else {
-        const remoteData = snap.data();
-        if (remoteData?.companyName !== 'The Goated Farm') {
-          await setDoc(doc(firestore, 'system', 'config'), { companyName: 'The Goated Farm', ownerEmails: APPROVED_OWNER_EMAILS }, { merge: true });
-        }
+        await syncRecordToServer('system', { id: 'config', ...targetConfig }).catch(() => {});
       }
     } catch (e) {
       console.warn('Silent config seed note (offline or rules check):', e);
@@ -171,24 +165,27 @@ export async function resolveUserRole(user: User | null): Promise<UserProfile> {
   // 1. Check Firebase Auth user email
   if (user && user.email) {
     const email = user.email.toLowerCase().trim();
+    const isApproved = APPROVED_OWNER_EMAILS.includes(email);
     const prof: UserProfile = {
       uid: user.uid,
       email: email,
       phoneNumber: user.phoneNumber || undefined,
       displayName: user.displayName || email.split('@')[0],
-      role: 'OWNER',
-      isApproved: true
+      role: isApproved ? 'OWNER' : 'UNAPPROVED',
+      isApproved: isApproved
     };
-    try {
-      localStorage.setItem('goted_owner_session', JSON.stringify({
-        uid: prof.uid,
-        email: prof.email,
-        displayName: prof.displayName,
-        role: 'OWNER',
-        authenticatedAt: new Date().toISOString()
-      }));
-    } catch (e) {
-      // Ignore localStorage quota errors
+    if (isApproved) {
+      try {
+        localStorage.setItem('goted_owner_session', JSON.stringify({
+          uid: prof.uid,
+          email: prof.email,
+          displayName: prof.displayName,
+          role: 'OWNER',
+          authenticatedAt: new Date().toISOString()
+        }));
+      } catch (e) {
+        // Ignore localStorage quota errors
+      }
     }
     return prof;
   }
@@ -199,12 +196,14 @@ export async function resolveUserRole(user: User | null): Promise<UserProfile> {
     try {
       const session = JSON.parse(sessionRaw);
       if (session.email && session.email.includes('@')) {
+        const email = session.email.toLowerCase().trim();
+        const isApproved = APPROVED_OWNER_EMAILS.includes(email);
         return {
-          uid: session.uid || `goted_owner_${session.email}`,
-          email: session.email,
-          displayName: session.displayName || session.email.split('@')[0],
-          role: 'OWNER',
-          isApproved: true
+          uid: session.uid || `goted_owner_${email}`,
+          email: email,
+          displayName: session.displayName || email.split('@')[0],
+          role: isApproved ? 'OWNER' : 'UNAPPROVED',
+          isApproved: isApproved
         };
       }
     } catch (e) {
@@ -220,7 +219,41 @@ export async function resolveUserRole(user: User | null): Promise<UserProfile> {
 }
 
 /**
- * Synchronize pending offline data to Firestore when online
+ * Post records to authenticated server-side sync endpoints
+ * Validates double-entry balance and accounts server-side, writes safely via Admin SDK
+ */
+async function syncRecordToServer(collection: string, data: any): Promise<void> {
+  let token: string | null = null;
+  if (auth.currentUser) {
+    try {
+      token = await auth.currentUser.getIdToken();
+    } catch {}
+  }
+  if (!token) {
+    try {
+      const session = JSON.parse(localStorage.getItem('goted_owner_session') || '{}');
+      token = session.sessionToken || null;
+    } catch {}
+  }
+
+  const endpoint = `/api/sync/${collection}`;
+  const res = await fetch(endpoint, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {})
+    },
+    body: JSON.stringify(data)
+  });
+
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    throw new Error(errorData.error || `Server returned ${res.status}`);
+  }
+}
+
+/**
+ * Synchronize pending offline data to server endpoints (Admin SDK write)
  */
 export async function synchronizePendingData(): Promise<{ syncedCount: number; errors: string[] }> {
   if (!navigator.onLine) {
@@ -235,7 +268,7 @@ export async function synchronizePendingData(): Promise<{ syncedCount: number; e
     const pendingAnimals = await db.animals.filter((a) => a.synced === false).toArray();
     for (const animal of pendingAnimals) {
       try {
-        await setDoc(doc(firestore, 'animals', animal.id), animal);
+        await syncRecordToServer('animals', animal);
         await db.animals.update(animal.id, { synced: true });
         count++;
       } catch (err: any) {
@@ -247,7 +280,7 @@ export async function synchronizePendingData(): Promise<{ syncedCount: number; e
     const pendingFish = await db.fishBatches.filter((b) => b.synced === false).toArray();
     for (const batch of pendingFish) {
       try {
-        await setDoc(doc(firestore, 'fishBatches', batch.id), batch);
+        await syncRecordToServer('fishBatches', batch);
         await db.fishBatches.update(batch.id, { synced: true });
         count++;
       } catch (err: any) {
@@ -259,7 +292,7 @@ export async function synchronizePendingData(): Promise<{ syncedCount: number; e
     const pendingCrops = await db.cropCycles.filter((c) => c.synced === false).toArray();
     for (const crop of pendingCrops) {
       try {
-        await setDoc(doc(firestore, 'cropCycles', crop.id), crop);
+        await syncRecordToServer('cropCycles', crop);
         await db.cropCycles.update(crop.id, { synced: true });
         count++;
       } catch (err: any) {
@@ -267,11 +300,11 @@ export async function synchronizePendingData(): Promise<{ syncedCount: number; e
       }
     }
 
-    // 4. Sync Journal Entries
+    // 4. Sync Journal Entries (re-validates debit/credit server-side)
     const pendingJournals = await db.journalEntries.filter((j) => j.synced === false).toArray();
     for (const j of pendingJournals) {
       try {
-        await setDoc(doc(firestore, 'journalEntries', j.id), j);
+        await syncRecordToServer('journalEntries', j);
         await db.journalEntries.update(j.id, { synced: true });
         count++;
       } catch (err: any) {
@@ -283,7 +316,7 @@ export async function synchronizePendingData(): Promise<{ syncedCount: number; e
     const pendingPurchases = await db.purchases.filter((p) => p.synced === false).toArray();
     for (const p of pendingPurchases) {
       try {
-        await setDoc(doc(firestore, 'purchases', p.id), p);
+        await syncRecordToServer('purchases', p);
         await db.purchases.update(p.id, { synced: true });
         count++;
       } catch (err: any) {
@@ -295,7 +328,7 @@ export async function synchronizePendingData(): Promise<{ syncedCount: number; e
     const pendingSales = await db.sales.filter((s) => s.synced === false).toArray();
     for (const s of pendingSales) {
       try {
-        await setDoc(doc(firestore, 'sales', s.id), s);
+        await syncRecordToServer('sales', s);
         await db.sales.update(s.id, { synced: true });
         count++;
       } catch (err: any) {
@@ -307,7 +340,7 @@ export async function synchronizePendingData(): Promise<{ syncedCount: number; e
     const pendingAudit = await db.auditLogs.filter((a) => a.synced === false).toArray();
     for (const a of pendingAudit) {
       try {
-        await setDoc(doc(firestore, 'auditLogs', a.id), a);
+        await syncRecordToServer('auditLogs', a);
         await db.auditLogs.update(a.id, { synced: true });
         count++;
       } catch (err: any) {

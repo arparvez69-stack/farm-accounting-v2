@@ -22,13 +22,11 @@ import {
   FixedAsset,
   AuditLogEntry,
   SystemConfig,
-  ViewerAccount,
   AppAccessLog
 } from '../types';
 
 export class AgroDatabase extends Dexie {
   systemConfig!: Table<SystemConfig, string>;
-  viewers!: Table<ViewerAccount, string>;
   accounts!: Table<Account, string>;
   journalEntries!: Table<JournalEntry, string>;
   animals!: Table<Animal, string>;
@@ -63,7 +61,6 @@ export class AgroDatabase extends Dexie {
     super('AgroErpLocalDb');
     this.version(1).stores({
       systemConfig: 'ownerUid',
-      viewers: 'uid, status',
       accounts: 'id, code, accountClass, isSystem',
       journalEntries: 'id, voucherNumber, voucherType, date, synced',
       animals: 'id, tag, species, status, synced',
