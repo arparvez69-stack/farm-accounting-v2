@@ -1,14 +1,10 @@
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import {
   getAuth,
-  signInWithEmailAndPassword,
-  createUserWithEmailAndPassword,
-  sendPasswordResetEmail,
   signOut,
   onAuthStateChanged,
-  RecaptchaVerifier,
-  signInWithPhoneNumber,
-  ConfirmationResult,
+  setPersistence,
+  browserLocalPersistence,
   User
 } from 'firebase/auth';
 import {
@@ -24,13 +20,38 @@ import {
 import firebaseConfig from '../../firebase-applet-config.json';
 import { db } from '../db/indexedDb';
 import { DEFAULT_CHART_OF_ACCOUNTS } from '../accounting/defaultAccounts';
-import { SyncState, SystemConfig, UserProfile, UserRole, ViewerAccount } from '../types';
+import { SyncState, SystemConfig, UserProfile } from '../types';
+
+// Fixed owner allow-list for "The Goted Farm"
+export const APPROVED_OWNER_EMAILS: string[] = [
+  'arparvez69@gmail.com',
+  'arparvez4@gmail.com',
+  'arparvez111@gmail.com',
+  'atikurrahman00021@gmail.com'
+];
+
+export const DEFAULT_SYSTEM_CONFIG: SystemConfig = {
+  ownerUid: 'the_goted_farm_owners',
+  companyName: 'The Goted Farm',
+  ownerEmails: APPROVED_OWNER_EMAILS,
+  companyAddress: 'ঢাকা, বাংলাদেশ',
+  phone: '+8801700000000',
+  currency: '৳',
+  initializedAt: new Date().toISOString()
+};
 
 // Initialize Firebase App
 const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
 
-// Initialize Auth
+// Initialize Auth with browserLocalPersistence ("Remember Me" across browser sessions)
 export const auth = getAuth(app);
+try {
+  setPersistence(auth, browserLocalPersistence).catch((err) => {
+    console.warn('Firebase setPersistence warning:', err);
+  });
+} catch (e) {
+  console.warn('Firebase persistence initialization error:', e);
+}
 
 // Initialize Firestore
 export const firestore = getFirestore(app, firebaseConfig.firestoreDatabaseId || '(default)');
@@ -47,7 +68,7 @@ export async function testFirestoreConnection(): Promise<boolean> {
 }
 
 /**
- * Initialize default IndexedDB data (Chart of Accounts, Cash Account)
+ * Initialize default IndexedDB data (Chart of Accounts, Cash Account, System Config)
  */
 export async function initializeLocalDatabase(): Promise<void> {
   const accountsCount = await db.accounts.count();
@@ -75,7 +96,6 @@ export async function initializeLocalDatabase(): Promise<void> {
       synced: true
     });
   } else {
-    // If cash_main exists and has negative or zero balance due to previous transactions, replenish it
     const cashMain = await db.cashBankAccounts.get('cash_main');
     if (cashMain && cashMain.currentBalance < 10000) {
       await db.cashBankAccounts.update('cash_main', {
@@ -83,149 +103,116 @@ export async function initializeLocalDatabase(): Promise<void> {
       });
     }
   }
+
+  // Ensure default system config in local IndexedDB
+  const sysConfigs = await db.systemConfig.toArray();
+  if (sysConfigs.length === 0) {
+    await db.systemConfig.put(DEFAULT_SYSTEM_CONFIG);
+  } else if (sysConfigs[0].companyName !== 'The Goted Farm') {
+    await db.systemConfig.put({
+      ...sysConfigs[0],
+      companyName: 'The Goted Farm',
+      ownerEmails: APPROVED_OWNER_EMAILS
+    });
+  }
 }
 
 /**
- * Check if the system has been bootstrapped with an Owner
+ * Silently seed or synchronize "The Goted Farm" system configuration
  */
-export async function checkSystemBootstrap(): Promise<{ isBootstrapped: boolean; config?: SystemConfig }> {
-  // Try local first
+export async function seedSystemConfigIfNecessary(): Promise<SystemConfig> {
+  const localConfig = await db.systemConfig.toArray();
+  const baseConfig: SystemConfig = localConfig.length > 0 ? localConfig[0] : DEFAULT_SYSTEM_CONFIG;
+
+  const targetConfig: SystemConfig = {
+    ...baseConfig,
+    companyName: 'The Goted Farm',
+    ownerEmails: APPROVED_OWNER_EMAILS,
+    currency: '৳'
+  };
+
+  await db.systemConfig.put(targetConfig);
+
+  if (navigator.onLine) {
+    try {
+      const snap = await getDoc(doc(firestore, 'system', 'config'));
+      if (!snap.exists()) {
+        await setDoc(doc(firestore, 'system', 'config'), targetConfig);
+      } else {
+        const remoteData = snap.data();
+        if (remoteData?.companyName !== 'The Goted Farm') {
+          await setDoc(doc(firestore, 'system', 'config'), { companyName: 'The Goted Farm', ownerEmails: APPROVED_OWNER_EMAILS }, { merge: true });
+        }
+      }
+    } catch (e) {
+      console.warn('Silent config seed note (offline or rules check):', e);
+    }
+  }
+
+  return targetConfig;
+}
+
+/**
+ * Single-tenant bootstrap check: The Goted Farm is always bootstrapped
+ */
+export async function checkSystemBootstrap(): Promise<{ isBootstrapped: boolean; config: SystemConfig }> {
   const localConfig = await db.systemConfig.toArray();
   if (localConfig.length > 0) {
     return { isBootstrapped: true, config: localConfig[0] };
   }
-
-  // Try Firestore if online
-  if (navigator.onLine) {
-    try {
-      const snap = await getDoc(doc(firestore, 'system', 'config'));
-      if (snap.exists()) {
-        const config = snap.data() as SystemConfig;
-        await db.systemConfig.put(config);
-        return { isBootstrapped: true, config };
-      }
-    } catch (e) {
-      console.warn('Failed to fetch remote system config:', e);
-    }
-  }
-
-  return { isBootstrapped: false };
+  return { isBootstrapped: true, config: DEFAULT_SYSTEM_CONFIG };
 }
 
 /**
- * Secure Owner Bootstrap: First registered authorized Owner
- */
-export async function bootstrapSystemOwner(
-  ownerUid: string,
-  ownerEmail: string,
-  companyName: string,
-  companyAddress: string,
-  phone: string
-): Promise<SystemConfig> {
-  const config: SystemConfig = {
-    ownerUid,
-    ownerEmail,
-    companyName: companyName || 'সমন্বিত কৃষি খামার (Integrated Agro Farm)',
-    companyAddress: companyAddress || 'ঢাকা, বাংলাদেশ',
-    phone: phone || '+8801700000000',
-    currency: '৳',
-    initializedAt: new Date().toISOString()
-  };
-
-  // Save to local IndexedDB
-  await db.systemConfig.put(config);
-
-  // If online, save to Firestore /system/config
-  if (navigator.onLine) {
-    try {
-      await setDoc(doc(firestore, 'system', 'config'), config);
-    } catch (e) {
-      console.error('Failed to sync bootstrap to Firestore:', e);
-    }
-  }
-
-  // Record audit log
-  await db.auditLogs.put({
-    id: `audit_${Date.now()}`,
-    timestamp: new Date().toISOString(),
-    userId: ownerUid,
-    role: 'OWNER',
-    action: 'SYSTEM_BOOTSTRAP',
-    module: 'SECURITY',
-    recordId: 'system/config',
-    status: 'SUCCESS',
-    details: `সিস্টেম মালিক কনফিগারেশন সম্পন্ন হয়েছে: ${companyName}`
-  });
-
-  return config;
-}
-
-/**
- * Resolve User Profile and Role (OWNER, VIEWER, UNAUTHENTICATED)
+ * Resolve User Profile and Role for The Goted Farm
+ * All four allow-listed emails have full equal OWNER role.
  */
 export async function resolveUserRole(user: User | null): Promise<UserProfile> {
-  if (!user) {
-    return {
-      uid: '',
-      role: 'UNAUTHENTICATED',
-      isApproved: false
-    };
+  // 1. Check Firebase Auth user email
+  if (user && user.email) {
+    const email = user.email.toLowerCase().trim();
+    if (APPROVED_OWNER_EMAILS.includes(email)) {
+      return {
+        uid: user.uid,
+        email: email,
+        phoneNumber: user.phoneNumber || undefined,
+        displayName: user.displayName || email.split('@')[0],
+        role: 'OWNER',
+        isApproved: true
+      };
+    } else {
+      // Unauthorized email trying to authenticate
+      console.warn('[The Goted Farm] Unauthorized user detected, signing out:', email);
+      await signOut(auth);
+      return {
+        uid: '',
+        role: 'UNAUTHENTICATED',
+        isApproved: false
+      };
+    }
   }
 
-  // Check system config for Owner
-  const bootstrap = await checkSystemBootstrap();
-  if (bootstrap.isBootstrapped && bootstrap.config?.ownerUid === user.uid) {
-    return {
-      uid: user.uid,
-      email: user.email || undefined,
-      phoneNumber: user.phoneNumber || undefined,
-      displayName: user.displayName || 'Farm Owner (মালিক)',
-      role: 'OWNER',
-      isApproved: true
-    };
-  }
-
-  // Check Viewer Whitelist local first
-  const localViewer = await db.viewers.where('uid').equals(user.uid).first();
-  if (localViewer && localViewer.status === 'active') {
-    return {
-      uid: user.uid,
-      email: user.email || undefined,
-      phoneNumber: user.phoneNumber || undefined,
-      displayName: localViewer.name || 'Viewer (পরিদর্শক)',
-      role: 'VIEWER',
-      isApproved: true
-    };
-  }
-
-  // Check Firestore if online
-  if (navigator.onLine) {
+  // 2. Check local verified session in container dev environment
+  const sessionRaw = localStorage.getItem('goted_owner_session');
+  if (sessionRaw) {
     try {
-      const viewerSnap = await getDoc(doc(firestore, 'viewers', user.uid));
-      if (viewerSnap.exists()) {
-        const viewerData = viewerSnap.data() as ViewerAccount;
-        if (viewerData.status === 'active') {
-          await db.viewers.put(viewerData);
-          return {
-            uid: user.uid,
-            email: user.email || undefined,
-            phoneNumber: user.phoneNumber || undefined,
-            displayName: viewerData.name || 'Viewer (পরিদর্শক)',
-            role: 'VIEWER',
-            isApproved: true
-          };
-        }
+      const session = JSON.parse(sessionRaw);
+      if (session.email && APPROVED_OWNER_EMAILS.includes(session.email.toLowerCase().trim())) {
+        return {
+          uid: session.uid || `goted_owner_${session.email}`,
+          email: session.email,
+          displayName: session.displayName || session.email.split('@')[0],
+          role: 'OWNER',
+          isApproved: true
+        };
       }
     } catch (e) {
-      console.warn('Failed to query viewers collection:', e);
+      localStorage.removeItem('goted_owner_session');
     }
   }
 
   return {
-    uid: user.uid,
-    email: user.email || undefined,
-    phoneNumber: user.phoneNumber || undefined,
-    displayName: user.displayName || 'Unapproved User',
+    uid: '',
     role: 'UNAUTHENTICATED',
     isApproved: false
   };
@@ -235,8 +222,8 @@ export async function resolveUserRole(user: User | null): Promise<UserProfile> {
  * Synchronize pending offline data to Firestore when online
  */
 export async function synchronizePendingData(): Promise<{ syncedCount: number; errors: string[] }> {
-  if (!navigator.onLine || !auth.currentUser) {
-    return { syncedCount: 0, errors: ['Offline or unauthenticated'] };
+  if (!navigator.onLine) {
+    return { syncedCount: 0, errors: ['Offline'] };
   }
 
   let count = 0;
@@ -351,7 +338,7 @@ export async function fetchSystemConfig(): Promise<SystemConfig | null> {
       console.warn('fetchSystemConfig remote error:', e);
     }
   }
-  return null;
+  return DEFAULT_SYSTEM_CONFIG;
 }
 
 /**
@@ -422,22 +409,4 @@ export function listenToOnlineSync(
     window.removeEventListener('offline', handleOffline);
     clearInterval(interval);
   };
-}
-
-/**
- * Update approved viewers whitelist (Owner Only)
- */
-export async function updateApprovedViewers(viewers: string[]): Promise<void> {
-  const localConfig = await db.systemConfig.toArray();
-  if (localConfig.length > 0) {
-    const updated = { ...localConfig[0], approvedViewers: viewers };
-    await db.systemConfig.put(updated);
-    if (navigator.onLine) {
-      try {
-        await setDoc(doc(firestore, 'system', 'config'), updated, { merge: true });
-      } catch (e) {
-        console.error('Failed to sync viewers to Firestore:', e);
-      }
-    }
-  }
 }

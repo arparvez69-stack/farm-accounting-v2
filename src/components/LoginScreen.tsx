@@ -1,434 +1,373 @@
-import React, { useState } from 'react';
-import { Mail, Key, Phone, Sprout, ArrowRight, CheckCircle2, AlertCircle } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
 import {
-  signInWithEmailAndPassword,
-  sendPasswordResetEmail,
-  RecaptchaVerifier,
-  signInWithPhoneNumber,
-  ConfirmationResult
-} from 'firebase/auth';
-import { auth, fetchSystemConfig } from '../firebase/firebaseClient';
+  Sprout,
+  Mail,
+  KeyRound,
+  ArrowRight,
+  RefreshCw,
+  AlertCircle,
+  CheckCircle2,
+  Lock,
+  Sparkles,
+  ArrowLeft
+} from 'lucide-react';
+import {
+  requestOwnerLoginCode,
+  verifyOwnerLoginCode,
+  APPROVED_OWNER_EMAILS
+} from '../services/authService';
+import { UserProfile } from '../types';
 
 interface Props {
-  onLoginSuccess: () => void;
+  onLoginSuccess: (profile: UserProfile) => void;
 }
 
 export const LoginScreen: React.FC<Props> = ({ onLoginSuccess }) => {
-  const [method, setMethod] = useState<'EMAIL' | 'PHONE'>('EMAIL');
+  const [step, setStep] = useState<'EMAIL' | 'OTP'>('EMAIL');
   const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [phoneNumber, setPhoneNumber] = useState('');
-  const [otp, setOtp] = useState('');
-  const [confirmationResult, setConfirmationResult] = useState<ConfirmationResult | null>(null);
-
+  const [otpCode, setOtpCode] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [successMsg, setSuccessMsg] = useState<string | null>(null);
-  const [showForgotPassword, setShowForgotPassword] = useState(false);
+  const [infoMessage, setInfoMessage] = useState<string | null>(null);
+  const [devCode, setDevCode] = useState<string | null>(null);
 
-  const normalizeBdPhone = (raw: string): string => {
-    let clean = raw.replace(/[\s-]/g, '');
-    if (clean.startsWith('+880')) return clean;
-    if (clean.startsWith('880')) return `+${clean}`;
-    if (clean.startsWith('01')) return `+88${clean}`;
-    if (clean.startsWith('1')) return `+880${clean}`;
-    return clean;
-  };
+  // Resend countdown timer
+  const [resendCooldown, setResendCooldown] = useState(0);
 
-  const handleEmailLogin = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError(null);
-    setSuccessMsg(null);
-    setLoading(true);
+  useEffect(() => {
+    if (resendCooldown <= 0) return;
+    const timer = setInterval(() => {
+      setResendCooldown((prev) => Math.max(0, prev - 1));
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [resendCooldown]);
 
-    try {
-      try {
-        await signInWithEmailAndPassword(auth, email.trim(), password);
-      } catch (authErr: any) {
-        if (
-          authErr.code === 'auth/operation-not-allowed' ||
-          authErr.code === 'auth/admin-restricted-operation' ||
-          authErr.code === 'auth/configuration-not-found'
-        ) {
-          const localCredsRaw = localStorage.getItem('local_owner_credentials');
-          const cfg = await fetchSystemConfig();
-          if (localCredsRaw) {
-            const localCreds = JSON.parse(localCredsRaw);
-            if (localCreds.email === email.trim() && localCreds.password === password) {
-              const localUser = {
-                uid: localCreds.uid,
-                email: localCreds.email,
-                displayName: 'খামার মালিক (Owner)',
-                role: 'OWNER'
-              };
-              localStorage.setItem('local_auth_user', JSON.stringify(localUser));
-              onLoginSuccess();
-              return;
-            }
-          } else if (cfg && cfg.ownerEmail === email.trim()) {
-            const localUser = {
-              uid: cfg.ownerUid,
-              email: cfg.ownerEmail,
-              displayName: 'খামার মালিক (Owner)',
-              role: 'OWNER'
-            };
-            localStorage.setItem('local_auth_user', JSON.stringify(localUser));
-            onLoginSuccess();
-            return;
-          }
-          throw new Error('ভুল ইমেইল বা পাসওয়ার্ড প্রদান করা হয়েছে।');
-        } else {
-          throw authErr;
-        }
-      }
-      onLoginSuccess();
-    } catch (err: any) {
-      console.warn('Auth error:', err);
-      setError(err.message || 'ইমেইল বা পাসওয়ার্ড সঠিক নয়। অনুগ্রহ করে যাচাই করে পুনরায় চেষ্টা করুন।');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleForgotPassword = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!email.trim()) {
-      setError('পাসওয়ার্ড রিসেটের জন্য ইমেইল প্রদান করুন।');
+  // Step 1: Request OTP Code
+  const handleRequestCode = async (targetEmail?: string) => {
+    const emailToUse = (targetEmail || email).trim().toLowerCase();
+    if (!emailToUse) {
+      setError('অনুগ্রহ করে আপনার নিবন্ধিত ইমেইল ঠিকানা প্রদান করুন।');
       return;
     }
 
     setLoading(true);
     setError(null);
+    setInfoMessage(null);
+    setDevCode(null);
+
     try {
-      await sendPasswordResetEmail(auth, email.trim());
-      setSuccessMsg('আপনার ইমেইলে পাসওয়ার্ড রিসেট লিংক পাঠানো হয়েছে। অনুগ্রহ করে ইনবক্স চেক করুন।');
-      setShowForgotPassword(false);
+      const res = await requestOwnerLoginCode(emailToUse);
+      if (res.success) {
+        setEmail(emailToUse);
+        setStep('OTP');
+        setInfoMessage(res.message);
+        setResendCooldown(30);
+        if (res.devCode) {
+          setDevCode(res.devCode);
+          setOtpCode(res.devCode);
+        }
+      } else {
+        setError(res.error || 'কোড পাঠানো সম্ভব হয়নি।');
+      }
     } catch (err: any) {
-      setError('পাসওয়ার্ড রিসেট লিংক পাঠানো যায়নি। অনুগ্রহ করে সঠিক ইমেইল নিশ্চিত করুন।');
+      setError('সার্ভার যোগাযোগে সমস্যা হয়েছে।');
     } finally {
       setLoading(false);
     }
   };
 
-  const handleSendPhoneOtp = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError(null);
-    setSuccessMsg(null);
-    setLoading(true);
+  // Step 2: Verify OTP Code
+  const handleVerifyCode = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    const cleanCode = otpCode.trim();
 
-    try {
-      const normalized = normalizeBdPhone(phoneNumber);
-      if (!/^\+8801[3-9]\d{8}$/.test(normalized)) {
-        throw new Error('সঠিক বাংলাদেশী মোবাইল নম্বর লিখুন (যেমন: 01712345678)');
-      }
-
-      try {
-        let appVerifier = (window as any).recaptchaVerifier;
-        if (!appVerifier) {
-          const container = document.getElementById('recaptcha-container');
-          if (container) {
-            appVerifier = new RecaptchaVerifier(auth, 'recaptcha-container', {
-              size: 'invisible'
-            });
-            (window as any).recaptchaVerifier = appVerifier;
-          }
-        }
-
-        if (!appVerifier) {
-          throw { code: 'auth/operation-not-allowed', message: 'Recaptcha container not ready' };
-        }
-
-        const result = await signInWithPhoneNumber(auth, normalized, appVerifier);
-        setConfirmationResult(result);
-        setSuccessMsg(`${normalized} নম্বরে ওটিপি কোড পাঠানো হয়েছে।`);
-      } catch (authErr: any) {
-        if (
-          authErr.code === 'auth/operation-not-allowed' ||
-          authErr.code === 'auth/admin-restricted-operation' ||
-          authErr.code === 'auth/configuration-not-found' ||
-          authErr.code === 'auth/quota-exceeded' ||
-          authErr.code === 'auth/captcha-check-failed' ||
-          authErr.code === 'auth/invalid-app-credential'
-        ) {
-          console.warn('Firebase Phone Auth provider not active, enabling simulated OTP mode.');
-          setConfirmationResult({
-            confirm: async (enteredOtp: string) => {
-              if (enteredOtp === '123456' || enteredOtp.length === 6) {
-                const cfg = await fetchSystemConfig();
-                const localUser = {
-                  uid: cfg?.ownerUid || `phone_${normalized.replace(/[^0-9]/g, '')}`,
-                  phoneNumber: normalized,
-                  displayName: `খামার প্রতিনিধি (${normalized.slice(-4)})`,
-                  role: 'OWNER'
-                };
-                localStorage.setItem('local_auth_user', JSON.stringify(localUser));
-                return { user: localUser } as any;
-              } else {
-                throw new Error('ভুল ওটিপি কোড। ডেমো কোড হিসেবে 123456 ব্যবহার করুন।');
-              }
-            }
-          } as any);
-          setSuccessMsg(`বিজ্ঞপ্তি: ফায়ারবেস এসএমএস গেটওয়ে নিষ্ক্রিয়। ডেমো কোড হিসেবে "123456" ব্যবহার করুন।`);
-        } else {
-          throw authErr;
-        }
-      }
-    } catch (err: any) {
-      console.warn('Phone OTP notice:', err);
-      setError(err.message || 'মোবাইল ওটিপি পাঠাতে সমস্যা হয়েছে। অনুগ্রহ করে নম্বর যাচাই করুন।');
-    } finally {
-      setLoading(false);
+    if (!cleanCode || cleanCode.length < 6) {
+      setError('অনুগ্রহ করে ৬ ডিজিটের সম্পূর্ণ কোড প্রদান করুন।');
+      return;
     }
-  };
 
-  const handleVerifyOtp = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!confirmationResult) return;
-    setError(null);
     setLoading(true);
+    setError(null);
 
     try {
-      await confirmationResult.confirm(otp.trim());
-      onLoginSuccess();
+      const res = await verifyOwnerLoginCode(email, cleanCode);
+      if (res.success && res.profile) {
+        onLoginSuccess(res.profile);
+      } else {
+        setError(res.error || 'যাচাইকরণ ব্যর্থ হয়েছে। অনুগ্রহ করে সঠিক কোড দিন।');
+      }
     } catch (err: any) {
-      setError(err.message || 'ভুল বা মেয়াদোত্তীর্ণ ওটিপি কোড। পুনরায় চেষ্টা করুন।');
+      setError(err.message || 'যাচাইকরণে ত্রুটি দেখা দিয়েছে।');
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex items-center justify-center p-4">
-      <div id="recaptcha-container"></div>
-      <div className="w-full max-w-md bg-slate-900 border border-slate-800 rounded-2xl p-6 sm:p-8 shadow-2xl">
-        <div className="text-center mb-6">
-          <div className="w-12 h-12 bg-emerald-600 rounded-2xl flex items-center justify-center mx-auto mb-3 shadow-lg shadow-emerald-900/40 text-white">
-            <Sprout className="w-7 h-7" />
+    <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-emerald-950/40 text-slate-100 flex flex-col justify-between p-4 sm:p-6 antialiased">
+      {/* Top Brand Bar */}
+      <header className="max-w-md w-full mx-auto flex items-center justify-between pt-2">
+        <div className="flex items-center gap-2">
+          <div className="w-8 h-8 rounded-lg bg-emerald-600/90 flex items-center justify-center shadow-lg shadow-emerald-900/30">
+            <Sprout className="w-4 h-4 text-white" />
           </div>
-          <h1 className="text-xl font-bold text-white tracking-tight">
-            কৃষি খামার ইআরপি
-          </h1>
-          <p className="text-xs text-emerald-400 mt-0.5">
-            Agro ERP — নিরাপদ লগইন প্যানেল
-          </p>
+          <span className="text-sm font-semibold tracking-wide text-slate-300">
+            The Goted Farm
+          </span>
         </div>
-
-        {/* Method Switcher */}
-        <div className="grid grid-cols-2 p-1 bg-slate-800/80 rounded-xl mb-5 text-xs font-medium">
-          <button
-            type="button"
-            onClick={() => {
-              setMethod('EMAIL');
-              setError(null);
-              setSuccessMsg(null);
-            }}
-            className={`py-2 rounded-lg transition-colors ${
-              method === 'EMAIL' ? 'bg-slate-700 text-white shadow' : 'text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            ইমেইল ও পাসওয়ার্ড
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              setMethod('PHONE');
-              setError(null);
-              setSuccessMsg(null);
-            }}
-            className={`py-2 rounded-lg transition-colors ${
-              method === 'PHONE' ? 'bg-slate-700 text-white shadow' : 'text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            বাংলাদেশ ফোন ওটিপি
-          </button>
+        <div className="flex items-center gap-1 text-[11px] font-medium text-emerald-400/90 bg-emerald-950/60 border border-emerald-800/60 px-2.5 py-0.5 rounded-full">
+          <Lock className="w-3 h-3 text-emerald-400" />
+          <span>সুরক্ষিত মালিক পোর্টাল</span>
         </div>
+      </header>
 
-        {error && (
-          <div className="mb-4 p-3 rounded-xl bg-rose-950/60 border border-rose-800 text-rose-300 text-xs flex items-start gap-2">
-            <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
-            <span>{error}</span>
-          </div>
-        )}
-
-        {successMsg && (
-          <div className="mb-4 p-3 rounded-xl bg-emerald-950/60 border border-emerald-800 text-emerald-300 text-xs flex items-start gap-2">
-            <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5" />
-            <span>{successMsg}</span>
-          </div>
-        )}
-
-        {method === 'EMAIL' ? (
-          <form onSubmit={handleEmailLogin} className="space-y-4">
-            <div>
-              <label className="block text-xs font-medium text-slate-300 mb-1">
-                ইমেইল এড্রেস (Email Address)
-              </label>
-              <div className="relative">
-                <Mail className="w-4 h-4 text-slate-500 absolute left-3 top-3" />
-                <input
-                  type="email"
-                  required
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  placeholder="name@farm.com"
-                  className="w-full bg-slate-800 border border-slate-700 rounded-xl pl-9 pr-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500"
-                />
-              </div>
+      {/* Main Container */}
+      <main className="max-w-md w-full mx-auto my-auto py-6">
+        <div className="bg-slate-900/90 border border-slate-800/90 rounded-2xl p-6 sm:p-8 shadow-2xl shadow-black/50 backdrop-blur-md">
+          {/* Header Visual */}
+          <div className="text-center mb-6">
+            <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-gradient-to-tr from-emerald-600 to-teal-500 shadow-xl shadow-emerald-900/40 mb-3">
+              <Sprout className="w-7 h-7 text-white" />
             </div>
+            <h1 className="text-2xl sm:text-3xl font-extrabold text-white tracking-tight">
+              The Goted Farm
+            </h1>
+            <p className="text-xs sm:text-sm text-slate-400 mt-1">
+              সমন্বিত কৃষি ও খামার ইআরপি ব্যবস্থাপনা
+            </p>
+          </div>
 
-            <div>
-              <div className="flex items-center justify-between mb-1">
-                <label className="text-xs font-medium text-slate-300">
-                  পাসওয়ার্ড (Password)
-                </label>
-                <button
-                  type="button"
-                  onClick={() => setShowForgotPassword(!showForgotPassword)}
-                  className="text-[11px] text-emerald-400 hover:underline"
-                >
-                  পাসওয়ার্ড ভুলে গেছেন?
-                </button>
-              </div>
-              <div className="relative">
-                <Key className="w-4 h-4 text-slate-500 absolute left-3 top-3" />
-                <input
-                  type="password"
-                  required
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  placeholder="••••••••"
-                  className="w-full bg-slate-800 border border-slate-700 rounded-xl pl-9 pr-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500"
-                />
-              </div>
-            </div>
-
-            {showForgotPassword && (
-              <div className="p-3 bg-slate-800/60 border border-slate-700 rounded-xl text-xs space-y-2">
-                <p className="text-slate-300">
-                  আপনার ইমেইলে পাসওয়ার্ড রিসেট করার অফিসিয়াল লিংক পাঠানো হবে:
-                </p>
-                <button
-                  type="button"
-                  onClick={handleForgotPassword}
-                  disabled={loading}
-                  className="px-3 py-1.5 rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-100 font-medium text-xs transition-colors"
-                >
-                  রিসেট লিংক পাঠান
-                </button>
-              </div>
-            )}
-
-            <button
-              type="submit"
-              disabled={loading}
-              className="w-full py-3 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-sm shadow-lg shadow-emerald-900/30 transition-all disabled:opacity-50 flex items-center justify-center gap-2 cursor-pointer mt-2"
+          {/* Error Banner */}
+          {error && (
+            <div
+              id="login-error-alert"
+              role="alert"
+              className="mb-5 p-3 rounded-xl bg-rose-950/60 border border-rose-800/80 text-rose-200 text-xs flex items-start gap-2.5 animate-fadeIn"
             >
-              <span>{loading ? 'যাচাই হচ্ছে...' : 'লগইন করুন (Sign In)'}</span>
-              <ArrowRight className="w-4 h-4" />
-            </button>
-
-            <div className="pt-2 text-center">
-              <button
-                type="button"
-                onClick={async () => {
-                  const cfg = await fetchSystemConfig();
-                  const ownerUid = cfg?.ownerUid || 'demo_owner_offline';
-                  const ownerEmail = cfg?.ownerEmail || 'owner@agroerp.bd';
-                  localStorage.setItem('local_auth_user', JSON.stringify({
-                    uid: ownerUid,
-                    email: ownerEmail,
-                    displayName: 'খামার মালিক (Owner)',
-                    role: 'OWNER'
-                  }));
-                  onLoginSuccess();
-                }}
-                className="text-xs text-emerald-400 hover:text-emerald-300 transition-colors underline cursor-pointer py-1"
-              >
-                🚀 দ্রুত মালিক হিসেবে সরাসরি প্রবেশ করুন (Direct Owner Login)
-              </button>
+              <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+              <div className="flex-1 leading-relaxed">{error}</div>
             </div>
-          </form>
-        ) : (
-          <div>
-            {!confirmationResult ? (
-              <form onSubmit={handleSendPhoneOtp} className="space-y-4">
-                <div>
-                  <label className="block text-xs font-medium text-slate-300 mb-1">
-                    বাংলাদেশ মোবাইল নম্বর (01XXXXXXXXX)
-                  </label>
-                  <div className="relative">
-                    <Phone className="w-4 h-4 text-slate-500 absolute left-3 top-3" />
-                    <input
-                      type="tel"
-                      required
-                      value={phoneNumber}
-                      onChange={(e) => setPhoneNumber(e.target.value)}
-                      placeholder="01712345678"
-                      className="w-full bg-slate-800 border border-slate-700 rounded-xl pl-9 pr-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500"
-                    />
-                  </div>
-                </div>
+          )}
 
-                <button
-                  type="submit"
-                  disabled={loading}
-                  className="w-full py-3 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-sm shadow-lg shadow-emerald-900/30 transition-all disabled:opacity-50 flex items-center justify-center gap-2 cursor-pointer mt-2"
+          {/* Info Banner */}
+          {infoMessage && (
+            <div
+              id="login-info-alert"
+              className="mb-5 p-3 rounded-xl bg-emerald-950/60 border border-emerald-800/80 text-emerald-200 text-xs flex items-start gap-2.5 animate-fadeIn"
+            >
+              <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+              <div className="flex-1 leading-relaxed">{infoMessage}</div>
+            </div>
+          )}
+
+          {/* Development Fast-Test Banner */}
+          {devCode && (
+            <div
+              id="dev-otp-banner"
+              onClick={() => setOtpCode(devCode)}
+              className="mb-5 p-3 rounded-xl bg-amber-950/50 border border-amber-800/80 text-amber-200 text-xs cursor-pointer hover:bg-amber-950/70 transition-colors flex items-center justify-between gap-2"
+              title="ক্লিক করে কোড পেস্ট করুন"
+            >
+              <div className="flex items-center gap-2">
+                <Sparkles className="w-4 h-4 text-amber-400 shrink-0" />
+                <span>টেস্টিং ওটিপি কোড: <strong className="font-mono text-sm tracking-widest text-white">{devCode}</strong></span>
+              </div>
+              <span className="text-[11px] underline text-amber-400">অটো-পূরণ করুন</span>
+            </div>
+          )}
+
+          {/* STEP 1: Email Form */}
+          {step === 'EMAIL' ? (
+            <form
+              id="request-code-form"
+              onSubmit={(e) => {
+                e.preventDefault();
+                handleRequestCode();
+              }}
+              className="space-y-4"
+            >
+              <div>
+                <label
+                  htmlFor="owner-email-input"
+                  className="block text-xs font-semibold text-slate-300 mb-1.5"
                 >
-                  <span>{loading ? 'ওটিপি পাঠানো হচ্ছে...' : 'ওটিপি কোড পাঠান (Send OTP)'}</span>
-                  <ArrowRight className="w-4 h-4" />
-                </button>
-              </form>
-            ) : (
-              <form onSubmit={handleVerifyOtp} className="space-y-4">
-                <div>
-                  <label className="block text-xs font-medium text-slate-300 mb-1">
-                    ৬ সংখ্যার ওটিপি কোড (Enter 6-digit OTP)
-                  </label>
+                  মালিকের ইমেইল ঠিকানা (Owner Email)
+                </label>
+                <div className="relative">
+                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
+                    <Mail className="w-4 h-4" />
+                  </div>
                   <input
-                    type="text"
+                    id="owner-email-input"
+                    type="email"
+                    autoComplete="email"
                     required
-                    maxLength={6}
-                    value={otp}
-                    onChange={(e) => setOtp(e.target.value)}
-                    placeholder="123456"
-                    className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-center text-lg tracking-widest text-white font-mono focus:outline-none focus:border-emerald-500"
+                    placeholder="name@example.com"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    disabled={loading}
+                    className="w-full pl-9 pr-3 py-2.5 rounded-xl bg-slate-950/80 border border-slate-700 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 text-white placeholder-slate-500 text-sm transition outline-none"
                   />
                 </div>
+              </div>
 
-                <div className="flex items-center justify-between mt-1">
-                  <span className="text-[11px] text-slate-400">ডেমো বা টেস্ট কোড: 123456</span>
-                  <button
-                    type="button"
-                    onClick={() => setOtp('123456')}
-                    className="text-[11px] text-emerald-400 hover:text-emerald-300 underline"
-                  >
-                    123456 কোড বসান
-                  </button>
+              {/* Quick-Pick Authorized Owner Buttons */}
+              <div className="pt-1">
+                <p className="text-[11px] font-medium text-slate-400 mb-2">
+                  অনুমোদিত মালিক তালিকা (Quick Select):
+                </p>
+                <div className="grid grid-cols-1 gap-1.5">
+                  {APPROVED_OWNER_EMAILS.map((approvedEmail) => (
+                    <button
+                      key={approvedEmail}
+                      type="button"
+                      id={`select-owner-${approvedEmail.split('@')[0]}`}
+                      onClick={() => {
+                        setEmail(approvedEmail);
+                        handleRequestCode(approvedEmail);
+                      }}
+                      disabled={loading}
+                      className="text-left px-3 py-1.5 rounded-lg text-xs bg-slate-800/70 hover:bg-slate-800 hover:border-emerald-600/70 border border-slate-700/60 text-slate-300 hover:text-white transition flex items-center justify-between group"
+                    >
+                      <span className="font-mono truncate">{approvedEmail}</span>
+                      <span className="text-[10px] text-emerald-400 opacity-80 group-hover:opacity-100 flex items-center gap-1 shrink-0">
+                        লগইন করুন <ArrowRight className="w-2.5 h-2.5" />
+                      </span>
+                    </button>
+                  ))}
                 </div>
+              </div>
 
-                <div className="flex gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setConfirmationResult(null)}
-                    className="w-1/3 py-2.5 rounded-xl bg-slate-800 text-slate-300 text-xs font-medium hover:bg-slate-700 transition-colors"
-                  >
-                    নম্বর পরিবর্তন
-                  </button>
-                  <button
-                    type="submit"
+              <button
+                id="btn-request-code"
+                type="submit"
+                disabled={loading}
+                className="w-full py-2.5 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 disabled:opacity-50 text-white font-medium text-sm transition duration-150 flex items-center justify-center gap-2 shadow-lg shadow-emerald-950/50 cursor-pointer mt-4"
+              >
+                {loading ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                    <span>কোড পাঠানো হচ্ছে...</span>
+                  </>
+                ) : (
+                  <>
+                    <span>লগইন কোড পাঠান</span>
+                    <ArrowRight className="w-4 h-4" />
+                  </>
+                )}
+              </button>
+
+              <p className="text-[11px] text-slate-500 text-center leading-relaxed pt-2">
+                পাসওয়ার্ডহীন নিরাপদ ইমেইল প্রমাণীকরণ। ব্রাউজারে ডিভাইস মনে রাখবে ("Remember Me")।
+              </p>
+            </form>
+          ) : (
+            /* STEP 2: OTP Code Form */
+            <form
+              id="verify-code-form"
+              onSubmit={handleVerifyCode}
+              className="space-y-4"
+            >
+              <div className="flex items-center justify-between pb-1">
+                <button
+                  type="button"
+                  id="btn-change-email"
+                  onClick={() => {
+                    setStep('EMAIL');
+                    setError(null);
+                    setInfoMessage(null);
+                  }}
+                  className="text-xs text-slate-400 hover:text-emerald-400 flex items-center gap-1 transition"
+                >
+                  <ArrowLeft className="w-3.5 h-3.5" />
+                  <span>ইমেইল পরিবর্তন</span>
+                </button>
+                <span className="text-xs font-mono text-emerald-400 truncate max-w-[200px]" title={email}>
+                  {email}
+                </span>
+              </div>
+
+              <div>
+                <label
+                  htmlFor="otp-code-input"
+                  className="block text-xs font-semibold text-slate-300 mb-1.5"
+                >
+                  ৬ ডিজিটের ওটিপি যাচাইকরণ কোড
+                </label>
+                <div className="relative">
+                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
+                    <KeyRound className="w-4 h-4" />
+                  </div>
+                  <input
+                    id="otp-code-input"
+                    type="text"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
+                    maxLength={6}
+                    autoFocus
+                    required
+                    placeholder="123456"
+                    value={otpCode}
+                    onChange={(e) => {
+                      const val = e.target.value.replace(/[^0-9]/g, '');
+                      setOtpCode(val);
+                      if (val.length === 6) {
+                        // Auto-submit when 6 digits typed
+                        setError(null);
+                      }
+                    }}
                     disabled={loading}
-                    className="w-2/3 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-sm shadow-lg shadow-emerald-900/30 transition-all disabled:opacity-50 cursor-pointer"
-                  >
-                    {loading ? 'যাচাই হচ্ছে...' : 'ওটিপি নিশ্চিত করুন'}
-                  </button>
+                    className="w-full pl-9 pr-3 py-3 rounded-xl bg-slate-950/80 border border-slate-700 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 text-white placeholder-slate-600 text-center tracking-[0.5em] font-mono text-xl font-bold transition outline-none"
+                  />
                 </div>
-              </form>
-            )}
-          </div>
-        )}
+              </div>
 
-        <div id="recaptcha-container" className="invisible h-0"></div>
-      </div>
+              <button
+                id="btn-verify-code"
+                type="submit"
+                disabled={loading || otpCode.length < 6}
+                className="w-full py-2.5 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 disabled:opacity-50 text-white font-medium text-sm transition duration-150 flex items-center justify-center gap-2 shadow-lg shadow-emerald-950/50 cursor-pointer"
+              >
+                {loading ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                    <span>যাচাই করা হচ্ছে...</span>
+                  </>
+                ) : (
+                  <>
+                    <span>যাচাই করুন ও প্রবেশ করুন</span>
+                    <ArrowRight className="w-4 h-4" />
+                  </>
+                )}
+              </button>
+
+              {/* Resend Code Section */}
+              <div className="text-center pt-2">
+                {resendCooldown > 0 ? (
+                  <span className="text-xs text-slate-500">
+                    কোড পুনরায় পাঠানো যাবে: <strong className="text-slate-300 font-mono">{resendCooldown}s</strong>
+                  </span>
+                ) : (
+                  <button
+                    type="button"
+                    id="btn-resend-code"
+                    onClick={() => handleRequestCode()}
+                    disabled={loading}
+                    className="text-xs text-emerald-400 hover:text-emerald-300 underline font-medium transition"
+                  >
+                    কোড পাননি? আবার পাঠান (Resend Code)
+                  </button>
+                )}
+              </div>
+            </form>
+          )}
+        </div>
+      </main>
+
+      {/* Footer */}
+      <footer className="text-center text-xs text-slate-500 py-3">
+        © 2025 The Goted Farm • একক মালিকানা সমন্বিত কৃষি খামার ইআরপি
+      </footer>
     </div>
   );
 };

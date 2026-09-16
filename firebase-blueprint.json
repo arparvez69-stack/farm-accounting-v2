@@ -2,30 +2,15 @@
   "entities": {
     "systemConfig": {
       "title": "System Configuration",
-      "description": "Global ERP configuration including initial owner UID and company settings",
+      "description": "Global ERP configuration for The Goted Farm single-tenant instance",
       "type": "object",
       "properties": {
-        "ownerUid": { "type": "string", "description": "UID of the registered owner" },
-        "companyName": { "type": "string", "description": "Farm business name" },
+        "companyName": { "type": "string", "description": "Farm business name (The Goted Farm)" },
+        "ownerEmails": { "type": "array", "items": { "type": "string" }, "description": "Fixed owner allow-list" },
         "currency": { "type": "string", "description": "BDT currency symbol" },
         "initializedAt": { "type": "string", "description": "ISO timestamp of system bootstrap" }
       },
-      "required": ["ownerUid", "companyName", "currency", "initializedAt"]
-    },
-    "viewer": {
-      "title": "Viewer Whitelist",
-      "description": "Approved read-only viewer accounts",
-      "type": "object",
-      "properties": {
-        "uid": { "type": "string", "description": "Firebase user UID" },
-        "email": { "type": "string", "description": "Viewer email address" },
-        "phone": { "type": "string", "description": "Viewer phone number" },
-        "name": { "type": "string", "description": "Viewer full name" },
-        "addedBy": { "type": "string", "description": "Owner UID who added this viewer" },
-        "addedAt": { "type": "string", "description": "ISO timestamp added" },
-        "status": { "type": "string", "enum": ["active", "revoked"], "description": "Access status" }
-      },
-      "required": ["uid", "addedBy", "addedAt", "status"]
+      "required": ["companyName", "currency", "initializedAt"]
     },
     "account": {
       "title": "Chart of Account",
@@ -136,11 +121,7 @@
   "firestore": {
     "/system/config": {
       "schema": "systemConfig",
-      "description": "Global ERP settings and Owner registration"
-    },
-    "/viewers/{viewerId}": {
-      "schema": "viewer",
-      "description": "Approved Viewer whitelist collection"
+      "description": "Global ERP settings for The Goted Farm"
     },
     "/accounts/{accountId}": {
       "schema": "account",

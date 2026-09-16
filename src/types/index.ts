@@ -19,6 +19,7 @@ export interface UserProfile {
 export interface SystemConfig {
   ownerUid: string;
   ownerEmail?: string;
+  ownerEmails?: string[];
   companyName: string;
   companyAddress?: string;
   phone?: string;

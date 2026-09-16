@@ -1,5 +1,5 @@
 import React from 'react';
-import { Shield, ShieldAlert, LogOut, Sprout } from 'lucide-react';
+import { Shield, LogOut, Sprout } from 'lucide-react';
 import { SyncState, SystemConfig, UserProfile } from '../types';
 import { SyncStatusBadge } from './SyncStatusBadge';
 
@@ -31,10 +31,10 @@ export const Header: React.FC<Props> = ({
           </div>
           <div className="truncate">
             <h1 className="text-sm sm:text-base font-bold text-slate-100 tracking-tight leading-tight truncate">
-              {systemConfig?.companyName || 'সমন্বিত কৃষি খামার (Agro ERP)'}
+              {systemConfig?.companyName || 'The Goted Farm'}
             </h1>
             <p className="text-[11px] text-emerald-400 font-medium truncate">
-              বাংলাদেশ সমন্বিত খামার ইআরপি
+              সমন্বিত কৃষি ও খামার ইআরপি (ERP)
             </p>
           </div>
         </div>
@@ -47,31 +47,24 @@ export const Header: React.FC<Props> = ({
             onSyncNow={onSyncNow}
           />
 
-          {/* Role Badge */}
-          {userProfile.role === 'OWNER' ? (
-            <span className="hidden xs:inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-emerald-950/80 text-emerald-300 border border-emerald-800">
-              <Shield className="w-3 h-3 text-emerald-400" />
-              <span>মালিক (OWNER)</span>
-            </span>
-          ) : userProfile.role === 'VIEWER' ? (
-            <span className="hidden xs:inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-sky-950/80 text-sky-300 border border-sky-800">
-              <ShieldAlert className="w-3 h-3 text-sky-400" />
-              <span>পরিদর্শক (VIEWER)</span>
-            </span>
-          ) : null}
+          {/* Owner Role Badge */}
+          <span className="hidden xs:inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-950/80 text-emerald-300 border border-emerald-800">
+            <Shield className="w-3 h-3 text-emerald-400" />
+            <span>খামার মালিক (OWNER)</span>
+          </span>
 
           {/* User & Logout */}
           <div className="flex items-center gap-1.5 border-l border-slate-800 pl-2">
             <span
-              title={userProfile.email || userProfile.phoneNumber || 'User'}
-              className="text-xs text-slate-400 max-w-[90px] sm:max-w-[140px] truncate hidden md:inline-block"
+              title={userProfile.email || 'Owner'}
+              className="text-xs text-slate-300 max-w-[120px] sm:max-w-[180px] truncate font-mono hidden md:inline-block"
             >
-              {userProfile.displayName || userProfile.email || 'ব্যবহারকারী'}
+              {userProfile.email || userProfile.displayName || 'Owner'}
             </span>
             <button
               onClick={onLogout}
               title="লগআউট করুন (Logout)"
-              className="p-1.5 rounded-lg text-slate-400 hover:text-rose-400 hover:bg-slate-800 transition-colors"
+              className="p-1.5 rounded-lg text-slate-400 hover:text-rose-400 hover:bg-slate-800 transition-colors cursor-pointer"
             >
               <LogOut className="w-4 h-4" />
             </button>

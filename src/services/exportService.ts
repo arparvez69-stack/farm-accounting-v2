@@ -198,7 +198,6 @@ export async function createFullJsonBackup(): Promise<string> {
     version: '1.0.0',
     timestamp: new Date().toISOString(),
     systemConfig: await db.systemConfig.toArray(),
-    viewers: await db.viewers.toArray(),
     accounts: await db.accounts.toArray(),
     journalEntries: await db.journalEntries.toArray(),
     animals: await db.animals.toArray(),
@@ -252,7 +251,6 @@ export async function restoreFromJsonBackup(
       'rw',
       [
         db.systemConfig,
-        db.viewers,
         db.accounts,
         db.journalEntries,
         db.animals,

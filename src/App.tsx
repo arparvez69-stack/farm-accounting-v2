@@ -1,16 +1,17 @@
 import React, { useEffect, useState } from 'react';
-import { onAuthStateChanged, signOut, User } from 'firebase/auth';
+import { onAuthStateChanged, User } from 'firebase/auth';
 import {
   auth,
   checkSystemBootstrap,
   initializeLocalDatabase,
   listenToOnlineSync,
   resolveUserRole,
+  seedSystemConfigIfNecessary,
   synchronizePendingData
 } from './firebase/firebaseClient';
+import { logoutOwner } from './services/authService';
 import { ActiveTab, MobileBottomNav } from './components/MobileBottomNav';
 import { Header } from './components/Header';
-import { BootstrapOwner } from './components/BootstrapOwner';
 import { LoginScreen } from './components/LoginScreen';
 import { Dashboard } from './components/Dashboard';
 import { AccountingModule } from './components/AccountingModule';
@@ -23,7 +24,6 @@ import { SyncState, SystemConfig, UserProfile } from './types';
 import { runRegressionTests } from './tests/regressionTests';
 
 export default function App() {
-  const [bootstrapped, setBootstrapped] = useState<boolean | null>(null);
   const [systemConfig, setSystemConfig] = useState<SystemConfig | null>(null);
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
@@ -43,55 +43,53 @@ export default function App() {
   const initApp = async () => {
     try {
       setLoading(true);
-      // Initialize IndexedDB default accounts
+
+      // 1. Initialize IndexedDB default accounts and configuration
       await initializeLocalDatabase();
 
-      // Run accounting and transaction regression tests in the background to guarantee 100% integrity
+      // 2. Run accounting integrity regression tests in background
       runRegressionTests().then((testRes) => {
         if (testRes.success) {
-          console.log(`[Agro ERP] Regression test suite passed (${testRes.passed}/${testRes.total} assertions).`);
+          console.log(`[The Goted Farm] Accounting regression test suite passed (${testRes.passed}/${testRes.total} assertions).`);
         } else {
-          console.error('[Agro ERP] Regression test failures:', testRes.failures);
+          console.error('[The Goted Farm] Regression test failures:', testRes.failures);
         }
       });
 
-      // Check if farm has an owner configured
+      // 3. Ensure system config for The Goted Farm
       const boot = await checkSystemBootstrap();
-      setBootstrapped(boot.isBootstrapped);
-      if (boot.config) {
-        setSystemConfig(boot.config);
+      setSystemConfig(boot.config);
+
+      // 4. Check for active session in Firebase Auth or local verified session
+      const initialProfile = await resolveUserRole(auth.currentUser);
+      if (initialProfile.isApproved && initialProfile.role === 'OWNER') {
+        setUserProfile(initialProfile);
+        setCurrentUser(auth.currentUser);
+        await seedSystemConfigIfNecessary();
       }
 
-      // Check local storage for authenticated session
-      const localUserRaw = localStorage.getItem('local_auth_user');
-      if (localUserRaw) {
-        try {
-          const localUser = JSON.parse(localUserRaw);
-          setCurrentUser(localUser as any);
-          const prof = await resolveUserRole(localUser as any);
-          setUserProfile(prof);
-        } catch (e) {
-          console.error('Error parsing local auth user:', e);
-        }
-      }
-
-      // Firebase Auth listener
+      // 5. Firebase Auth state listener
       onAuthStateChanged(auth, async (user) => {
         if (user) {
           setCurrentUser(user);
           const prof = await resolveUserRole(user);
           setUserProfile(prof);
-          localStorage.removeItem('local_auth_user');
+          if (prof.isApproved) {
+            await seedSystemConfigIfNecessary();
+          }
         } else {
-          const checkLocal = localStorage.getItem('local_auth_user');
-          if (!checkLocal) {
+          // If no Firebase Auth user, check if we have a verified local session
+          const fallbackProf = await resolveUserRole(null);
+          if (fallbackProf.isApproved && fallbackProf.role === 'OWNER') {
+            setUserProfile(fallbackProf);
+          } else {
             setCurrentUser(null);
             setUserProfile(null);
           }
         }
       });
 
-      // Background Sync Listener
+      // 6. Background synchronization listener
       listenToOnlineSync(
         (st) => setSyncState(st),
         (cnt) => setPendingCount(cnt)
@@ -103,16 +101,8 @@ export default function App() {
     }
   };
 
-  const handleBootstrapped = async (config: SystemConfig) => {
-    setSystemConfig(config);
-    setBootstrapped(true);
-    const prof = await resolveUserRole(auth.currentUser);
-    setUserProfile(prof);
-  };
-
   const handleLogout = async () => {
-    localStorage.removeItem('local_auth_user');
-    await signOut(auth);
+    await logoutOwner();
     setCurrentUser(null);
     setUserProfile(null);
   };
@@ -127,37 +117,21 @@ export default function App() {
     return (
       <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center p-4 text-slate-300">
         <div className="w-12 h-12 border-4 border-emerald-500 border-t-transparent rounded-full animate-spin mb-4"></div>
-        <p className="text-sm font-semibold">কৃষি খামার ইআরপি ডাটাবেজ লোড হচ্ছে...</p>
-        <p className="text-xs text-slate-500 mt-1">অফলাইন-ফার্স্ট ক্যাশ ও হিসাবরক্ষণ ইঞ্জিন প্রস্তুত হচ্ছে</p>
+        <p className="text-sm font-semibold">The Goted Farm ইআরপি ডাটাবেজ প্রস্তুত হচ্ছে...</p>
+        <p className="text-xs text-slate-500 mt-1">অফলাইন-ফার্স্ট হিসাবরক্ষণ ও সমন্বিত খামার ইঞ্জিন লোড হচ্ছে</p>
       </div>
     );
   }
 
-  // STEP 1: If not bootstrapped, require Owner Initialization
-  if (bootstrapped === false) {
-    return <BootstrapOwner onBootstrapped={handleBootstrapped} />;
-  }
-
-  // STEP 2: If not logged in, show Login Screen
-  if (!currentUser || !userProfile || userProfile.role === 'UNAUTHENTICATED') {
+  // If not logged in as an approved Owner, show single-tenant OTP Login Screen
+  if (!userProfile || !userProfile.isApproved || userProfile.role !== 'OWNER') {
     return (
       <LoginScreen
-        onLoginSuccess={async () => {
+        onLoginSuccess={async (profile) => {
+          setUserProfile(profile);
           const boot = await checkSystemBootstrap();
           if (boot.config) setSystemConfig(boot.config);
-
-          const localRaw = localStorage.getItem('local_auth_user');
-          if (localRaw) {
-            const parsed = JSON.parse(localRaw);
-            setCurrentUser(parsed as any);
-            const prof = await resolveUserRole(parsed as any);
-            setUserProfile(prof);
-          } else {
-            const user = auth.currentUser;
-            setCurrentUser(user);
-            const prof = await resolveUserRole(user);
-            setUserProfile(prof);
-          }
+          await seedSystemConfigIfNecessary();
         }}
       />
     );

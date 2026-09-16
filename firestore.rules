@@ -2,162 +2,120 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // Helper functions
-    function isSignedIn() {
-      return request.auth != null;
+    // Single-tenant fixed owner allow-list for "The Goted Farm"
+    function isApprovedOwner() {
+      return request.auth != null &&
+        request.auth.token.email in [
+          'arparvez69@gmail.com',
+          'arparvez4@gmail.com',
+          'arparvez111@gmail.com',
+          'atikurrahman00021@gmail.com'
+        ];
     }
 
-    function isOwner() {
-      return isSignedIn() &&
-        exists(/databases/$(database)/documents/system/config) &&
-        get(/databases/$(database)/documents/system/config).data.ownerUid == request.auth.uid;
-    }
-
-    function isApprovedViewer() {
-      return isSignedIn() &&
-        exists(/databases/$(database)/documents/viewers/$(request.auth.uid)) &&
-        get(/databases/$(database)/documents/viewers/$(request.auth.uid)).data.status == 'active';
-    }
-
-    function canRead() {
-      return isOwner() || isApprovedViewer();
-    }
-
-    // System configuration & secure Owner bootstrap
+    // System configuration for "The Goted Farm"
     match /system/config {
-      // Any signed in user can read the config to verify their role/company
-      allow read: if isSignedIn();
-      
-      // Initial bootstrap: Allowed ONLY if config doesn't exist yet, and ownerUid matches caller UID
-      allow create: if isSignedIn() &&
-        !exists(/databases/$(database)/documents/system/config) &&
-        request.resource.data.ownerUid == request.auth.uid;
-        
-      // Once created, only the authenticated Owner can update, and ownerUid cannot be transferred
-      allow update: if isOwner() &&
-        request.resource.data.ownerUid == resource.data.ownerUid;
-        
+      allow read, write: if isApprovedOwner();
       allow delete: if false;
     }
 
-    // Viewers whitelist: only Owner can manage; approved viewers can read their own or list
-    match /viewers/{viewerId} {
-      allow read: if isOwner() || (isSignedIn() && request.auth.uid == viewerId);
-      allow create, update, delete: if isOwner();
+    // Server-only OTP codes: never accessible by client direct queries
+    match /loginCodes/{email} {
+      allow read, write: if false;
     }
 
     // Chart of Accounts
     match /accounts/{accountId} {
-      allow read: if canRead();
-      allow write: if isOwner();
+      allow read, write: if isApprovedOwner();
     }
 
     // General Journal Entries
     match /journalEntries/{entryId} {
-      allow read: if canRead();
-      allow write: if isOwner();
+      allow read, write: if isApprovedOwner();
     }
 
     // Livestock Animals & Events
     match /animals/{animalId} {
-      allow read: if canRead();
-      allow write: if isOwner();
+      allow read, write: if isApprovedOwner();
     }
     match /animalEvents/{eventId} {
-      allow read: if canRead();
-      allow write: if isOwner();
+      allow read, write: if isApprovedOwner();
     }
 
     // Aquaculture Ponds & Fish Batches
     match /ponds/{pondId} {
-      allow read: if canRead();
-      allow write: if isOwner();
+      allow read, write: if isApprovedOwner();
     }
     match /fishBatches/{batchId} {
-      allow read: if canRead();
-      allow write: if isOwner();
+      allow read, write: if isApprovedOwner();
     }
 
     // Agriculture Plots & Crop Cycles
     match /plots/{plotId} {
-      allow read: if canRead();
-      allow write: if isOwner();
+      allow read, write: if isApprovedOwner();
     }
     match /cropCycles/{cycleId} {
-      allow read: if canRead();
-      allow write: if isOwner();
+      allow read, write: if isApprovedOwner();
     }
 
     // Inventory, Products & Stock Movements
     match /inventoryItems/{itemId} {
-      allow read: if canRead();
-      allow write: if isOwner();
+      allow read, write: if isApprovedOwner();
     }
     match /stockMovements/{movementId} {
-      allow read: if canRead();
-      allow write: if isOwner();
+      allow read, write: if isApprovedOwner();
     }
 
     // Purchases & Sales
     match /purchases/{purchaseId} {
-      allow read: if canRead();
-      allow write: if isOwner();
+      allow read, write: if isApprovedOwner();
     }
     match /sales/{saleId} {
-      allow read: if canRead();
-      allow write: if isOwner();
+      allow read, write: if isApprovedOwner();
     }
 
     // Parties (Customers & Suppliers)
     match /parties/{partyId} {
-      allow read: if canRead();
-      allow write: if isOwner();
+      allow read, write: if isApprovedOwner();
     }
 
     // Cash & Bank Accounts
     match /cashBankAccounts/{accId} {
-      allow read: if canRead();
-      allow write: if isOwner();
+      allow read, write: if isApprovedOwner();
     }
 
     // Loans
     match /loans/{loanId} {
-      allow read: if canRead();
-      allow write: if isOwner();
+      allow read, write: if isApprovedOwner();
     }
 
     // Investors & Transactions
     match /investors/{investorId} {
-      allow read: if canRead();
-      allow write: if isOwner();
+      allow read, write: if isApprovedOwner();
     }
     match /investorTransactions/{txId} {
-      allow read: if canRead();
-      allow write: if isOwner();
+      allow read, write: if isApprovedOwner();
     }
 
     // Fixed Assets
     match /fixedAssets/{assetId} {
-      allow read: if canRead();
-      allow write: if isOwner();
+      allow read, write: if isApprovedOwner();
     }
 
     // Permaculture & Internal Resource Flows
     match /internalFlows/{flowId} {
-      allow read: if canRead();
-      allow write: if isOwner();
+      allow read, write: if isApprovedOwner();
     }
 
     // Processing & BOM Runs
     match /processingRuns/{runId} {
-      allow read: if canRead();
-      allow write: if isOwner();
+      allow read, write: if isApprovedOwner();
     }
 
-    // Audit logs: Readable by Owner and approved Viewers, append-only by authenticated users for audit trail, never update/delete
+    // Audit logs: Append-only by approved owners for immutable audit trail, never update or delete
     match /auditLogs/{logId} {
-      allow read: if canRead();
-      allow create: if isSignedIn();
+      allow read: if isApprovedOwner();
+      allow create: if isApprovedOwner();
       allow update, delete: if false;
     }
   }
