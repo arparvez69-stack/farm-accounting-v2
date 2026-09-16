@@ -17,6 +17,13 @@ export const APPROVED_OWNER_EMAILS = [
   'atikurrahman00021@gmail.com'
 ] as const;
 
+export const OWNER_PINS: Record<string, string> = {
+  'arparvez69@gmail.com': MASTER_SECRET_PIN,
+  'arparvez4@gmail.com': MASTER_SECRET_PIN,
+  'arparvez111@gmail.com': MASTER_SECRET_PIN,
+  'atikurrahman00021@gmail.com': MASTER_SECRET_PIN
+};
+
 export interface VerifyPinResponse {
   success: boolean;
   profile?: UserProfile;
@@ -109,22 +116,21 @@ export async function verifyOwnerSecretPin(
   const normalized = email.trim().toLowerCase();
   const cleanPin = pin.trim();
 
-  if (!normalized) {
-    return { success: false, error: 'অনুগ্রহ করে আপনার ইমেইল ঠিকানা লিখুন।' };
-  }
-  if (!cleanPin) {
-    return { success: false, error: 'অনুগ্রহ করে গোপন পিন (Secret PIN) লিখুন।' };
+  if (!normalized || !cleanPin) {
+    return { success: false, error: 'ইমেইল এবং গোপন পিন উভয়ই আবশ্যক।' };
   }
 
-  // 1. Validate Secret PIN
-  const isPinCorrect = cleanPin === MASTER_SECRET_PIN;
+  // 1. Validate both email allow-list AND secret PIN
+  const isEmailApproved = (APPROVED_OWNER_EMAILS as readonly string[]).includes(normalized);
+  const expectedPin = OWNER_PINS[normalized] || MASTER_SECRET_PIN;
+  const isPinCorrect = Boolean(cleanPin) && (cleanPin === expectedPin || cleanPin === MASTER_SECRET_PIN);
 
-  if (!isPinCorrect) {
+  if (!isEmailApproved || !isPinCorrect) {
     // Record failed attempt
     await recordAccessLog(normalized, 'FAILED', 'SECRET_PIN');
     return {
       success: false,
-      error: 'ভুল গোপন পিন (Incorrect Secret PIN)! সঠিক পিন না দিলে অ্যাপে প্রবেশ করা যাবে না।'
+      error: 'অবৈধ ইমেইল অথবা গোপন পিন (Invalid email or secret PIN)!'
     };
   }
 
@@ -150,9 +156,16 @@ export async function verifyOwnerSecretPin(
         const data = await res.json();
         if (data.customToken) customToken = data.customToken;
         if (data.uid) uid = data.uid;
+      } else {
+        const errData = await res.json().catch(() => ({}));
+        await recordAccessLog(normalized, 'FAILED', 'SECRET_PIN');
+        return {
+          success: false,
+          error: errData.error || 'অবৈধ ইমেইল অথবা গোপন পিন (Invalid email or secret PIN)!'
+        };
       }
     } catch {
-      // Server offline fallback: client-side pin was verified
+      // Server offline fallback: client-side pin and email were verified
     }
 
     // 4. Record successful access log

@@ -47,7 +47,7 @@ export const LoginScreen: React.FC<Props> = ({ onLoginSuccess }) => {
       if (res.success && res.profile) {
         onLoginSuccess(res.profile);
       } else {
-        setError(res.error || 'ভুল গোপন পিন! সঠিক পিন না দিলে অ্যাপে প্রবেশ করা যাবে না।');
+        setError(res.error || 'অবৈধ ইমেইল অথবা গোপন পিন! সঠিক তথ্য না দিলে অ্যাপে প্রবেশ করা যাবে না।');
       }
     } catch (err: any) {
       setError(err.message || 'যাচাইকরণে ত্রুটি দেখা দিয়েছে। পুনরায় চেষ্টা করুন।');
