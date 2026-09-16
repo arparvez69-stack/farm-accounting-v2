@@ -257,57 +257,57 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
   const fmt = (n: number) => `৳${Number(n || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`;
 
   return (
-    <div className="space-y-4 pb-20 max-w-7xl mx-auto">
+    <div className="space-y-4 pb-6 max-w-5xl mx-auto">
       {/* Top Header & Subtabs */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 rounded-2xl bg-slate-900 border border-slate-800">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 sm:p-5 rounded-2xl bg-white border border-gray-200 shadow-xs">
         <div>
-          <h2 className="text-base sm:text-lg font-bold text-white flex items-center gap-2">
-            <BookOpen className="w-5 h-5 text-emerald-400" />
-            <span>দ্বৈত-দাখিলা হিসাবরক্ষণ (Double-Entry Accounting)</span>
+          <h2 className="text-lg sm:text-xl font-bold text-gray-900 flex items-center gap-2">
+            <BookOpen className="w-5 h-5 text-[#1E5128]" />
+            <span>দ্বৈত-দাখিলা হিসাবরক্ষণ</span>
           </h2>
-          <p className="text-xs text-slate-400">
+          <p className="text-[14px] text-gray-600 mt-0.5">
             রশিদ, পরিশোধ, কন্ট্রা, সাধারণ জাবেদা, খতিয়ান ও স্বয়ংক্রিয় রেওয়ামিল
           </p>
         </div>
 
         {/* Sub Navigation Bar */}
-        <div className="flex items-center gap-1 bg-slate-800/80 p-1 rounded-xl overflow-x-auto text-xs font-medium">
+        <div className="flex items-center gap-1.5 bg-gray-100 p-1.5 rounded-xl overflow-x-auto text-[13px] font-semibold">
           <button
             onClick={() => setSubTab('daybook')}
-            className={`px-3 py-1.5 rounded-lg whitespace-nowrap transition-colors ${
-              subTab === 'daybook' ? 'bg-emerald-600 text-white' : 'text-slate-300 hover:text-white'
+            className={`px-3.5 py-2 rounded-lg whitespace-nowrap transition-all cursor-pointer min-h-[40px] ${
+              subTab === 'daybook' ? 'bg-[#1E5128] text-white shadow-xs' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200/60'
             }`}
           >
             জাবেদা তালিকা (Daybook)
           </button>
           <button
             onClick={() => setSubTab('vouchers')}
-            className={`px-3 py-1.5 rounded-lg whitespace-nowrap transition-colors ${
-              subTab === 'vouchers' ? 'bg-emerald-600 text-white' : 'text-slate-300 hover:text-white'
+            className={`px-3.5 py-2 rounded-lg whitespace-nowrap transition-all cursor-pointer min-h-[40px] ${
+              subTab === 'vouchers' ? 'bg-[#1E5128] text-white shadow-xs' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200/60'
             }`}
           >
             + নতুন ভাউচার
           </button>
           <button
             onClick={() => setSubTab('ledger')}
-            className={`px-3 py-1.5 rounded-lg whitespace-nowrap transition-colors ${
-              subTab === 'ledger' ? 'bg-emerald-600 text-white' : 'text-slate-300 hover:text-white'
+            className={`px-3.5 py-2 rounded-lg whitespace-nowrap transition-all cursor-pointer min-h-[40px] ${
+              subTab === 'ledger' ? 'bg-[#1E5128] text-white shadow-xs' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200/60'
             }`}
           >
             খতিয়ান (Ledger)
           </button>
           <button
             onClick={() => setSubTab('trialBalance')}
-            className={`px-3 py-1.5 rounded-lg whitespace-nowrap transition-colors ${
-              subTab === 'trialBalance' ? 'bg-emerald-600 text-white' : 'text-slate-300 hover:text-white'
+            className={`px-3.5 py-2 rounded-lg whitespace-nowrap transition-all cursor-pointer min-h-[40px] ${
+              subTab === 'trialBalance' ? 'bg-[#1E5128] text-white shadow-xs' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200/60'
             }`}
           >
             রেওয়ামিল (Trial Balance)
           </button>
           <button
             onClick={() => setSubTab('chart')}
-            className={`px-3 py-1.5 rounded-lg whitespace-nowrap transition-colors ${
-              subTab === 'chart' ? 'bg-emerald-600 text-white' : 'text-slate-300 hover:text-white'
+            className={`px-3.5 py-2 rounded-lg whitespace-nowrap transition-all cursor-pointer min-h-[40px] ${
+              subTab === 'chart' ? 'bg-[#1E5128] text-white shadow-xs' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200/60'
             }`}
           >
             হিসাবের চার্ট (COA)
@@ -317,41 +317,41 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
 
       {msg && (
         <div
-          className={`p-3 rounded-xl border text-xs flex items-center gap-2 ${
+          className={`p-3.5 rounded-xl border text-[14px] font-medium flex items-center gap-2.5 ${
             msg.type === 'success'
-              ? 'bg-emerald-950/70 border-emerald-800 text-emerald-300'
-              : 'bg-rose-950/70 border-rose-800 text-rose-300'
+              ? 'bg-[#F0FDF4] border-[#BBF7D0] text-[#15803D]'
+              : 'bg-red-50 border-red-200 text-red-700'
           }`}
         >
-          {msg.type === 'success' ? <CheckCircle2 className="w-4 h-4 shrink-0" /> : <AlertCircle className="w-4 h-4 shrink-0" />}
+          {msg.type === 'success' ? <CheckCircle2 className="w-5 h-5 shrink-0" /> : <AlertCircle className="w-5 h-5 shrink-0" />}
           <span>{msg.text}</span>
         </div>
       )}
 
       {/* SUBTAB 1: NEW VOUCHER FORM */}
       {subTab === 'vouchers' && (
-        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 sm:p-6 shadow-xl">
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="text-sm font-bold text-white flex items-center gap-2">
-              <PlusCircle className="w-4 h-4 text-emerald-400" />
+        <div className="bg-white border border-gray-200 rounded-2xl p-4 sm:p-6 shadow-xs space-y-4">
+          <div className="flex items-center justify-between flex-wrap gap-2 pb-3 border-b border-gray-100">
+            <h3 className="text-base font-bold text-gray-900 flex items-center gap-2">
+              <PlusCircle className="w-5 h-5 text-[#1E5128]" />
               <span>নতুন আর্থিক লেনদেন লিপিবদ্ধ করুন (New Balanced Voucher)</span>
             </h3>
             {/* Live Balanced indicator */}
             <div
-              className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold ${
+              className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[13px] font-semibold ${
                 balanceCheck.isBalanced && balanceCheck.totalDebit > 0
-                  ? 'bg-emerald-950 text-emerald-300 border border-emerald-800'
-                  : 'bg-rose-950 text-rose-300 border border-rose-800 animate-pulse'
+                  ? 'bg-[#F0FDF4] text-[#15803D] border border-[#BBF7D0]'
+                  : 'bg-red-50 text-red-700 border border-red-200 animate-pulse'
               }`}
             >
               {balanceCheck.isBalanced && balanceCheck.totalDebit > 0 ? (
                 <>
-                  <CheckCircle2 className="w-3.5 h-3.5" />
+                  <CheckCircle2 className="w-4 h-4" />
                   <span>ডেবিট = ক্রেডিট (৳{balanceCheck.totalDebit.toFixed(2)})</span>
                 </>
               ) : (
                 <>
-                  <AlertCircle className="w-3.5 h-3.5" />
+                  <AlertCircle className="w-4 h-4" />
                   <span>পার্থক্য: ৳{balanceCheck.difference.toFixed(2)}</span>
                 </>
               )}
@@ -359,15 +359,15 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
           </div>
 
           <form onSubmit={handleSubmitVoucher} className="space-y-4">
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
               <div>
-                <label className="block text-xs font-medium text-slate-300 mb-1">
+                <label className="block text-[14px] font-bold text-gray-800 mb-1.5">
                   ভাউচারের ধরন (Voucher Type)
                 </label>
                 <select
                   value={voucherType}
                   onChange={(e) => setVoucherType(e.target.value as VoucherType)}
-                  className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-emerald-500"
+                  className="w-full bg-[#F8FAFC] border border-gray-300 rounded-xl px-3.5 py-2.5 text-[15px] text-gray-900 focus:outline-none focus:border-[#1E5128] focus:ring-2 focus:ring-[#1E5128]/20 min-h-[44px]"
                 >
                   <option value="PAYMENT">পরিশোধ (Payment Voucher)</option>
                   <option value="RECEIPT">জমা/রশিদ (Receipt Voucher)</option>
@@ -378,30 +378,30 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
               </div>
 
               <div>
-                <label className="block text-xs font-medium text-slate-300 mb-1">তারিখ (Date)</label>
+                <label className="block text-[14px] font-bold text-gray-800 mb-1.5">তারিখ (Date)</label>
                 <input
                   type="date"
                   required
                   value={date}
                   onChange={(e) => setDate(e.target.value)}
-                  className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-emerald-500"
+                  className="w-full bg-[#F8FAFC] border border-gray-300 rounded-xl px-3.5 py-2.5 text-[15px] text-gray-900 focus:outline-none focus:border-[#1E5128] focus:ring-2 focus:ring-[#1E5128]/20 min-h-[44px]"
                 />
               </div>
 
               <div>
-                <label className="block text-xs font-medium text-slate-300 mb-1">রেফারেন্স নং (Reference No)</label>
+                <label className="block text-[14px] font-bold text-gray-800 mb-1.5">রেফারেন্স নং (Reference No)</label>
                 <input
                   type="text"
                   value={reference}
                   onChange={(e) => setReference(e.target.value)}
                   placeholder="যেমন: বিল নং / ব্যাংক স্লিপ নং"
-                  className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-emerald-500"
+                  className="w-full bg-[#F8FAFC] border border-gray-300 rounded-xl px-3.5 py-2.5 text-[15px] text-gray-900 focus:outline-none focus:border-[#1E5128] focus:ring-2 focus:ring-[#1E5128]/20 min-h-[44px]"
                 />
               </div>
             </div>
 
             <div>
-              <label className="block text-xs font-medium text-slate-300 mb-1">
+              <label className="block text-[14px] font-bold text-gray-800 mb-1.5">
                 লেনদেনের বিবরণ / ব্যাখ্যা (Narration)
               </label>
               <input
@@ -410,35 +410,35 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
                 value={narration}
                 onChange={(e) => setNarration(e.target.value)}
                 placeholder="যেমন: ১০০০ কেজি ফিড ক্রয়ের বিল নগদ পরিশোধ"
-                className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-emerald-500"
+                className="w-full bg-[#F8FAFC] border border-gray-300 rounded-xl px-3.5 py-2.5 text-[15px] text-gray-900 focus:outline-none focus:border-[#1E5128] focus:ring-2 focus:ring-[#1E5128]/20 min-h-[44px]"
               />
             </div>
 
             {/* Debit / Credit Lines */}
-            <div className="pt-2 border-t border-slate-800 space-y-2">
+            <div className="pt-3 border-t border-gray-200 space-y-2.5">
               <div className="flex items-center justify-between">
-                <span className="text-xs font-bold text-slate-300">হিসাব লাইনসমূহ (Debit & Credit Lines)</span>
+                <span className="text-[14px] font-bold text-gray-800">হিসাব লাইনসমূহ (Debit & Credit Lines)</span>
                 <button
                   type="button"
                   onClick={addLine}
-                  className="text-xs text-emerald-400 hover:underline flex items-center gap-1 font-medium"
+                  className="text-[13px] text-[#1E5128] hover:underline flex items-center gap-1 font-bold cursor-pointer py-1 px-2"
                 >
-                  <PlusCircle className="w-3.5 h-3.5" />
+                  <PlusCircle className="w-4 h-4" />
                   <span>+ লাইন যোগ করুন</span>
                 </button>
               </div>
 
-              <div className="space-y-2">
+              <div className="space-y-2.5">
                 {lines.map((line, idx) => (
                   <div
                     key={idx}
-                    className="grid grid-cols-12 gap-2 items-center bg-slate-800/40 p-2 rounded-xl border border-slate-800"
+                    className="grid grid-cols-12 gap-2 items-center bg-[#F8FAFC] p-2.5 sm:p-3 rounded-xl border border-gray-200"
                   >
                     <div className="col-span-12 sm:col-span-6">
                       <select
                         value={line.accountCode}
                         onChange={(e) => handleLineAccountChange(idx, e.target.value)}
-                        className="w-full bg-slate-800 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-emerald-500"
+                        className="w-full bg-white border border-gray-300 rounded-lg px-3 py-2 text-[14px] text-gray-900 focus:outline-none focus:border-[#1E5128] min-h-[40px]"
                       >
                         <option value="">-- হিসাব নির্বাচন করুন (Select Account) --</option>
                         {accounts.map((acc) => (
@@ -457,7 +457,7 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
                         value={line.debit || ''}
                         onChange={(e) => handleLineAmountChange(idx, 'debit', e.target.value)}
                         placeholder="ডেবিট ৳"
-                        className="w-full bg-slate-800 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-emerald-400 font-mono focus:outline-none focus:border-emerald-500"
+                        className="w-full bg-white border border-gray-300 rounded-lg px-3 py-2 text-[14px] text-[#15803D] font-bold focus:outline-none focus:border-[#1E5128] min-h-[40px]"
                       />
                     </div>
 
@@ -469,7 +469,7 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
                         value={line.credit || ''}
                         onChange={(e) => handleLineAmountChange(idx, 'credit', e.target.value)}
                         placeholder="ক্রেডিট ৳"
-                        className="w-full bg-slate-800 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-sky-400 font-mono focus:outline-none focus:border-emerald-500"
+                        className="w-full bg-white border border-gray-300 rounded-lg px-3 py-2 text-[14px] text-sky-700 font-bold focus:outline-none focus:border-[#1E5128] min-h-[40px]"
                       />
                     </div>
 
@@ -478,9 +478,9 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
                         type="button"
                         onClick={() => removeLine(idx)}
                         disabled={lines.length <= 2}
-                        className="p-1 text-slate-500 hover:text-rose-400 disabled:opacity-30"
+                        className="p-2 text-gray-400 hover:text-red-600 disabled:opacity-30 cursor-pointer min-h-[40px] min-w-[40px] flex items-center justify-center"
                       >
-                        <Trash2 className="w-4 h-4" />
+                        <Trash2 className="w-5 h-5" />
                       </button>
                     </div>
                   </div>
@@ -488,11 +488,11 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
               </div>
 
               {/* Totals Summary Footer */}
-              <div className="flex items-center justify-between p-3 rounded-xl bg-slate-800/80 text-xs font-mono font-bold text-white border border-slate-700">
-                <span>মোট যোগফল (Total):</span>
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between p-3.5 rounded-xl bg-[#F8FAFC] text-[14px] font-bold text-gray-900 border border-gray-200 gap-2">
+                <span>মোট যোগফল:</span>
                 <div className="flex gap-4">
-                  <span className="text-emerald-400">মোট ডেবিট: ৳{balanceCheck.totalDebit.toFixed(2)}</span>
-                  <span className="text-sky-400">মোট ক্রেডিট: ৳{balanceCheck.totalCredit.toFixed(2)}</span>
+                  <span className="text-[#15803D]">মোট ডেবিট: ৳{balanceCheck.totalDebit.toFixed(2)}</span>
+                  <span className="text-sky-700">মোট ক্রেডিট: ৳{balanceCheck.totalCredit.toFixed(2)}</span>
                 </div>
               </div>
             </div>
@@ -500,7 +500,7 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
             <button
               type="submit"
               disabled={role === 'VIEWER' || !balanceCheck.isBalanced || balanceCheck.totalDebit <= 0}
-              className="w-full py-2.5 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-800 disabled:text-slate-500 text-white font-semibold text-xs transition-colors cursor-pointer shadow-lg shadow-emerald-900/20"
+              className="w-full py-3.5 px-4 rounded-xl bg-[#1E5128] hover:bg-[#173F1F] disabled:bg-gray-200 disabled:text-gray-400 text-white font-bold text-[15px] transition-all cursor-pointer shadow-xs min-h-[48px] active:scale-98"
             >
               ভাউচার নিশ্চিত ও পোস্ট করুন (Post Balanced Voucher)
             </button>
@@ -510,22 +510,22 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
 
       {/* SUBTAB 2: DAYBOOK / JOURNAL LIST */}
       {subTab === 'daybook' && (
-        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 shadow">
-          <div className="flex items-center justify-between mb-3">
-            <h3 className="text-xs sm:text-sm font-bold text-white flex items-center gap-1.5">
-              <FileText className="w-4 h-4 text-emerald-400" />
+        <div className="bg-white border border-gray-200 rounded-2xl p-4 sm:p-5 shadow-xs">
+          <div className="flex items-center justify-between mb-4 pb-2 border-b border-gray-100">
+            <h3 className="text-[16px] font-bold text-gray-900 flex items-center gap-2">
+              <FileText className="w-5 h-5 text-[#1E5128]" />
               <span>লিপিবদ্ধ জাবেদা ভাউচারসমূহ ({journals.length})</span>
             </h3>
             <button
               onClick={() => setSubTab('vouchers')}
-              className="text-xs text-emerald-400 hover:underline font-medium"
+              className="text-[13px] text-[#1E5128] hover:underline font-bold cursor-pointer py-1 px-2"
             >
               + নতুন ভাউচার
             </button>
           </div>
 
           {journals.length === 0 ? (
-            <div className="p-8 text-center text-slate-500 text-xs">
+            <div className="p-8 text-center text-gray-500 text-[14px]">
               কোনো জাবেদা রেকর্ড নেই। "+ নতুন ভাউচার" বাটনে ক্লিক করে হিসাব শুরু করুন।
             </div>
           ) : (
@@ -533,36 +533,36 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
               {journals.map((j) => (
                 <div
                   key={j.id}
-                  className="p-3 rounded-xl bg-slate-800/50 border border-slate-800 space-y-2 text-xs"
+                  className="p-3.5 rounded-xl bg-[#F8FAFC] border border-gray-200 space-y-2.5 text-[14px]"
                 >
-                  <div className="flex items-center justify-between flex-wrap gap-2 border-b border-slate-700/60 pb-2">
+                  <div className="flex items-center justify-between flex-wrap gap-2 border-b border-gray-200 pb-2">
                     <div className="flex items-center gap-2">
-                      <span className="font-mono font-bold text-emerald-400">{j.voucherNumber}</span>
-                      <span className="px-1.5 py-0.5 rounded bg-slate-800 text-[10px] text-slate-300 font-medium">
+                      <span className="font-mono font-bold text-[#1E5128] text-[15px]">{j.voucherNumber}</span>
+                      <span className="px-2 py-0.5 rounded bg-white border border-gray-200 text-xs text-gray-700 font-semibold">
                         {j.voucherType}
                       </span>
-                      <span className="text-slate-400 text-[11px]">{j.date}</span>
+                      <span className="text-gray-500 text-[13px]">{j.date}</span>
                     </div>
-                    <div className="font-bold text-white font-mono">
+                    <div className="font-bold text-gray-900 font-mono text-[15px]">
                       মোট: {fmt(j.totalDebit)}
                     </div>
                   </div>
 
-                  <p className="text-slate-300 text-[11px] italic">{j.narration}</p>
+                  <p className="text-gray-800 text-[14px]">{j.narration}</p>
 
                   {/* Lines preview */}
-                  <div className="space-y-1 pt-1 font-mono text-[11px]">
+                  <div className="space-y-1.5 pt-1 text-[13px]">
                     {j.lines.map((line, lIdx) => (
-                      <div key={lIdx} className="flex items-center justify-between text-slate-300">
-                        <span className="truncate pr-2">
+                      <div key={lIdx} className="flex items-center justify-between text-gray-700">
+                        <span className="truncate pr-2 font-medium">
                           {line.accountCode} - {line.accountName}
                         </span>
-                        <div className="flex gap-3 shrink-0">
+                        <div className="flex gap-3 shrink-0 font-bold">
                           {line.debit > 0 && (
-                            <span className="text-emerald-400">Dr: {fmt(line.debit)}</span>
+                            <span className="text-[#15803D]">Dr: {fmt(line.debit)}</span>
                           )}
                           {line.credit > 0 && (
-                            <span className="text-sky-400">Cr: {fmt(line.credit)}</span>
+                            <span className="text-sky-700">Cr: {fmt(line.credit)}</span>
                           )}
                         </div>
                       </div>
@@ -577,22 +577,22 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
 
       {/* SUBTAB 3: GENERAL LEDGER */}
       {subTab === 'ledger' && (
-        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 shadow space-y-4">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div className="bg-white border border-gray-200 rounded-2xl p-4 sm:p-5 shadow-xs space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-gray-100">
             <div>
-              <h3 className="text-xs sm:text-sm font-bold text-white flex items-center gap-1.5">
-                <ArrowRightLeft className="w-4 h-4 text-emerald-400" />
+              <h3 className="text-[16px] font-bold text-gray-900 flex items-center gap-2">
+                <ArrowRightLeft className="w-5 h-5 text-[#1E5128]" />
                 <span>সাধারণ খতিয়ান (General Ledger)</span>
               </h3>
-              <p className="text-[11px] text-slate-400">নির্দিষ্ট হিসাবের সমস্ত লেনদেন ও রানিং ব্যালেন্স</p>
+              <p className="text-[13px] text-gray-600 mt-0.5">নির্দিষ্ট হিসাবের সমস্ত লেনদেন ও রানিং ব্যালেন্স</p>
             </div>
 
             {/* Account Selector */}
-            <div className="w-full sm:w-72">
+            <div className="w-full sm:w-80">
               <select
                 value={selectedLedgerCode}
                 onChange={(e) => loadLedger(e.target.value)}
-                className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-emerald-500"
+                className="w-full bg-[#F8FAFC] border border-gray-300 rounded-xl px-3.5 py-2.5 text-[14px] text-gray-900 focus:outline-none focus:border-[#1E5128] min-h-[44px]"
               >
                 {accounts.map((a) => (
                   <option key={a.id} value={a.code}>
@@ -605,18 +605,18 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
 
           {/* Account Summary Banner */}
           {ledgerAccount && (
-            <div className="p-3 rounded-xl bg-slate-800/70 border border-slate-700 flex items-center justify-between text-xs">
+            <div className="p-4 rounded-xl bg-[#F8FAFC] border border-gray-200 flex items-center justify-between text-[14px]">
               <div>
-                <span className="font-bold text-white text-sm">
+                <span className="font-bold text-gray-900 text-base">
                   {ledgerAccount.code} — {ledgerAccount.nameBn}
                 </span>
-                <div className="text-slate-400 text-[11px] mt-0.5">
+                <div className="text-gray-600 text-[13px] mt-0.5">
                   শ্রেণী: {ledgerAccount.accountClass} | স্বাভাবিক স্থিতি: {ledgerAccount.normalBalance}
                 </div>
               </div>
               <div className="text-right">
-                <div className="text-[11px] text-slate-400">সর্বশেষ স্থিতি (Net Balance)</div>
-                <div className="text-base font-bold text-emerald-400 font-mono">
+                <div className="text-[12px] text-gray-600 font-medium">সর্বশেষ স্থিতি (Net Balance)</div>
+                <div className="text-lg font-extrabold text-[#15803D] font-mono">
                   {fmt(ledgerNetBalance)}
                 </div>
               </div>
@@ -624,34 +624,34 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
           )}
 
           {/* Ledger Table */}
-          <div className="overflow-x-auto rounded-xl border border-slate-800">
-            <table className="w-full text-left text-xs text-slate-300">
-              <thead className="bg-slate-800 text-slate-400 uppercase text-[10px] font-semibold">
+          <div className="overflow-x-auto rounded-xl border border-gray-200">
+            <table className="w-full text-left text-[13px] text-gray-800">
+              <thead className="bg-gray-100 text-gray-600 uppercase text-[11px] font-bold">
                 <tr>
-                  <th className="p-2.5">তারিখ</th>
-                  <th className="p-2.5">ভাউচার নং</th>
-                  <th className="p-2.5">বিবরণ</th>
-                  <th className="p-2.5 text-right">ডেবিট (৳)</th>
-                  <th className="p-2.5 text-right">ক্রেডিট (৳)</th>
-                  <th className="p-2.5 text-right">ব্যালেন্স (৳)</th>
+                  <th className="p-3">তারিখ</th>
+                  <th className="p-3">ভাউচার নং</th>
+                  <th className="p-3">বিবরণ</th>
+                  <th className="p-3 text-right">ডেবিট (৳)</th>
+                  <th className="p-3 text-right">ক্রেডিট (৳)</th>
+                  <th className="p-3 text-right">ব্যালেন্স (৳)</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-800 font-mono">
+              <tbody className="divide-y divide-gray-200">
                 {ledgerEntries.length === 0 ? (
                   <tr>
-                    <td colSpan={6} className="p-6 text-center text-slate-500 text-xs">
+                    <td colSpan={6} className="p-6 text-center text-gray-500 text-[14px]">
                       এই হিসাবে এখনো কোনো লেনদেন সংঘটিত হয়নি।
                     </td>
                   </tr>
                 ) : (
                   ledgerEntries.map((row, idx) => (
-                    <tr key={idx} className="hover:bg-slate-800/40 transition-colors">
-                      <td className="p-2.5 text-slate-400">{row.date}</td>
-                      <td className="p-2.5 font-bold text-emerald-400">{row.voucherNumber}</td>
-                      <td className="p-2.5 font-sans text-slate-300 truncate max-w-xs">{row.narration}</td>
-                      <td className="p-2.5 text-right text-emerald-400">{row.debit > 0 ? fmt(row.debit) : '-'}</td>
-                      <td className="p-2.5 text-right text-sky-400">{row.credit > 0 ? fmt(row.credit) : '-'}</td>
-                      <td className="p-2.5 text-right font-bold text-white">{fmt(row.runningBalance)}</td>
+                    <tr key={idx} className="hover:bg-gray-50 transition-colors">
+                      <td className="p-3 text-gray-600 whitespace-nowrap">{row.date}</td>
+                      <td className="p-3 font-bold text-[#1E5128] whitespace-nowrap font-mono">{row.voucherNumber}</td>
+                      <td className="p-3 text-gray-800 truncate max-w-xs">{row.narration}</td>
+                      <td className="p-3 text-right font-semibold text-[#15803D] whitespace-nowrap">{row.debit > 0 ? fmt(row.debit) : '-'}</td>
+                      <td className="p-3 text-right font-semibold text-sky-700 whitespace-nowrap">{row.credit > 0 ? fmt(row.credit) : '-'}</td>
+                      <td className="p-3 text-right font-bold text-gray-900 whitespace-nowrap">{fmt(row.runningBalance)}</td>
                     </tr>
                   ))
                 )}
@@ -663,21 +663,21 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
 
       {/* SUBTAB 4: TRIAL BALANCE */}
       {subTab === 'trialBalance' && (
-        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 shadow space-y-4">
-          <div className="flex items-center justify-between">
+        <div className="bg-white border border-gray-200 rounded-2xl p-4 sm:p-5 shadow-xs space-y-4">
+          <div className="flex items-center justify-between flex-wrap gap-2 pb-3 border-b border-gray-100">
             <div>
-              <h3 className="text-xs sm:text-sm font-bold text-white flex items-center gap-1.5">
-                <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+              <h3 className="text-[16px] font-bold text-gray-900 flex items-center gap-2">
+                <CheckCircle2 className="w-5 h-5 text-[#1E5128]" />
                 <span>রেওয়ামিল (Trial Balance)</span>
               </h3>
-              <p className="text-[11px] text-slate-400">সকল খতিয়ান স্থিতির সমতা ও নির্ভুলতা যাচাই</p>
+              <p className="text-[13px] text-gray-600 mt-0.5">সকল খতিয়ান স্থিতির সমতা ও নির্ভুলতা যাচাই</p>
             </div>
 
             <div
-              className={`px-3 py-1 rounded-full text-xs font-semibold border ${
+              className={`px-3 py-1.5 rounded-full text-xs font-semibold border ${
                 tbIsBalanced && tbOrphanAccounts.length === 0
-                  ? 'bg-emerald-950 text-emerald-300 border-emerald-800'
-                  : 'bg-rose-950 text-rose-300 border-rose-800 animate-bounce'
+                  ? 'bg-[#F0FDF4] text-[#15803D] border-[#BBF7D0]'
+                  : 'bg-red-50 text-red-700 border-red-200 animate-bounce'
               }`}
             >
               {tbIsBalanced && tbOrphanAccounts.length === 0
@@ -687,38 +687,38 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
           </div>
 
           {tbOrphanAccounts.length > 0 && (
-            <div className="p-3 rounded-xl bg-rose-950/70 border border-rose-800 text-xs text-rose-200">
+            <div className="p-3.5 rounded-xl bg-red-50 border border-red-200 text-[13px] text-red-800">
               <strong>সতর্কতা:</strong> নিম্নলিখিত হিসাবগুলো চার্ট অব একাউন্টসে বিদ্যমান নেই: {tbOrphanAccounts.join(', ')}।
             </div>
           )}
 
-          <div className="overflow-x-auto rounded-xl border border-slate-800">
-            <table className="w-full text-left text-xs text-slate-300">
-              <thead className="bg-slate-800 text-slate-400 uppercase text-[10px] font-semibold">
+          <div className="overflow-x-auto rounded-xl border border-gray-200">
+            <table className="w-full text-left text-[13px] text-gray-800">
+              <thead className="bg-gray-100 text-gray-600 uppercase text-[11px] font-bold">
                 <tr>
-                  <th className="p-2.5">কোড</th>
-                  <th className="p-2.5">হিসাবের নাম</th>
-                  <th className="p-2.5">শ্রেণী</th>
-                  <th className="p-2.5 text-right">ডেবিট ব্যালেন্স (৳)</th>
-                  <th className="p-2.5 text-right">ক্রেডিট ব্যালেন্স (৳)</th>
+                  <th className="p-3">কোড</th>
+                  <th className="p-3">হিসাবের নাম</th>
+                  <th className="p-3">শ্রেণী</th>
+                  <th className="p-3 text-right">ডেবিট ব্যালেন্স (৳)</th>
+                  <th className="p-3 text-right">ক্রেডিট ব্যালেন্স (৳)</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-800 font-mono">
+              <tbody className="divide-y divide-gray-200">
                 {tbRows.map((r) => (
-                  <tr key={r.code} className={`hover:bg-slate-800/40 ${r.isOrphan ? 'bg-rose-950/30' : ''}`}>
-                    <td className="p-2.5 text-emerald-400 font-bold">{r.code}</td>
-                    <td className="p-2.5 font-sans text-slate-200">{r.nameBn}</td>
-                    <td className="p-2.5 text-slate-400 text-[10px]">{r.accountClass}</td>
-                    <td className="p-2.5 text-right text-emerald-400">{r.debit > 0 ? fmt(r.debit) : '-'}</td>
-                    <td className="p-2.5 text-right text-sky-400">{r.credit > 0 ? fmt(r.credit) : '-'}</td>
+                  <tr key={r.code} className={`hover:bg-gray-50 ${r.isOrphan ? 'bg-red-50' : ''}`}>
+                    <td className="p-3 text-[#1E5128] font-bold font-mono">{r.code}</td>
+                    <td className="p-3 text-gray-900 font-medium">{r.nameBn}</td>
+                    <td className="p-3 text-gray-600 text-xs">{r.accountClass}</td>
+                    <td className="p-3 text-right font-semibold text-[#15803D]">{r.debit > 0 ? fmt(r.debit) : '-'}</td>
+                    <td className="p-3 text-right font-semibold text-sky-700">{r.credit > 0 ? fmt(r.credit) : '-'}</td>
                   </tr>
                 ))}
               </tbody>
-              <tfoot className="bg-slate-800/80 font-mono font-bold text-xs border-t-2 border-slate-700">
+              <tfoot className="bg-gray-100 font-bold text-[14px] border-t-2 border-gray-300">
                 <tr>
-                  <td colSpan={3} className="p-3 text-white">মোট (Total):</td>
-                  <td className="p-3 text-right text-emerald-400">{fmt(tbTotalDebit)}</td>
-                  <td className="p-3 text-right text-sky-400">{fmt(tbTotalCredit)}</td>
+                  <td colSpan={3} className="p-3.5 text-gray-900">মোট (Total):</td>
+                  <td className="p-3.5 text-right text-[#15803D]">{fmt(tbTotalDebit)}</td>
+                  <td className="p-3.5 text-right text-sky-700">{fmt(tbTotalCredit)}</td>
                 </tr>
               </tfoot>
             </table>
@@ -728,20 +728,20 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
 
       {/* SUBTAB 5: CHART OF ACCOUNTS EXPLORER */}
       {subTab === 'chart' && (
-        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 shadow space-y-4">
-          <div className="flex items-center justify-between">
+        <div className="bg-white border border-gray-200 rounded-2xl p-4 sm:p-5 shadow-xs space-y-4">
+          <div className="flex items-center justify-between flex-wrap gap-2 pb-3 border-b border-gray-100">
             <div>
-              <h3 className="text-xs sm:text-sm font-bold text-white flex items-center gap-1.5">
-                <Layers className="w-4 h-4 text-emerald-400" />
+              <h3 className="text-[16px] font-bold text-gray-900 flex items-center gap-2">
+                <Layers className="w-5 h-5 text-[#1E5128]" />
                 <span>হিসাবের চার্ট (Chart of Accounts Master)</span>
               </h3>
-              <p className="text-[11px] text-slate-400">হিসাবসমূহের হায়ারার্কি ও কাঠামো</p>
+              <p className="text-[13px] text-gray-600 mt-0.5">হিসাবসমূহের কাঠামো ও শ্রেণীবিভাগ</p>
             </div>
 
             {role === 'OWNER' && (
               <button
                 onClick={() => setShowAddAccount(true)}
-                className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold shadow transition-colors"
+                className="px-3.5 py-2 rounded-xl bg-[#1E5128] hover:bg-[#173F1F] text-white text-[13px] font-bold shadow-xs transition-all cursor-pointer min-h-[40px]"
               >
                 + নতুন হিসাব কোড যোগ করুন
               </button>
@@ -749,16 +749,16 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
           </div>
 
           {showAddAccount && (
-            <form onSubmit={handleCreateAccount} className="p-4 bg-slate-800/80 border border-slate-700 rounded-xl space-y-3">
-              <h4 className="text-xs font-bold text-emerald-400">নতুন হিসাব তৈরি (Add Child Account)</h4>
-              <div className="grid grid-cols-1 sm:grid-cols-4 gap-2">
+            <form onSubmit={handleCreateAccount} className="p-4 bg-[#F8FAFC] border border-gray-300 rounded-xl space-y-3">
+              <h4 className="text-[14px] font-bold text-[#1E5128]">নতুন হিসাব তৈরি (Add Account)</h4>
+              <div className="grid grid-cols-1 sm:grid-cols-4 gap-2.5">
                 <input
                   type="text"
                   required
                   placeholder="কোড (যেমন: 6160)"
                   value={newAccCode}
                   onChange={(e) => setNewAccCode(e.target.value)}
-                  className="bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-white"
+                  className="bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900"
                 />
                 <input
                   type="text"
@@ -766,12 +766,12 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
                   placeholder="বাংলা নাম"
                   value={newAccNameBn}
                   onChange={(e) => setNewAccNameBn(e.target.value)}
-                  className="bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-white"
+                  className="bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900"
                 />
                 <select
                   value={newAccClass}
                   onChange={(e) => setNewAccClass(e.target.value as any)}
-                  className="bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-white"
+                  className="bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900"
                 >
                   <option value="ASSET">ASSET (সম্পদ)</option>
                   <option value="LIABILITY">LIABILITY (দায়)</option>
@@ -783,23 +783,23 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
                 <select
                   value={newAccNormalBalance}
                   onChange={(e) => setNewAccNormalBalance(e.target.value as any)}
-                  className="bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-white"
+                  className="bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900"
                 >
                   <option value="DEBIT">স্বাভাবিক ব্যালেন্স: DEBIT</option>
                   <option value="CREDIT">স্বাভাবিক ব্যালেন্স: CREDIT</option>
                 </select>
               </div>
-              <div className="flex gap-2 justify-end">
+              <div className="flex gap-2.5 justify-end">
                 <button
                   type="button"
                   onClick={() => setShowAddAccount(false)}
-                  className="px-3 py-1.5 rounded-lg bg-slate-700 text-slate-300 text-xs"
+                  className="px-4 py-2 rounded-lg bg-gray-200 text-gray-800 text-[13px] font-semibold cursor-pointer min-h-[40px]"
                 >
                   বাতিল
                 </button>
                 <button
                   type="submit"
-                  className="px-3 py-1.5 rounded-lg bg-emerald-600 text-white text-xs font-semibold"
+                  className="px-4 py-2 rounded-lg bg-[#1E5128] text-white text-[13px] font-bold cursor-pointer min-h-[40px]"
                 >
                   সংরক্ষণ করুন
                 </button>
@@ -807,21 +807,21 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
             </form>
           )}
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
             {accounts.map((acc) => (
               <div
                 key={acc.id}
-                className="p-3 rounded-xl bg-slate-800/40 border border-slate-800 hover:border-slate-700 transition-colors text-xs space-y-1"
+                className="p-3.5 rounded-xl bg-[#F8FAFC] border border-gray-200 hover:border-gray-300 transition-colors text-[13px] space-y-1.5"
               >
                 <div className="flex items-center justify-between">
-                  <span className="font-mono font-bold text-emerald-400">{acc.code}</span>
-                  <span className="text-[10px] px-1.5 py-0.2 rounded bg-slate-800 text-slate-400">
+                  <span className="font-mono font-bold text-[#1E5128] text-[14px]">{acc.code}</span>
+                  <span className="text-[11px] px-2 py-0.5 rounded bg-white border border-gray-200 text-gray-700 font-semibold">
                     {acc.accountClass}
                   </span>
                 </div>
-                <div className="font-medium text-white text-xs">{acc.nameBn}</div>
-                <div className="text-[10px] text-slate-400 italic">{acc.nameEn}</div>
-                <div className="text-[10px] text-slate-500 pt-1 border-t border-slate-800 flex justify-between">
+                <div className="font-bold text-gray-900 text-[14px]">{acc.nameBn}</div>
+                <div className="text-[12px] text-gray-500 italic">{acc.nameEn}</div>
+                <div className="text-[12px] text-gray-600 pt-1.5 border-t border-gray-200 flex justify-between font-medium">
                   <span>ব্যালেন্স ধরন: {acc.normalBalance}</span>
                   <span>{acc.isSystem ? 'সিস্টেম' : 'কাস্টম'}</span>
                 </div>

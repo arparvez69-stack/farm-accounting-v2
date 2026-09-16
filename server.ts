@@ -11,7 +11,7 @@ const PORT = 3000;
 
 app.use(express.json());
 
-// Single-tenant fixed owner allow-list for "The Goted Farm"
+// Single-tenant fixed owner allow-list for "The Goated Farm"
 export const APPROVED_OWNER_EMAILS: string[] = [
   'arparvez69@gmail.com',
   'arparvez4@gmail.com',
@@ -19,7 +19,7 @@ export const APPROVED_OWNER_EMAILS: string[] = [
   'atikurrahman00021@gmail.com'
 ];
 
-// Master Secret PIN for The Goted Farm
+// Master Secret PIN for The Goated Farm
 const MASTER_SECRET_PIN = process.env.MASTER_SECRET_PIN || '111069';
 
 // Owner PIN configuration - supports dedicated PIN per email or falls back to Master Secret PIN
@@ -77,7 +77,7 @@ try {
     adminInitialized = true;
   }
 } catch (err: any) {
-  console.warn('[The Goted Farm] Firebase Admin initialization note:', err.message);
+  console.warn('[The Goated Farm] Firebase Admin initialization note:', err.message);
 }
 
 // ==========================================
@@ -120,13 +120,13 @@ app.post('/api/verify-login-code', async (req, res) => {
     if (serverAccessLogs.length > 200) serverAccessLogs.pop();
 
     if (!isValid) {
-      console.warn(`[The Goted Farm] ❌ Failed login attempt for email: ${email}`);
+      console.warn(`[The Goated Farm] ❌ Failed login attempt for email: ${email}`);
       return res.status(401).json({
         error: 'অবৈধ ইমেইল অথবা গোপন পিন (Invalid email or secret PIN)।'
       });
     }
 
-    console.log(`[The Goted Farm] ✅ Successful login for: ${email}`);
+    console.log(`[The Goated Farm] ✅ Successful login for: ${email}`);
 
     // Deterministic UID for this user email
     const uid = 'goted_user_' + crypto.createHash('sha256').update(email).digest('hex').slice(0, 20);
@@ -139,7 +139,7 @@ app.post('/api/verify-login-code', async (req, res) => {
           role: 'OWNER',
           email: email
         });
-        console.log(`[The Goted Farm] Custom token issued for user: ${email}`);
+        console.log(`[The Goated Farm] Custom token issued for user: ${email}`);
       } catch {
         // Fall back gracefully if custom token creation fails
         customToken = null;
@@ -155,7 +155,7 @@ app.post('/api/verify-login-code', async (req, res) => {
       tokenFallbackRequired: !customToken
     });
   } catch (err: any) {
-    console.error('[The Goted Farm] verify-login-code error:', err);
+    console.error('[The Goated Farm] verify-login-code error:', err);
     return res.status(500).json({ error: 'যাচাইকরণে সমস্যা হয়েছে। পুনরায় চেষ্টা করুন।' });
   }
 });
@@ -171,7 +171,7 @@ app.get('/api/access-logs', (req, res) => {
 // Farm status endpoint
 app.get('/api/farm-info', (req, res) => {
   res.json({
-    farmName: 'The Goted Farm',
+    farmName: 'The Goated Farm',
     mode: 'single-tenant',
     authorizedOwnersCount: APPROVED_OWNER_EMAILS.length
   });
@@ -194,7 +194,7 @@ async function startServer() {
   }
 
   app.listen(PORT, '0.0.0.0', () => {
-    console.log(`[The Goted Farm] Server running on http://0.0.0.0:${PORT}`);
+    console.log(`[The Goated Farm] Server running on http://0.0.0.0:${PORT}`);
   });
 }
 

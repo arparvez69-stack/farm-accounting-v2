@@ -22,19 +22,19 @@ export const Header: React.FC<Props> = ({
   onLogout
 }) => {
   return (
-    <header className="sticky top-0 z-30 bg-slate-900/95 backdrop-blur border-b border-slate-800 text-white pt-safe px-3 sm:px-6 py-2.5">
-      <div className="max-w-7xl mx-auto flex items-center justify-between gap-2">
+    <header className="sticky top-0 z-30 bg-white/95 backdrop-blur-md border-b border-gray-200 text-gray-900 pt-safe px-3.5 sm:px-6 py-2.5 shadow-xs">
+      <div className="max-w-5xl mx-auto flex items-center justify-between gap-2">
         {/* Left: Brand / Farm Info */}
         <div className="flex items-center gap-2.5 min-w-0">
-          <div className="w-9 h-9 rounded-xl bg-emerald-600 flex items-center justify-center shadow-lg shadow-emerald-900/40 shrink-0">
+          <div className="w-10 h-10 rounded-xl bg-[#1E5128] flex items-center justify-center shadow-sm shrink-0">
             <Sprout className="w-5 h-5 text-white" />
           </div>
           <div className="truncate">
-            <h1 className="text-sm sm:text-base font-bold text-slate-100 tracking-tight leading-tight truncate">
-              {systemConfig?.companyName || 'The Goted Farm'}
+            <h1 className="text-[15px] sm:text-base font-bold text-gray-900 tracking-tight leading-tight truncate">
+              {systemConfig?.companyName || 'The Goated Farm'}
             </h1>
-            <p className="text-[11px] text-emerald-400 font-medium truncate">
-              সমন্বিত কৃষি ও খামার ইআরপি (ERP)
+            <p className="text-[13px] text-[#1E5128] font-semibold truncate">
+              সমন্বিত খামার ও হিসাবরক্ষণ
             </p>
           </div>
         </div>
@@ -48,23 +48,23 @@ export const Header: React.FC<Props> = ({
           />
 
           {/* Owner Role Badge */}
-          <span className="hidden xs:inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-950/80 text-emerald-300 border border-emerald-800">
-            <Shield className="w-3 h-3 text-emerald-400" />
-            <span>খামার মালিক (OWNER)</span>
+          <span className="hidden sm:inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-[#F0FDF4] text-[#1E5128] border border-[#BBF7D0]">
+            <Shield className="w-3.5 h-3.5 text-[#1E5128]" />
+            <span>মালিক (OWNER)</span>
           </span>
 
           {/* User & Logout */}
-          <div className="flex items-center gap-1.5 border-l border-slate-800 pl-2">
+          <div className="flex items-center gap-1.5 border-l border-gray-200 pl-2">
             <span
               title={userProfile.email || 'Owner'}
-              className="text-xs text-slate-300 max-w-[120px] sm:max-w-[180px] truncate font-mono hidden md:inline-block"
+              className="text-xs text-gray-600 max-w-[120px] sm:max-w-[180px] truncate font-medium hidden md:inline-block"
             >
               {userProfile.email || userProfile.displayName || 'Owner'}
             </span>
             <button
               onClick={onLogout}
               title="লগআউট করুন (Logout)"
-              className="p-1.5 rounded-lg text-slate-400 hover:text-rose-400 hover:bg-slate-800 transition-colors cursor-pointer"
+              className="p-2 rounded-xl text-gray-500 hover:text-red-700 hover:bg-red-50 transition-colors cursor-pointer min-h-[44px] min-w-[44px] flex items-center justify-center active:scale-95"
             >
               <LogOut className="w-4 h-4" />
             </button>

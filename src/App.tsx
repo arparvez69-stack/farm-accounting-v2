@@ -50,13 +50,13 @@ export default function App() {
       // 2. Run accounting integrity regression tests in background
       runRegressionTests().then((testRes) => {
         if (testRes.success) {
-          console.log(`[The Goted Farm] Accounting regression test suite passed (${testRes.passed}/${testRes.total} assertions).`);
+          console.log(`[The Goated Farm] Accounting regression test suite passed (${testRes.passed}/${testRes.total} assertions).`);
         } else {
-          console.error('[The Goted Farm] Regression test failures:', testRes.failures);
+          console.error('[The Goated Farm] Regression test failures:', testRes.failures);
         }
       });
 
-      // 3. Ensure system config for The Goted Farm
+      // 3. Ensure system config for The Goated Farm
       const boot = await checkSystemBootstrap();
       setSystemConfig(boot.config);
 
@@ -115,10 +115,10 @@ export default function App() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center p-4 text-slate-300">
-        <div className="w-12 h-12 border-4 border-emerald-500 border-t-transparent rounded-full animate-spin mb-4"></div>
-        <p className="text-sm font-semibold">The Goted Farm ইআরপি ডাটাবেজ প্রস্তুত হচ্ছে...</p>
-        <p className="text-xs text-slate-500 mt-1">অফলাইন-ফার্স্ট হিসাবরক্ষণ ও সমন্বিত খামার ইঞ্জিন লোড হচ্ছে</p>
+      <div className="min-h-screen bg-[#F8F9FA] flex flex-col items-center justify-center p-6 text-slate-800">
+        <div className="w-12 h-12 border-4 border-[#1E5128] border-t-transparent rounded-full animate-spin mb-4"></div>
+        <p className="text-base font-bold text-slate-900">The Goated Farm ইআরপি ডাটাবেজ প্রস্তুত হচ্ছে...</p>
+        <p className="text-sm text-slate-600 mt-1">অফলাইন-ফার্স্ট হিসাবরক্ষণ ও সমন্বিত খামার ইঞ্জিন লোড হচ্ছে</p>
       </div>
     );
   }
@@ -138,7 +138,7 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col antialiased selection:bg-emerald-600 selection:text-white">
+    <div className="min-h-screen bg-[#F8F9FA] text-[#111827] flex flex-col antialiased selection:bg-[#1E5128] selection:text-white">
       {/* Sticky Top Header */}
       <Header
         userProfile={userProfile}
@@ -150,7 +150,7 @@ export default function App() {
       />
 
       {/* Main App Content Viewport */}
-      <main className="flex-1 p-3 sm:p-6 max-w-7xl w-full mx-auto">
+      <main className="flex-1 px-3.5 py-4 sm:px-6 sm:py-6 max-w-5xl w-full mx-auto pb-28 md:pb-12">
         {activeTab === 'dashboard' && (
           <Dashboard
             role={userProfile.role}

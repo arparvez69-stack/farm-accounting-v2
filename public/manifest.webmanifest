@@ -1,10 +1,10 @@
 {
-  "name": "Agro ERP",
-  "short_name": "AgroERP",
+  "name": "The Goated Farm",
+  "short_name": "GoatedFarm",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#020617",
-  "theme_color": "#166534",
+  "background_color": "#F8F9FA",
+  "theme_color": "#1E5128",
   "icons": [
     {
       "src": "/icon.svg",

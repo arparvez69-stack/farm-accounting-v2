@@ -1,5 +1,5 @@
 import React from 'react';
-import { Wifi, WifiOff, RefreshCw, CheckCircle2, AlertCircle } from 'lucide-react';
+import { WifiOff, RefreshCw, CheckCircle2, AlertCircle } from 'lucide-react';
 import { SyncState } from '../types';
 
 interface Props {
@@ -12,43 +12,42 @@ export const SyncStatusBadge: React.FC<Props> = ({ syncState, pendingCount, onSy
   const isOnline = typeof navigator !== 'undefined' ? navigator.onLine : true;
 
   return (
-    <div className="flex items-center gap-2">
-      <button
-        onClick={onSyncNow}
-        disabled={syncState === 'SYNCING'}
-        title="সিঙ্ক করুন (Click to synchronize)"
-        className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border transition-colors ${
-          !isOnline
-            ? 'bg-amber-900/30 text-amber-300 border-amber-700/50'
-            : syncState === 'SYNCING'
-            ? 'bg-blue-900/30 text-blue-300 border-blue-700/50 animate-pulse'
-            : pendingCount > 0
-            ? 'bg-orange-900/30 text-orange-300 border-orange-700/50'
-            : 'bg-emerald-900/30 text-emerald-300 border-emerald-700/50'
-        }`}
-      >
-        {!isOnline ? (
-          <>
-            <WifiOff className="w-3.5 h-3.5 text-amber-400" />
-            <span>অফলাইন (OFFLINE)</span>
-          </>
-        ) : syncState === 'SYNCING' ? (
-          <>
-            <RefreshCw className="w-3.5 h-3.5 animate-spin text-blue-400" />
-            <span>সিঙ্ক হচ্ছে...</span>
-          </>
-        ) : pendingCount > 0 ? (
-          <>
-            <AlertCircle className="w-3.5 h-3.5 text-orange-400" />
-            <span>{pendingCount} অপেক্ষমাণ (PENDING)</span>
-          </>
-        ) : (
-          <>
-            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-            <span>সিঙ্কড (SYNCED)</span>
-          </>
-        )}
-      </button>
-    </div>
+    <button
+      onClick={onSyncNow}
+      disabled={syncState === 'SYNCING'}
+      title="ট্যাপ করে ডেটা সিঙ্ক করুন (Tap to synchronize)"
+      className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[13px] font-medium border transition-all cursor-pointer min-h-[40px] shadow-xs active:scale-95 ${
+        !isOnline
+          ? 'bg-amber-50 text-amber-800 border-amber-300 hover:bg-amber-100'
+          : syncState === 'SYNCING'
+          ? 'bg-blue-50 text-blue-800 border-blue-300 animate-pulse'
+          : pendingCount > 0
+          ? 'bg-orange-50 text-orange-800 border-orange-300 hover:bg-orange-100'
+          : 'bg-[#F0FDF4] text-[#15803D] border-[#BBF7D0] hover:bg-emerald-100/60'
+      }`}
+    >
+      {!isOnline ? (
+        <>
+          <WifiOff className="w-4 h-4 text-amber-600 shrink-0" />
+          <span>অফলাইন</span>
+        </>
+      ) : syncState === 'SYNCING' ? (
+        <>
+          <RefreshCw className="w-4 h-4 animate-spin text-blue-600 shrink-0" />
+          <span>সিঙ্ক হচ্ছে...</span>
+        </>
+      ) : pendingCount > 0 ? (
+        <>
+          <AlertCircle className="w-4 h-4 text-orange-600 shrink-0" />
+          <span>{pendingCount} অপেক্ষমাণ</span>
+        </>
+      ) : (
+        <>
+          <CheckCircle2 className="w-4 h-4 text-[#15803D] shrink-0" />
+          <span>সিঙ্কড</span>
+        </>
+      )}
+    </button>
   );
 };
+

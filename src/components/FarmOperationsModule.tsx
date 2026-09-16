@@ -310,48 +310,48 @@ export const FarmOperationsModule: React.FC<Props> = ({ role, currentUserId }) =
   const fmt = (n: number) => `৳${Number(n || 0).toLocaleString('en-IN', { minimumFractionDigits: 0 })}`;
 
   return (
-    <div className="space-y-4 pb-20 max-w-7xl mx-auto">
+    <div className="space-y-4 pb-6 max-w-5xl mx-auto">
       {/* Header & Subtabs */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 rounded-2xl bg-slate-900 border border-slate-800">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 sm:p-5 rounded-2xl bg-white border border-gray-200 shadow-xs">
         <div>
-          <h2 className="text-base sm:text-lg font-bold text-white flex items-center gap-2">
-            <Tractor className="w-5 h-5 text-emerald-400" />
+          <h2 className="text-lg sm:text-xl font-bold text-gray-900 flex items-center gap-2">
+            <Tractor className="w-5 h-5 text-[#1E5128]" />
             <span>সমন্বিত খামার ব্যবস্থাপনা (Agro Operations)</span>
           </h2>
-          <p className="text-xs text-slate-400">
+          <p className="text-[14px] text-gray-600 mt-0.5">
             গরু-ছাগল ফ্যাটেনিং/দুগ্ধ খামার, মৎস্য হ্যাচারি, নেপিয়ার ঘাস, বায়ো-ফ্লো ও প্রসেসিং
           </p>
         </div>
 
-        <div className="flex items-center gap-1 bg-slate-800/80 p-1 rounded-xl overflow-x-auto text-xs font-medium">
+        <div className="flex items-center gap-1.5 bg-gray-100 p-1.5 rounded-xl overflow-x-auto text-[13px] font-semibold">
           <button
             onClick={() => setTab('livestock')}
-            className={`px-3 py-1.5 rounded-lg whitespace-nowrap transition-colors ${
-              tab === 'livestock' ? 'bg-emerald-600 text-white' : 'text-slate-300 hover:text-white'
+            className={`px-3.5 py-2 rounded-lg whitespace-nowrap transition-all cursor-pointer min-h-[40px] ${
+              tab === 'livestock' ? 'bg-[#1E5128] text-white shadow-xs' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200/60'
             }`}
           >
             গবাদিপশু (Livestock)
           </button>
           <button
             onClick={() => setTab('fisheries')}
-            className={`px-3 py-1.5 rounded-lg whitespace-nowrap transition-colors ${
-              tab === 'fisheries' ? 'bg-emerald-600 text-white' : 'text-slate-300 hover:text-white'
+            className={`px-3.5 py-2 rounded-lg whitespace-nowrap transition-all cursor-pointer min-h-[40px] ${
+              tab === 'fisheries' ? 'bg-[#1E5128] text-white shadow-xs' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200/60'
             }`}
           >
             মৎস্য চাষ (Fisheries)
           </button>
           <button
             onClick={() => setTab('crops')}
-            className={`px-3 py-1.5 rounded-lg whitespace-nowrap transition-colors ${
-              tab === 'crops' ? 'bg-emerald-600 text-white' : 'text-slate-300 hover:text-white'
+            className={`px-3.5 py-2 rounded-lg whitespace-nowrap transition-all cursor-pointer min-h-[40px] ${
+              tab === 'crops' ? 'bg-[#1E5128] text-white shadow-xs' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200/60'
             }`}
           >
             শস্য ও ঘাস (Crops)
           </button>
           <button
             onClick={() => setTab('flows')}
-            className={`px-3 py-1.5 rounded-lg whitespace-nowrap transition-colors ${
-              tab === 'flows' ? 'bg-emerald-600 text-white' : 'text-slate-300 hover:text-white'
+            className={`px-3.5 py-2 rounded-lg whitespace-nowrap transition-all cursor-pointer min-h-[40px] ${
+              tab === 'flows' ? 'bg-[#1E5128] text-white shadow-xs' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200/60'
             }`}
           >
             অভ্যন্তরীণ প্রবাহ (Flows)
@@ -361,55 +361,55 @@ export const FarmOperationsModule: React.FC<Props> = ({ role, currentUserId }) =
 
       {msg && (
         <div
-          className={`p-3 rounded-xl border text-xs flex items-center gap-2 ${
+          className={`p-3.5 rounded-xl border text-[14px] font-medium flex items-center gap-2.5 ${
             msg.type === 'success'
-              ? 'bg-emerald-950/70 border-emerald-800 text-emerald-300'
-              : 'bg-rose-950/70 border-rose-800 text-rose-300'
+              ? 'bg-[#F0FDF4] border-[#BBF7D0] text-[#15803D]'
+              : 'bg-red-50 border-red-200 text-red-700'
           }`}
         >
-          {msg.type === 'success' ? <CheckCircle2 className="w-4 h-4 shrink-0" /> : <AlertCircle className="w-4 h-4 shrink-0" />}
+          {msg.type === 'success' ? <CheckCircle2 className="w-5 h-5 shrink-0" /> : <AlertCircle className="w-5 h-5 shrink-0" />}
           <span>{msg.text}</span>
         </div>
       )}
 
       {/* ===================== TAB 1: LIVESTOCK ===================== */}
       {tab === 'livestock' && (
-        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 sm:p-6 space-y-4">
-          <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+        <div className="bg-white border border-gray-200 rounded-2xl p-4 sm:p-5 shadow-xs space-y-4">
+          <div className="flex items-center justify-between border-b border-gray-100 pb-3 flex-wrap gap-2">
             <div>
-              <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                <Activity className="w-4 h-4 text-emerald-400" />
+              <h3 className="text-[16px] font-bold text-gray-900 flex items-center gap-2">
+                <Activity className="w-5 h-5 text-[#1E5128]" />
                 <span>গবাদিপশু প্রোফাইল ও উৎপাদন সূচক ({animals.length})</span>
               </h3>
-              <p className="text-xs text-slate-400">প্রতিটি প্রাণীর স্বতন্ত্র ক্রয়মূল্য, ওজন ও ক্রমবর্ধমান খাদ্য খরচ</p>
+              <p className="text-[13px] text-gray-600 mt-0.5">প্রতিটি প্রাণীর স্বতন্ত্র ক্রয়মূল্য, ওজন ও ক্রমবর্ধমান খাদ্য খরচ</p>
             </div>
 
             {role === 'OWNER' && (
               <button
                 onClick={() => setShowAddAnimal(!showAddAnimal)}
-                className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold shadow transition-colors flex items-center gap-1.5"
+                className="px-3.5 py-2 rounded-xl bg-[#1E5128] hover:bg-[#173F1F] text-white text-[13px] font-bold shadow-xs transition-all cursor-pointer min-h-[40px] flex items-center gap-1.5"
               >
-                <PlusCircle className="w-3.5 h-3.5" />
+                <PlusCircle className="w-4 h-4" />
                 <span>+ নতুন পশু নিবন্ধন</span>
               </button>
             )}
           </div>
 
           {showAddAnimal && (
-            <form onSubmit={handleAddAnimal} className="p-4 bg-slate-800/80 border border-slate-700 rounded-xl space-y-3 text-xs">
-              <div className="font-bold text-emerald-400">নতুন গবাদিপশু তথ্য যোগ করুন</div>
-              <div className="grid grid-cols-1 sm:grid-cols-4 gap-2">
+            <form onSubmit={handleAddAnimal} className="p-4 bg-[#F8FAFC] border border-gray-300 rounded-xl space-y-3">
+              <div className="font-bold text-[#1E5128] text-[15px]">নতুন গবাদিপশু তথ্য যোগ করুন</div>
+              <div className="grid grid-cols-1 sm:grid-cols-4 gap-2.5">
                 <input
                   type="text"
                   placeholder="ট্যাগ নং (যেমন: COW-105)"
                   value={tagId}
                   onChange={(e) => setTagId(e.target.value)}
-                  className="bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-white"
+                  className="bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900"
                 />
                 <select
                   value={species}
                   onChange={(e) => setSpecies(e.target.value as any)}
-                  className="bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-white"
+                  className="bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900"
                 >
                   <option value="CATTLE">গরু (Cattle)</option>
                   <option value="GOAT">ছাগল (Goat)</option>
@@ -420,50 +420,50 @@ export const FarmOperationsModule: React.FC<Props> = ({ role, currentUserId }) =
                   placeholder="জাত (Breed)"
                   value={breed}
                   onChange={(e) => setBreed(e.target.value)}
-                  className="bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-white"
+                  className="bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900"
                 />
                 <select
                   value={gender}
                   onChange={(e) => setGender(e.target.value as any)}
-                  className="bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-white"
+                  className="bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900"
                 >
                   <option value="FEMALE">মাদি (Female)</option>
                   <option value="MALE">মদ্দা (Male)</option>
                 </select>
               </div>
 
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                 <div>
-                  <label className="text-[10px] text-slate-400">ক্রয়মূল্য ৳</label>
+                  <label className="block text-[13px] font-medium text-gray-700 mb-1">ক্রয়মূল্য ৳</label>
                   <input
                     type="number"
                     value={purchaseCost}
                     onChange={(e) => setPurchaseCost(e.target.value)}
-                    className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-white"
+                    className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900"
                   />
                 </div>
                 <div>
-                  <label className="text-[10px] text-slate-400">বর্তমান ওজন (কেজি)</label>
+                  <label className="block text-[13px] font-medium text-gray-700 mb-1">বর্তমান ওজন (কেজি)</label>
                   <input
                     type="number"
                     value={currentWeight}
                     onChange={(e) => setCurrentWeight(e.target.value)}
-                    className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-white"
+                    className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900"
                   />
                 </div>
               </div>
 
-              <div className="flex justify-end gap-2">
+              <div className="flex justify-end gap-2.5 pt-1">
                 <button
                   type="button"
                   onClick={() => setShowAddAnimal(false)}
-                  className="px-3 py-1.5 rounded-lg bg-slate-700 text-slate-300 text-xs"
+                  className="px-4 py-2 rounded-lg bg-gray-200 text-gray-800 text-[13px] font-semibold cursor-pointer min-h-[40px]"
                 >
                   বাতিল
                 </button>
                 <button
                   type="submit"
-                  className="px-3 py-1.5 rounded-lg bg-emerald-600 text-white text-xs font-semibold"
+                  className="px-4 py-2 rounded-lg bg-[#1E5128] text-white text-[13px] font-bold cursor-pointer min-h-[40px]"
                 >
                   নিবন্ধন করুন
                 </button>
@@ -471,38 +471,38 @@ export const FarmOperationsModule: React.FC<Props> = ({ role, currentUserId }) =
             </form>
           )}
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
             {animals.map((a) => (
               <div
                 key={a.id}
-                className="p-4 rounded-xl bg-slate-800/50 border border-slate-800 space-y-2 text-xs shadow"
+                className="p-4 rounded-xl bg-[#F8FAFC] border border-gray-200 space-y-2.5 shadow-xs"
               >
                 <div className="flex items-center justify-between">
                   <div>
-                    <span className="font-mono font-bold text-emerald-400 text-sm">{a.id}</span>
-                    <h4 className="font-medium text-white text-xs">{a.breed}</h4>
+                    <span className="font-mono font-bold text-[#1E5128] text-[15px]">{a.id}</span>
+                    <h4 className="font-bold text-gray-900 text-[14px]">{a.breed}</h4>
                   </div>
-                  <span className="px-2 py-0.5 rounded-full bg-slate-800 text-[10px] text-slate-300">
+                  <span className="px-2.5 py-1 rounded-full bg-white border border-gray-200 text-xs text-gray-700 font-semibold">
                     {a.gender === 'FEMALE' ? 'গাভী' : 'ষাঁড়'} ({a.currentWeightKg} কেজি)
                   </span>
                 </div>
 
-                <div className="space-y-1 font-mono text-[11px] pt-1 text-slate-300 border-t border-slate-800">
+                <div className="space-y-1.5 text-[13px] pt-2 border-t border-gray-200">
                   <div className="flex justify-between">
-                    <span className="text-slate-400 font-sans">ক্রয়মূল্য:</span>
-                    <span>{fmt(a.purchaseCost)}</span>
+                    <span className="text-gray-600">ক্রয়মূল্য:</span>
+                    <span className="font-semibold text-gray-900">{fmt(a.purchaseCost)}</span>
                   </div>
                   <div className="flex justify-between">
-                    <span className="text-slate-400 font-sans">খাদ্য খরচ:</span>
-                    <span className="text-amber-400">{fmt(a.accumulatedFeedCost)}</span>
+                    <span className="text-gray-600">খাদ্য খরচ:</span>
+                    <span className="font-semibold text-amber-700">{fmt(a.accumulatedFeedCost)}</span>
                   </div>
                   <div className="flex justify-between">
-                    <span className="text-slate-400 font-sans">ওষুধ ও লেবার:</span>
-                    <span>{fmt(a.accumulatedMedCost + a.accumulatedLabourCost)}</span>
+                    <span className="text-gray-600">ওষুধ ও লেবার:</span>
+                    <span className="font-semibold text-gray-900">{fmt(a.accumulatedMedCost + a.accumulatedLabourCost)}</span>
                   </div>
-                  <div className="flex justify-between font-bold text-white pt-1 border-t border-slate-700">
-                    <span className="font-sans">মোট পুঞ্জীভূত খরচ:</span>
-                    <span className="text-emerald-300">{fmt(a.totalCost)}</span>
+                  <div className="flex justify-between font-bold text-gray-900 pt-1.5 border-t border-gray-200 text-[14px]">
+                    <span>মোট পুঞ্জীভূত খরচ:</span>
+                    <span className="text-[#15803D]">{fmt(a.totalCost)}</span>
                   </div>
                 </div>
               </div>
@@ -513,38 +513,38 @@ export const FarmOperationsModule: React.FC<Props> = ({ role, currentUserId }) =
 
       {/* ===================== TAB 2: FISHERIES ===================== */}
       {tab === 'fisheries' && (
-        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 sm:p-6 space-y-4">
-          <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+        <div className="bg-white border border-gray-200 rounded-2xl p-4 sm:p-5 shadow-xs space-y-4">
+          <div className="flex items-center justify-between border-b border-gray-100 pb-3 flex-wrap gap-2">
             <div>
-              <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                <Fish className="w-4 h-4 text-sky-400" />
+              <h3 className="text-[16px] font-bold text-gray-900 flex items-center gap-2">
+                <Fish className="w-5 h-5 text-sky-600" />
                 <span>মৎস্য চাষ ও পুকুর ব্যাচ ({fishBatches.length})</span>
               </h3>
-              <p className="text-xs text-slate-400">পোনা মজুদের হিসাব, ফিড খরচ ও মরটালিটি ট্র্যাকিং</p>
+              <p className="text-[13px] text-gray-600 mt-0.5">পোনা মজুদের হিসাব, ফিড খরচ ও মরটালিটি ট্র্যাকিং</p>
             </div>
 
             {role === 'OWNER' && (
               <button
                 onClick={() => setShowAddFish(!showAddFish)}
-                className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold shadow transition-colors flex items-center gap-1.5"
+                className="px-3.5 py-2 rounded-xl bg-[#1E5128] hover:bg-[#173F1F] text-white text-[13px] font-bold shadow-xs transition-all cursor-pointer min-h-[40px] flex items-center gap-1.5"
               >
-                <PlusCircle className="w-3.5 h-3.5" />
+                <PlusCircle className="w-4 h-4" />
                 <span>+ নতুন মাছের ব্যাচ</span>
               </button>
             )}
           </div>
 
           {showAddFish && (
-            <form onSubmit={handleAddFish} className="p-4 bg-slate-800/80 border border-slate-700 rounded-xl space-y-3 text-xs">
-              <div className="font-bold text-emerald-400">নতুন মাছের ব্যাচ মজুদ</div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <form onSubmit={handleAddFish} className="p-4 bg-[#F8FAFC] border border-gray-300 rounded-xl space-y-3">
+              <div className="font-bold text-[#1E5128] text-[15px]">নতুন মাছের ব্যাচ মজুদ</div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                 <input
                   type="text"
                   required
                   placeholder="পুকুরের নাম (যেমন: পশ্চিম পুকুর)"
                   value={pondName}
                   onChange={(e) => setPondName(e.target.value)}
-                  className="bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-white"
+                  className="bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900"
                 />
                 <input
                   type="text"
@@ -552,38 +552,38 @@ export const FarmOperationsModule: React.FC<Props> = ({ role, currentUserId }) =
                   placeholder="মাছের প্রজাতি (যেমন: কার্প ও পাবদা)"
                   value={fishSpecies}
                   onChange={(e) => setFishSpecies(e.target.value)}
-                  className="bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-white"
+                  className="bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900"
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                 <input
                   type="number"
                   placeholder="পোনা সংখ্যা (Qty)"
                   value={fingerlingQty}
                   onChange={(e) => setFingerlingQty(e.target.value)}
-                  className="bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-white"
+                  className="bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900"
                 />
                 <input
                   type="number"
                   placeholder="পোনা ক্রয়ের মোট খরচ ৳"
                   value={fingerlingCost}
                   onChange={(e) => setFingerlingCost(e.target.value)}
-                  className="bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-white"
+                  className="bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900"
                 />
               </div>
 
-              <div className="flex justify-end gap-2">
+              <div className="flex justify-end gap-2.5 pt-1">
                 <button
                   type="button"
                   onClick={() => setShowAddFish(false)}
-                  className="px-3 py-1.5 rounded-lg bg-slate-700 text-slate-300 text-xs"
+                  className="px-4 py-2 rounded-lg bg-gray-200 text-gray-800 text-[13px] font-semibold cursor-pointer min-h-[40px]"
                 >
                   বাতিল
                 </button>
                 <button
                   type="submit"
-                  className="px-3 py-1.5 rounded-lg bg-emerald-600 text-white text-xs font-semibold"
+                  className="px-4 py-2 rounded-lg bg-[#1E5128] text-white text-[13px] font-bold cursor-pointer min-h-[40px]"
                 >
                   ব্যাচ তৈরি করুন
                 </button>
@@ -591,39 +591,39 @@ export const FarmOperationsModule: React.FC<Props> = ({ role, currentUserId }) =
             </form>
           )}
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
             {fishBatches.map((b) => (
               <div
                 key={b.id}
-                className="p-4 rounded-xl bg-slate-800/50 border border-slate-800 space-y-2 text-xs shadow"
+                className="p-4 rounded-xl bg-[#F8FAFC] border border-gray-200 space-y-2.5 shadow-xs"
               >
                 <div className="flex items-center justify-between">
                   <div>
-                    <span className="font-mono font-bold text-sky-400">{b.id}</span>
-                    <h4 className="font-bold text-white text-sm">{b.pondName}</h4>
-                    <p className="text-[11px] text-slate-400">{b.species}</p>
+                    <span className="font-mono font-bold text-sky-700 text-[14px]">{b.id}</span>
+                    <h4 className="font-bold text-gray-900 text-[15px]">{b.pondName}</h4>
+                    <p className="text-[13px] text-gray-600">{b.species}</p>
                   </div>
-                  <span className="px-2 py-0.5 rounded-full bg-sky-950 text-sky-300 border border-sky-800 text-[10px]">
+                  <span className="px-2.5 py-1 rounded-full bg-sky-50 text-sky-700 border border-sky-200 text-xs font-semibold">
                     {b.status}
                   </span>
                 </div>
 
-                <div className="space-y-1 font-mono text-[11px] pt-1 text-slate-300 border-t border-slate-800">
+                <div className="space-y-1.5 text-[13px] pt-2 border-t border-gray-200">
                   <div className="flex justify-between">
-                    <span className="text-slate-400 font-sans">মজুদ পোনা:</span>
-                    <span>{b.fingerlingQty} টি</span>
+                    <span className="text-gray-600">মজুদ পোনা:</span>
+                    <span className="font-semibold text-gray-900">{b.fingerlingQty} টি</span>
                   </div>
                   <div className="flex justify-between">
-                    <span className="text-slate-400 font-sans">পোনা খরচ:</span>
-                    <span>{fmt(b.fingerlingCost)}</span>
+                    <span className="text-gray-600">পোনা খরচ:</span>
+                    <span className="font-semibold text-gray-900">{fmt(b.fingerlingCost)}</span>
                   </div>
                   <div className="flex justify-between">
-                    <span className="text-slate-400 font-sans">মোট ফিড প্রয়োগ:</span>
-                    <span className="text-amber-400">{b.totalFeedKg} কেজি ({fmt(b.totalFeedCost)})</span>
+                    <span className="text-gray-600">মোট ফিড প্রয়োগ:</span>
+                    <span className="font-semibold text-amber-700">{b.totalFeedKg} কেজি ({fmt(b.totalFeedCost)})</span>
                   </div>
                   <div className="flex justify-between">
-                    <span className="text-slate-400 font-sans">মৃত পোনা সংখ্যা:</span>
-                    <span className="text-rose-400">{b.mortalityCount} টি</span>
+                    <span className="text-gray-600">মৃত পোনা সংখ্যা:</span>
+                    <span className="font-semibold text-red-600">{b.mortalityCount} টি</span>
                   </div>
                 </div>
               </div>
@@ -634,38 +634,38 @@ export const FarmOperationsModule: React.FC<Props> = ({ role, currentUserId }) =
 
       {/* ===================== TAB 3: CROPS & FODDER ===================== */}
       {tab === 'crops' && (
-        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 sm:p-6 space-y-4">
-          <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+        <div className="bg-white border border-gray-200 rounded-2xl p-4 sm:p-5 shadow-xs space-y-4">
+          <div className="flex items-center justify-between border-b border-gray-100 pb-3 flex-wrap gap-2">
             <div>
-              <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                <Wheat className="w-4 h-4 text-amber-400" />
+              <h3 className="text-[16px] font-bold text-gray-900 flex items-center gap-2">
+                <Wheat className="w-5 h-5 text-amber-600" />
                 <span>শস্য ও নেপিয়ার ঘাস চাষ ({cropCycles.length})</span>
               </h3>
-              <p className="text-xs text-slate-400">ঘাস চাষ, সার প্রয়োগ, সেচ ও ফসল কর্তন ট্র্যাকিং</p>
+              <p className="text-[13px] text-gray-600 mt-0.5">ঘাস চাষ, সার প্রয়োগ, সেচ ও ফসল কর্তন ট্র্যাকিং</p>
             </div>
 
             {role === 'OWNER' && (
               <button
                 onClick={() => setShowAddCrop(!showAddCrop)}
-                className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold shadow transition-colors flex items-center gap-1.5"
+                className="px-3.5 py-2 rounded-xl bg-[#1E5128] hover:bg-[#173F1F] text-white text-[13px] font-bold shadow-xs transition-all cursor-pointer min-h-[40px] flex items-center gap-1.5"
               >
-                <PlusCircle className="w-3.5 h-3.5" />
+                <PlusCircle className="w-4 h-4" />
                 <span>+ নতুন শস্য চক্র</span>
               </button>
             )}
           </div>
 
           {showAddCrop && (
-            <form onSubmit={handleAddCrop} className="p-4 bg-slate-800/80 border border-slate-700 rounded-xl space-y-3 text-xs">
-              <div className="font-bold text-emerald-400">নতুন শস্য চক্র যুক্ত করুন</div>
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+            <form onSubmit={handleAddCrop} className="p-4 bg-[#F8FAFC] border border-gray-300 rounded-xl space-y-3">
+              <div className="font-bold text-[#1E5128] text-[15px]">নতুন শস্য চক্র যুক্ত করুন</div>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
                 <input
                   type="text"
                   required
                   placeholder="জমির প্লট (যেমন: প্লট-২ উত্তর)"
                   value={plotName}
                   onChange={(e) => setPlotName(e.target.value)}
-                  className="bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-white"
+                  className="bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900"
                 />
                 <input
                   type="text"
@@ -673,28 +673,28 @@ export const FarmOperationsModule: React.FC<Props> = ({ role, currentUserId }) =
                   placeholder="ফসলের নাম (যেমন: পাকচং নেপিয়ার)"
                   value={cropName}
                   onChange={(e) => setCropName(e.target.value)}
-                  className="bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-white"
+                  className="bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900"
                 />
                 <input
                   type="number"
                   placeholder="জমির পরিমাণ (শতাংশ)"
                   value={cropArea}
                   onChange={(e) => setCropArea(e.target.value)}
-                  className="bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-white"
+                  className="bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900"
                 />
               </div>
 
-              <div className="flex justify-end gap-2">
+              <div className="flex justify-end gap-2.5 pt-1">
                 <button
                   type="button"
                   onClick={() => setShowAddCrop(false)}
-                  className="px-3 py-1.5 rounded-lg bg-slate-700 text-slate-300 text-xs"
+                  className="px-4 py-2 rounded-lg bg-gray-200 text-gray-800 text-[13px] font-semibold cursor-pointer min-h-[40px]"
                 >
                   বাতিল
                 </button>
                 <button
                   type="submit"
-                  className="px-3 py-1.5 rounded-lg bg-emerald-600 text-white text-xs font-semibold"
+                  className="px-4 py-2 rounded-lg bg-[#1E5128] text-white text-[13px] font-bold cursor-pointer min-h-[40px]"
                 >
                   সংরক্ষণ করুন
                 </button>
@@ -702,35 +702,35 @@ export const FarmOperationsModule: React.FC<Props> = ({ role, currentUserId }) =
             </form>
           )}
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
             {cropCycles.map((c) => (
               <div
                 key={c.id}
-                className="p-4 rounded-xl bg-slate-800/50 border border-slate-800 space-y-2 text-xs shadow"
+                className="p-4 rounded-xl bg-[#F8FAFC] border border-gray-200 space-y-2.5 shadow-xs"
               >
                 <div className="flex items-center justify-between">
                   <div>
-                    <span className="font-mono font-bold text-amber-400">{c.id}</span>
-                    <h4 className="font-bold text-white text-sm">{c.cropName}</h4>
-                    <p className="text-[11px] text-slate-400">{c.plotName} ({c.areaDecimals} শতাংশ)</p>
+                    <span className="font-mono font-bold text-amber-700 text-[14px]">{c.id}</span>
+                    <h4 className="font-bold text-gray-900 text-[15px]">{c.cropName}</h4>
+                    <p className="text-[13px] text-gray-600">{c.plotName} ({c.areaDecimals} শতাংশ)</p>
                   </div>
-                  <span className="px-2 py-0.5 rounded-full bg-amber-950 text-amber-300 border border-amber-800 text-[10px]">
+                  <span className="px-2.5 py-1 rounded-full bg-amber-50 text-amber-800 border border-amber-200 text-xs font-semibold">
                     {c.status}
                   </span>
                 </div>
 
-                <div className="space-y-1 font-mono text-[11px] pt-1 text-slate-300 border-t border-slate-800">
+                <div className="space-y-1.5 text-[13px] pt-2 border-t border-gray-200">
                   <div className="flex justify-between">
-                    <span className="text-slate-400 font-sans">রোপণের তারিখ:</span>
-                    <span>{c.plantingDate}</span>
+                    <span className="text-gray-600">রোপণের তারিখ:</span>
+                    <span className="font-medium text-gray-900">{c.plantingDate}</span>
                   </div>
                   <div className="flex justify-between">
-                    <span className="text-slate-400 font-sans">মোট চাষ খরচ:</span>
-                    <span className="text-rose-400">{fmt(c.totalCost)}</span>
+                    <span className="text-gray-600">মোট চাষ খরচ:</span>
+                    <span className="font-semibold text-red-600">{fmt(c.totalCost)}</span>
                   </div>
                   <div className="flex justify-between">
-                    <span className="text-slate-400 font-sans">কর্তনকৃত ফলন:</span>
-                    <span className="text-emerald-400 font-bold">{c.harvestYieldKg} কেজি</span>
+                    <span className="text-gray-600">কর্তনকৃত ফলন:</span>
+                    <span className="text-[#15803D] font-bold">{c.harvestYieldKg} কেজি</span>
                   </div>
                 </div>
               </div>
@@ -741,14 +741,14 @@ export const FarmOperationsModule: React.FC<Props> = ({ role, currentUserId }) =
 
       {/* ===================== TAB 4: INTERNAL FLOWS ===================== */}
       {tab === 'flows' && (
-        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 sm:p-6 space-y-4">
-          <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+        <div className="bg-white border border-gray-200 rounded-2xl p-4 sm:p-5 shadow-xs space-y-4">
+          <div className="flex items-center justify-between border-b border-gray-100 pb-3 flex-wrap gap-2">
             <div>
-              <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                <ArrowRightLeft className="w-4 h-4 text-emerald-400" />
+              <h3 className="text-[16px] font-bold text-gray-900 flex items-center gap-2">
+                <ArrowRightLeft className="w-5 h-5 text-[#1E5128]" />
                 <span>অভ্যন্তরীণ সমন্বিত সম্পদ স্থানান্তর (Circular Bio-Flows)</span>
               </h3>
-              <p className="text-xs text-slate-400">
+              <p className="text-[13px] text-gray-600 mt-0.5">
                 গোবর পুকুর বা ফসলে প্রয়োগ, কিংবা উৎপাদিত নেপিয়ার ঘাস গরুকে খাওয়ানো (ডাবল-কাউন্টিং মুক্ত)
               </p>
             </div>
@@ -756,22 +756,22 @@ export const FarmOperationsModule: React.FC<Props> = ({ role, currentUserId }) =
             {role === 'OWNER' && (
               <button
                 onClick={() => setShowAddFlow(!showAddFlow)}
-                className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold shadow transition-colors flex items-center gap-1.5"
+                className="px-3.5 py-2 rounded-xl bg-[#1E5128] hover:bg-[#173F1F] text-white text-[13px] font-bold shadow-xs transition-all cursor-pointer min-h-[40px] flex items-center gap-1.5"
               >
-                <PlusCircle className="w-3.5 h-3.5" />
+                <PlusCircle className="w-4 h-4" />
                 <span>+ নতুন স্থানান্তর</span>
               </button>
             )}
           </div>
 
           {showAddFlow && (
-            <form onSubmit={handleAddInternalFlow} className="p-4 bg-slate-800/80 border border-slate-700 rounded-xl space-y-3 text-xs">
-              <div className="font-bold text-emerald-400">নতুন বায়ো-ফ্লো রেকর্ড</div>
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+            <form onSubmit={handleAddInternalFlow} className="p-4 bg-[#F8FAFC] border border-gray-300 rounded-xl space-y-3">
+              <div className="font-bold text-[#1E5128] text-[15px]">নতুন বায়ো-ফ্লো রেকর্ড</div>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
                 <select
                   value={flowResource}
                   onChange={(e) => setFlowResource(e.target.value as any)}
-                  className="bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-white"
+                  className="bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900"
                 >
                   <option value="MANURE">গোবর সার (Manure)</option>
                   <option value="COMPOST">কম্পোস্ট সার (Compost)</option>
@@ -784,52 +784,52 @@ export const FarmOperationsModule: React.FC<Props> = ({ role, currentUserId }) =
                   placeholder="উৎস (যেমন: ডেইরি শেড)"
                   value={flowSource}
                   onChange={(e) => setFlowSource(e.target.value)}
-                  className="bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-white"
+                  className="bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900"
                 />
                 <input
                   type="text"
                   placeholder="গন্তব্য (যেমন: মাছের পুকুর)"
                   value={flowDestination}
                   onChange={(e) => setFlowDestination(e.target.value)}
-                  className="bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-white"
+                  className="bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900"
                 />
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
                 <input
                   type="text"
                   placeholder="বিবরণ"
                   value={flowDesc}
                   onChange={(e) => setFlowDesc(e.target.value)}
-                  className="bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-white"
+                  className="bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900"
                 />
                 <input
                   type="number"
                   placeholder="পরিমাণ (কেজি)"
                   value={flowQty}
                   onChange={(e) => setFlowQty(e.target.value)}
-                  className="bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-white"
+                  className="bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900"
                 />
                 <input
                   type="number"
                   placeholder="আনুমানিক আর্থিক মূল্য ৳"
                   value={flowValue}
                   onChange={(e) => setFlowValue(e.target.value)}
-                  className="bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-white"
+                  className="bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900"
                 />
               </div>
 
-              <div className="flex justify-end gap-2">
+              <div className="flex justify-end gap-2.5 pt-1">
                 <button
                   type="button"
                   onClick={() => setShowAddFlow(false)}
-                  className="px-3 py-1.5 rounded-lg bg-slate-700 text-slate-300 text-xs"
+                  className="px-4 py-2 rounded-lg bg-gray-200 text-gray-800 text-[13px] font-semibold cursor-pointer min-h-[40px]"
                 >
                   বাতিল
                 </button>
                 <button
                   type="submit"
-                  className="px-3 py-1.5 rounded-lg bg-emerald-600 text-white text-xs font-semibold"
+                  className="px-4 py-2 rounded-lg bg-[#1E5128] text-white text-[13px] font-bold cursor-pointer min-h-[40px]"
                 >
                   রেকর্ড করুন
                 </button>
@@ -837,24 +837,24 @@ export const FarmOperationsModule: React.FC<Props> = ({ role, currentUserId }) =
             </form>
           )}
 
-          <div className="space-y-2">
+          <div className="space-y-2.5">
             {internalFlows.length === 0 ? (
-              <div className="p-6 text-center text-slate-500 text-xs">
+              <div className="p-8 text-center text-gray-500 text-[14px]">
                 কোনো অভ্যন্তরীণ প্রবাহ রেকর্ড করা নেই।
               </div>
             ) : (
               internalFlows.map((fl) => (
                 <div
                   key={fl.id}
-                  className="flex items-center justify-between p-3 rounded-xl bg-slate-800/40 border border-slate-800 text-xs"
+                  className="flex flex-col sm:flex-row sm:items-center justify-between p-3.5 rounded-xl bg-[#F8FAFC] border border-gray-200 text-[14px] gap-2"
                 >
                   <div>
-                    <div className="font-bold text-white">{fl.notes || fl.resource}</div>
-                    <div className="text-[10px] text-slate-400">
+                    <div className="font-bold text-gray-900">{fl.notes || fl.resource}</div>
+                    <div className="text-[13px] text-gray-600">
                       {fl.source} ➔ {fl.destination} | তারিখ: {fl.date} | পরিমাণ: {fl.quantity} {fl.unit}
                     </div>
                   </div>
-                  <div className="font-bold text-emerald-400 font-mono">
+                  <div className="font-bold text-[#15803D] font-mono text-[15px]">
                     মূল্য: {fmt(fl.internalCostValuation)}
                   </div>
                 </div>

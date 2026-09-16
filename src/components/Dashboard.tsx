@@ -132,227 +132,247 @@ export const Dashboard: React.FC<Props> = ({ role, onNavigate }) => {
   const fmtMoney = (val: number) => `৳${Number(val || 0).toLocaleString('en-IN', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
 
   return (
-    <div className="space-y-4 pb-20 max-w-7xl mx-auto">
-      {/* Top Banner / Greeting */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 p-4 rounded-2xl bg-gradient-to-br from-slate-900 via-slate-900 to-emerald-950/40 border border-slate-800 shadow-lg">
-        <div>
-          <h2 className="text-lg sm:text-xl font-bold text-white flex items-center gap-2">
-            <span>খামার ওভারভিউ ও সারসংক্ষেপ</span>
-            {isAccountingBalanced && (
-              <span className="text-[11px] px-2 py-0.5 rounded-full bg-emerald-950 text-emerald-300 border border-emerald-800 font-normal">
-                দ্বৈত-দাখিলা হিসাব নির্ভুল
-              </span>
-            )}
-          </h2>
-          <p className="text-xs text-slate-400 mt-0.5">
-            রিয়েল-টাইম হিসাবরক্ষণ, গবাদিপশু, মৎস্য ও শস্য বিশ্লেষণ
-          </p>
+    <div className="space-y-5 pb-6 max-w-5xl mx-auto">
+      {/* 1. Top Executive Banner & Hero Balances */}
+      <div className="bg-white rounded-2xl border border-gray-200 p-4 sm:p-6 shadow-xs space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-gray-100">
+          <div>
+            <div className="flex items-center gap-2 flex-wrap">
+              <h2 className="text-xl sm:text-2xl font-bold text-gray-900 tracking-tight">
+                খামার সার্বিক চিত্র
+              </h2>
+              {isAccountingBalanced && (
+                <span className="inline-flex items-center gap-1 text-[13px] px-2.5 py-0.5 rounded-full bg-[#F0FDF4] text-[#15803D] border border-[#BBF7D0] font-semibold">
+                  দ্বৈত-দাখিলা নির্ভুল
+                </span>
+              )}
+            </div>
+            <p className="text-[14px] text-gray-600 mt-1">
+              রিয়েল-টাইম হিসাবরক্ষণ, গবাদিপশু, মৎস্য ও শস্যের সার্বিক অবস্থা
+            </p>
+          </div>
+
+          {/* Quick Action Dock for Owner */}
+          {role === 'OWNER' && (
+            <div className="flex items-center gap-2.5 flex-wrap">
+              <button
+                onClick={() => onNavigate('accounting')}
+                className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-[#1E5128] hover:bg-[#173F1F] text-white text-[14px] font-bold shadow-xs transition-all active:scale-95 cursor-pointer min-h-[44px]"
+              >
+                <PlusCircle className="w-4 h-4" />
+                <span>নতুন ভাউচার</span>
+              </button>
+              <button
+                onClick={() => onNavigate('commerce')}
+                className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-gray-100 hover:bg-gray-200 text-gray-800 border border-gray-200 text-[14px] font-semibold shadow-xs transition-all active:scale-95 cursor-pointer min-h-[44px]"
+              >
+                <FileText className="w-4 h-4" />
+                <span>বিক্রয় / চালান</span>
+              </button>
+            </div>
+          )}
         </div>
 
-        {/* Quick action buttons for Owner */}
-        {role === 'OWNER' && (
-          <div className="flex items-center gap-2 mt-2 sm:mt-0 flex-wrap">
-            <button
-              onClick={() => onNavigate('accounting')}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold shadow transition-colors"
-            >
-              <PlusCircle className="w-3.5 h-3.5" />
-              <span>নতুন ভাউচার</span>
-            </button>
-            <button
-              onClick={() => onNavigate('commerce')}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-semibold shadow transition-colors"
-            >
-              <FileText className="w-3.5 h-3.5" />
-              <span>বিক্রয় / চালান</span>
-            </button>
+        {/* Hero 2 Key Metrics (Total Liquidity & Net Margin) */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5 pt-1">
+          {/* Liquidity (Cash + Bank) */}
+          <div className="p-4 rounded-xl bg-[#F8FAFC] border border-gray-200/80">
+            <div className="flex items-center justify-between text-[14px] text-gray-600 font-medium">
+              <span>তরল তহবিল (নগদ ও ব্যাংক)</span>
+              <div className="p-2 rounded-lg bg-blue-100/80 text-blue-700">
+                <Wallet className="w-5 h-5" />
+              </div>
+            </div>
+            <div className="text-2xl sm:text-3xl font-extrabold text-gray-900 tracking-tight mt-1">
+              {fmtMoney(cashBalance + bankBalance)}
+            </div>
+            <div className="flex items-center gap-3 text-[13px] text-gray-600 mt-2 pt-2 border-t border-gray-200/60 font-medium">
+              <span>ক্যাশ: <strong className="text-gray-900">{fmtMoney(cashBalance)}</strong></span>
+              <span>•</span>
+              <span>ব্যাংক: <strong className="text-gray-900">{fmtMoney(bankBalance)}</strong></span>
+            </div>
           </div>
-        )}
+
+          {/* Net Profit / Margin */}
+          <div className="p-4 rounded-xl bg-[#F8FAFC] border border-gray-200/80">
+            <div className="flex items-center justify-between text-[14px] text-gray-600 font-medium">
+              <span>নিট লাভ / ক্ষতি (Net Profit)</span>
+              <div className={`p-2 rounded-lg ${netProfit >= 0 ? 'bg-emerald-100/80 text-[#15803D]' : 'bg-red-100/80 text-[#C2410C]'}`}>
+                {netProfit >= 0 ? <TrendingUp className="w-5 h-5" /> : <TrendingDown className="w-5 h-5" />}
+              </div>
+            </div>
+            <div className={`text-2xl sm:text-3xl font-extrabold tracking-tight mt-1 ${netProfit >= 0 ? 'text-[#15803D]' : 'text-[#C2410C]'}`}>
+              {fmtMoney(netProfit)}
+            </div>
+            <div className="text-[13px] text-gray-600 mt-2 pt-2 border-t border-gray-200/60 font-medium">
+              চলতি হিসাবকাল অনুযায়ী দ্বৈত-দাখিলা মুনাফা
+            </div>
+          </div>
+        </div>
       </div>
 
-      {/* Alerts section */}
+      {/* 2. System Alerts Section (if active) */}
       {alerts.length > 0 && (
-        <div className="p-3.5 rounded-2xl bg-amber-950/40 border border-amber-800/80 text-amber-200 text-xs space-y-1.5 shadow">
-          <div className="flex items-center gap-1.5 font-bold text-amber-300">
-            <AlertTriangle className="w-4 h-4" />
-            <span>জরুরি সতর্কতা ({alerts.length})</span>
+        <div className="p-4 rounded-2xl bg-amber-50 border border-amber-300 text-amber-900 shadow-xs space-y-2">
+          <div className="flex items-center gap-2 font-bold text-[15px] text-amber-900">
+            <AlertTriangle className="w-5 h-5 text-amber-700 shrink-0" />
+            <span>জরুরি সতর্কতা ({alerts.length} টি)</span>
           </div>
-          <ul className="list-disc list-inside space-y-0.5 text-amber-200/90 pl-1">
+          <ul className="list-disc list-inside space-y-1 text-[14px] text-amber-900 pl-1">
             {alerts.map((alt, idx) => (
-              <li key={idx}>{alt}</li>
+              <li key={idx} className="leading-snug">{alt}</li>
             ))}
           </ul>
         </div>
       )}
 
-      {/* Core Financial Stat Cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-4">
-        {/* Net Profit */}
-        <div className="p-3 sm:p-4 rounded-2xl bg-slate-900/90 border border-slate-800 shadow-md">
-          <div className="flex items-center justify-between text-xs text-slate-400 mb-1">
-            <span>নিট লাভ/ক্ষতি (Net Profit)</span>
-            <div className={`p-1.5 rounded-lg ${netProfit >= 0 ? 'bg-emerald-950 text-emerald-400' : 'bg-rose-950 text-rose-400'}`}>
-              {netProfit >= 0 ? <TrendingUp className="w-4 h-4" /> : <TrendingDown className="w-4 h-4" />}
-            </div>
-          </div>
-          <div className={`text-base sm:text-xl font-bold tracking-tight ${netProfit >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-            {fmtMoney(netProfit)}
-          </div>
-          <div className="text-[10px] text-slate-500 mt-1">চলতি হিসাব সময়কাল</div>
-        </div>
-
-        {/* Revenue */}
-        <div className="p-3 sm:p-4 rounded-2xl bg-slate-900/90 border border-slate-800 shadow-md">
-          <div className="flex items-center justify-between text-xs text-slate-400 mb-1">
-            <span>মোট আয় (Revenue)</span>
-            <div className="p-1.5 rounded-lg bg-emerald-950 text-emerald-400">
+      {/* 3. Secondary Revenue, Expense & Working Capital */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+        {/* Total Revenue */}
+        <div className="p-4 rounded-xl bg-white border border-gray-200 shadow-xs">
+          <div className="flex items-center justify-between text-[13px] text-gray-600 font-medium">
+            <span>মোট রাজস্ব / আয়</span>
+            <div className="p-1.5 rounded-lg bg-emerald-50 text-[#15803D]">
               <ArrowUpRight className="w-4 h-4" />
             </div>
           </div>
-          <div className="text-base sm:text-xl font-bold tracking-tight text-white">
+          <div className="text-xl font-bold text-gray-900 tracking-tight mt-1.5">
             {fmtMoney(totalRevenue)}
           </div>
-          <div className="text-[10px] text-slate-500 mt-1">মাছ, পশু, দুধ ও শস্য বিক্রয়</div>
+          <p className="text-[13px] text-gray-600 mt-1">পশু, মাছ, দুধ ও ফসল বিক্রয়</p>
         </div>
 
-        {/* Expenses */}
-        <div className="p-3 sm:p-4 rounded-2xl bg-slate-900/90 border border-slate-800 shadow-md">
-          <div className="flex items-center justify-between text-xs text-slate-400 mb-1">
-            <span>মোট ব্যয় (Expense)</span>
-            <div className="p-1.5 rounded-lg bg-rose-950 text-rose-400">
+        {/* Total Expenses */}
+        <div className="p-4 rounded-xl bg-white border border-gray-200 shadow-xs">
+          <div className="flex items-center justify-between text-[13px] text-gray-600 font-medium">
+            <span>মোট খরচ ও COGS</span>
+            <div className="p-1.5 rounded-lg bg-rose-50 text-[#C2410C]">
               <ArrowDownLeft className="w-4 h-4" />
             </div>
           </div>
-          <div className="text-base sm:text-xl font-bold tracking-tight text-white">
+          <div className="text-xl font-bold text-gray-900 tracking-tight mt-1.5">
             {fmtMoney(totalExpenses)}
           </div>
-          <div className="text-[10px] text-slate-500 mt-1">COGS ও পরিচালন খরচ</div>
+          <p className="text-[13px] text-gray-600 mt-1">খাবার, ওষুধ ও পরিচালন ব্যয়</p>
         </div>
 
-        {/* Total Liquidity: Cash + Bank */}
-        <div className="p-3 sm:p-4 rounded-2xl bg-slate-900/90 border border-slate-800 shadow-md">
-          <div className="flex items-center justify-between text-xs text-slate-400 mb-1">
-            <span>তরল তহবিল (Cash & Bank)</span>
-            <div className="p-1.5 rounded-lg bg-blue-950 text-blue-400">
-              <Wallet className="w-4 h-4" />
-            </div>
-          </div>
-          <div className="text-base sm:text-xl font-bold tracking-tight text-white">
-            {fmtMoney(cashBalance + bankBalance)}
-          </div>
-          <div className="text-[10px] text-slate-400 flex justify-between mt-1">
-            <span>ক্যাশ: {fmtMoney(cashBalance)}</span>
-            <span>ব্যাংক: {fmtMoney(bankBalance)}</span>
-          </div>
-        </div>
-      </div>
-
-      {/* AR, AP, and Inventory Row */}
-      <div className="grid grid-cols-3 gap-2.5 sm:gap-4">
-        <div className="p-3 rounded-2xl bg-slate-900/70 border border-slate-800">
-          <div className="text-[11px] text-slate-400 truncate">পাওনা (Accounts Receivable)</div>
-          <div className="text-sm sm:text-lg font-bold text-sky-400 mt-0.5 truncate">
+        {/* AR (Receivable) */}
+        <div className="p-4 rounded-xl bg-white border border-gray-200 shadow-xs">
+          <div className="text-[13px] text-gray-600 font-medium">কাস্টমারদের কাছে পাওনা</div>
+          <div className="text-xl font-bold text-sky-700 tracking-tight mt-1.5">
             {fmtMoney(arBalance)}
           </div>
+          <p className="text-[13px] text-gray-600 mt-1">বকেয়া বিক্রয় বিল</p>
         </div>
-        <div className="p-3 rounded-2xl bg-slate-900/70 border border-slate-800">
-          <div className="text-[11px] text-slate-400 truncate">দেনা (Accounts Payable)</div>
-          <div className="text-sm sm:text-lg font-bold text-amber-400 mt-0.5 truncate">
+
+        {/* AP (Payable) */}
+        <div className="p-4 rounded-xl bg-white border border-gray-200 shadow-xs">
+          <div className="text-[13px] text-gray-600 font-medium">সাপ্লায়ার দেনা (AP)</div>
+          <div className="text-xl font-bold text-amber-700 tracking-tight mt-1.5">
             {fmtMoney(apBalance)}
           </div>
-        </div>
-        <div className="p-3 rounded-2xl bg-slate-900/70 border border-slate-800">
-          <div className="text-[11px] text-slate-400 truncate">মজুদ পণ্যের মূল্য (Inventory)</div>
-          <div className="text-sm sm:text-lg font-bold text-emerald-400 mt-0.5 truncate">
-            {fmtMoney(inventoryValue)}
-          </div>
+          <p className="text-[13px] text-gray-600 mt-1">খাবার ও কাঁচামাল দেনা</p>
         </div>
       </div>
 
-      {/* Farm Live Operational KPIs */}
-      <div className="p-4 rounded-2xl bg-slate-900 border border-slate-800 shadow">
-        <div className="flex items-center justify-between mb-3">
-          <h3 className="text-xs sm:text-sm font-bold text-slate-200 flex items-center gap-1.5">
-            <Activity className="w-4 h-4 text-emerald-400" />
-            <span>খামারের বর্তমান জৈব সম্পদ সূচক (Farm Operations)</span>
-          </h3>
+      {/* 4. Live Farm Biological Assets (Operations) */}
+      <div className="bg-white rounded-2xl border border-gray-200 p-4 sm:p-5 shadow-xs">
+        <div className="flex items-center justify-between mb-3.5 pb-2 border-b border-gray-100">
+          <div className="flex items-center gap-2">
+            <Activity className="w-5 h-5 text-[#1E5128]" />
+            <h3 className="text-[16px] sm:text-[17px] font-bold text-gray-900">
+              খামারের বর্তমান জৈব সম্পদ সূচক
+            </h3>
+          </div>
           <button
             onClick={() => onNavigate('operations')}
-            className="text-[11px] text-emerald-400 hover:underline font-medium"
+            className="text-[14px] text-[#1E5128] hover:underline font-bold cursor-pointer py-1 px-2"
           >
-            বিস্তারিত দেখুন →
+            বিস্তারিত →
           </button>
         </div>
 
-        <div className="grid grid-cols-3 gap-2 sm:gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          {/* Livestock */}
           <div
             onClick={() => onNavigate('operations')}
-            className="p-3 rounded-xl bg-slate-800/60 border border-slate-700/60 hover:border-emerald-500/50 cursor-pointer transition-all"
+            className="p-4 rounded-xl bg-[#F8FAFC] border border-gray-200 hover:border-[#1E5128]/60 cursor-pointer transition-all active:scale-98"
           >
-            <div className="text-[11px] text-slate-400">সক্রিয় গবাদিপশু</div>
-            <div className="text-lg sm:text-2xl font-bold text-white mt-0.5">{animalCount} টি</div>
-            <div className="text-[10px] text-emerald-400 mt-0.5">গরু ও ছাগল</div>
+            <div className="text-[13px] text-gray-600 font-medium">সক্রিয় গবাদিপশু</div>
+            <div className="text-2xl font-bold text-gray-900 mt-1">{animalCount} টি</div>
+            <div className="text-[13px] font-semibold text-[#1E5128] mt-1">গরু ও ছাগল পালনে সক্রিয়</div>
           </div>
 
+          {/* Fisheries */}
           <div
             onClick={() => onNavigate('operations')}
-            className="p-3 rounded-xl bg-slate-800/60 border border-slate-700/60 hover:border-emerald-500/50 cursor-pointer transition-all"
+            className="p-4 rounded-xl bg-[#F8FAFC] border border-gray-200 hover:border-[#1E5128]/60 cursor-pointer transition-all active:scale-98"
           >
-            <div className="text-[11px] text-slate-400">সক্রিয় মাছের ব্যাচ</div>
-            <div className="text-lg sm:text-2xl font-bold text-white mt-0.5">{fishBatchCount} টি</div>
-            <div className="text-[10px] text-sky-400 mt-0.5">পুকুরভিত্তিক ব্যাচ</div>
+            <div className="text-[13px] text-gray-600 font-medium">সক্রিয় মাছের ব্যাচ</div>
+            <div className="text-2xl font-bold text-gray-900 mt-1">{fishBatchCount} টি</div>
+            <div className="text-[13px] font-semibold text-sky-700 mt-1">পুকুরভিত্তিক মাছ চাষ</div>
           </div>
 
+          {/* Crops */}
           <div
             onClick={() => onNavigate('operations')}
-            className="p-3 rounded-xl bg-slate-800/60 border border-slate-700/60 hover:border-emerald-500/50 cursor-pointer transition-all"
+            className="p-4 rounded-xl bg-[#F8FAFC] border border-gray-200 hover:border-[#1E5128]/60 cursor-pointer transition-all active:scale-98"
           >
-            <div className="text-[11px] text-slate-400">চলতি শস্য/ঘাস চক্র</div>
-            <div className="text-lg sm:text-2xl font-bold text-white mt-0.5">{cropCycleCount} টি</div>
-            <div className="text-[10px] text-amber-400 mt-0.5">নেপিয়ার ও ফসল</div>
+            <div className="text-[13px] text-gray-600 font-medium">চলতি শস্য ও ঘাস চক্র</div>
+            <div className="text-2xl font-bold text-gray-900 mt-1">{cropCycleCount} টি</div>
+            <div className="text-[13px] font-semibold text-amber-700 mt-1">নেপিয়ার ঘাস ও মৌসুমী ফসল</div>
           </div>
         </div>
       </div>
 
-      {/* Recent Posted Financial Transactions */}
-      <div className="p-4 rounded-2xl bg-slate-900 border border-slate-800 shadow">
-        <div className="flex items-center justify-between mb-3">
-          <h3 className="text-xs sm:text-sm font-bold text-slate-200 flex items-center gap-1.5">
-            <Clock className="w-4 h-4 text-slate-400" />
-            <span>সাম্প্রতিক জাবেদা লেনদেন (Recent Posted Vouchers)</span>
-          </h3>
+      {/* 5. Recent Posted Financial Transactions */}
+      <div className="bg-white rounded-2xl border border-gray-200 p-4 sm:p-5 shadow-xs">
+        <div className="flex items-center justify-between mb-3.5 pb-2 border-b border-gray-100">
+          <div className="flex items-center gap-2">
+            <Clock className="w-5 h-5 text-gray-500" />
+            <h3 className="text-[16px] sm:text-[17px] font-bold text-gray-900">
+              সাম্প্রতিক জাবেদা লেনদেন
+            </h3>
+          </div>
           <button
             onClick={() => onNavigate('accounting')}
-            className="text-[11px] text-emerald-400 hover:underline font-medium"
+            className="text-[14px] text-[#1E5128] hover:underline font-bold cursor-pointer py-1 px-2"
           >
             সকল জাবেদা →
           </button>
         </div>
 
         {recentTransactions.length === 0 ? (
-          <div className="p-6 text-center text-slate-500 text-xs">
+          <div className="p-8 text-center text-gray-500 text-[14px]">
             এখনও কোন আর্থিক লেনদেন লিপিবদ্ধ করা হয়নি। "নতুন ভাউচার" দিয়ে শুরু করুন।
           </div>
         ) : (
-          <div className="space-y-2">
+          <div className="space-y-2.5">
             {recentTransactions.map((tx) => (
               <div
                 key={tx.id}
-                className="flex items-center justify-between p-2.5 rounded-xl bg-slate-800/40 border border-slate-800 hover:bg-slate-800/70 transition-colors text-xs"
+                onClick={() => onNavigate('accounting')}
+                className="flex flex-col sm:flex-row sm:items-center justify-between p-3.5 rounded-xl bg-[#F8FAFC] border border-gray-200 hover:border-gray-300 hover:bg-gray-50/80 transition-all cursor-pointer gap-2"
               >
-                <div className="min-w-0 pr-2">
-                  <div className="flex items-center gap-2">
-                    <span className="font-mono text-emerald-400 font-semibold">{tx.voucherNumber}</span>
-                    <span className="text-[10px] px-1.5 py-0.2 rounded bg-slate-800 text-slate-300">
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="font-mono text-[#1E5128] font-bold text-[14px]">
+                      {tx.voucherNumber}
+                    </span>
+                    <span className="text-[12px] font-semibold px-2 py-0.5 rounded-md bg-white border border-gray-200 text-gray-700">
                       {tx.voucherType}
                     </span>
-                    <span className="text-slate-400 text-[10px]">{tx.date}</span>
+                    <span className="text-gray-500 text-[13px]">{tx.date}</span>
                   </div>
-                  <p className="text-slate-300 truncate mt-0.5">{tx.narration || 'কোন বিবরণ নেই'}</p>
+                  <p className="text-gray-800 text-[14px] truncate mt-1">
+                    {tx.narration || 'কোন বিবরণ নেই'}
+                  </p>
                 </div>
-                <div className="text-right shrink-0">
-                  <div className="font-semibold text-white">{fmtMoney(tx.totalDebit)}</div>
-                  <div className="text-[10px] text-slate-500">ডেবিট = ক্রেডিট</div>
+                <div className="text-left sm:text-right shrink-0 pt-1 sm:pt-0 border-t sm:border-t-0 border-gray-200/50">
+                  <div className="font-bold text-[16px] text-gray-900">
+                    {fmtMoney(tx.totalDebit)}
+                  </div>
+                  <div className="text-[12px] text-gray-500 font-medium">ডেবিট = ক্রেডিট</div>
                 </div>
               </div>
             ))}

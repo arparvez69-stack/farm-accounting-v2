@@ -22,7 +22,7 @@ import { db } from '../db/indexedDb';
 import { DEFAULT_CHART_OF_ACCOUNTS } from '../accounting/defaultAccounts';
 import { SyncState, SystemConfig, UserProfile } from '../types';
 
-// Fixed owner allow-list for "The Goted Farm"
+// Fixed owner allow-list for "The Goated Farm"
 export const APPROVED_OWNER_EMAILS: string[] = [
   'arparvez69@gmail.com',
   'arparvez4@gmail.com',
@@ -31,8 +31,8 @@ export const APPROVED_OWNER_EMAILS: string[] = [
 ];
 
 export const DEFAULT_SYSTEM_CONFIG: SystemConfig = {
-  ownerUid: 'the_goted_farm_owners',
-  companyName: 'The Goted Farm',
+  ownerUid: 'the_goated_farm_owners',
+  companyName: 'The Goated Farm',
   ownerEmails: APPROVED_OWNER_EMAILS,
   companyAddress: 'ঢাকা, বাংলাদেশ',
   phone: '+8801700000000',
@@ -108,17 +108,17 @@ export async function initializeLocalDatabase(): Promise<void> {
   const sysConfigs = await db.systemConfig.toArray();
   if (sysConfigs.length === 0) {
     await db.systemConfig.put(DEFAULT_SYSTEM_CONFIG);
-  } else if (sysConfigs[0].companyName !== 'The Goted Farm') {
+  } else if (sysConfigs[0].companyName !== 'The Goated Farm') {
     await db.systemConfig.put({
       ...sysConfigs[0],
-      companyName: 'The Goted Farm',
+      companyName: 'The Goated Farm',
       ownerEmails: APPROVED_OWNER_EMAILS
     });
   }
 }
 
 /**
- * Silently seed or synchronize "The Goted Farm" system configuration
+ * Silently seed or synchronize "The Goated Farm" system configuration
  */
 export async function seedSystemConfigIfNecessary(): Promise<SystemConfig> {
   const localConfig = await db.systemConfig.toArray();
@@ -126,7 +126,7 @@ export async function seedSystemConfigIfNecessary(): Promise<SystemConfig> {
 
   const targetConfig: SystemConfig = {
     ...baseConfig,
-    companyName: 'The Goted Farm',
+    companyName: 'The Goated Farm',
     ownerEmails: APPROVED_OWNER_EMAILS,
     currency: '৳'
   };
@@ -140,8 +140,8 @@ export async function seedSystemConfigIfNecessary(): Promise<SystemConfig> {
         await setDoc(doc(firestore, 'system', 'config'), targetConfig);
       } else {
         const remoteData = snap.data();
-        if (remoteData?.companyName !== 'The Goted Farm') {
-          await setDoc(doc(firestore, 'system', 'config'), { companyName: 'The Goted Farm', ownerEmails: APPROVED_OWNER_EMAILS }, { merge: true });
+        if (remoteData?.companyName !== 'The Goated Farm') {
+          await setDoc(doc(firestore, 'system', 'config'), { companyName: 'The Goated Farm', ownerEmails: APPROVED_OWNER_EMAILS }, { merge: true });
         }
       }
     } catch (e) {
@@ -153,7 +153,7 @@ export async function seedSystemConfigIfNecessary(): Promise<SystemConfig> {
 }
 
 /**
- * Single-tenant bootstrap check: The Goted Farm is always bootstrapped
+ * Single-tenant bootstrap check: The Goated Farm is always bootstrapped
  */
 export async function checkSystemBootstrap(): Promise<{ isBootstrapped: boolean; config: SystemConfig }> {
   const localConfig = await db.systemConfig.toArray();
@@ -164,7 +164,7 @@ export async function checkSystemBootstrap(): Promise<{ isBootstrapped: boolean;
 }
 
 /**
- * Resolve User Profile and Role for The Goted Farm
+ * Resolve User Profile and Role for The Goated Farm
  * All four allow-listed emails have full equal OWNER role.
  */
 export async function resolveUserRole(user: User | null): Promise<UserProfile> {

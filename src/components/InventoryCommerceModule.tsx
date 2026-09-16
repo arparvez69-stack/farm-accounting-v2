@@ -258,48 +258,48 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
   const fmt = (n: number) => `৳${Number(n || 0).toLocaleString('en-IN', { minimumFractionDigits: 0 })}`;
 
   return (
-    <div className="space-y-4 pb-20 max-w-7xl mx-auto">
+    <div className="space-y-4 pb-6 max-w-5xl mx-auto">
       {/* Header & Tabs */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 rounded-2xl bg-slate-900 border border-slate-800">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 sm:p-5 rounded-2xl bg-white border border-gray-200 shadow-xs">
         <div>
-          <h2 className="text-base sm:text-lg font-bold text-white flex items-center gap-2">
-            <Package className="w-5 h-5 text-emerald-400" />
+          <h2 className="text-lg sm:text-xl font-bold text-gray-900 flex items-center gap-2">
+            <Package className="w-5 h-5 text-[#1E5128]" />
             <span>ক্রয়-বিক্রয়, মজুদ ও পক্ষসমূহ (Commerce & Inventory)</span>
           </h2>
-          <p className="text-xs text-slate-400">
+          <p className="text-[14px] text-gray-600 mt-0.5">
             ফিড, সার, ওষুধ মজুদ, ক্রয় চালান, বিক্রয় ও দেনাদার-পাওনাদার খতিয়ান
           </p>
         </div>
 
-        <div className="flex items-center gap-1 bg-slate-800/80 p-1 rounded-xl overflow-x-auto text-xs font-medium">
+        <div className="flex items-center gap-1.5 bg-gray-100 p-1.5 rounded-xl overflow-x-auto text-[13px] font-semibold">
           <button
             onClick={() => setTab('inventory')}
-            className={`px-3 py-1.5 rounded-lg whitespace-nowrap transition-colors ${
-              tab === 'inventory' ? 'bg-emerald-600 text-white' : 'text-slate-300 hover:text-white'
+            className={`px-3.5 py-2 rounded-lg whitespace-nowrap transition-all cursor-pointer min-h-[40px] ${
+              tab === 'inventory' ? 'bg-[#1E5128] text-white shadow-xs' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200/60'
             }`}
           >
             স্টক/মজুদ (Inventory)
           </button>
           <button
             onClick={() => setTab('sales')}
-            className={`px-3 py-1.5 rounded-lg whitespace-nowrap transition-colors ${
-              tab === 'sales' ? 'bg-emerald-600 text-white' : 'text-slate-300 hover:text-white'
+            className={`px-3.5 py-2 rounded-lg whitespace-nowrap transition-all cursor-pointer min-h-[40px] ${
+              tab === 'sales' ? 'bg-[#1E5128] text-white shadow-xs' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200/60'
             }`}
           >
             বিক্রয় চালান (Sales)
           </button>
           <button
             onClick={() => setTab('purchases')}
-            className={`px-3 py-1.5 rounded-lg whitespace-nowrap transition-colors ${
-              tab === 'purchases' ? 'bg-emerald-600 text-white' : 'text-slate-300 hover:text-white'
+            className={`px-3.5 py-2 rounded-lg whitespace-nowrap transition-all cursor-pointer min-h-[40px] ${
+              tab === 'purchases' ? 'bg-[#1E5128] text-white shadow-xs' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200/60'
             }`}
           >
             ক্রয় চালান (Purchases)
           </button>
           <button
             onClick={() => setTab('parties')}
-            className={`px-3 py-1.5 rounded-lg whitespace-nowrap transition-colors ${
-              tab === 'parties' ? 'bg-emerald-600 text-white' : 'text-slate-300 hover:text-white'
+            className={`px-3.5 py-2 rounded-lg whitespace-nowrap transition-all cursor-pointer min-h-[40px] ${
+              tab === 'parties' ? 'bg-[#1E5128] text-white shadow-xs' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200/60'
             }`}
           >
             গ্রাহক ও সাপ্লায়ার (Parties)
@@ -309,61 +309,61 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
 
       {msg && (
         <div
-          className={`p-3 rounded-xl border text-xs flex items-center gap-2 ${
+          className={`p-3.5 rounded-xl border text-[14px] font-medium flex items-center gap-2.5 ${
             msg.type === 'success'
-              ? 'bg-emerald-950/70 border-emerald-800 text-emerald-300'
-              : 'bg-rose-950/70 border-rose-800 text-rose-300'
+              ? 'bg-[#F0FDF4] border-[#BBF7D0] text-[#15803D]'
+              : 'bg-red-50 border-red-200 text-red-700'
           }`}
         >
-          {msg.type === 'success' ? <FileCheck className="w-4 h-4 shrink-0" /> : <AlertTriangle className="w-4 h-4 shrink-0" />}
+          {msg.type === 'success' ? <FileCheck className="w-5 h-5 shrink-0" /> : <AlertTriangle className="w-5 h-5 shrink-0" />}
           <span>{msg.text}</span>
         </div>
       )}
 
       {/* ===================== TAB 1: INVENTORY ===================== */}
       {tab === 'inventory' && (
-        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 sm:p-6 space-y-4">
-          <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+        <div className="bg-white border border-gray-200 rounded-2xl p-4 sm:p-5 shadow-xs space-y-4">
+          <div className="flex items-center justify-between border-b border-gray-100 pb-3 flex-wrap gap-2">
             <div>
-              <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                <Package className="w-4 h-4 text-emerald-400" />
+              <h3 className="text-[16px] font-bold text-gray-900 flex items-center gap-2">
+                <Package className="w-5 h-5 text-[#1E5128]" />
                 <span>মজুদ পণ্যের তালিকা ও মূল্যায়ন ({items.length})</span>
               </h3>
-              <p className="text-xs text-slate-400">গড় ক্রয়মূল্য (Weighted Average Cost) ভিত্তিতে মূল্যায়ন</p>
+              <p className="text-[13px] text-gray-600 mt-0.5">গড় ক্রয়মূল্য (Weighted Average Cost) ভিত্তিতে মূল্যায়ন</p>
             </div>
 
             {role === 'OWNER' && (
               <button
                 onClick={() => setShowAddItem(!showAddItem)}
-                className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold shadow transition-colors flex items-center gap-1.5"
+                className="px-3.5 py-2 rounded-xl bg-[#1E5128] hover:bg-[#173F1F] text-white text-[13px] font-bold shadow-xs transition-all cursor-pointer min-h-[40px] flex items-center gap-1.5"
               >
-                <PlusCircle className="w-3.5 h-3.5" />
+                <PlusCircle className="w-4 h-4" />
                 <span>+ নতুন পণ্য</span>
               </button>
             )}
           </div>
 
           {showAddItem && (
-            <form onSubmit={handleAddItem} className="p-4 bg-slate-800/80 border border-slate-700 rounded-xl space-y-3 text-xs">
-              <div className="font-bold text-emerald-400 text-xs">নতুন আইটেম যোগ করুন</div>
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+            <form onSubmit={handleAddItem} className="p-4 bg-[#F8FAFC] border border-gray-300 rounded-xl space-y-3">
+              <div className="font-bold text-[#1E5128] text-[15px]">নতুন আইটেম যোগ করুন</div>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
                 <div>
-                  <label className="text-[10px] text-slate-400">পণ্যের নাম</label>
+                  <label className="block text-[13px] font-medium text-gray-700 mb-1">পণ্যের নাম</label>
                   <input
                     type="text"
                     required
                     placeholder="যেমন: কার্প মাছের গ্রোয়ার ফিড"
                     value={itemNameBn}
                     onChange={(e) => setItemNameBn(e.target.value)}
-                    className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-white"
+                    className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900"
                   />
                 </div>
                 <div>
-                  <label className="text-[10px] text-slate-400">ক্যাটাগরি</label>
+                  <label className="block text-[13px] font-medium text-gray-700 mb-1">ক্যাটাগরি</label>
                   <select
                     value={itemCategory}
                     onChange={(e) => setItemCategory(e.target.value as any)}
-                    className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-white"
+                    className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900"
                   >
                     <option value="FEED">ফিড/খাদ্য (Feed - 1051)</option>
                     <option value="FERTILIZER">সার (Fertilizer - 1052)</option>
@@ -374,67 +374,67 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                   </select>
                 </div>
                 <div>
-                  <label className="text-[10px] text-slate-400">একক (Unit)</label>
+                  <label className="block text-[13px] font-medium text-gray-700 mb-1">একক (Unit)</label>
                   <input
                     type="text"
                     value={itemUnit}
                     onChange={(e) => setItemUnit(e.target.value)}
                     placeholder="কেজি / লিটার / ব্যাগ"
-                    className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-white"
+                    className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900"
                   />
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
                 <div>
-                  <label className="text-[10px] text-slate-400">বর্তমান স্টক</label>
+                  <label className="block text-[13px] font-medium text-gray-700 mb-1">বর্তমান স্টক</label>
                   <input
                     type="number"
                     value={itemStock}
                     onChange={(e) => setItemStock(e.target.value)}
-                    className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-white"
+                    className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900"
                   />
                 </div>
                 <div>
-                  <label className="text-[10px] text-slate-400">গড় ক্রয়মূল্য ৳</label>
+                  <label className="block text-[13px] font-medium text-gray-700 mb-1">গড় ক্রয়মূল্য ৳</label>
                   <input
                     type="number"
                     value={itemCost}
                     onChange={(e) => setItemCost(e.target.value)}
-                    className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-white"
+                    className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900"
                   />
                 </div>
                 <div>
-                  <label className="text-[10px] text-slate-400">বিক্রয়মূল্য ৳</label>
+                  <label className="block text-[13px] font-medium text-gray-700 mb-1">বিক্রয়মূল্য ৳</label>
                   <input
                     type="number"
                     value={itemPrice}
                     onChange={(e) => setItemPrice(e.target.value)}
-                    className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-white"
+                    className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900"
                   />
                 </div>
                 <div>
-                  <label className="text-[10px] text-slate-400">রিঅর্ডার লেভেল</label>
+                  <label className="block text-[13px] font-medium text-gray-700 mb-1">রিঅর্ডার লেভেল</label>
                   <input
                     type="number"
                     value={itemReorder}
                     onChange={(e) => setItemReorder(e.target.value)}
-                    className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-white"
+                    className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900"
                   />
                 </div>
               </div>
 
-              <div className="flex justify-end gap-2">
+              <div className="flex justify-end gap-2.5 pt-1">
                 <button
                   type="button"
                   onClick={() => setShowAddItem(false)}
-                  className="px-3 py-1.5 rounded-lg bg-slate-700 text-slate-300 text-xs"
+                  className="px-4 py-2 rounded-lg bg-gray-200 text-gray-800 text-[13px] font-semibold cursor-pointer min-h-[40px]"
                 >
                   বাতিল
                 </button>
                 <button
                   type="submit"
-                  className="px-3 py-1.5 rounded-lg bg-emerald-600 text-white text-xs font-semibold"
+                  className="px-4 py-2 rounded-lg bg-[#1E5128] text-white text-[13px] font-bold cursor-pointer min-h-[40px]"
                 >
                   সংরক্ষণ করুন
                 </button>
@@ -442,38 +442,38 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
             </form>
           )}
 
-          <div className="overflow-x-auto rounded-xl border border-slate-800">
-            <table className="w-full text-left text-xs text-slate-300">
-              <thead className="bg-slate-800 text-slate-400 uppercase text-[10px]">
+          <div className="overflow-x-auto rounded-xl border border-gray-200">
+            <table className="w-full text-left text-[14px] text-gray-800">
+              <thead className="bg-[#F8FAFC] text-gray-600 font-semibold border-b border-gray-200 text-[13px]">
                 <tr>
-                  <th className="p-2.5">পণ্যের নাম</th>
-                  <th className="p-2.5">ক্যাটাগরি</th>
-                  <th className="p-2.5">বর্তমান স্টক</th>
-                  <th className="p-2.5">গড় ক্রয়মূল্য</th>
-                  <th className="p-2.5">বিক্রয় মূল্য</th>
-                  <th className="p-2.5 text-right">মোট মজুদ মূল্য (৳)</th>
-                  <th className="p-2.5">সতর্কতা</th>
+                  <th className="p-3">পণ্যের নাম</th>
+                  <th className="p-3">ক্যাটাগরি</th>
+                  <th className="p-3">বর্তমান স্টক</th>
+                  <th className="p-3">গড় ক্রয়মূল্য</th>
+                  <th className="p-3">বিক্রয় মূল্য</th>
+                  <th className="p-3 text-right">মোট মজুদ মূল্য (৳)</th>
+                  <th className="p-3">সতর্কতা</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-800 font-mono">
+              <tbody className="divide-y divide-gray-100">
                 {items.map((it) => {
                   const val = it.currentStock * it.avgCostPrice;
                   const isLow = it.currentStock <= it.reorderLevel;
                   return (
-                    <tr key={it.id} className="hover:bg-slate-800/40">
-                      <td className="p-2.5 font-sans font-medium text-white">{it.nameBn}</td>
-                      <td className="p-2.5 font-sans text-slate-400 text-[10px]">{it.category}</td>
-                      <td className="p-2.5 font-bold text-white">{it.currentStock} {it.unit}</td>
-                      <td className="p-2.5 text-slate-300">{fmt(it.avgCostPrice)}</td>
-                      <td className="p-2.5 text-emerald-400">{it.sellingPrice > 0 ? fmt(it.sellingPrice) : '-'}</td>
-                      <td className="p-2.5 text-right font-bold text-emerald-300">{fmt(val)}</td>
-                      <td className="p-2.5 font-sans">
+                    <tr key={it.id} className="hover:bg-gray-50/80">
+                      <td className="p-3 font-medium text-gray-900">{it.nameBn}</td>
+                      <td className="p-3 text-gray-600 text-[13px]">{it.category}</td>
+                      <td className="p-3 font-bold text-gray-900">{it.currentStock} {it.unit}</td>
+                      <td className="p-3 text-gray-700">{fmt(it.avgCostPrice)}</td>
+                      <td className="p-3 text-[#15803D] font-semibold">{it.sellingPrice > 0 ? fmt(it.sellingPrice) : '-'}</td>
+                      <td className="p-3 text-right font-bold text-[#1E5128]">{fmt(val)}</td>
+                      <td className="p-3">
                         {isLow ? (
-                          <span className="px-2 py-0.5 rounded-full text-[10px] bg-amber-950 text-amber-300 border border-amber-800">
+                          <span className="px-2.5 py-1 rounded-full text-xs font-semibold bg-amber-50 text-amber-800 border border-amber-200">
                             মজুদ কম!
                           </span>
                         ) : (
-                          <span className="text-[10px] text-slate-500">পর্যাপ্ত</span>
+                          <span className="text-xs font-medium text-gray-500">পর্যাপ্ত</span>
                         )}
                       </td>
                     </tr>
@@ -487,37 +487,37 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
 
       {/* ===================== TAB 2: SALES ===================== */}
       {tab === 'sales' && (
-        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 sm:p-6 space-y-4">
-          <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+        <div className="bg-white border border-gray-200 rounded-2xl p-4 sm:p-5 shadow-xs space-y-4">
+          <div className="flex items-center justify-between border-b border-gray-100 pb-3 flex-wrap gap-2">
             <div>
-              <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                <TrendingUp className="w-4 h-4 text-emerald-400" />
+              <h3 className="text-[16px] font-bold text-gray-900 flex items-center gap-2">
+                <TrendingUp className="w-5 h-5 text-[#1E5128]" />
                 <span>বিক্রয় চালান ও রাজস্ব (Sales Invoices)</span>
               </h3>
-              <p className="text-xs text-slate-400">স্বয়ংক্রিয় জাবেদা (নগদ: 1010, ব্যাংক: 1030, বাকি: 1040 AR)</p>
+              <p className="text-[13px] text-gray-600 mt-0.5">স্বয়ংক্রিয় জাবেদা (নগদ: 1010, ব্যাংক: 1030, বাকি: 1040 AR)</p>
             </div>
 
             {role === 'OWNER' && (
               <button
                 onClick={() => setShowNewSale(!showNewSale)}
-                className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold shadow transition-colors flex items-center gap-1.5"
+                className="px-3.5 py-2 rounded-xl bg-[#1E5128] hover:bg-[#173F1F] text-white text-[13px] font-bold shadow-xs transition-all cursor-pointer min-h-[40px] flex items-center gap-1.5"
               >
-                <PlusCircle className="w-3.5 h-3.5" />
+                <PlusCircle className="w-4 h-4" />
                 <span>+ নতুন বিক্রয় চালান</span>
               </button>
             )}
           </div>
 
           {showNewSale && (
-            <form onSubmit={handleCreateSale} className="p-4 bg-slate-800/80 border border-slate-700 rounded-xl space-y-3 text-xs">
-              <div className="font-bold text-emerald-400 text-xs">নতুন বিক্রয় চালান তৈরি করুন</div>
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+            <form onSubmit={handleCreateSale} className="p-4 bg-[#F8FAFC] border border-gray-300 rounded-xl space-y-3">
+              <div className="font-bold text-[#1E5128] text-[15px]">নতুন বিক্রয় চালান তৈরি করুন</div>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
                 <div>
-                  <label className="text-[10px] text-slate-400">ক্রেতা নির্বাচন</label>
+                  <label className="block text-[13px] font-medium text-gray-700 mb-1">ক্রেতা নির্বাচন</label>
                   <select
                     value={saleCustomerId}
                     onChange={(e) => setSaleCustomerId(e.target.value)}
-                    className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-white"
+                    className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900"
                   >
                     <option value="">-- ক্রেতা নির্বাচন --</option>
                     {parties.filter((p) => p.type === 'CUSTOMER').map((c) => (
@@ -527,7 +527,7 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                 </div>
 
                 <div>
-                  <label className="text-[10px] text-slate-400">বিক্রয়ের পণ্য</label>
+                  <label className="block text-[13px] font-medium text-gray-700 mb-1">বিক্রয়ের পণ্য</label>
                   <select
                     value={saleItemId}
                     onChange={(e) => {
@@ -535,7 +535,7 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                       const it = items.find((i) => i.id === e.target.value);
                       if (it && it.sellingPrice > 0) setSaleUnitPrice(it.sellingPrice.toString());
                     }}
-                    className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-white"
+                    className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900"
                   >
                     <option value="">-- পণ্য নির্বাচন --</option>
                     {items.map((it) => (
@@ -547,11 +547,11 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                 </div>
 
                 <div>
-                  <label className="text-[10px] text-slate-400">পরিশোধের মাধ্যম</label>
+                  <label className="block text-[13px] font-medium text-gray-700 mb-1">পরিশোধের মাধ্যম</label>
                   <select
                     value={salePaymentMethod}
                     onChange={(e) => setSalePaymentMethod(e.target.value as any)}
-                    className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-white"
+                    className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900"
                   >
                     <option value="CASH">নগদ (Cash - 1010)</option>
                     <option value="BANK">ব্যাংক স্থানান্তর (Bank - 1030)</option>
@@ -560,39 +560,39 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                 <div>
-                  <label className="text-[10px] text-slate-400">পরিমাণ</label>
+                  <label className="block text-[13px] font-medium text-gray-700 mb-1">পরিমাণ</label>
                   <input
                     type="number"
                     value={saleQty}
                     onChange={(e) => setSaleQty(e.target.value)}
-                    className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-white"
+                    className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900"
                   />
                 </div>
                 <div>
-                  <label className="text-[10px] text-slate-400">একক দর ৳</label>
+                  <label className="block text-[13px] font-medium text-gray-700 mb-1">একক দর ৳</label>
                   <input
                     type="number"
                     placeholder="৳"
                     value={saleUnitPrice}
                     onChange={(e) => setSaleUnitPrice(e.target.value)}
-                    className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-white"
+                    className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900"
                   />
                 </div>
               </div>
 
-              <div className="flex justify-end gap-2">
+              <div className="flex justify-end gap-2.5 pt-1">
                 <button
                   type="button"
                   onClick={() => setShowNewSale(false)}
-                  className="px-3 py-1.5 rounded-lg bg-slate-700 text-slate-300 text-xs"
+                  className="px-4 py-2 rounded-lg bg-gray-200 text-gray-800 text-[13px] font-semibold cursor-pointer min-h-[40px]"
                 >
                   বাতিল
                 </button>
                 <button
                   type="submit"
-                  className="px-3 py-1.5 rounded-lg bg-emerald-600 text-white text-xs font-semibold"
+                  className="px-4 py-2 rounded-lg bg-[#1E5128] text-white text-[13px] font-bold cursor-pointer min-h-[40px]"
                 >
                   চালান পোস্ট করুন
                 </button>
@@ -600,44 +600,44 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
             </form>
           )}
 
-          <div className="overflow-x-auto rounded-xl border border-slate-800">
-            <table className="w-full text-left text-xs text-slate-300">
-              <thead className="bg-slate-800 text-slate-400 uppercase text-[10px]">
+          <div className="overflow-x-auto rounded-xl border border-gray-200">
+            <table className="w-full text-left text-[14px] text-gray-800">
+              <thead className="bg-[#F8FAFC] text-gray-600 font-semibold border-b border-gray-200 text-[13px]">
                 <tr>
-                  <th className="p-2.5">চালান নং</th>
-                  <th className="p-2.5">তারিখ</th>
-                  <th className="p-2.5">ক্রেতা</th>
-                  <th className="p-2.5">পণ্যসমূহ</th>
-                  <th className="p-2.5">মোট মূল্য</th>
-                  <th className="p-2.5">পরিশোধ মাধ্যম</th>
-                  <th className="p-2.5">স্থিতি</th>
+                  <th className="p-3">চালান নং</th>
+                  <th className="p-3">তারিখ</th>
+                  <th className="p-3">ক্রেতা</th>
+                  <th className="p-3">পণ্যসমূহ</th>
+                  <th className="p-3">মোট মূল্য</th>
+                  <th className="p-3">পরিশোধ মাধ্যম</th>
+                  <th className="p-3">স্থিতি</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-800 font-mono">
+              <tbody className="divide-y divide-gray-100">
                 {sales.length === 0 ? (
                   <tr>
-                    <td colSpan={7} className="p-6 text-center text-slate-500 font-sans text-xs">
+                    <td colSpan={7} className="p-8 text-center text-gray-500 text-[14px]">
                       এখনো কোনো বিক্রয় চালান ইস্যু করা হয়নি।
                     </td>
                   </tr>
                 ) : (
                   sales.map((s) => (
-                    <tr key={s.id} className="hover:bg-slate-800/40">
-                      <td className="p-2.5 font-bold text-emerald-400">{s.invoiceNumber}</td>
-                      <td className="p-2.5 text-slate-400">{s.date}</td>
-                      <td className="p-2.5 font-sans font-medium text-white">{s.customerName}</td>
-                      <td className="p-2.5 font-sans">
+                    <tr key={s.id} className="hover:bg-gray-50/80">
+                      <td className="p-3 font-bold text-[#1E5128] font-mono">{s.invoiceNumber}</td>
+                      <td className="p-3 text-gray-600">{s.date}</td>
+                      <td className="p-3 font-semibold text-gray-900">{s.customerName}</td>
+                      <td className="p-3">
                         {s.items.map((i, idx) => (
-                          <div key={idx} className="text-slate-300">
+                          <div key={idx} className="text-gray-700 text-[13px]">
                             {i.itemName} ({i.quantity} × {fmt(i.unitPrice || 0)})
                           </div>
                         ))}
                       </td>
-                      <td className="p-2.5 text-emerald-300 font-bold">{fmt(s.totalAmount || s.grandTotal || 0)}</td>
-                      <td className="p-2.5 font-sans text-[11px]">{s.paymentMethod}</td>
-                      <td className="p-2.5 font-sans">
-                        <span className={`px-2 py-0.5 rounded-full text-[10px] ${
-                          s.status === 'PAID' ? 'bg-emerald-950 text-emerald-400' : 'bg-amber-950 text-amber-300'
+                      <td className="p-3 text-[#15803D] font-bold font-mono">{fmt(s.totalAmount || s.grandTotal || 0)}</td>
+                      <td className="p-3 text-gray-700 text-[13px]">{s.paymentMethod}</td>
+                      <td className="p-3">
+                        <span className={`px-2.5 py-1 rounded-full text-xs font-semibold ${
+                          s.status === 'PAID' ? 'bg-[#F0FDF4] text-[#15803D] border border-[#BBF7D0]' : 'bg-amber-50 text-amber-800 border border-amber-200'
                         }`}>
                           {s.status === 'PAID' ? 'পরিশোধিত' : 'বাকি (DUE)'}
                         </span>
@@ -653,37 +653,37 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
 
       {/* ===================== TAB 3: PURCHASES ===================== */}
       {tab === 'purchases' && (
-        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 sm:p-6 space-y-4">
-          <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+        <div className="bg-white border border-gray-200 rounded-2xl p-4 sm:p-5 shadow-xs space-y-4">
+          <div className="flex items-center justify-between border-b border-gray-100 pb-3 flex-wrap gap-2">
             <div>
-              <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                <ShoppingCart className="w-4 h-4 text-sky-400" />
+              <h3 className="text-[16px] font-bold text-gray-900 flex items-center gap-2">
+                <ShoppingCart className="w-5 h-5 text-sky-600" />
                 <span>ক্রয় চালান ও সরবরাহকারী খরচ (Purchase Invoices)</span>
               </h3>
-              <p className="text-xs text-slate-400">ফিড ক্রয়: Dr 1051, নগদ: Cr 1010, ব্যাংক: Cr 1030, বাকি: Cr 2010 AP</p>
+              <p className="text-[13px] text-gray-600 mt-0.5">ফিড ক্রয়: Dr 1051, নগদ: Cr 1010, ব্যাংক: Cr 1030, বাকি: Cr 2010 AP</p>
             </div>
 
             {role === 'OWNER' && (
               <button
                 onClick={() => setShowNewPurchase(!showNewPurchase)}
-                className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold shadow transition-colors flex items-center gap-1.5"
+                className="px-3.5 py-2 rounded-xl bg-[#1E5128] hover:bg-[#173F1F] text-white text-[13px] font-bold shadow-xs transition-all cursor-pointer min-h-[40px] flex items-center gap-1.5"
               >
-                <PlusCircle className="w-3.5 h-3.5" />
+                <PlusCircle className="w-4 h-4" />
                 <span>+ নতুন ক্রয় চালান</span>
               </button>
             )}
           </div>
 
           {showNewPurchase && (
-            <form onSubmit={handleCreatePurchase} className="p-4 bg-slate-800/80 border border-slate-700 rounded-xl space-y-3 text-xs">
-              <div className="font-bold text-emerald-400 text-xs">নতুন ক্রয় চালান লিপিবদ্ধ করুন</div>
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+            <form onSubmit={handleCreatePurchase} className="p-4 bg-[#F8FAFC] border border-gray-300 rounded-xl space-y-3">
+              <div className="font-bold text-[#1E5128] text-[15px]">নতুন ক্রয় চালান লিপিবদ্ধ করুন</div>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
                 <div>
-                  <label className="text-[10px] text-slate-400">সরবরাহকারী নির্বাচন</label>
+                  <label className="block text-[13px] font-medium text-gray-700 mb-1">সরবরাহকারী নির্বাচন</label>
                   <select
                     value={purchSupplierId}
                     onChange={(e) => setPurchSupplierId(e.target.value)}
-                    className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-white"
+                    className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900"
                   >
                     <option value="">-- সরবরাহকারী নির্বাচন --</option>
                     {parties.filter((p) => p.type === 'SUPPLIER').map((s) => (
@@ -693,7 +693,7 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                 </div>
 
                 <div>
-                  <label className="text-[10px] text-slate-400">ক্রয়কৃত আইটেম</label>
+                  <label className="block text-[13px] font-medium text-gray-700 mb-1">ক্রয়কৃত আইটেম</label>
                   <select
                     value={purchItemId}
                     onChange={(e) => {
@@ -701,7 +701,7 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                       const it = items.find((i) => i.id === e.target.value);
                       if (it) setPurchUnitPrice(it.avgCostPrice.toString());
                     }}
-                    className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-white"
+                    className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900"
                   >
                     <option value="">-- পণ্য নির্বাচন --</option>
                     {items.map((it) => (
@@ -713,11 +713,11 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                 </div>
 
                 <div>
-                  <label className="text-[10px] text-slate-400">পরিশোধের মাধ্যম</label>
+                  <label className="block text-[13px] font-medium text-gray-700 mb-1">পরিশোধের মাধ্যম</label>
                   <select
                     value={purchPaymentMethod}
                     onChange={(e) => setPurchPaymentMethod(e.target.value as any)}
-                    className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-white"
+                    className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900"
                   >
                     <option value="CASH">নগদ (Cash - 1010)</option>
                     <option value="BANK">ব্যাংক স্থানান্তর (Bank - 1030)</option>
@@ -726,49 +726,49 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
                 <div>
-                  <label className="text-[10px] text-slate-400">পরিমাণ</label>
+                  <label className="block text-[13px] font-medium text-gray-700 mb-1">পরিমাণ</label>
                   <input
                     type="number"
                     value={purchQty}
                     onChange={(e) => setPurchQty(e.target.value)}
-                    className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-white"
+                    className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900"
                   />
                 </div>
                 <div>
-                  <label className="text-[10px] text-slate-400">একক ক্রয়মূল্য ৳</label>
+                  <label className="block text-[13px] font-medium text-gray-700 mb-1">একক ক্রয়মূল্য ৳</label>
                   <input
                     type="number"
                     placeholder="৳"
                     value={purchUnitPrice}
                     onChange={(e) => setPurchUnitPrice(e.target.value)}
-                    className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-white"
+                    className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900"
                   />
                 </div>
                 <div>
-                  <label className="text-[10px] text-slate-400">পরিবহন খরচ ৳ (Carriage Inward)</label>
+                  <label className="block text-[13px] font-medium text-gray-700 mb-1">পরিবহন খরচ ৳ (Carriage Inward)</label>
                   <input
                     type="number"
                     placeholder="৳"
                     value={purchTransportCost}
                     onChange={(e) => setPurchTransportCost(e.target.value)}
-                    className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-white"
+                    className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900"
                   />
                 </div>
               </div>
 
-              <div className="flex justify-end gap-2">
+              <div className="flex justify-end gap-2.5 pt-1">
                 <button
                   type="button"
                   onClick={() => setShowNewPurchase(false)}
-                  className="px-3 py-1.5 rounded-lg bg-slate-700 text-slate-300 text-xs"
+                  className="px-4 py-2 rounded-lg bg-gray-200 text-gray-800 text-[13px] font-semibold cursor-pointer min-h-[40px]"
                 >
                   বাতিল
                 </button>
                 <button
                   type="submit"
-                  className="px-3 py-1.5 rounded-lg bg-emerald-600 text-white text-xs font-semibold"
+                  className="px-4 py-2 rounded-lg bg-[#1E5128] text-white text-[13px] font-bold cursor-pointer min-h-[40px]"
                 >
                   চালান সংরক্ষণ করুন
                 </button>
@@ -776,46 +776,46 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
             </form>
           )}
 
-          <div className="overflow-x-auto rounded-xl border border-slate-800">
-            <table className="w-full text-left text-xs text-slate-300">
-              <thead className="bg-slate-800 text-slate-400 uppercase text-[10px]">
+          <div className="overflow-x-auto rounded-xl border border-gray-200">
+            <table className="w-full text-left text-[14px] text-gray-800">
+              <thead className="bg-[#F8FAFC] text-gray-600 font-semibold border-b border-gray-200 text-[13px]">
                 <tr>
-                  <th className="p-2.5">চালান নং</th>
-                  <th className="p-2.5">তারিখ</th>
-                  <th className="p-2.5">সরবরাহকারী</th>
-                  <th className="p-2.5">ক্রয়কৃত পণ্য</th>
-                  <th className="p-2.5">পরিবহন খরচ</th>
-                  <th className="p-2.5">মোট চালান মূল্য</th>
-                  <th className="p-2.5">পরিশোধ মাধ্যম</th>
-                  <th className="p-2.5">স্থিতি</th>
+                  <th className="p-3">চালান নং</th>
+                  <th className="p-3">তারিখ</th>
+                  <th className="p-3">সরবরাহকারী</th>
+                  <th className="p-3">ক্রয়কৃত পণ্য</th>
+                  <th className="p-3">পরিবহন খরচ</th>
+                  <th className="p-3">মোট চালান মূল্য</th>
+                  <th className="p-3">পরিশোধ মাধ্যম</th>
+                  <th className="p-3">স্থিতি</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-800 font-mono">
+              <tbody className="divide-y divide-gray-100">
                 {purchases.length === 0 ? (
                   <tr>
-                    <td colSpan={8} className="p-6 text-center text-slate-500 font-sans text-xs">
+                    <td colSpan={8} className="p-8 text-center text-gray-500 text-[14px]">
                       এখনো কোনো ক্রয় চালান রেকর্ড করা হয়নি।
                     </td>
                   </tr>
                 ) : (
                   purchases.map((p) => (
-                    <tr key={p.id} className="hover:bg-slate-800/40">
-                      <td className="p-2.5 font-bold text-sky-400">{p.invoiceNumber}</td>
-                      <td className="p-2.5 text-slate-400">{p.date}</td>
-                      <td className="p-2.5 font-sans font-medium text-white">{p.supplierName}</td>
-                      <td className="p-2.5 font-sans">
+                    <tr key={p.id} className="hover:bg-gray-50/80">
+                      <td className="p-3 font-bold text-sky-700 font-mono">{p.invoiceNumber}</td>
+                      <td className="p-3 text-gray-600">{p.date}</td>
+                      <td className="p-3 font-semibold text-gray-900">{p.supplierName}</td>
+                      <td className="p-3">
                         {p.items.map((i, idx) => (
-                          <div key={idx} className="text-slate-300">
+                          <div key={idx} className="text-gray-700 text-[13px]">
                             {i.itemName} ({i.quantity} × {fmt(i.unitPrice || 0)})
                           </div>
                         ))}
                       </td>
-                      <td className="p-2.5 text-amber-300">{fmt(p.transportCost || 0)}</td>
-                      <td className="p-2.5 text-rose-300 font-bold">{fmt(p.grandTotal || p.totalAmount || 0)}</td>
-                      <td className="p-2.5 font-sans text-[11px]">{p.paymentMethod}</td>
-                      <td className="p-2.5 font-sans">
-                        <span className={`px-2 py-0.5 rounded-full text-[10px] ${
-                          p.status === 'PAID' ? 'bg-emerald-950 text-emerald-400' : 'bg-amber-950 text-amber-300'
+                      <td className="p-3 text-amber-700 font-medium">{fmt(p.transportCost || 0)}</td>
+                      <td className="p-3 text-red-600 font-bold font-mono">{fmt(p.grandTotal || p.totalAmount || 0)}</td>
+                      <td className="p-3 text-gray-700 text-[13px]">{p.paymentMethod}</td>
+                      <td className="p-3">
+                        <span className={`px-2.5 py-1 rounded-full text-xs font-semibold ${
+                          p.status === 'PAID' ? 'bg-[#F0FDF4] text-[#15803D] border border-[#BBF7D0]' : 'bg-amber-50 text-amber-800 border border-amber-200'
                         }`}>
                           {p.status === 'PAID' ? 'পরিশোধিত' : 'বাকি (DUE)'}
                         </span>
@@ -831,43 +831,43 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
 
       {/* ===================== TAB 4: PARTIES (CUSTOMERS & SUPPLIERS) ===================== */}
       {tab === 'parties' && (
-        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 sm:p-6 space-y-4">
-          <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+        <div className="bg-white border border-gray-200 rounded-2xl p-4 sm:p-5 shadow-xs space-y-4">
+          <div className="flex items-center justify-between border-b border-gray-100 pb-3 flex-wrap gap-2">
             <div>
-              <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                <Users className="w-4 h-4 text-emerald-400" />
+              <h3 className="text-[16px] font-bold text-gray-900 flex items-center gap-2">
+                <Users className="w-5 h-5 text-[#1E5128]" />
                 <span>গ্রাহক ও সরবরাহকারী তালিকা (Parties Directory)</span>
               </h3>
-              <p className="text-xs text-slate-400">পাওনা ও দেনার হিসাব ট্র্যাকিং</p>
+              <p className="text-[13px] text-gray-600 mt-0.5">পাওনা ও দেনার হিসাব ট্র্যাকিং</p>
             </div>
 
             {role === 'OWNER' && (
               <button
                 onClick={() => setShowAddParty(!showAddParty)}
-                className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold shadow transition-colors flex items-center gap-1.5"
+                className="px-3.5 py-2 rounded-xl bg-[#1E5128] hover:bg-[#173F1F] text-white text-[13px] font-bold shadow-xs transition-all cursor-pointer min-h-[40px] flex items-center gap-1.5"
               >
-                <PlusCircle className="w-3.5 h-3.5" />
+                <PlusCircle className="w-4 h-4" />
                 <span>+ নতুন ব্যক্তি/প্রতিষ্ঠান</span>
               </button>
             )}
           </div>
 
           {showAddParty && (
-            <form onSubmit={handleAddParty} className="p-4 bg-slate-800/80 border border-slate-700 rounded-xl space-y-3 text-xs">
-              <div className="font-bold text-emerald-400 text-xs">নতুন পক্ষ (Party) নিবন্ধন</div>
-              <div className="grid grid-cols-1 sm:grid-cols-4 gap-2">
+            <form onSubmit={handleAddParty} className="p-4 bg-[#F8FAFC] border border-gray-300 rounded-xl space-y-3">
+              <div className="font-bold text-[#1E5128] text-[15px]">নতুন পক্ষ (Party) নিবন্ধন</div>
+              <div className="grid grid-cols-1 sm:grid-cols-4 gap-2.5">
                 <input
                   type="text"
                   required
                   placeholder="নাম/প্রতিষ্ঠান"
                   value={partyName}
                   onChange={(e) => setPartyName(e.target.value)}
-                  className="bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-white"
+                  className="bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900"
                 />
                 <select
                   value={partyType}
                   onChange={(e) => setPartyType(e.target.value as any)}
-                  className="bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-white"
+                  className="bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900"
                 >
                   <option value="CUSTOMER">ক্রেতা (Customer)</option>
                   <option value="SUPPLIER">সরবরাহকারী (Supplier)</option>
@@ -877,28 +877,28 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                   placeholder="ফোন নম্বর"
                   value={partyPhone}
                   onChange={(e) => setPartyPhone(e.target.value)}
-                  className="bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-white"
+                  className="bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900"
                 />
                 <input
                   type="text"
                   placeholder="ঠিকানা"
                   value={partyAddress}
                   onChange={(e) => setPartyAddress(e.target.value)}
-                  className="bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-white"
+                  className="bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900"
                 />
               </div>
 
-              <div className="flex justify-end gap-2">
+              <div className="flex justify-end gap-2.5 pt-1">
                 <button
                   type="button"
                   onClick={() => setShowAddParty(false)}
-                  className="px-3 py-1.5 rounded-lg bg-slate-700 text-slate-300 text-xs"
+                  className="px-4 py-2 rounded-lg bg-gray-200 text-gray-800 text-[13px] font-semibold cursor-pointer min-h-[40px]"
                 >
                   বাতিল
                 </button>
                 <button
                   type="submit"
-                  className="px-3 py-1.5 rounded-lg bg-emerald-600 text-white text-xs font-semibold"
+                  className="px-4 py-2 rounded-lg bg-[#1E5128] text-white text-[13px] font-bold cursor-pointer min-h-[40px]"
                 >
                   সংরক্ষণ করুন
                 </button>
@@ -906,30 +906,30 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
             </form>
           )}
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
             {parties.map((p) => (
               <div
                 key={p.id}
-                className="p-3.5 rounded-xl bg-slate-800/40 border border-slate-800 space-y-1.5 text-xs"
+                className="p-4 rounded-xl bg-[#F8FAFC] border border-gray-200 space-y-2 shadow-xs"
               >
                 <div className="flex items-center justify-between">
-                  <span className="font-bold text-white text-sm">{p.name}</span>
-                  <span className={`px-2 py-0.5 rounded text-[10px] font-semibold ${
-                    p.type === 'CUSTOMER' ? 'bg-sky-950 text-sky-400' : 'bg-amber-950 text-amber-400'
+                  <span className="font-bold text-gray-900 text-[15px]">{p.name}</span>
+                  <span className={`px-2.5 py-1 rounded-full text-xs font-semibold ${
+                    p.type === 'CUSTOMER' ? 'bg-sky-50 text-sky-700 border border-sky-200' : 'bg-amber-50 text-amber-800 border border-amber-200'
                   }`}>
                     {p.type === 'CUSTOMER' ? 'ক্রেতা' : 'সরবরাহকারী'}
                   </span>
                 </div>
-                <div className="text-slate-400 text-[11px] flex items-center gap-1.5">
-                  <Phone className="w-3 h-3 text-slate-500" />
+                <div className="text-gray-600 text-[13px] flex items-center gap-1.5">
+                  <Phone className="w-3.5 h-3.5 text-gray-500" />
                   <span>{p.phone || 'ফোন নেই'}</span>
                 </div>
-                <div className="text-slate-400 text-[11px] truncate">
+                <div className="text-gray-600 text-[13px] truncate">
                   {p.address || 'ঠিকানা নেই'}
                 </div>
-                <div className="pt-2 border-t border-slate-800 flex items-center justify-between font-mono">
-                  <span className="text-slate-400 text-[11px]">বর্তমান ব্যালেন্স:</span>
-                  <span className={`font-bold ${p.balance > 0 ? (p.type === 'CUSTOMER' ? 'text-sky-400' : 'text-amber-400') : 'text-slate-400'}`}>
+                <div className="pt-2 border-t border-gray-200 flex items-center justify-between font-mono">
+                  <span className="text-gray-600 text-[13px]">বর্তমান ব্যালেন্স:</span>
+                  <span className={`font-bold text-[14px] ${p.balance > 0 ? (p.type === 'CUSTOMER' ? 'text-sky-700' : 'text-amber-700') : 'text-gray-600'}`}>
                     {fmt(p.balance)}
                   </span>
                 </div>
