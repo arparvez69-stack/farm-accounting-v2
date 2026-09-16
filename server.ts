@@ -20,6 +20,20 @@ export const APPROVED_OWNER_EMAILS: string[] = [
   'atikurrahman00021@gmail.com'
 ];
 
+// Master Secret PIN for The Goted Farm
+const MASTER_SECRET_PIN = process.env.MASTER_SECRET_PIN || '111069';
+
+// In-memory record of access events for dashboard & audit
+interface AccessLogRecord {
+  id: string;
+  email: string;
+  timestamp: string;
+  ip?: string;
+  userAgent?: string;
+  status: 'SUCCESS' | 'FAILED';
+}
+const serverAccessLogs: AccessLogRecord[] = [];
+
 // Initialize Firebase Admin SDK
 let adminInitialized = false;
 try {
@@ -256,12 +270,9 @@ app.post('/api/request-login-code', async (req, res) => {
     // Send email
     const emailSent = await sendOtpEmail(email, code);
 
-    const isDev = process.env.NODE_ENV !== 'production';
     return res.json({
       success: true,
-      message: 'যাচাইকরণ কোড সফলভাবে পাঠানো হয়েছে। অনুগ্রহ করে আপনার ইমেইল চেক করুন।',
-      // In development mode, provide the code directly if no email provider is configured
-      ...(isDev && !emailSent ? { devCode: code } : {})
+      message: 'যাচাইকরণ কোড সফলভাবে পাঠানো হয়েছে। অনুগ্রহ করে আপনার ইমেইল চেক করুন।'
     });
   } catch (err: any) {
     console.error('[The Goted Farm] request-login-code error:', err);
@@ -271,6 +282,7 @@ app.post('/api/request-login-code', async (req, res) => {
 
 // ==========================================
 // API Route 2: POST /api/verify-login-code
+// Supports Secret PIN (111069) directly or OTP
 // ==========================================
 app.post('/api/verify-login-code', async (req, res) => {
   try {
@@ -278,55 +290,56 @@ app.post('/api/verify-login-code', async (req, res) => {
     const rawCode = req.body?.code;
 
     if (!rawEmail || !rawCode || typeof rawEmail !== 'string' || typeof rawCode !== 'string') {
-      return res.status(400).json({ error: 'ইমেইল এবং ৬ ডিজিটের কোড উভয়ই আবশ্যক।' });
+      return res.status(400).json({ error: 'ইমেইল এবং গোপন পিন/কোড উভয়ই আবশ্যক।' });
     }
 
     const email = rawEmail.trim().toLowerCase();
     const code = rawCode.trim();
     const now = Date.now();
+    const ip = req.headers['x-forwarded-for']?.toString() || req.socket.remoteAddress || 'unknown';
+    const userAgent = req.headers['user-agent'] || 'unknown';
 
-    // Check allow-list
-    if (!APPROVED_OWNER_EMAILS.includes(email)) {
-      return res.status(400).json({ error: 'অবৈধ কোড বা অননুমোদিত ইমেইল।' });
-    }
+    // 1. Verify Secret Master PIN (Default: 111069)
+    let isMasterPinValid = code === MASTER_SECRET_PIN;
 
+    // 2. Also check dynamic OTP if applicable
+    let isOtpValid = false;
     const record = otpStore.get(email);
-    if (!record || !record.hash || record.expiresAt < now) {
-      return res.status(400).json({
-        error: 'কোডের মেয়াদ শেষ হয়েছে বা কোনো সক্রিয় অনুরোধ নেই। অনুগ্রহ করে নতুন কোড অনুরোধ করুন।'
-      });
+    if (record && record.hash && record.expiresAt >= now && record.lockedUntil <= now) {
+      const inputHash = crypto.createHash('sha256').update(code).digest('hex');
+      isOtpValid = crypto.timingSafeEqual(Buffer.from(inputHash), Buffer.from(record.hash));
     }
 
-    // Check lock out
-    if (record.lockedUntil > now) {
-      const waitMin = Math.ceil((record.lockedUntil - now) / (60 * 1000));
-      return res.status(429).json({
-        error: `অতিরিক্ত ভুল চেষ্টার কারণে সাময়িকভাবে লক করা হয়েছে। অনুগ্রহ করে ${waitMin} মিনিট পর চেষ্টা করুন।`
-      });
-    }
+    const isValid = isMasterPinValid || isOtpValid;
 
-    // Compare hash securely
-    const inputHash = crypto.createHash('sha256').update(code).digest('hex');
-    const isValid = crypto.timingSafeEqual(Buffer.from(inputHash), Buffer.from(record.hash));
+    // Record access attempt in server memory log
+    serverAccessLogs.unshift({
+      id: 'acc_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7),
+      email: email,
+      timestamp: new Date().toISOString(),
+      ip: ip,
+      userAgent: userAgent,
+      status: isValid ? 'SUCCESS' : 'FAILED'
+    });
+    // Keep max 200 logs
+    if (serverAccessLogs.length > 200) serverAccessLogs.pop();
 
     if (!isValid) {
-      record.attempts++;
-      if (record.attempts >= 5) {
-        record.lockedUntil = now + 15 * 60 * 1000; // 15 minutes lockout
-        return res.status(429).json({
-          error: '৫ বার ভুল কোড দেওয়ার কারণে একাউন্ট ১৫ মিনিটের জন্য লক করা হয়েছে।'
-        });
-      }
+      console.warn(`[The Goted Farm] ❌ Failed login attempt for email: ${email} with invalid PIN.`);
       return res.status(400).json({
-        error: `ভুল যাচাইকরণ কোড। আপনার বাকি চেষ্টা: ${5 - record.attempts} বার।`
+        error: 'ভুল গোপন পিন (Incorrect Secret PIN)। সঠিক পিন না দিলে অ্যাপে প্রবেশ করা যাবে না।'
       });
     }
 
-    // Success: Clear the OTP record
-    otpStore.delete(email);
+    // Success: Clear any pending OTP record
+    if (record) {
+      otpStore.delete(email);
+    }
 
-    // Deterministic UID for this owner email
-    const uid = 'goted_owner_' + crypto.createHash('sha256').update(email).digest('hex').slice(0, 20);
+    console.log(`[The Goted Farm]  Successful login for: ${email} via Secret PIN/Code`);
+
+    // Deterministic UID for this user email
+    const uid = 'goted_user_' + crypto.createHash('sha256').update(email).digest('hex').slice(0, 20);
 
     // Attempt Firebase custom token creation
     let customToken: string | null = null;
@@ -336,7 +349,7 @@ app.post('/api/verify-login-code', async (req, res) => {
           role: 'OWNER',
           email: email
         });
-        console.log(`[The Goted Farm] Custom token issued for owner: ${email}`);
+        console.log(`[The Goted Farm] Custom token issued for user: ${email}`);
       }
     } catch (tokenErr: any) {
       console.warn('[The Goted Farm] Admin customToken note:', tokenErr.message);
@@ -354,6 +367,14 @@ app.post('/api/verify-login-code', async (req, res) => {
     console.error('[The Goted Farm] verify-login-code error:', err);
     return res.status(500).json({ error: 'যাচাইকরণে সমস্যা হয়েছে। পুনরায় চেষ্টা করুন।' });
   }
+});
+
+// API Route 3: GET /api/access-logs (to see who is using/accessing the app)
+app.get('/api/access-logs', (req, res) => {
+  res.json({
+    success: true,
+    logs: serverAccessLogs
+  });
 });
 
 // Farm status endpoint

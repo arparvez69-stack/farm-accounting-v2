@@ -38,6 +38,16 @@ export interface ViewerAccount {
   status: 'active' | 'revoked';
 }
 
+export interface AppAccessLog {
+  id: string;
+  email: string;
+  timestamp: string;
+  userAgent?: string;
+  loginMethod: 'SECRET_PIN' | 'SESSION_RESTORE';
+  status: 'SUCCESS' | 'FAILED';
+  synced?: boolean;
+}
+
 export type AccountClass =
   | 'ASSET'
   | 'LIABILITY'

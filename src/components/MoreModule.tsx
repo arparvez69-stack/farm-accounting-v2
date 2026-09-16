@@ -8,11 +8,14 @@ import {
   Users,
   CheckCircle2,
   Mail,
-  Lock
+  Lock,
+  UserCheck,
+  KeyRound,
+  RefreshCw
 } from 'lucide-react';
 import { db } from '../db/indexedDb';
-import { AuditLog, FixedAsset, SystemConfig, UserRole } from '../types';
-import { APPROVED_OWNER_EMAILS } from '../services/authService';
+import { AuditLog, FixedAsset, SystemConfig, UserRole, AppAccessLog } from '../types';
+import { APPROVED_OWNER_EMAILS, getAppAccessLogs, MASTER_SECRET_PIN } from '../services/authService';
 import { generateTransactionNumber, safeInsert } from '../utils/idGenerator';
 
 interface Props {
@@ -21,11 +24,12 @@ interface Props {
   systemConfig: SystemConfig | null;
 }
 
-type MoreTab = 'audit' | 'owners' | 'assets' | 'settings';
+type MoreTab = 'audit' | 'accessLogs' | 'owners' | 'assets' | 'settings';
 
 export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig }) => {
-  const [tab, setTab] = useState<MoreTab>('audit');
+  const [tab, setTab] = useState<MoreTab>('accessLogs');
   const [logs, setLogs] = useState<AuditLog[]>([]);
+  const [accessLogs, setAccessLogs] = useState<AppAccessLog[]>([]);
   const [assets, setAssets] = useState<FixedAsset[]>([]);
   const [loading, setLoading] = useState(false);
 
@@ -44,7 +48,10 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig 
   const loadData = async () => {
     setLoading(true);
     try {
-      if (tab === 'audit') {
+      if (tab === 'accessLogs') {
+        const alList = await getAppAccessLogs();
+        setAccessLogs(alList);
+      } else if (tab === 'audit') {
         const aList = await db.auditLogs.orderBy('timestamp').reverse().limit(100).toArray();
         setLogs(aList);
       } else if (tab === 'assets') {
@@ -104,6 +111,16 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig 
 
         <div className="flex items-center gap-1 bg-slate-800/80 p-1 rounded-xl overflow-x-auto text-xs font-medium">
           <button
+            id="tab-access-logs-btn"
+            onClick={() => setTab('accessLogs')}
+            className={`px-3 py-1.5 rounded-lg whitespace-nowrap transition-colors cursor-pointer flex items-center gap-1.5 ${
+              tab === 'accessLogs' ? 'bg-emerald-600 text-white' : 'text-slate-300 hover:text-white'
+            }`}
+          >
+            <UserCheck className="w-3.5 h-3.5" />
+            <span>কে কে অ্যাপ ব্যবহার করছে (Access Log)</span>
+          </button>
+          <button
             onClick={() => setTab('audit')}
             className={`px-3 py-1.5 rounded-lg whitespace-nowrap transition-colors cursor-pointer ${
               tab === 'audit' ? 'bg-emerald-600 text-white' : 'text-slate-300 hover:text-white'
@@ -137,6 +154,100 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig 
           </button>
         </div>
       </div>
+
+      {/* ===================== TAB 0: APP ACCESS LOGS ===================== */}
+      {tab === 'accessLogs' && (
+        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 sm:p-6 space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800 pb-3">
+            <div>
+              <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                <UserCheck className="w-4 h-4 text-emerald-400" />
+                <span>অ্যাপে প্রবেশ ও ব্যবহারকারীর তালিকা (App Access & Login History)</span>
+              </h3>
+              <p className="text-xs text-slate-400">
+                কে কোন ইমেইল দিয়ে গোপন পিন ব্যবহার করে অ্যাপে প্রবেশ করেছে তার বিস্তারিত বিবরণ
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={loadData}
+                className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-medium flex items-center gap-1.5 transition cursor-pointer border border-slate-700"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
+                <span>রিফ্রেশ</span>
+              </button>
+              <span className="text-xs text-emerald-400 bg-emerald-950/80 border border-emerald-800/80 px-2.5 py-1 rounded-full font-mono">
+                মোট প্রবেশ রেকর্ড: {accessLogs.length}
+              </span>
+            </div>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs text-slate-300">
+              <thead className="bg-slate-800/60 text-slate-400 uppercase text-[10px]">
+                <tr>
+                  <th className="p-2.5">সময় (Timestamp)</th>
+                  <th className="p-2.5">ব্যবহারকারীর ইমেইল (User Email)</th>
+                  <th className="p-2.5">লগইন পদ্ধতি</th>
+                  <th className="p-2.5">অবস্থা (Status)</th>
+                  <th className="p-2.5">ডিভাইস / ব্রাউজার</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-800">
+                {accessLogs.length === 0 ? (
+                  <tr>
+                    <td colSpan={5} className="p-8 text-center text-slate-500">
+                      এখনো কোনো অ্যাক্সেস লগ নেই। নতুন কেউ পিন দিয়ে লগইন করলে এখানে প্রদর্শিত হবে।
+                    </td>
+                  </tr>
+                ) : (
+                  accessLogs.map((log) => (
+                    <tr key={log.id} className="hover:bg-slate-800/30 transition-colors">
+                      <td className="p-2.5 font-mono text-[11px] text-slate-400 whitespace-nowrap">
+                        {new Date(log.timestamp).toLocaleString('bn-BD', {
+                          year: 'numeric',
+                          month: 'short',
+                          day: 'numeric',
+                          hour: '2-digit',
+                          minute: '2-digit',
+                          second: '2-digit'
+                        })}
+                      </td>
+                      <td className="p-2.5">
+                        <div className="flex items-center gap-2">
+                          <div className="w-6 h-6 rounded-full bg-emerald-950 border border-emerald-700 flex items-center justify-center text-emerald-400 font-bold text-xs">
+                            {log.email.charAt(0).toUpperCase()}
+                          </div>
+                          <span className="font-semibold text-white font-mono">{log.email}</span>
+                        </div>
+                      </td>
+                      <td className="p-2.5">
+                        <span className="px-2 py-0.5 rounded text-[10px] font-medium bg-slate-800 text-slate-300 border border-slate-700">
+                          {log.loginMethod === 'SECRET_PIN' ? 'গোপন পিন (Secret PIN)' : 'সংরক্ষিত সেশন'}
+                        </span>
+                      </td>
+                      <td className="p-2.5">
+                        <span
+                          className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                            log.status === 'SUCCESS'
+                              ? 'bg-emerald-950 text-emerald-400 border border-emerald-800'
+                              : 'bg-rose-950 text-rose-400 border border-rose-800'
+                          }`}
+                        >
+                          {log.status === 'SUCCESS' ? 'সফল (Success)' : 'প্রত্যাখ্যাত (Denied)'}
+                        </span>
+                      </td>
+                      <td className="p-2.5 max-w-xs truncate text-slate-400 text-[11px]">
+                        {log.userAgent || 'ওয়েব ব্রাউজার'}
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
       {/* ===================== TAB 1: AUDIT TRAIL ===================== */}
       {tab === 'audit' && (
@@ -379,9 +490,9 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig 
 
           <div className="p-3.5 rounded-xl bg-slate-950/60 border border-slate-800 text-xs text-slate-400 space-y-1">
             <p className="font-semibold text-slate-300">নিরাপত্তা ও অ্যাক্সেস পলিসি:</p>
-            <p>• মুক্ত বা স্ব-নিবন্ধন সম্পূর্ণ বন্ধ। কোনো নতুন ব্যক্তি সরাসরি সাইন-আপ করতে পারবেন না।</p>
-            <p>• ফায়ারস্টোর সিকিউরিটি রুলসে সার্ভার-লেভেলে অনুমোদিত ৪টি ইমেইল ছাড়া সকল রিড ও রাইট ব্লক করা।</p>
-            <p>• পাসওয়ার্ডহীন ৬-ডিজিটের ওটিপি (Email OTP) ভিত্তিক প্রমাণীকরণ।</p>
+            <p>• ব্যবহারকারীকে তার ইমেইল প্রদান করতে হবে এবং মাস্টার সিক্রেট পিন দিয়ে প্রবেশ করতে হবে।</p>
+            <p>• প্রতিটি লগইন ও অ্যাক্সেস প্রচেষ্টা অডিট লগে রেকর্ড থাকে, যা উপরের "কে কে অ্যাপ ব্যবহার করছে" ট্যাবে দেখা যাবে।</p>
+            <p>• সঠিক পিন (111069) ব্যতীত কেউ সিস্টেমে কোনো অবস্থাতেই প্রবেশ করতে পারবে না।</p>
           </div>
         </div>
       )}
@@ -416,7 +527,11 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig 
             </div>
             <div className="flex justify-between py-1 border-b border-slate-800">
               <span className="text-slate-400">প্রমাণীকরণ পদ্ধতি:</span>
-              <span className="font-semibold text-white">Passwordless Email OTP</span>
+              <span className="font-semibold text-white">গোপন পিন যাচাইকরণ (Secret PIN Auth)</span>
+            </div>
+            <div className="flex justify-between py-1 border-b border-slate-800">
+              <span className="text-slate-400">মাস্টার সিক্রেট পিন:</span>
+              <span className="font-mono font-bold text-emerald-400">111069</span>
             </div>
             <div className="flex justify-between py-1 border-b border-slate-800">
               <span className="text-slate-400">ইনিশিয়ালাইজেশন:</span>

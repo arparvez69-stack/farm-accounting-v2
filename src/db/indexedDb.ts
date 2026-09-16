@@ -22,7 +22,8 @@ import {
   FixedAsset,
   AuditLogEntry,
   SystemConfig,
-  ViewerAccount
+  ViewerAccount,
+  AppAccessLog
 } from '../types';
 
 export class AgroDatabase extends Dexie {
@@ -49,6 +50,7 @@ export class AgroDatabase extends Dexie {
   investors!: Table<Investor, string>;
   fixedAssets!: Table<FixedAsset, string>;
   auditLogs!: Table<AuditLogEntry, string>;
+  accessLogs!: Table<AppAccessLog, string>;
 
   get salesInvoices(): Table<Sale, string> {
     return this.sales;
@@ -88,6 +90,10 @@ export class AgroDatabase extends Dexie {
     this.version(2).stores({
       fishBatches: 'id, pondId, species, status, stockingDate, synced',
       cropCycles: 'id, plotId, cropName, status, plantingDate, synced'
+    });
+
+    this.version(3).stores({
+      accessLogs: 'id, email, timestamp, status, synced'
     });
   }
 }
