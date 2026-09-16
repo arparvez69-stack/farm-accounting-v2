@@ -62,11 +62,13 @@ export const Header: React.FC<Props> = ({
               {userProfile.email || userProfile.displayName || 'Owner'}
             </span>
             <button
+              id="btn-header-logout"
               onClick={onLogout}
-              title="লগআউট করুন (Logout)"
-              className="p-2 rounded-xl text-gray-500 hover:text-red-700 hover:bg-red-50 transition-colors cursor-pointer min-h-[44px] min-w-[44px] flex items-center justify-center active:scale-95"
+              title="এই ডিভাইস থেকে লগ আউট করুন (Log out this device)"
+              className="p-2 sm:px-3 sm:py-1.5 rounded-xl text-red-600 hover:text-red-700 hover:bg-red-50 border border-transparent hover:border-red-200 transition-colors cursor-pointer min-h-[44px] flex items-center justify-center gap-1.5 active:scale-95 text-xs font-bold"
             >
-              <LogOut className="w-4 h-4" />
+              <LogOut className="w-4 h-4 text-red-600" />
+              <span className="hidden md:inline">লগ আউট</span>
             </button>
           </div>
         </div>

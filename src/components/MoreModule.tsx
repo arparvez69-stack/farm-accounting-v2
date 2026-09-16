@@ -11,27 +11,44 @@ import {
   Lock,
   UserCheck,
   KeyRound,
-  RefreshCw
+  RefreshCw,
+  LogOut,
+  Eye,
+  EyeOff,
+  AlertCircle
 } from 'lucide-react';
 import { db } from '../db/indexedDb';
 import { AuditLog, FixedAsset, SystemConfig, UserRole, AppAccessLog } from '../types';
-import { APPROVED_OWNER_EMAILS, getAppAccessLogs, MASTER_SECRET_PIN } from '../services/authService';
+import { APPROVED_OWNER_EMAILS, getAppAccessLogs, logoutOwner } from '../services/authService';
 import { generateTransactionNumber, safeInsert } from '../utils/idGenerator';
 
 interface Props {
   role: UserRole;
   currentUserId: string;
   systemConfig: SystemConfig | null;
+  userEmail?: string;
+  onLogout?: () => void;
 }
 
-type MoreTab = 'audit' | 'accessLogs' | 'owners' | 'assets' | 'settings';
+type MoreTab = 'accessLogs' | 'changePin' | 'audit' | 'assets' | 'owners' | 'settings';
 
-export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig }) => {
+export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig, userEmail, onLogout }) => {
   const [tab, setTab] = useState<MoreTab>('accessLogs');
   const [logs, setLogs] = useState<AuditLog[]>([]);
   const [accessLogs, setAccessLogs] = useState<AppAccessLog[]>([]);
   const [assets, setAssets] = useState<FixedAsset[]>([]);
   const [loading, setLoading] = useState(false);
+
+  // Change PIN state
+  const [targetEmail, setTargetEmail] = useState<string>(userEmail || APPROVED_OWNER_EMAILS[0]);
+  const [currentPin, setCurrentPin] = useState('');
+  const [newPin, setNewPin] = useState('');
+  const [confirmPin, setConfirmPin] = useState('');
+  const [showCurrentPin, setShowCurrentPin] = useState(false);
+  const [showNewPin, setShowNewPin] = useState(false);
+  const [pinLoading, setPinLoading] = useState(false);
+  const [pinError, setPinError] = useState<string | null>(null);
+  const [pinSuccess, setPinSuccess] = useState<string | null>(null);
 
   // Add Asset Modal
   const [showAddAsset, setShowAddAsset] = useState(false);
@@ -44,6 +61,66 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig 
   useEffect(() => {
     loadData();
   }, [tab]);
+
+  const handleLogoutDevice = async () => {
+    if (window.confirm('আপনি কি নিশ্চিত যে আপনি এই ডিভাইস থেকে লগ আউট করতে চান? পুনরায় প্রবেশ করতে ইমেইল ও গোপন পিন প্রয়োজন হবে।')) {
+      await logoutOwner();
+      if (onLogout) {
+        onLogout();
+      } else {
+        window.location.reload();
+      }
+    }
+  };
+
+  const handleChangePin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setPinError(null);
+    setPinSuccess(null);
+
+    const cleanCurrent = currentPin.trim();
+    const cleanNew = newPin.trim();
+    const cleanConfirm = confirmPin.trim();
+
+    if (!cleanCurrent) {
+      setPinError('বর্তমান গোপন পিন প্রদান করুন।');
+      return;
+    }
+    if (cleanNew.length < 6) {
+      setPinError('নতুন পিন কমপক্ষে ৬ ডিজিটের হতে হবে (New PIN must be 6+ digits)।');
+      return;
+    }
+    if (cleanNew !== cleanConfirm) {
+      setPinError('নতুন পিন এবং নিশ্চিতকরণ পিন মিলছে না (PINs do not match)।');
+      return;
+    }
+
+    setPinLoading(true);
+    try {
+      const res = await fetch('/api/change-pin', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: targetEmail,
+          currentPin: cleanCurrent,
+          newPin: cleanNew
+        })
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setPinSuccess('গোপন পিন সফলভাবে পরিবর্তন করা হয়েছে! আপনার পরবর্তী লগইনে এই নতুন পিনটি ব্যবহার করুন।');
+        setCurrentPin('');
+        setNewPin('');
+        setConfirmPin('');
+      } else {
+        setPinError(data.error || 'পিন পরিবর্তন ব্যর্থ হয়েছে।');
+      }
+    } catch (err: any) {
+      setPinError(err.message || 'সার্ভার যোগাযোগে ত্রুটি দেখা দিয়েছে।');
+    } finally {
+      setPinLoading(false);
+    }
+  };
 
   const loadData = async () => {
     setLoading(true);
@@ -98,15 +175,28 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig 
   return (
     <div className="space-y-4 pb-6 max-w-5xl mx-auto">
       {/* Header & Subtabs */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 sm:p-5 rounded-2xl bg-white border border-gray-200 shadow-xs">
-        <div>
-          <h2 className="text-lg sm:text-xl font-bold text-gray-900 flex items-center gap-2">
-            <ShieldCheck className="w-5 h-5 text-[#1E5128]" />
-            <span>নিরাপত্তা, স্থায়ী সম্পদ ও অডিট (System & Security)</span>
-          </h2>
-          <p className="text-[14px] text-gray-600 mt-0.5">
-            অডিট ট্রেইল, খামার মালিক তালিকা, স্থায়ী সম্পদ অবচয় ও ফার্ম সেটিংস
-          </p>
+      <div className="flex flex-col gap-3 p-4 sm:p-5 rounded-2xl bg-white border border-gray-200 shadow-xs">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div>
+            <h2 className="text-lg sm:text-xl font-bold text-gray-900 flex items-center gap-2">
+              <ShieldCheck className="w-5 h-5 text-[#1E5128]" />
+              <span>নিরাপত্তা, স্থায়ী সম্পদ ও অডিট (System & Security)</span>
+            </h2>
+            <p className="text-[14px] text-gray-600 mt-0.5">
+              অডিট ট্রেইল, খামার মালিক তালিকা, গোপন পিন পরিবর্তন ও ফার্ম সেটিংস
+            </p>
+          </div>
+
+          {/* TASK 6: Clearly labeled Log out this device button */}
+          <button
+            id="btn-logout-device-header"
+            onClick={handleLogoutDevice}
+            className="self-start sm:self-auto px-4 py-2.5 rounded-xl bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 text-[13px] font-bold flex items-center gap-2 transition-all cursor-pointer min-h-[44px] shadow-xs active:scale-95"
+            title="এই ডিভাইস থেকে লগ আউট করুন (Log out this device)"
+          >
+            <LogOut className="w-4 h-4 text-red-600 shrink-0" />
+            <span>এই ডিভাইস থেকে লগ আউট করুন / Log out this device</span>
+          </button>
         </div>
 
         <div className="flex items-center gap-1.5 bg-gray-100 p-1.5 rounded-xl overflow-x-auto text-[13px] font-semibold">
@@ -119,6 +209,16 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig 
           >
             <UserCheck className="w-4 h-4" />
             <span>কে কে অ্যাপ ব্যবহার করছে (Access Log)</span>
+          </button>
+          <button
+            id="tab-change-pin-btn"
+            onClick={() => setTab('changePin')}
+            className={`px-3.5 py-2 rounded-lg whitespace-nowrap transition-all cursor-pointer min-h-[40px] flex items-center gap-1.5 ${
+              tab === 'changePin' ? 'bg-[#1E5128] text-white shadow-xs' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200/60'
+            }`}
+          >
+            <KeyRound className="w-4 h-4" />
+            <span>পিন পরিবর্তন (Change PIN)</span>
           </button>
           <button
             onClick={() => setTab('audit')}
@@ -154,6 +254,170 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig 
           </button>
         </div>
       </div>
+
+      {/* ===================== TAB: CHANGE PIN (TASK 7) ===================== */}
+      {tab === 'changePin' && (
+        <div className="bg-white border border-gray-200 rounded-2xl p-5 sm:p-7 shadow-xs space-y-5 max-w-xl mx-auto">
+          <div className="flex items-center gap-3 border-b border-gray-100 pb-4">
+            <div className="w-12 h-12 rounded-2xl bg-[#E8F5E9] text-[#1E5128] flex items-center justify-center shrink-0">
+              <KeyRound className="w-6 h-6" />
+            </div>
+            <div>
+              <h3 className="text-lg font-bold text-gray-900">
+                গোপন পিন পরিবর্তন করুন (Change Secret PIN)
+              </h3>
+              <p className="text-[13px] text-gray-500">
+                শুধুমাত্র অনুমোদিত খামার মালিকদের জন্য (Owner-only)। নতুন পিন কমপক্ষে ৬ ডিজিটের হতে হবে।
+              </p>
+            </div>
+          </div>
+
+          {pinSuccess && (
+            <div
+              role="alert"
+              className="p-4 rounded-xl bg-emerald-50 border border-emerald-300 text-emerald-900 text-[14px] flex items-start gap-2.5 shadow-xs"
+            >
+              <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0 mt-0.5" />
+              <div className="flex-1 font-semibold">{pinSuccess}</div>
+            </div>
+          )}
+
+          {pinError && (
+            <div
+              role="alert"
+              className="p-4 rounded-xl bg-red-50 border border-red-300 text-red-900 text-[14px] flex items-start gap-2.5 shadow-xs"
+            >
+              <AlertCircle className="w-5 h-5 text-red-600 shrink-0 mt-0.5" />
+              <div className="flex-1 font-semibold">{pinError}</div>
+            </div>
+          )}
+
+          <form onSubmit={handleChangePin} className="space-y-4">
+            {/* Owner Email Selection */}
+            <div>
+              <label className="block text-[13px] font-bold text-gray-800 mb-1">
+                মালিকের ইমেইল (Owner Email)
+              </label>
+              <select
+                value={targetEmail}
+                onChange={(e) => setTargetEmail(e.target.value)}
+                disabled={pinLoading}
+                className="w-full px-3.5 py-2.5 rounded-xl bg-[#F8FAFC] border border-gray-300 focus:border-[#1E5128] focus:ring-2 focus:ring-[#1E5128]/20 text-gray-900 text-[14px] font-mono outline-none"
+              >
+                {APPROVED_OWNER_EMAILS.map((email) => (
+                  <option key={email} value={email}>
+                    {email}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Current PIN */}
+            <div>
+              <label className="block text-[13px] font-bold text-gray-800 mb-1">
+                বর্তমান গোপন পিন (Current PIN)
+              </label>
+              <div className="relative">
+                <input
+                  type={showCurrentPin ? 'text' : 'password'}
+                  inputMode="numeric"
+                  required
+                  placeholder="বর্তমান পিন দিন..."
+                  value={currentPin}
+                  onChange={(e) => {
+                    setCurrentPin(e.target.value);
+                    if (pinError) setPinError(null);
+                  }}
+                  disabled={pinLoading}
+                  className="w-full px-3.5 pr-11 py-2.5 rounded-xl bg-[#F8FAFC] border border-gray-300 focus:border-[#1E5128] focus:ring-2 focus:ring-[#1E5128]/20 text-gray-900 text-[15px] font-mono tracking-wider outline-none"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowCurrentPin(!showCurrentPin)}
+                  className="absolute inset-y-0 right-0 pr-3 flex items-center text-gray-500 hover:text-gray-800 cursor-pointer min-h-[44px] min-w-[44px] justify-center"
+                >
+                  {showCurrentPin ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+              </div>
+            </div>
+
+            {/* New PIN (6+ digits) */}
+            <div>
+              <label className="block text-[13px] font-bold text-gray-800 mb-1">
+                নতুন গোপন পিন (New PIN — 6+ digits)
+              </label>
+              <div className="relative">
+                <input
+                  type={showNewPin ? 'text' : 'password'}
+                  inputMode="numeric"
+                  minLength={6}
+                  required
+                  placeholder="নতুন ৬+ ডিজিটের পিন দিন..."
+                  value={newPin}
+                  onChange={(e) => {
+                    setNewPin(e.target.value);
+                    if (pinError) setPinError(null);
+                  }}
+                  disabled={pinLoading}
+                  className="w-full px-3.5 pr-11 py-2.5 rounded-xl bg-[#F8FAFC] border border-gray-300 focus:border-[#1E5128] focus:ring-2 focus:ring-[#1E5128]/20 text-gray-900 text-[15px] font-mono tracking-wider outline-none"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowNewPin(!showNewPin)}
+                  className="absolute inset-y-0 right-0 pr-3 flex items-center text-gray-500 hover:text-gray-800 cursor-pointer min-h-[44px] min-w-[44px] justify-center"
+                >
+                  {showNewPin ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+              </div>
+              <p className="text-[12px] text-gray-500 mt-1">
+                পিনটি অন্তত ৬ ডিজিটের হতে হবে। সার্ভারে এটি Bcrypt Cost 12 অ্যালগরিদমে হ্যাশ হিসেবে সুরক্ষিত থাকবে।
+              </p>
+            </div>
+
+            {/* Confirm New PIN */}
+            <div>
+              <label className="block text-[13px] font-bold text-gray-800 mb-1">
+                নতুন পিন নিশ্চিত করুন (Confirm New PIN)
+              </label>
+              <input
+                type="password"
+                inputMode="numeric"
+                minLength={6}
+                required
+                placeholder="নতুন পিনটি আবার লিখুন..."
+                value={confirmPin}
+                onChange={(e) => {
+                  setConfirmPin(e.target.value);
+                  if (pinError) setPinError(null);
+                }}
+                disabled={pinLoading}
+                className="w-full px-3.5 py-2.5 rounded-xl bg-[#F8FAFC] border border-gray-300 focus:border-[#1E5128] focus:ring-2 focus:ring-[#1E5128]/20 text-gray-900 text-[15px] font-mono tracking-wider outline-none"
+              />
+            </div>
+
+            {/* Submit */}
+            <div className="pt-2">
+              <button
+                type="submit"
+                disabled={pinLoading || !currentPin || !newPin || !confirmPin}
+                className="w-full py-3 px-4 rounded-xl bg-[#1E5128] hover:bg-[#173F1F] active:scale-98 disabled:opacity-50 text-white font-bold text-[14px] transition-all flex items-center justify-center gap-2 shadow-xs cursor-pointer min-h-[44px]"
+              >
+                {pinLoading ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                    <span>পরিবর্তন সংরক্ষণ করা হচ্ছে...</span>
+                  </>
+                ) : (
+                  <>
+                    <KeyRound className="w-4 h-4" />
+                    <span>পিন পরিবর্তন সম্পন্ন করুন (Update PIN)</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
 
       {/* ===================== TAB 0: APP ACCESS LOGS ===================== */}
       {tab === 'accessLogs' && (
@@ -492,7 +756,7 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig 
             <p className="font-bold text-gray-900">নিরাপত্তা ও অ্যাক্সেস পলিসি:</p>
             <p>• ব্যবহারকারীকে তার ইমেইল প্রদান করতে হবে এবং মাস্টার সিক্রেট পিন দিয়ে প্রবেশ করতে হবে।</p>
             <p>• প্রতিটি লগইন ও অ্যাক্সেস প্রচেষ্টা অডিট লগে রেকর্ড থাকে, যা উপরের "কে কে অ্যাপ ব্যবহার করছে" ট্যাবে দেখা যাবে।</p>
-            <p>• সঠিক পিন (111069) ব্যতীত কেউ সিস্টেমে কোনো অবস্থাতেই প্রবেশ করতে পারবে না।</p>
+            <p>• সঠিক এনক্রিপ্টেড পিন ব্যতীত কেউ সিস্টেমে কোনো অবস্থাতেই প্রবেশ করতে পারবে না।</p>
           </div>
         </div>
       )}
@@ -529,16 +793,31 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig 
             </div>
             <div className="flex justify-between py-2 border-b border-gray-100">
               <span className="text-gray-500">প্রমাণীকরণ পদ্ধতি:</span>
-              <span className="font-semibold text-gray-900">গোপন পিন যাচাইকরণ (Secret PIN Auth)</span>
+              <span className="font-semibold text-gray-900">সার্ভার-সাইড Bcrypt হ্যাশ যাচাইকরণ (Bcrypt Hashed PIN)</span>
             </div>
             <div className="flex justify-between py-2 border-b border-gray-100">
-              <span className="text-gray-500">মাস্টার সিক্রেট পিন:</span>
-              <span className="font-mono font-bold text-[#15803D]">111069</span>
+              <span className="text-gray-500">সিক্রেট পিন নিরাপত্তা:</span>
+              <span className="font-mono font-bold text-[#15803D]">•••••• (Bcrypt Cost 12 Secured)</span>
             </div>
             <div className="flex justify-between py-2 border-b border-gray-100">
               <span className="text-gray-500">ইনিশিয়ালাইজেশন:</span>
               <span className="font-mono text-gray-600">The Goated Farm Enterprise</span>
             </div>
+          </div>
+
+          {/* TASK 6: Prominent Logout Button in Settings */}
+          <div className="pt-3 border-t border-gray-100">
+            <button
+              id="btn-logout-device-settings"
+              onClick={handleLogoutDevice}
+              className="w-full py-3 px-4 rounded-xl bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 text-[14px] font-bold flex items-center justify-center gap-2 transition-all cursor-pointer shadow-xs active:scale-98"
+            >
+              <LogOut className="w-5 h-5 text-red-600" />
+              <span>এই ডিভাইস থেকে লগ আউট করুন / Log out this device</span>
+            </button>
+            <p className="text-[12px] text-gray-500 text-center mt-2">
+              লগ আউট করলে এই ডিভাইসে সংরক্ষিত সেশন মুছে যাবে এবং পুনরায় প্রবেশ করতে ইমেইল ও গোপন পিন প্রয়োজন হবে।
+            </p>
           </div>
         </div>
       )}

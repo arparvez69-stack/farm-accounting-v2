@@ -198,6 +198,8 @@ export default function App() {
             role={userProfile.role}
             currentUserId={userProfile.uid}
             systemConfig={systemConfig}
+            userEmail={userProfile.email}
+            onLogout={handleLogout}
           />
         )}
       </main>

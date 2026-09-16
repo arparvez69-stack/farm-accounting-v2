@@ -9,9 +9,12 @@ import {
   Lock,
   ShieldCheck,
   Eye,
-  EyeOff
+  EyeOff,
+  CheckCircle2,
+  X,
+  ArrowLeft
 } from 'lucide-react';
-import { verifyOwnerSecretPin } from '../services/authService';
+import { verifyOwnerSecretPin, APPROVED_OWNER_EMAILS } from '../services/authService';
 import { UserProfile } from '../types';
 
 interface Props {
@@ -24,6 +27,103 @@ export const LoginScreen: React.FC<Props> = ({ onLoginSuccess }) => {
   const [showPin, setShowPin] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // TASK 8: Forgot PIN state
+  const [showForgotModal, setShowForgotModal] = useState(false);
+  const [forgotStep, setForgotStep] = useState<1 | 2>(1);
+  const [forgotEmail, setForgotEmail] = useState('');
+  const [resetCode, setResetCode] = useState('');
+  const [newResetPin, setNewResetPin] = useState('');
+  const [confirmResetPin, setConfirmResetPin] = useState('');
+  const [showNewResetPin, setShowNewResetPin] = useState(false);
+  const [forgotLoading, setForgotLoading] = useState(false);
+  const [forgotError, setForgotError] = useState<string | null>(null);
+  const [forgotSuccess, setForgotSuccess] = useState<string | null>(null);
+
+  // TASK 8: Step 1 - Request code
+  const handleRequestResetCode = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const cleanEmail = forgotEmail.trim().toLowerCase();
+    if (!cleanEmail) {
+      setForgotError('অনুগ্রহ করে অনুমোদিত ইমেইল দিন।');
+      return;
+    }
+
+    setForgotLoading(true);
+    setForgotError(null);
+    setForgotSuccess(null);
+
+    try {
+      const res = await fetch('/api/request-pin-reset', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: cleanEmail })
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setForgotSuccess(data.message || 'রিসেট কোড পাঠানো হয়েছে। ইমেইল ইনবক্স চেক করুন।');
+        setForgotStep(2);
+      } else {
+        setForgotError(data.error || 'রিসেট কোড পাঠানো সম্ভব হয়নি।');
+      }
+    } catch (err: any) {
+      setForgotError(err.message || 'সার্ভার যোগাযোগে ত্রুটি দেখা দিয়েছে।');
+    } finally {
+      setForgotLoading(false);
+    }
+  };
+
+  // TASK 8: Step 2 - Confirm reset
+  const handleConfirmPinReset = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const cleanEmail = forgotEmail.trim().toLowerCase();
+    const cleanCode = resetCode.trim();
+    const cleanNewPin = newResetPin.trim();
+    const cleanConfirm = confirmResetPin.trim();
+
+    if (!cleanCode) {
+      setForgotError('৬-সংখ্যার রিসেট কোড দিন।');
+      return;
+    }
+    if (cleanNewPin.length < 6) {
+      setForgotError('নতুন পিন কমপক্ষে ৬ ডিজিটের হতে হবে (At least 6 digits)।');
+      return;
+    }
+    if (cleanNewPin !== cleanConfirm) {
+      setForgotError('নতুন পিন ও নিশ্চিতকরণ পিন মিলছে না।');
+      return;
+    }
+
+    setForgotLoading(true);
+    setForgotError(null);
+
+    try {
+      const res = await fetch('/api/confirm-pin-reset', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: cleanEmail,
+          resetCode: cleanCode,
+          newPin: cleanNewPin
+        })
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setShowForgotModal(false);
+        setForgotStep(1);
+        setEmail(cleanEmail);
+        setPin(cleanNewPin);
+        setError(null);
+        alert('আপনার গোপন পিন সফলভাবে পরিবর্তন করা হয়েছে! এখন লগইন বাটনে চাপ দিয়ে প্রবেশ করুন।');
+      } else {
+        setForgotError(data.error || 'পিন রিসেট ব্যর্থ হয়েছে। কোড ভুল বা মেয়াদোত্তীর্ণ হতে পারে।');
+      }
+    } catch (err: any) {
+      setForgotError(err.message || 'সার্ভার যোগাযোগে ত্রুটি দেখা দিয়েছে।');
+    } finally {
+      setForgotLoading(false);
+    }
+  };
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -143,12 +243,32 @@ export const LoginScreen: React.FC<Props> = ({ onLoginSuccess }) => {
 
             {/* Field 2: Master Secret PIN */}
             <div>
-              <label
-                htmlFor="secret-pin-input"
-                className="block text-[14px] font-bold text-gray-800 mb-1.5"
-              >
-                গোপন পিন (Secret Master PIN)
-              </label>
+              <div className="flex items-center justify-between mb-1.5">
+                <label
+                  htmlFor="secret-pin-input"
+                  className="block text-[14px] font-bold text-gray-800"
+                >
+                  গোপন পিন (Secret Master PIN)
+                </label>
+                {/* TASK 8: Forgot PIN Link */}
+                <button
+                  type="button"
+                  id="btn-forgot-pin"
+                  onClick={() => {
+                    setForgotEmail(email.trim() || APPROVED_OWNER_EMAILS[0]);
+                    setShowForgotModal(true);
+                    setForgotStep(1);
+                    setForgotError(null);
+                    setForgotSuccess(null);
+                    setResetCode('');
+                    setNewResetPin('');
+                    setConfirmResetPin('');
+                  }}
+                  className="text-[13px] text-[#1E5128] hover:text-[#173F1F] hover:underline font-semibold cursor-pointer"
+                >
+                  PIN ভুলে গেছেন? / Forgot PIN?
+                </button>
+              </div>
               <div className="relative">
                 <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-gray-500">
                   <KeyRound className="w-5 h-5" />
@@ -211,6 +331,222 @@ export const LoginScreen: React.FC<Props> = ({ onLoginSuccess }) => {
           </form>
         </div>
       </main>
+
+      {/* TASK 8: Forgot PIN Modal (2-Step Form) */}
+      {showForgotModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
+          <div className="bg-white rounded-3xl p-6 sm:p-7 max-w-md w-full shadow-2xl border border-gray-200 relative animate-in fade-in zoom-in duration-150">
+            <button
+              onClick={() => setShowForgotModal(false)}
+              className="absolute top-5 right-5 p-2 rounded-full text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition cursor-pointer"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            <div className="flex items-center gap-2.5 mb-4">
+              <div className="w-10 h-10 rounded-xl bg-[#E8F5E9] text-[#1E5128] flex items-center justify-center shrink-0">
+                <KeyRound className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="font-bold text-gray-900 text-lg">
+                  {forgotStep === 1 ? 'গোপন পিন পুনরুদ্ধার (Step 1 of 2)' : 'নতুন পিন নিশ্চিতকরণ (Step 2 of 2)'}
+                </h3>
+                <p className="text-[12px] text-gray-500">
+                  {forgotStep === 1
+                    ? 'ইমেইলে যাচাইকরণ কোড পাঠানো হবে (১৫ মিনিট মেয়াদ)'
+                    : 'কোড ও নতুন ৬+ ডিজিটের গোপন পিন দিন'}
+                </p>
+              </div>
+            </div>
+
+            {forgotError && (
+              <div
+                role="alert"
+                className="mb-4 p-3.5 rounded-xl bg-red-50 border border-red-200 text-red-800 text-[13px] flex items-start gap-2 shadow-xs"
+              >
+                <AlertCircle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
+                <div className="flex-1 font-semibold">{forgotError}</div>
+              </div>
+            )}
+
+            {forgotSuccess && (
+              <div
+                role="alert"
+                className="mb-4 p-3.5 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-[13px] flex items-start gap-2 shadow-xs"
+              >
+                <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+                <div className="flex-1 font-semibold">{forgotSuccess}</div>
+              </div>
+            )}
+
+            {/* Step 1: Request Code */}
+            {forgotStep === 1 && (
+              <form onSubmit={handleRequestResetCode} className="space-y-4">
+                <div>
+                  <label className="block text-[13px] font-bold text-gray-800 mb-1">
+                    অনুমোদিত মালিকের ইমেইল (Owner Email)
+                  </label>
+                  <select
+                    value={forgotEmail}
+                    onChange={(e) => setForgotEmail(e.target.value)}
+                    disabled={forgotLoading}
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-[#F8FAFC] border border-gray-300 focus:border-[#1E5128] text-gray-900 text-[14px] font-mono outline-none"
+                  >
+                    {APPROVED_OWNER_EMAILS.map((em) => (
+                      <option key={em} value={em}>
+                        {em}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="text-[12px] text-gray-500 mt-1">
+                    শুধুমাত্র ৪ জন অনুমোদিত মালিকের ইমেইলে কোড পাঠানো যাবে।
+                  </p>
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={forgotLoading || !forgotEmail}
+                  className="w-full py-3 px-4 rounded-xl bg-[#1E5128] hover:bg-[#173F1F] active:scale-98 disabled:opacity-50 text-white font-bold text-[14px] transition-all flex items-center justify-center gap-2 shadow-xs cursor-pointer min-h-[44px]"
+                >
+                  {forgotLoading ? (
+                    <>
+                      <RefreshCw className="w-4 h-4 animate-spin" />
+                      <span>কোড পাঠানো হচ্ছে...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Mail className="w-4 h-4" />
+                      <span>রিসেট কোড পাঠান (Send Reset Code)</span>
+                    </>
+                  )}
+                </button>
+              </form>
+            )}
+
+            {/* Step 2: Enter Code + New PIN */}
+            {forgotStep === 2 && (
+              <form onSubmit={handleConfirmPinReset} className="space-y-3.5">
+                <div>
+                  <label className="block text-[13px] font-bold text-gray-800 mb-1">
+                    ইমেইল ঠিকানা
+                  </label>
+                  <input
+                    type="text"
+                    disabled
+                    value={forgotEmail}
+                    className="w-full px-3.5 py-2 rounded-xl bg-gray-100 border border-gray-300 text-gray-600 font-mono text-[13px]"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[13px] font-bold text-gray-800 mb-1">
+                    ৬-সংখ্যার রিসেট কোড (6-digit Reset Code)
+                  </label>
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    maxLength={6}
+                    required
+                    placeholder="যেমন: 492815"
+                    value={resetCode}
+                    onChange={(e) => {
+                      setResetCode(e.target.value.replace(/\D/g, ''));
+                      if (forgotError) setForgotError(null);
+                    }}
+                    disabled={forgotLoading}
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-[#F8FAFC] border border-gray-300 focus:border-[#1E5128] text-gray-900 font-mono text-[16px] tracking-widest outline-none text-center"
+                  />
+                  <p className="text-[11px] text-gray-500 mt-1">
+                    কোডটির মেয়াদ ১৫ মিনিট। এটি একবারই ব্যবহারযোগ্য।
+                  </p>
+                </div>
+
+                <div>
+                  <label className="block text-[13px] font-bold text-gray-800 mb-1">
+                    নতুন গোপন পিন (New PIN — 6+ digits)
+                  </label>
+                  <div className="relative">
+                    <input
+                      type={showNewResetPin ? 'text' : 'password'}
+                      inputMode="numeric"
+                      minLength={6}
+                      required
+                      placeholder="কমপক্ষে ৬ ডিজিটের নতুন পিন..."
+                      value={newResetPin}
+                      onChange={(e) => {
+                        setNewResetPin(e.target.value);
+                        if (forgotError) setForgotError(null);
+                      }}
+                      disabled={forgotLoading}
+                      className="w-full px-3.5 pr-10 py-2.5 rounded-xl bg-[#F8FAFC] border border-gray-300 focus:border-[#1E5128] text-gray-900 font-mono text-[15px] tracking-wider outline-none"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowNewResetPin(!showNewResetPin)}
+                      className="absolute inset-y-0 right-0 pr-3 flex items-center text-gray-500 hover:text-gray-800 cursor-pointer min-h-[44px] min-w-[44px] justify-center"
+                    >
+                      {showNewResetPin ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-[13px] font-bold text-gray-800 mb-1">
+                    নতুন পিন নিশ্চিত করুন (Confirm New PIN)
+                  </label>
+                  <input
+                    type="password"
+                    inputMode="numeric"
+                    minLength={6}
+                    required
+                    placeholder="নতুন পিনটি পুনরায় লিখুন..."
+                    value={confirmResetPin}
+                    onChange={(e) => {
+                      setConfirmResetPin(e.target.value);
+                      if (forgotError) setForgotError(null);
+                    }}
+                    disabled={forgotLoading}
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-[#F8FAFC] border border-gray-300 focus:border-[#1E5128] text-gray-900 font-mono text-[15px] tracking-wider outline-none"
+                  />
+                </div>
+
+                <div className="flex gap-2 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setForgotStep(1);
+                      setForgotError(null);
+                    }}
+                    disabled={forgotLoading}
+                    className="py-2.5 px-3 rounded-xl border border-gray-300 text-gray-700 hover:bg-gray-100 font-semibold text-[13px] transition flex items-center gap-1 cursor-pointer"
+                  >
+                    <ArrowLeft className="w-4 h-4" />
+                    <span>পেছনে</span>
+                  </button>
+
+                  <button
+                    type="submit"
+                    disabled={forgotLoading || !resetCode || !newResetPin || !confirmResetPin}
+                    className="flex-1 py-2.5 px-4 rounded-xl bg-[#1E5128] hover:bg-[#173F1F] active:scale-98 disabled:opacity-50 text-white font-bold text-[14px] transition-all flex items-center justify-center gap-2 shadow-xs cursor-pointer min-h-[44px]"
+                  >
+                    {forgotLoading ? (
+                      <>
+                        <RefreshCw className="w-4 h-4 animate-spin" />
+                        <span>সংরক্ষণ হচ্ছে...</span>
+                      </>
+                    ) : (
+                      <>
+                        <CheckCircle2 className="w-4 h-4" />
+                        <span>পিন রিসেট ও সেভ করুন</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              </form>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Footer */}
       <footer className="text-center text-xs text-gray-500 py-3 font-medium">

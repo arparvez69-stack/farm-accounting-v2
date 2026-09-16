@@ -13,10 +13,15 @@ service cloud.firestore {
         ];
     }
 
-    // System configuration for "The Goted Farm"
+    // System configuration for "The Goated Farm"
     match /system/config {
       allow read, write: if isApprovedOwner();
       allow delete: if false;
+    }
+
+    // Server-only auth secrets (bcrypt hashes): Admin SDK only, never accessible by client SDK
+    match /system/authSecrets {
+      allow read, write: if false;
     }
 
     // Server-only OTP codes: never accessible by client direct queries

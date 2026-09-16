@@ -116,12 +116,31 @@
         "details": { "type": "string", "description": "JSON details or summary" }
       },
       "required": ["id", "timestamp", "userId", "role", "action", "module", "status"]
+    },
+    "authSecrets": {
+      "title": "Authentication Secrets",
+      "description": "Server-only bcrypt hashes and reset codes of owner secret PINs (Admin SDK only)",
+      "type": "object",
+      "properties": {
+        "hashes": {
+          "type": "object",
+          "description": "Map of owner emails to bcrypt hash strings"
+        },
+        "resetCodes": {
+          "type": "object",
+          "description": "Temporary 6-digit password reset codes with 15-minute expiration"
+        }
+      }
     }
   },
   "firestore": {
     "/system/config": {
       "schema": "systemConfig",
-      "description": "Global ERP settings for The Goted Farm"
+      "description": "Global ERP settings for The Goated Farm"
+    },
+    "/system/authSecrets": {
+      "schema": "authSecrets",
+      "description": "Server-only bcrypt hashes of owner PINs (Admin SDK only)"
     },
     "/accounts/{accountId}": {
       "schema": "account",

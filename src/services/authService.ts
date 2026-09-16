@@ -8,21 +8,12 @@ import { auth, resolveUserRole, seedSystemConfigIfNecessary } from '../firebase/
 import { UserProfile, AppAccessLog } from '../types';
 import { db } from '../db/indexedDb';
 
-export const MASTER_SECRET_PIN = '111069';
-
 export const APPROVED_OWNER_EMAILS = [
   'arparvez69@gmail.com',
   'arparvez4@gmail.com',
   'arparvez111@gmail.com',
   'atikurrahman00021@gmail.com'
 ] as const;
-
-export const OWNER_PINS: Record<string, string> = {
-  'arparvez69@gmail.com': MASTER_SECRET_PIN,
-  'arparvez4@gmail.com': MASTER_SECRET_PIN,
-  'arparvez111@gmail.com': MASTER_SECRET_PIN,
-  'atikurrahman00021@gmail.com': MASTER_SECRET_PIN
-};
 
 export interface VerifyPinResponse {
   success: boolean;
@@ -105,9 +96,9 @@ export async function getAppAccessLogs(): Promise<AppAccessLog[]> {
 }
 
 /**
- * Verify Email & Secret PIN (111069)
- * Checks that the secret PIN is 100% accurate.
- * If valid, creates persistent session so user won't be asked again upon reopening.
+ * Verify Email & Secret PIN via Server
+ * Login must ALWAYS go through POST /api/verify-login-code on server.ts.
+ * If that request fails or is offline, shows "Cannot verify login while offline" — no client-side check.
  */
 export async function verifyOwnerSecretPin(
   email: string,
@@ -120,17 +111,40 @@ export async function verifyOwnerSecretPin(
     return { success: false, error: 'ইমেইল এবং গোপন পিন উভয়ই আবশ্যক।' };
   }
 
-  // 1. Validate both email allow-list AND secret PIN
-  const isEmailApproved = (APPROVED_OWNER_EMAILS as readonly string[]).includes(normalized);
-  const expectedPin = OWNER_PINS[normalized] || MASTER_SECRET_PIN;
-  const isPinCorrect = Boolean(cleanPin) && (cleanPin === expectedPin || cleanPin === MASTER_SECRET_PIN);
+  // If client is offline, do not attempt fallback — reject immediately
+  if (typeof navigator !== 'undefined' && !navigator.onLine) {
+    return { success: false, error: 'Cannot verify login while offline' };
+  }
 
-  if (!isEmailApproved || !isPinCorrect) {
-    // Record failed attempt
-    await recordAccessLog(normalized, 'FAILED', 'SECRET_PIN');
+  let customToken: string | null = null;
+  let uid = `goted_owner_${normalized.replace(/[^a-zA-Z0-9]/g, '_')}`;
+
+  try {
+    // 1. Mandatory server verification (BCrypt verified on server against Firestore)
+    const res = await fetch('/api/verify-login-code', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: normalized, code: cleanPin })
+    });
+
+    const data = await res.json().catch(() => ({}));
+
+    if (!res.ok) {
+      await recordAccessLog(normalized, 'FAILED', 'SECRET_PIN');
+      return {
+        success: false,
+        error: data.error || 'অবৈধ ইমেইল অথবা গোপন পিন (Invalid email or secret PIN)!'
+      };
+    }
+
+    if (data.customToken) customToken = data.customToken;
+    if (data.uid) uid = data.uid;
+  } catch (networkErr) {
+    // If request fails or server is offline, show "Cannot verify login while offline" — NEVER fall back to a client-side check
+    console.warn('Authentication server network error:', networkErr);
     return {
       success: false,
-      error: 'অবৈধ ইমেইল অথবা গোপন পিন (Invalid email or secret PIN)!'
+      error: 'Cannot verify login while offline'
     };
   }
 
@@ -142,36 +156,10 @@ export async function verifyOwnerSecretPin(
       console.warn('Firebase persistence warning:', persistErr);
     }
 
-    // 3. Call server endpoint to verify and retrieve custom token / record server log
-    let customToken: string | null = null;
-    let uid = `goted_owner_${normalized.replace(/[^a-zA-Z0-9]/g, '_')}`;
-
-    try {
-      const res = await fetch('/api/verify-login-code', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: normalized, code: cleanPin })
-      });
-      if (res.ok) {
-        const data = await res.json();
-        if (data.customToken) customToken = data.customToken;
-        if (data.uid) uid = data.uid;
-      } else {
-        const errData = await res.json().catch(() => ({}));
-        await recordAccessLog(normalized, 'FAILED', 'SECRET_PIN');
-        return {
-          success: false,
-          error: errData.error || 'অবৈধ ইমেইল অথবা গোপন পিন (Invalid email or secret PIN)!'
-        };
-      }
-    } catch {
-      // Server offline fallback: client-side pin and email were verified
-    }
-
-    // 4. Record successful access log
+    // 3. Record successful access log
     await recordAccessLog(normalized, 'SUCCESS', 'SECRET_PIN');
 
-    // 5. Store authenticated owner session state in localStorage for persistent access
+    // 4. Store authenticated owner session state in localStorage for persistent access
     const verifiedSession = {
       uid: uid,
       email: normalized,
@@ -181,7 +169,7 @@ export async function verifyOwnerSecretPin(
     };
     localStorage.setItem('goted_owner_session', JSON.stringify(verifiedSession));
 
-    // 6. Sign in to Firebase Auth with Custom Token if available
+    // 5. Sign in to Firebase Auth with Custom Token if available
     if (customToken) {
       try {
         await signInWithCustomToken(auth, customToken);
@@ -190,14 +178,14 @@ export async function verifyOwnerSecretPin(
       }
     }
 
-    // 7. Silently ensure single-tenant system/config is seeded
+    // 6. Silently ensure single-tenant system/config is seeded
     await seedSystemConfigIfNecessary();
 
-    // 8. Resolve user profile
+    // 7. Resolve user profile
     const profile = await resolveUserRole(auth.currentUser);
     return { success: true, profile };
   } catch (err: any) {
-    console.error('Verify secret pin error:', err);
+    console.error('Session establishment error:', err);
     return {
       success: false,
       error: err.message || 'লগইন সম্পন্ন করতে সমস্যা হয়েছে। অনুগ্রহ করে আবার চেষ্টা করুন।'
