@@ -1,5 +1,5 @@
 // Service Worker for The Goated Farm (Offline-First Agro ERP)
-const CACHE_NAME = 'the-goated-farm-shell-v1';
+const CACHE_NAME = 'the-goated-farm-shell-v2';
 
 // Core app shell assets to precache on install
 const APP_SHELL_ASSETS = [
@@ -48,6 +48,18 @@ self.addEventListener('fetch', (event) => {
 
   // Never cache /api/* responses — bypass service worker and go straight to network
   if (url.pathname.startsWith('/api/')) {
+    return;
+  }
+
+  // Never intercept or cache Vite development modules, node_modules, or hot-reload assets
+  if (
+    url.pathname.startsWith('/src/') ||
+    url.pathname.startsWith('/node_modules/') ||
+    url.pathname.startsWith('/@') ||
+    url.searchParams.has('v') ||
+    url.searchParams.has('t') ||
+    url.searchParams.has('import')
+  ) {
     return;
   }
 
