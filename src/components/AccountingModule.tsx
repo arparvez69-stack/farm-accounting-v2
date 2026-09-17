@@ -13,13 +13,15 @@ import {
   Calendar,
   History,
   X,
-  Check
+  Check,
+  Search
 } from 'lucide-react';
 import { db } from '../db/indexedDb';
 import {
   generateTrialBalance,
   getGeneralLedger,
   postJournalEntry,
+  reverseJournalEntry,
   TrialBalanceRow,
   LedgerEntry,
   validateBalancedLines,
@@ -66,10 +68,16 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
   const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
   const [narration, setNarration] = useState('');
   const [reference, setReference] = useState('');
+  const [correctionOf, setCorrectionOf] = useState<string | null>(null);
+  const [correctingOriginal, setCorrectingOriginal] = useState<JournalEntry | null>(null);
   const [lines, setLines] = useState<JournalLine[]>([
     { accountId: '', accountCode: '', accountName: '', debit: 0, credit: 0, memo: '' },
     { accountId: '', accountCode: '', accountName: '', debit: 0, credit: 0, memo: '' }
   ]);
+
+  // Daybook & Reversal Modal State
+  const [searchQuery, setSearchQuery] = useState('');
+  const [reversingEntry, setReversingEntry] = useState<JournalEntry | null>(null);
 
   // General Ledger State
   const [selectedLedgerCode, setSelectedLedgerCode] = useState<string>('1010');
@@ -268,6 +276,7 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
         narration: narration.trim() || 'হিসাবরক্ষণ জাবেদা ভাউচার',
         reference: reference.trim(),
         lines,
+        correctionOf: correctionOf || undefined,
         createdBy: currentUserId,
         createdAt: new Date().toISOString()
       });
@@ -278,17 +287,26 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
         timestamp: new Date().toISOString(),
         userId: currentUserId,
         role: 'OWNER',
-        action: 'CREATE_VOUCHER',
+        action: correctionOf ? 'CREATE_CORRECTION_VOUCHER' : 'CREATE_VOUCHER',
         module: 'ACCOUNTING',
         recordId: entryId,
         status: 'SUCCESS',
-        details: `ভাউচার পোস্ট করা হয়েছে: ${voucherNum} (৳${balanceCheck.totalDebit})`
+        details: correctionOf
+          ? `সংশোধিত ভাউচার পোস্ট করা হয়েছে: ${voucherNum} (রিভার্সাল ভাউচার ID: ${correctionOf}, পরিমাণ: ৳${balanceCheck.totalDebit})`
+          : `ভাউচার পোস্ট করা হয়েছে: ${voucherNum} (৳${balanceCheck.totalDebit})`
       });
 
-      setMsg({ type: 'success', text: `ভাউচার ${voucherNum} সফলভাবে সংরক্ষিত হয়েছে!` });
+      setMsg({
+        type: 'success',
+        text: correctionOf
+          ? `সংশোধিত নতুন ভাউচার ${voucherNum} সফলভাবে সংরক্ষিত ও লিঙ্ক করা হয়েছে!`
+          : `ভাউচার ${voucherNum} সফলভাবে সংরক্ষিত হয়েছে!`
+      });
       // Reset form
       setNarration('');
       setReference('');
+      setCorrectionOf(null);
+      setCorrectingOriginal(null);
       setLines([
         { accountId: '', accountCode: '', accountName: '', debit: 0, credit: 0, memo: '' },
         { accountId: '', accountCode: '', accountName: '', debit: 0, credit: 0, memo: '' }
@@ -296,6 +314,58 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
       setSubTab('daybook');
     } catch (err: any) {
       setMsg({ type: 'error', text: err.message || 'ভাউচার সংরক্ষণ করতে ব্যর্থ হয়েছে।' });
+    }
+  };
+
+  const handleReverseAndCorrect = async (originalEntry: JournalEntry) => {
+    if (role !== 'OWNER') {
+      setMsg({ type: 'error', text: 'শুধুমাত্র অনুমোদিত মালিক ভাউচার সংশোধন বা রিভার্স করতে পারেন।' });
+      return;
+    }
+
+    if (originalEntry.reversedBy) {
+      setMsg({ type: 'error', text: `এই এন্ট্রিটি (#${originalEntry.voucherNumber}) ইতোমধ্যে সংশোধিত হয়েছে।` });
+      return;
+    }
+
+    try {
+      setLoading(true);
+      const result = await reverseJournalEntry(originalEntry.id, currentUserId);
+
+      // Reload so lists show the reversal and the "সংশোধিত" badge on original
+      await loadBaseData();
+
+      setMsg({
+        type: 'success',
+        text: `মূল এন্ট্রি #${originalEntry.voucherNumber} সফলভাবে রিভার্স করা হয়েছে (রিভার্সাল দাখিলা: #${result.reversal.voucherNumber})। এখন নিচে সঠিক তথ্য প্রদান করে সংশোধিত ভাউচারটি সংরক্ষণ করুন।`
+      });
+
+      // 4. Immediately open a blank entry form pre-filled with the same accounts/lines as the original,
+      // linked via a correctionOf field pointing back to the reversal.
+      setCorrectionOf(result.reversal.id);
+      setCorrectingOriginal(originalEntry);
+      setVoucherType(originalEntry.voucherType || 'JOURNAL');
+      setDate(new Date().toISOString().split('T')[0]);
+      setNarration(`মূল এন্ট্রি #${originalEntry.id}-এর সংশোধিত সঠিক দাখিলা`);
+      setReference(`সংশোধনী: #${result.reversal.voucherNumber}`);
+      setLines(
+        originalEntry.lines.map((l) => ({
+          accountId: l.accountId,
+          accountCode: l.accountCode,
+          accountName: l.accountName,
+          debit: l.debit,
+          credit: l.credit,
+          memo: l.memo ? `সংশোধনী: ${l.memo}` : ''
+        }))
+      );
+
+      // Open the voucher form immediately
+      setSubTab('vouchers');
+    } catch (err: any) {
+      setMsg({ type: 'error', text: err.message || 'এন্ট্রি সংশোধন করতে ব্যর্থ হয়েছে।' });
+    } finally {
+      setLoading(false);
+      setReversingEntry(null);
     }
   };
 
@@ -497,6 +567,33 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
             </div>
           </div>
 
+          {correctionOf && (
+            <div className="mb-4 p-3.5 rounded-xl bg-amber-50/90 border border-amber-300 text-amber-950 flex items-center justify-between flex-wrap gap-2 text-[13px] shadow-2xs">
+              <div className="flex items-center gap-2">
+                <History className="w-4 h-4 text-amber-700 shrink-0" />
+                <span>
+                  <strong>সংশোধিত নতুন দাখিলা (Correction Entry):</strong> মূল এন্ট্রির বিপরীতকরণ (Reversal) সম্পন্ন হয়েছে (রিভার্সাল ভাউচার ID: <code className="bg-amber-100 px-1 py-0.5 rounded font-mono text-xs">{correctionOf}</code>)। নিচে সঠিক পরিমাণ ও হিসাব তথ্য যাচাই করে নতুন এন্ট্রিটি নিশ্চিত করুন।
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setCorrectionOf(null);
+                  setCorrectingOriginal(null);
+                  setNarration('');
+                  setReference('');
+                  setLines([
+                    { accountId: '', accountCode: '', accountName: '', debit: 0, credit: 0, memo: '' },
+                    { accountId: '', accountCode: '', accountName: '', debit: 0, credit: 0, memo: '' }
+                  ]);
+                }}
+                className="text-xs text-amber-800 underline hover:text-amber-950 font-bold cursor-pointer"
+              >
+                সংশোধনী মোড বাতিল করুন
+              </button>
+            </div>
+          )}
+
           <form onSubmit={handleSubmitVoucher} className="space-y-4">
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
               <div>
@@ -651,7 +748,9 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
               disabled={role !== 'OWNER' || !balanceCheck.isBalanced || balanceCheck.totalDebit <= 0}
               className="w-full py-3.5 px-4 rounded-xl bg-[#1E5128] hover:bg-[#173F1F] disabled:bg-gray-200 disabled:text-gray-400 text-white font-bold text-[15px] transition-all cursor-pointer shadow-xs min-h-[48px] active:scale-98"
             >
-              ভাউচার নিশ্চিত ও পোস্ট করুন (Post Balanced Voucher)
+              {correctionOf
+                ? 'সংশোধিত ভাউচার নিশ্চিত ও পোস্ট করুন (Post Corrected Voucher)'
+                : 'ভাউচার নিশ্চিত ও পোস্ট করুন (Post Balanced Voucher)'}
             </button>
           </form>
         </div>
@@ -666,11 +765,58 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
               <span>লিপিবদ্ধ জাবেদা ভাউচারসমূহ ({journals.length})</span>
             </h3>
             <button
-              onClick={() => setSubTab('vouchers')}
+              onClick={() => {
+                setCorrectionOf(null);
+                setCorrectingOriginal(null);
+                setSubTab('vouchers');
+              }}
               className="text-[13px] text-[#1E5128] hover:underline font-bold cursor-pointer py-1 px-2"
             >
               + নতুন ভাউচার
             </button>
+          </div>
+
+          {/* Search Box */}
+          <div className="mb-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="relative flex-1">
+              <Search className="w-4 h-4 text-gray-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="ভাউচার নম্বর, বিবরণ, বা হিসাবের নাম দিয়ে খুঁজুন..."
+                className="w-full pl-10 pr-9 py-2 bg-[#F8FAFC] border border-gray-200 rounded-xl text-[14px] text-gray-900 focus:outline-none focus:border-[#1E5128] focus:bg-white transition-all min-h-[42px]"
+              />
+              {searchQuery && (
+                <button
+                  type="button"
+                  onClick={() => setSearchQuery('')}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 p-1"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
+            {searchQuery && (
+              <div className="text-xs text-gray-500 font-medium whitespace-nowrap">
+                ফলাফল:{' '}
+                {
+                  journals.filter((j) => {
+                    const q = searchQuery.toLowerCase().trim();
+                    return (
+                      j.voucherNumber.toLowerCase().includes(q) ||
+                      j.narration.toLowerCase().includes(q) ||
+                      j.id.toLowerCase().includes(q) ||
+                      (j.reversedBy && ('সংশোধিত'.includes(q) || 'corrected'.includes(q))) ||
+                      (j.reversalOf && ('রিভার্সাল'.includes(q) || 'reversal'.includes(q))) ||
+                      (j.correctionOf && ('নতুন সংশোধিত'.includes(q) || 'correction'.includes(q))) ||
+                      j.lines.some((l) => l.accountCode.includes(q) || l.accountName.toLowerCase().includes(q))
+                    );
+                  }).length
+                }{' '}
+                টি ভাউচার
+              </div>
+            )}
           </div>
 
           {latestClosed && (
@@ -704,46 +850,112 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
             </div>
           ) : (
             <div className="space-y-3">
-              {journals.map((j) => (
-                <div
-                  key={j.id}
-                  className="p-3.5 rounded-xl bg-[#F8FAFC] border border-gray-200 space-y-2.5 text-[14px]"
-                >
-                  <div className="flex items-center justify-between flex-wrap gap-2 border-b border-gray-200 pb-2">
-                    <div className="flex items-center gap-2">
-                      <span className="font-mono font-bold text-[#1E5128] text-[15px]">{j.voucherNumber}</span>
-                      <span className="px-2 py-0.5 rounded bg-white border border-gray-200 text-xs text-gray-700 font-semibold">
-                        {j.voucherType}
-                      </span>
-                      <span className="text-gray-500 text-[13px]">{j.date}</span>
-                    </div>
-                    <div className="font-bold text-gray-900 font-mono text-[15px]">
-                      মোট: {fmt(j.totalDebit)}
-                    </div>
-                  </div>
-
-                  <p className="text-gray-800 text-[14px]">{j.narration}</p>
-
-                  {/* Lines preview */}
-                  <div className="space-y-1.5 pt-1 text-[13px]">
-                    {j.lines.map((line, lIdx) => (
-                      <div key={lIdx} className="flex items-center justify-between text-gray-700">
-                        <span className="truncate pr-2 font-medium">
-                          {line.accountCode} - {line.accountName}
+              {journals
+                .filter((j) => {
+                  if (!searchQuery.trim()) return true;
+                  const q = searchQuery.toLowerCase().trim();
+                  return (
+                    j.voucherNumber.toLowerCase().includes(q) ||
+                    j.narration.toLowerCase().includes(q) ||
+                    j.id.toLowerCase().includes(q) ||
+                    (j.reversedBy && ('সংশোধিত'.includes(q) || 'corrected'.includes(q))) ||
+                    (j.reversalOf && ('রিভার্সাল'.includes(q) || 'reversal'.includes(q))) ||
+                    (j.correctionOf && ('নতুন সংশোধিত'.includes(q) || 'correction'.includes(q))) ||
+                    j.lines.some((l) => l.accountCode.includes(q) || l.accountName.toLowerCase().includes(q))
+                  );
+                })
+                .map((j) => (
+                  <div
+                    key={j.id}
+                    className={`p-3.5 rounded-xl border space-y-2.5 text-[14px] transition-all ${
+                      j.reversedBy
+                        ? 'bg-amber-50/30 border-amber-200'
+                        : j.reversalOf
+                        ? 'bg-blue-50/30 border-blue-200'
+                        : 'bg-[#F8FAFC] border-gray-200'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between flex-wrap gap-2 border-b border-gray-200 pb-2">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-mono font-bold text-[#1E5128] text-[15px]">{j.voucherNumber}</span>
+                        <span className="px-2 py-0.5 rounded bg-white border border-gray-200 text-xs text-gray-700 font-semibold">
+                          {j.voucherType}
                         </span>
-                        <div className="flex gap-3 shrink-0 font-bold">
-                          {line.debit > 0 && (
-                            <span className="text-[#15803D]">Dr: {fmt(line.debit)}</span>
-                          )}
-                          {line.credit > 0 && (
-                            <span className="text-sky-700">Cr: {fmt(line.credit)}</span>
-                          )}
-                        </div>
+
+                        {/* Badges */}
+                        {j.reversedBy && (
+                          <span
+                            className="px-2.5 py-0.5 rounded-full bg-amber-100 text-amber-900 border border-amber-300 text-xs font-bold flex items-center gap-1 shadow-2xs"
+                            title={`সংশোধিত এন্ট্রি (রিভার্সাল আইডি: ${j.reversedBy})`}
+                          >
+                            <span className="w-1.5 h-1.5 rounded-full bg-amber-600"></span>
+                            সংশোধিত
+                          </span>
+                        )}
+
+                        {j.reversalOf && (
+                          <span
+                            className="px-2.5 py-0.5 rounded-full bg-blue-100 text-blue-900 border border-blue-200 text-xs font-semibold flex items-center gap-1"
+                            title={`বিপরীত দাখিলা - মূল ভাউচার আইডি: ${j.reversalOf}`}
+                          >
+                            <ArrowRightLeft className="w-3 h-3 text-blue-700" />
+                            বিপরীত দাখিলা (Reversal)
+                          </span>
+                        )}
+
+                        {j.correctionOf && (
+                          <span
+                            className="px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-900 border border-emerald-300 text-xs font-semibold flex items-center gap-1"
+                            title={`সংশোধিত নতুন দাখিলা - রিভার্সাল আইডি: ${j.correctionOf}`}
+                          >
+                            <CheckCircle2 className="w-3 h-3 text-emerald-700" />
+                            নতুন সংশোধিত দাখিলা
+                          </span>
+                        )}
+
+                        <span className="text-gray-500 text-[13px]">{j.date}</span>
                       </div>
-                    ))}
+
+                      <div className="flex items-center gap-3">
+                        <div className="font-bold text-gray-900 font-mono text-[15px]">
+                          মোট: {fmt(j.totalDebit)}
+                        </div>
+                        {!j.reversedBy && role === 'OWNER' && (
+                          <button
+                            type="button"
+                            onClick={() => setReversingEntry(j)}
+                            className="px-2.5 py-1 rounded-lg bg-white hover:bg-amber-50 text-amber-900 border border-amber-300 hover:border-amber-400 text-[12px] font-bold flex items-center gap-1.5 transition-all cursor-pointer shadow-2xs active:scale-95"
+                            title="এই এন্ট্রিটি সংশোধন বা রিভার্স করুন"
+                          >
+                            <ArrowRightLeft className="w-3.5 h-3.5 text-amber-700" />
+                            <span>সংশোধন করুন</span>
+                          </button>
+                        )}
+                      </div>
+                    </div>
+
+                    <p className="text-gray-800 text-[14px]">{j.narration}</p>
+
+                    {/* Lines preview */}
+                    <div className="space-y-1.5 pt-1 text-[13px]">
+                      {j.lines.map((line, lIdx) => (
+                        <div key={lIdx} className="flex items-center justify-between text-gray-700">
+                          <span className="truncate pr-2 font-medium">
+                            {line.accountCode} - {line.accountName}
+                          </span>
+                          <div className="flex gap-3 shrink-0 font-bold">
+                            {line.debit > 0 && (
+                              <span className="text-[#15803D]">Dr: {fmt(line.debit)}</span>
+                            )}
+                            {line.credit > 0 && (
+                              <span className="text-sky-700">Cr: {fmt(line.credit)}</span>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
                   </div>
-                </div>
-              ))}
+                ))}
             </div>
           )}
         </div>
@@ -808,12 +1020,13 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
                   <th className="p-3 text-right">ডেবিট (৳)</th>
                   <th className="p-3 text-right">ক্রেডিট (৳)</th>
                   <th className="p-3 text-right">ব্যালেন্স (৳)</th>
+                  <th className="p-3 text-right">অবস্থা ও অ্যাকশন</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-200">
                 {ledgerEntries.length === 0 ? (
                   <tr>
-                    <td colSpan={6} className="p-6 text-center text-gray-500 text-[14px]">
+                    <td colSpan={7} className="p-6 text-center text-gray-500 text-[14px]">
                       এই হিসাবে এখনো কোনো লেনদেন সংঘটিত হয়নি।
                     </td>
                   </tr>
@@ -826,6 +1039,53 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
                       <td className="p-3 text-right font-semibold text-[#15803D] whitespace-nowrap">{row.debit > 0 ? fmt(row.debit) : '-'}</td>
                       <td className="p-3 text-right font-semibold text-sky-700 whitespace-nowrap">{row.credit > 0 ? fmt(row.credit) : '-'}</td>
                       <td className="p-3 text-right font-bold text-gray-900 whitespace-nowrap">{fmt(row.runningBalance)}</td>
+                      <td className="p-3 text-right whitespace-nowrap">
+                        {row.reversedBy ? (
+                          <span
+                            className="px-2.5 py-0.5 rounded-full bg-amber-100 text-amber-900 border border-amber-300 font-bold text-[11px] inline-flex items-center gap-1 shadow-2xs"
+                            title={`সংশোধিত এন্ট্রি (রিভার্সাল আইডি: ${row.reversedBy})`}
+                          >
+                            <span className="w-1.5 h-1.5 rounded-full bg-amber-600"></span>
+                            সংশোধিত
+                          </span>
+                        ) : row.reversalOf ? (
+                          <span
+                            className="px-2.5 py-0.5 rounded-full bg-blue-100 text-blue-900 border border-blue-200 font-semibold text-[11px] inline-flex items-center gap-1"
+                            title={`বিপরীত দাখিলা - মূল এন্ট্রি আইডি: ${row.reversalOf}`}
+                          >
+                            রিভার্সাল
+                          </span>
+                        ) : row.correctionOf ? (
+                          <span
+                            className="px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-900 border border-emerald-300 font-semibold text-[11px] inline-flex items-center gap-1"
+                            title={`সংশোধিত নতুন দাখিলা - রিভার্সাল আইডি: ${row.correctionOf}`}
+                          >
+                            সংশোধিত দাখিলা
+                          </span>
+                        ) : (
+                          role === 'OWNER' && (
+                            <button
+                              type="button"
+                              onClick={async () => {
+                                let entryToReverse = journals.find((j) => j.id === row.journalEntryId);
+                                if (!entryToReverse && row.journalEntryId) {
+                                  entryToReverse = await db.journalEntries.get(row.journalEntryId);
+                                }
+                                if (!entryToReverse) {
+                                  entryToReverse = await db.journalEntries.where('voucherNumber').equals(row.voucherNumber).first();
+                                }
+                                if (entryToReverse) {
+                                  setReversingEntry(entryToReverse);
+                                }
+                              }}
+                              className="px-2.5 py-1 rounded-md bg-white hover:bg-amber-50 text-amber-900 border border-amber-300 hover:border-amber-400 text-[11px] font-bold transition-all cursor-pointer shadow-2xs"
+                              title="এই এন্ট্রিটি সংশোধন করুন"
+                            >
+                              সংশোধন করুন
+                            </button>
+                          )
+                        )}
+                      </td>
                     </tr>
                   ))
                 )}
@@ -1224,6 +1484,79 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
                     <span>বছর সমাপ্তি নিশ্চিত করুন</span>
                   </>
                 )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* REVERSAL CONFIRMATION MODAL */}
+      {reversingEntry && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl max-w-lg w-full p-5 sm:p-6 shadow-xl border border-gray-200 space-y-4">
+            <div className="flex items-start justify-between gap-3 border-b border-gray-100 pb-3">
+              <div className="flex items-center gap-2.5 text-amber-700">
+                <ArrowRightLeft className="w-6 h-6 shrink-0" />
+                <h3 className="text-lg font-bold text-gray-900">ভুল এন্ট্রি সংশোধন ও বিপরীতকরণ</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setReversingEntry(null)}
+                className="text-gray-400 hover:text-gray-600 p-1 rounded-lg"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="bg-amber-50/80 border border-amber-200 rounded-xl p-3.5 text-amber-950 text-[13px] space-y-2">
+              <p className="font-semibold flex items-center gap-1.5">
+                <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
+                <span>হিসাবরক্ষণ নীতি (Never Delete, Always Traceable Reversal):</span>
+              </p>
+              <p className="text-gray-700">
+                হিসাবরক্ষণ স্বচ্ছতা বজায় রাখতে ডাটাবেজ থেকে এন্ট্রি মুছে ফেলা হয় না। আপনি সংশোধন নিশ্চিত করলে:
+              </p>
+              <ol className="list-decimal list-inside space-y-1 text-gray-700 font-medium">
+                <li>আজকের তারিখে স্বয়ংক্রিয়ভাবে একটি বিপরীত সমপরিমাণ দাখিলা (Reversal Entry) পোস্ট হবে।</li>
+                <li>মূল ভাউচারটিতে স্থায়ীভাবে <strong>"সংশোধিত"</strong> ব্যাজ দৃশ্যমান থাকবে।</li>
+                <li>এরপর সাথে সাথে একই হিসাব লাইনসমূহ প্রি-ফিল্ড অবস্থায় নতুন ভাউচার ফর্ম খুলবে, যাতে আপনি সরাসরি সঠিক তথ্য দিয়ে সংশোধিত ভাউচার পোস্ট করতে পারেন।</li>
+              </ol>
+            </div>
+
+            <div className="p-3.5 bg-gray-50 rounded-xl border border-gray-200 text-[13px] space-y-1.5 font-mono">
+              <div className="flex justify-between">
+                <span className="text-gray-500 font-sans">ভাউচার নম্বর:</span>
+                <span className="font-bold text-gray-900">{reversingEntry.voucherNumber} ({reversingEntry.voucherType})</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-500 font-sans">তারিখ:</span>
+                <span className="text-gray-800">{reversingEntry.date}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-500 font-sans">বিবরণ:</span>
+                <span className="text-gray-800 truncate max-w-xs">{reversingEntry.narration}</span>
+              </div>
+              <div className="flex justify-between pt-1 border-t border-gray-200">
+                <span className="text-gray-500 font-sans">মোট পরিমাণ:</span>
+                <span className="font-bold text-emerald-800 font-sans text-[14px]">৳{reversingEntry.totalDebit.toLocaleString('en-IN')}</span>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-gray-100">
+              <button
+                type="button"
+                onClick={() => setReversingEntry(null)}
+                className="px-4 py-2.5 rounded-xl bg-gray-100 hover:bg-gray-200 text-gray-700 text-xs font-bold transition-colors cursor-pointer"
+              >
+                বাতিল করুন
+              </button>
+              <button
+                type="button"
+                disabled={loading}
+                onClick={() => handleReverseAndCorrect(reversingEntry)}
+                className="px-5 py-2.5 rounded-xl bg-[#1E5128] hover:bg-[#173F1F] disabled:bg-gray-300 text-white text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 shadow-xs"
+              >
+                {loading ? 'প্রক্রিয়াকরণ হচ্ছে...' : 'বিপরীত দাখিলা নিশ্চিত ও সংশোধন করুন'}
               </button>
             </div>
           </div>

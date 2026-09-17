@@ -452,12 +452,14 @@ export async function runRegressionTests(): Promise<TestResult> {
     // TEST 14: Automated Fixed Asset Depreciation
     // ----------------------------------------------------
     const testAssetId = 'ast_test_depr_regression';
-    // Create an asset purchased 2 months ago
-    const twoMonthsAgo = new Date();
-    twoMonthsAgo.setMonth(twoMonthsAgo.getMonth() - 2);
+    // Clean up any lingering test asset from previous runs first
+    await db.fixedAssets.delete(testAssetId);
+
+    // Create an asset purchased 65 days ago (guaranteed 2+ full elapsed calendar months regardless of month length)
+    const twoMonthsAgo = new Date(Date.now() - 65 * 86400000);
     const twoMonthsAgoStr = twoMonthsAgo.toISOString().split('T')[0];
 
-    await safeInsert(db.fixedAssets, {
+    await db.fixedAssets.put({
       id: testAssetId,
       name: 'টেস্ট ঘাস কাটার মেশিন',
       category: 'MACHINERY',
@@ -494,8 +496,12 @@ export async function runRegressionTests(): Promise<TestResult> {
       'Trial Balance must remain balanced after automated depreciation journal entries.'
     );
 
-    // Clean up test asset
+    // Clean up test asset and its journal entries
     await db.fixedAssets.delete(testAssetId);
+    const testEntries = await db.journalEntries.filter((e) => e.reference === testAssetId).toArray();
+    if (testEntries.length > 0) {
+      await db.journalEntries.bulkDelete(testEntries.map((e) => e.id));
+    }
 
   } catch (error: any) {
     failures.push(`CRITICAL RUNTIME ERROR: ${error.message}`);

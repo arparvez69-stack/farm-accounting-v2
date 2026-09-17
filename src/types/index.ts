@@ -96,6 +96,9 @@ export interface JournalEntry {
   createdBy: string;
   createdAt: string;
   synced?: boolean;
+  reversedBy?: string;
+  reversalOf?: string;
+  correctionOf?: string;
 }
 
 export interface ClosedPeriod {

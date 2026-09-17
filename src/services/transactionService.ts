@@ -46,7 +46,8 @@ export async function executeSaleTransaction(params: {
       db.parties,
       db.cashBankAccounts,
       db.accounts,
-      db.auditLogs
+      db.auditLogs,
+      db.closedPeriods
     ],
     async () => {
       const { customer, item, quantity, unitPrice, paymentMethod, bankAccountId, currentUserId } = params;
@@ -259,7 +260,8 @@ export async function executePurchaseTransaction(params: {
       db.parties,
       db.cashBankAccounts,
       db.accounts,
-      db.auditLogs
+      db.auditLogs,
+      db.closedPeriods
     ],
     async () => {
       const { supplier, item, quantity, unitPrice, transportCost = 0, paymentMethod, bankAccountId, currentUserId } = params;
@@ -444,7 +446,8 @@ export async function executeLoanTransaction(params: {
       db.loans,
       db.cashBankAccounts,
       db.accounts,
-      db.auditLogs
+      db.auditLogs,
+      db.closedPeriods
     ],
     async () => {
       const { lenderName, principal, interestRate, tenureMonths, targetAccountId, currentUserId } = params;
@@ -566,7 +569,8 @@ export async function executeInvestorTransaction(params: {
       db.investors,
       db.cashBankAccounts,
       db.accounts,
-      db.auditLogs
+      db.auditLogs,
+      db.closedPeriods
     ],
     async () => {
       const { investorName, contribution, profitShare, targetAccountId, currentUserId } = params;
@@ -683,7 +687,8 @@ export async function executeContraTransferTransaction(params: {
       db.journalEntries,
       db.cashBankAccounts,
       db.accounts,
-      db.auditLogs
+      db.auditLogs,
+      db.closedPeriods
     ],
     async () => {
       const { fromAccountId, toAccountId, amount, narration, currentUserId } = params;
@@ -805,7 +810,8 @@ export async function executeAnimalEventTransaction(params: {
       db.journalEntries,
       db.cashBankAccounts,
       db.accounts,
-      db.auditLogs
+      db.auditLogs,
+      db.closedPeriods
     ],
     async () => {
       const { animal, event, paymentMethod = 'CASH', bankAccountId, currentUserId } = params;
@@ -972,7 +978,8 @@ export async function executeAnimalSaleOrRemovalTransaction(params: {
       db.journalEntries,
       db.cashBankAccounts,
       db.accounts,
-      db.auditLogs
+      db.auditLogs,
+      db.closedPeriods
     ],
     async () => {
       const {

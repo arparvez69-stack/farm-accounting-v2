@@ -1,3 +1,4 @@
+import Dexie from 'dexie';
 import { db } from '../db/indexedDb';
 import { Account, AccountClass, ClosedPeriod, JournalEntry, JournalLine, NormalBalance, VoucherType } from '../types';
 import { generateTransactionNumber, generateUniqueId, safeInsert } from '../utils/idGenerator';
@@ -25,6 +26,7 @@ export interface TrialBalance {
 }
 
 export interface LedgerEntry {
+  journalEntryId?: string;
   date: string;
   voucherNumber: string;
   voucherType: VoucherType;
@@ -32,6 +34,9 @@ export interface LedgerEntry {
   debit: number;
   credit: number;
   runningBalance: number;
+  reversedBy?: string;
+  reversalOf?: string;
+  correctionOf?: string;
 }
 
 export interface ProfitLossReport {
@@ -164,10 +169,20 @@ export function validateJournalEntry(
  */
 export async function getLatestClosedPeriod(): Promise<ClosedPeriod | null> {
   try {
+    if (!db.isOpen()) {
+      await db.open();
+    }
+    const currentTx = Dexie.currentTransaction;
+    if (currentTx && !currentTx.storeNames.includes('closedPeriods')) {
+      return null;
+    }
+    if (!db.tables.some((t) => t.name === 'closedPeriods')) {
+      return null;
+    }
     const periods = await db.closedPeriods.orderBy('endDate').reverse().toArray();
     return periods.length > 0 ? periods[0] : null;
   } catch (err) {
-    console.error('Failed to get latest closed period:', err);
+    console.warn('Notice: Closed periods store not accessible or empty:', err);
     return null;
   }
 }
@@ -177,9 +192,19 @@ export async function getLatestClosedPeriod(): Promise<ClosedPeriod | null> {
  */
 export async function getClosedPeriods(): Promise<ClosedPeriod[]> {
   try {
+    if (!db.isOpen()) {
+      await db.open();
+    }
+    const currentTx = Dexie.currentTransaction;
+    if (currentTx && !currentTx.storeNames.includes('closedPeriods')) {
+      return [];
+    }
+    if (!db.tables.some((t) => t.name === 'closedPeriods')) {
+      return [];
+    }
     return await db.closedPeriods.orderBy('endDate').reverse().toArray();
   } catch (err) {
-    console.error('Failed to get closed periods:', err);
+    console.warn('Notice: Closed periods store not accessible:', err);
     return [];
   }
 }
@@ -226,6 +251,98 @@ export async function postJournalEntry(
   }
 
   return fullEntry;
+}
+
+/**
+ * Reverses a mistaken journal entry traceable and balances it out.
+ * 1. Creates a brand-new journal entry dated today (or specified valid date).
+ * 2. Swaps every debit and credit line exactly (equal and opposite).
+ * 3. Narration: "মূল এন্ট্রি #[id] তারিখ [date]-এর সংশোধনী"
+ * 4. Links reversalOf on new entry and reversedBy on original entry.
+ * 5. Does NOT delete or remove original entry, keeping it fully traceable and searchable.
+ */
+export async function reverseJournalEntry(
+  originalEntryId: string,
+  currentUserId: string,
+  customReversalDate?: string
+): Promise<{ original: JournalEntry; reversal: JournalEntry }> {
+  const original = await db.journalEntries.get(originalEntryId);
+  if (!original) {
+    throw new Error(`মূল জাবেদা দাখিলা (ID: ${originalEntryId}) খুঁজে পাওয়া যায়নি।`);
+  }
+
+  if (original.reversedBy) {
+    throw new Error(`এই জাবেদা দাখিলাটি (#${original.voucherNumber}) ইতোমধ্যে সংশোধিত/রিভার্স করা হয়েছে।`);
+  }
+
+  const today = customReversalDate || new Date().toISOString().split('T')[0];
+  const latestClosed = await getLatestClosedPeriod();
+  if (latestClosed && today <= latestClosed.endDate) {
+    throw new Error(
+      `হিসাবরক্ষণ সীমাবদ্ধতা: সর্বশেষ সমাপ্ত হিসাবকাল ${latestClosed.endDate} পর্যন্ত বন্ধ। সংশোধনী আজকের তারিখে (${today}) পোস্ট করতে হবে যা বন্ধ সময়কালের পরবর্তী হতে হবে।`
+    );
+  }
+
+  // Swap every debit/credit line exactly (equal and opposite)
+  const reversedLines: JournalLine[] = original.lines.map((line) => ({
+    accountId: line.accountId,
+    accountCode: line.accountCode,
+    accountName: line.accountName,
+    debit: Number(line.credit || 0),
+    credit: Number(line.debit || 0),
+    memo: line.memo ? `সংশোধনী: ${line.memo}` : undefined
+  }));
+
+  const voucherNum = generateTransactionNumber('ADJ');
+  const reversalId = generateUniqueId('j');
+
+  const reversalEntryData: Omit<JournalEntry, 'totalDebit' | 'totalCredit'> = {
+    id: reversalId,
+    voucherNumber: voucherNum,
+    voucherType: 'ADJUSTMENT',
+    date: today,
+    narration: `মূল এন্ট্রি #${original.id} তারিখ ${original.date}-এর সংশোধনী`,
+    lines: reversedLines,
+    reference: original.id,
+    reversalOf: original.id,
+    createdBy: currentUserId || 'system',
+    createdAt: new Date().toISOString()
+  };
+
+  const reversalEntry = await postJournalEntry(reversalEntryData);
+
+  // Link reversedBy on original entry
+  await db.journalEntries.update(original.id, {
+    reversedBy: reversalEntry.id,
+    synced: false
+  });
+
+  const updatedOriginal: JournalEntry = {
+    ...original,
+    reversedBy: reversalEntry.id
+  };
+
+  // Safe audit log
+  try {
+    await safeInsert(db.auditLogs, {
+      id: generateUniqueId('audit'),
+      timestamp: new Date().toISOString(),
+      userId: currentUserId || 'system',
+      role: 'OWNER',
+      action: 'REVERSE_VOUCHER',
+      module: 'ACCOUNTING',
+      recordId: reversalEntry.id,
+      status: 'SUCCESS',
+      details: `মূল এন্ট্রি #${original.voucherNumber} (${original.id}) রিভার্স করা হয়েছে। নতুন সংশোধনী ভাউচার: ${reversalEntry.voucherNumber}`
+    });
+  } catch (auditErr) {
+    console.warn('Audit log write error on reversal:', auditErr);
+  }
+
+  return {
+    original: updatedOriginal,
+    reversal: reversalEntry
+  };
 }
 
 /**
@@ -765,13 +882,17 @@ export async function getGeneralLedger(accountCode: string): Promise<{ account?:
         }
 
         ledgerEntries.push({
+          journalEntryId: entry.id,
           date: entry.date,
           voucherNumber: entry.voucherNumber,
           voucherType: entry.voucherType,
           narration: entry.narration,
           debit,
           credit,
-          runningBalance: Math.round(running * 100) / 100
+          runningBalance: Math.round(running * 100) / 100,
+          reversedBy: entry.reversedBy,
+          reversalOf: entry.reversalOf,
+          correctionOf: entry.correctionOf
         });
       }
     }

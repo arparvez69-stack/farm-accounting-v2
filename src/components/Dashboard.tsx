@@ -752,6 +752,11 @@ export const Dashboard: React.FC<Props> = ({ role, onNavigate }) => {
                     <span className="text-[12px] font-semibold px-2 py-0.5 rounded-md bg-white border border-gray-200 text-gray-700">
                       {tx.voucherType}
                     </span>
+                    {tx.reversedBy && (
+                      <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-amber-100 text-amber-900 border border-amber-300">
+                        সংশোধিত
+                      </span>
+                    )}
                     <span className="text-gray-500 text-[13px]">{tx.date}</span>
                   </div>
                   <p className="text-gray-800 text-[14px] truncate mt-1">

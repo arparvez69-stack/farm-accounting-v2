@@ -74,9 +74,11 @@ export default function App() {
       await initializeLocalDatabase();
 
       // Automated fixed asset depreciation check on app load (runs once per session)
-      runDepreciationOnAppLoad().catch((err) => {
+      try {
+        await runDepreciationOnAppLoad();
+      } catch (err) {
         console.error('[The Goated Farm] Automated depreciation on app load error:', err);
-      });
+      }
 
       // 2. Run accounting integrity regression tests in background
       runRegressionTests().then((testRes) => {

@@ -17,7 +17,7 @@ export interface DepreciationRunResult {
   }[];
 }
 
-let isDepreciationRunning = false;
+let activeDepreciationPromise: Promise<DepreciationRunResult> | null = null;
 let hasRunOnAppLoad = false;
 
 /**
@@ -50,18 +50,26 @@ export function getNextMonthDate(dateStr: string): string {
  * 3. Updates accumulatedDepreciation, currentBookValue, and lastDepreciationDate on the asset.
  */
 export async function runAutomatedDepreciation(currentUserId?: string): Promise<DepreciationRunResult> {
-  if (isDepreciationRunning) {
-    console.warn('[DepreciationService] Depreciation calculation already in progress. Skipping duplicate run.');
-    return {
-      assetsProcessed: 0,
-      entriesPosted: 0,
-      totalDepreciationAmount: 0,
-      details: []
-    };
+  // If a depreciation run is currently in progress, wait for it to finish first
+  while (activeDepreciationPromise) {
+    try {
+      await activeDepreciationPromise;
+    } catch {
+      // Ignore errors from previous in-flight run
+    }
   }
 
-  isDepreciationRunning = true;
+  const runPromise = executeDepreciationInternal(currentUserId);
+  activeDepreciationPromise = runPromise;
 
+  try {
+    return await runPromise;
+  } finally {
+    activeDepreciationPromise = null;
+  }
+}
+
+async function executeDepreciationInternal(currentUserId?: string): Promise<DepreciationRunResult> {
   try {
     const assets = await db.fixedAssets.toArray();
     const accounts = await db.accounts.toArray();
@@ -227,8 +235,9 @@ export async function runAutomatedDepreciation(currentUserId?: string): Promise<
       totalDepreciationAmount: grandTotalDepr,
       details: resultDetails
     };
-  } finally {
-    isDepreciationRunning = false;
+  } catch (err) {
+    console.error('[DepreciationService] Error during automated depreciation calculation:', err);
+    throw err;
   }
 }
 

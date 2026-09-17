@@ -88,7 +88,10 @@ export class AgroDatabase extends Dexie {
       loans: 'id, lenderName, status, synced',
       investors: 'id, name, status, synced',
       fixedAssets: 'id, name, category, synced',
-      auditLogs: 'id, timestamp, userId, action, module, synced'
+      auditLogs: 'id, timestamp, userId, action, module, synced',
+      accessLogs: 'id, email, timestamp, status, synced',
+      payments: 'id, parentType, parentId, date, synced',
+      closedPeriods: 'id, endDate, closedAt, synced'
     });
 
     this.version(2).stores({
@@ -110,6 +113,14 @@ export class AgroDatabase extends Dexie {
 
     this.version(6).stores({
       closedPeriods: 'id, endDate, closedAt, synced'
+    });
+
+    this.version(7).stores({
+      closedPeriods: 'id, endDate, closedAt, synced'
+    });
+
+    this.version(8).stores({
+      journalEntries: 'id, voucherNumber, voucherType, date, reversedBy, reversalOf, correctionOf, synced'
     });
   }
 }
