@@ -9,16 +9,25 @@ import {
   Activity,
   PlusCircle,
   Clock,
-  FileText
+  FileText,
+  Calendar,
+  CheckCircle2,
+  Check,
+  SkipForward,
+  ChevronRight,
+  Syringe,
+  Stethoscope,
+  ShoppingBag,
+  Bell
 } from 'lucide-react';
 import { db } from '../db/indexedDb';
 import { generateProfitLoss, generateTrialBalance } from '../accounting/accountingEngine';
 import { ActiveTab } from './MobileBottomNav';
-import { UserRole } from '../types';
+import { Reminder, UserRole } from '../types';
 
 interface Props {
   role: UserRole;
-  onNavigate: (tab: ActiveTab) => void;
+  onNavigate: (tab: ActiveTab, animalId?: string) => void;
   onOpenQuickVoucher?: () => void;
 }
 
@@ -37,6 +46,7 @@ export const Dashboard: React.FC<Props> = ({ role, onNavigate }) => {
   const [fishBatchCount, setFishBatchCount] = useState(0);
   const [cropCycleCount, setCropCycleCount] = useState(0);
 
+  const [reminders, setReminders] = useState<Reminder[]>([]);
   const [recentTransactions, setRecentTransactions] = useState<any[]>([]);
   const [alerts, setAlerts] = useState<string[]>([]);
   const [isAccountingBalanced, setIsAccountingBalanced] = useState(true);
@@ -103,6 +113,63 @@ export const Dashboard: React.FC<Props> = ({ role, onNavigate }) => {
       const crops = await db.cropCycles.where('status').equals('GROWING').count();
       setCropCycleCount(crops);
 
+      // Reminders: PENDING that are overdue or due within 7 days, soonest first
+      const today = new Date();
+      const in7Days = new Date(today.getTime() + 7 * 86400000);
+      const in7DaysStr = in7Days.toISOString().split('T')[0];
+
+      // If reminders table is empty, seed initial realistic reminders
+      const reminderCount = await db.reminders.count();
+      if (reminderCount === 0) {
+        const todayDate = new Date();
+        const tomorrow = new Date(todayDate.getTime() + 86400000).toISOString().split('T')[0];
+        const in3Days = new Date(todayDate.getTime() + 3 * 86400000).toISOString().split('T')[0];
+        const in5Days = new Date(todayDate.getTime() + 5 * 86400000).toISOString().split('T')[0];
+
+        await db.reminders.bulkAdd([
+          {
+            id: 'rem-seed-1',
+            animalId: 'COW-101',
+            title: 'TAG-101: ক্ষুরা রোগ (FMD) পরবর্তী বুস্টার ডোজ',
+            category: 'VACCINE',
+            dueDate: in3Days,
+            status: 'PENDING',
+            createdAt: new Date().toISOString(),
+            synced: false
+          },
+          {
+            id: 'rem-seed-2',
+            title: 'পশু খাদ্য ও সাইলেজ সংগ্রহের জন্য বাজার সফর',
+            category: 'MARKET',
+            dueDate: tomorrow,
+            status: 'PENDING',
+            createdAt: new Date().toISOString(),
+            synced: false
+          },
+          {
+            id: 'rem-seed-3',
+            animalId: 'BULL-102',
+            title: 'TAG-102: কৃমিনাশক ও ওজন পরিমাপ ফলোআপ',
+            category: 'TREATMENT',
+            dueDate: in5Days,
+            status: 'PENDING',
+            createdAt: new Date().toISOString(),
+            synced: false
+          }
+        ]);
+      }
+
+      const allPendingReminders = await db.reminders
+        .where('status')
+        .equals('PENDING')
+        .toArray();
+
+      const dueThisWeek = allPendingReminders
+        .filter((r) => r.dueDate <= in7DaysStr)
+        .sort((a, b) => a.dueDate.localeCompare(b.dueDate)); // soonest first
+
+      setReminders(dueThisWeek);
+
       // Recent Journal entries
       const recentJ = await db.journalEntries.orderBy('date').reverse().limit(6).toArray();
       setRecentTransactions(recentJ);
@@ -129,10 +196,202 @@ export const Dashboard: React.FC<Props> = ({ role, onNavigate }) => {
     }
   };
 
+  const handleMarkDone = async (reminderId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    try {
+      await db.reminders.update(reminderId, { status: 'DONE' });
+      setReminders((prev) => prev.filter((r) => r.id !== reminderId));
+    } catch (err) {
+      console.error('Failed to mark reminder done:', err);
+    }
+  };
+
+  const handleSkip = async (reminderId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    try {
+      await db.reminders.update(reminderId, { status: 'SKIPPED' });
+      setReminders((prev) => prev.filter((r) => r.id !== reminderId));
+    } catch (err) {
+      console.error('Failed to skip reminder:', err);
+    }
+  };
+
+  const handleRowClick = (reminder: Reminder) => {
+    if (reminder.animalId) {
+      onNavigate('operations', reminder.animalId);
+    }
+  };
+
   const fmtMoney = (val: number) => `৳${Number(val || 0).toLocaleString('en-IN', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
+
+  const todayStr = new Date().toISOString().split('T')[0];
+  const todayTime = new Date(todayStr).getTime();
 
   return (
     <div className="space-y-5 pb-6 max-w-5xl mx-auto">
+      {/* 0. PROMINENT DUE THIS WEEK (এই সপ্তাহে করণীয়) CARD AT THE TOP */}
+      <div className="bg-white rounded-2xl border-2 border-emerald-600/30 p-4 sm:p-5 shadow-sm space-y-3.5">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 pb-2.5 border-b border-gray-100">
+          <div className="flex items-center gap-2.5">
+            <div className="w-9 h-9 rounded-xl bg-[#1E5128] text-white flex items-center justify-center shrink-0 shadow-xs">
+              <Calendar className="w-5 h-5" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h3 className="text-base sm:text-lg font-bold text-gray-900 tracking-tight">
+                  এই সপ্তাহে করণীয় (Due This Week)
+                </h3>
+                <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${
+                  reminders.length > 0
+                    ? 'bg-emerald-100 text-[#1E5128] border border-emerald-200'
+                    : 'bg-gray-100 text-gray-600'
+                }`}>
+                  {reminders.length}টি পেন্ডিং
+                </span>
+              </div>
+              <p className="text-xs sm:text-[13px] text-gray-600">
+                টিকা, চিকিৎসা ফলোআপ ও খামার পরিচালনার জরুরি সময়সূচি (বকেয়া ও আগামী ৭ দিন)
+              </p>
+            </div>
+          </div>
+
+          <button
+            onClick={() => onNavigate('operations')}
+            className="text-xs sm:text-[13px] font-bold text-[#1E5128] hover:text-[#173F1F] flex items-center gap-1 self-start sm:self-auto cursor-pointer"
+          >
+            <span>খামার কার্যক্রমে যান</span>
+            <ChevronRight className="w-4 h-4" />
+          </button>
+        </div>
+
+        {reminders.length === 0 ? (
+          <div className="p-4 rounded-xl bg-gray-50 border border-gray-200 text-center flex flex-col items-center justify-center py-6 text-gray-600 space-y-1.5">
+            <CheckCircle2 className="w-7 h-7 text-[#15803D]" />
+            <p className="text-[14px] font-semibold text-gray-900">
+              এই সপ্তাহে কোনো বকেয়া বা জরুরি করণীয় কাজ নেই!
+            </p>
+            <p className="text-xs text-gray-500">
+              খামারের সকল পশু টিকা ও চিকিৎসা সময়সূচি হালনাগাদ রয়েছে।
+            </p>
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {reminders.map((rem) => {
+              const dueTime = new Date(rem.dueDate).getTime();
+              const diffDays = Math.round((dueTime - todayTime) / 86400000);
+              const isOverdue = diffDays < 0;
+              const isToday = diffDays === 0;
+
+              let catBadge = {
+                label: 'অন্যান্য',
+                bg: 'bg-gray-100 text-gray-700 border-gray-200',
+                icon: Clock
+              };
+              if (rem.category === 'VACCINE') {
+                catBadge = {
+                  label: 'টিকা (Vaccine)',
+                  bg: 'bg-blue-50 text-blue-700 border-blue-200',
+                  icon: Syringe
+                };
+              } else if (rem.category === 'TREATMENT') {
+                catBadge = {
+                  label: 'চিকিৎসা (Treatment)',
+                  bg: 'bg-purple-50 text-purple-700 border-purple-200',
+                  icon: Stethoscope
+                };
+              } else if (rem.category === 'MARKET') {
+                catBadge = {
+                  label: 'বাজার / হাট (Market)',
+                  bg: 'bg-amber-50 text-amber-800 border-amber-200',
+                  icon: ShoppingBag
+                };
+              }
+
+              const CatIcon = catBadge.icon;
+
+              return (
+                <div
+                  key={rem.id}
+                  onClick={() => handleRowClick(rem)}
+                  className={`p-3 sm:p-3.5 rounded-xl border transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${
+                    isOverdue
+                      ? 'bg-red-50/50 border-red-200'
+                      : isToday
+                      ? 'bg-amber-50/50 border-amber-300'
+                      : 'bg-white border-gray-200 hover:border-[#1E5128]/50'
+                  } ${rem.animalId ? 'cursor-pointer hover:shadow-xs group' : ''}`}
+                >
+                  <div className="space-y-1.5 flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className={`inline-flex items-center gap-1 text-[11px] font-bold px-2 py-0.5 rounded-md border ${catBadge.bg}`}>
+                        <CatIcon className="w-3 h-3 shrink-0" />
+                        <span>{catBadge.label}</span>
+                      </span>
+
+                      {isOverdue && (
+                        <span className="text-[11px] font-bold px-2 py-0.5 rounded-md bg-red-100 text-red-800 border border-red-300 animate-pulse">
+                          মেয়াদোত্তীর্ণ ({Math.abs(diffDays)} দিন আগে)
+                        </span>
+                      )}
+
+                      {isToday && (
+                        <span className="text-[11px] font-bold px-2 py-0.5 rounded-md bg-amber-100 text-amber-900 border border-amber-300">
+                          আজকের কাজ (Due Today)
+                        </span>
+                      )}
+
+                      {!isOverdue && !isToday && (
+                        <span className="text-[11px] font-semibold px-2 py-0.5 rounded-md bg-emerald-50 text-[#15803D] border border-emerald-200">
+                          {diffDays === 1 ? 'আগামীকাল' : `${diffDays} দিন বাকি`}
+                        </span>
+                      )}
+
+                      <span className="text-[12px] text-gray-500 font-mono">
+                        তারিখ: {rem.dueDate}
+                      </span>
+                    </div>
+
+                    <div className="font-bold text-[14px] sm:text-[15px] text-gray-900 leading-snug">
+                      {rem.title}
+                    </div>
+
+                    {rem.animalId && (
+                      <div className="text-[12px] text-[#1E5128] font-semibold flex items-center gap-1 group-hover:underline">
+                        <span>পশু আইডি: {rem.animalId}</span>
+                        <span className="text-gray-400 font-normal">| বিস্তারিত ও ইতিহাস দেখতে ট্যাপ করুন →</span>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Action buttons: Mark Done & Skip (without leaving card) */}
+                  <div className="flex items-center gap-2 shrink-0 pt-2 sm:pt-0 border-t sm:border-t-0 border-gray-100" onClick={(e) => e.stopPropagation()}>
+                    <button
+                      type="button"
+                      onClick={(e) => handleMarkDone(rem.id, e)}
+                      title="কাজটি সম্পন্ন হিসেবে চিহ্নিত করুন"
+                      className="inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg bg-[#15803D] hover:bg-[#166534] text-white text-[12px] font-bold shadow-xs active:scale-95 transition-all cursor-pointer min-h-[36px]"
+                    >
+                      <Check className="w-3.5 h-3.5 shrink-0 stroke-[3]" />
+                      <span>সম্পন্ন</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={(e) => handleSkip(rem.id, e)}
+                      title="এই কাজটি এড়িয়ে যান"
+                      className="inline-flex items-center justify-center gap-1 px-2.5 py-2 rounded-lg bg-white hover:bg-gray-100 text-gray-700 border border-gray-300 text-[12px] font-semibold active:scale-95 transition-all cursor-pointer min-h-[36px]"
+                    >
+                      <SkipForward className="w-3.5 h-3.5 shrink-0 text-gray-500" />
+                      <span>এড়িয়ে যান</span>
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
       {/* 1. Top Executive Banner & Hero Balances */}
       <div className="bg-white rounded-2xl border border-gray-200 p-4 sm:p-6 shadow-xs space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-gray-100">

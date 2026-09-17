@@ -22,6 +22,7 @@ import { ReportsModule } from './components/ReportsModule';
 import { MoreModule } from './components/MoreModule';
 import { SyncState, SystemConfig, UserProfile } from './types';
 import { runRegressionTests } from './tests/regressionTests';
+import { triggerForegroundDueTodayNotification } from './db/indexedDb';
 
 export default function App() {
   const [systemConfig, setSystemConfig] = useState<SystemConfig | null>(null);
@@ -33,8 +34,16 @@ export default function App() {
   const [syncState, setSyncState] = useState<SyncState>('ONLINE');
   const [pendingCount, setPendingCount] = useState(0);
 
-  // Active Tab
+  // Active Tab & Cross-Tab Navigation Params
   const [activeTab, setActiveTab] = useState<ActiveTab>('dashboard');
+  const [selectedAnimalIdForOps, setSelectedAnimalIdForOps] = useState<string | null>(null);
+
+  const handleNavigate = (tab: ActiveTab, animalId?: string) => {
+    setActiveTab(tab);
+    if (tab === 'operations' && animalId) {
+      setSelectedAnimalIdForOps(animalId);
+    }
+  };
 
   useEffect(() => {
     initApp();
@@ -66,6 +75,7 @@ export default function App() {
         setUserProfile(initialProfile);
         setCurrentUser(auth.currentUser);
         await seedSystemConfigIfNecessary();
+        triggerForegroundDueTodayNotification().catch(() => {});
       }
 
       // 5. Firebase Auth state listener
@@ -132,6 +142,7 @@ export default function App() {
           const boot = await checkSystemBootstrap();
           if (boot.config) setSystemConfig(boot.config);
           await seedSystemConfigIfNecessary();
+          triggerForegroundDueTodayNotification().catch(() => {});
         }}
       />
     );
@@ -154,7 +165,7 @@ export default function App() {
         {activeTab === 'dashboard' && (
           <Dashboard
             role={userProfile.role}
-            onNavigate={(tab) => setActiveTab(tab)}
+            onNavigate={handleNavigate}
           />
         )}
 
@@ -169,6 +180,8 @@ export default function App() {
           <FarmOperationsModule
             role={userProfile.role}
             currentUserId={userProfile.uid}
+            initialAnimalId={selectedAnimalIdForOps}
+            onClearInitialAnimalId={() => setSelectedAnimalIdForOps(null)}
           />
         )}
 

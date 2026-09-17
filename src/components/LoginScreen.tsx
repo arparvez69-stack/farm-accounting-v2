@@ -15,6 +15,7 @@ import {
   ArrowLeft
 } from 'lucide-react';
 import { verifyOwnerSecretPin } from '../services/authService';
+import { triggerForegroundDueTodayNotification } from '../db/indexedDb';
 import { UserProfile } from '../types';
 
 interface Props {
@@ -151,6 +152,11 @@ export const LoginScreen: React.FC<Props> = ({ onLoginSuccess }) => {
     try {
       const res = await verifyOwnerSecretPin(cleanEmail, cleanPin);
       if (res.success && res.profile) {
+        // Request browser Notification permission on login and fire a one-time Notification()
+        // for any reminder due today, as a best-effort foreground alert.
+        // NOTE: This works only while the app tab/PWA is open in the foreground; it does NOT
+        // operate in the background or replace in-app notifications.
+        triggerForegroundDueTodayNotification().catch(() => {});
         onLoginSuccess(res.profile);
       } else {
         setError(res.error || 'অবৈধ ইমেইল অথবা গোপন পিন! সঠিক তথ্য না দিলে অ্যাপে প্রবেশ করা যাবে না।');

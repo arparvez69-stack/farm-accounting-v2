@@ -138,6 +138,17 @@ export interface AnimalEvent {
   synced?: boolean;
 }
 
+export interface Reminder {
+  id: string;
+  animalId?: string;
+  title: string;
+  category: 'VACCINE' | 'TREATMENT' | 'MARKET' | 'OTHER';
+  dueDate: string;
+  status: 'PENDING' | 'DONE' | 'SKIPPED';
+  createdAt: string;
+  synced?: boolean;
+}
+
 export interface Pond {
   id: string;
   name: string;

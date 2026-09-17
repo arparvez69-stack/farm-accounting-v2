@@ -22,7 +22,8 @@ import {
   FixedAsset,
   AuditLogEntry,
   SystemConfig,
-  AppAccessLog
+  AppAccessLog,
+  Reminder
 } from '../types';
 
 export class AgroDatabase extends Dexie {
@@ -31,6 +32,7 @@ export class AgroDatabase extends Dexie {
   journalEntries!: Table<JournalEntry, string>;
   animals!: Table<Animal, string>;
   animalEvents!: Table<AnimalEvent, string>;
+  reminders!: Table<Reminder, string>;
   ponds!: Table<Pond, string>;
   fishBatches!: Table<FishBatch, string>;
   plots!: Table<Plot, string>;
@@ -65,6 +67,7 @@ export class AgroDatabase extends Dexie {
       journalEntries: 'id, voucherNumber, voucherType, date, synced',
       animals: 'id, tag, species, status, synced',
       animalEvents: 'id, animalId, eventType, date, synced',
+      reminders: 'id, animalId, category, dueDate, status, synced',
       ponds: 'id, name, status, synced',
       fishBatches: 'id, pondId, species, status, stockingDate, synced',
       plots: 'id, name, currentStatus, synced',
@@ -92,7 +95,55 @@ export class AgroDatabase extends Dexie {
     this.version(3).stores({
       accessLogs: 'id, email, timestamp, status, synced'
     });
+
+    this.version(4).stores({
+      reminders: 'id, animalId, category, dueDate, status, synced'
+    });
   }
 }
 
 export const db = new AgroDatabase();
+
+/**
+ * Request browser Notification permission on login and fire a one-time Notification()
+ * for any reminder due today, as a best-effort foreground alert.
+ * 
+ * NOTE ON LIMITATIONS:
+ * Browser Notification() works ONLY while the app tab or PWA is open in the foreground.
+ * It does NOT operate as a background push notification service when the browser or tab
+ * is closed (especially on iOS Chrome where Web Push is restricted/unreliable).
+ * Background push is NOT claimed or simulated here; the in-app "Due This Week" list
+ * is the authoritative, reliable mechanism on every app visit.
+ */
+export async function triggerForegroundDueTodayNotification(): Promise<void> {
+  if (typeof window === 'undefined' || !('Notification' in window)) {
+    return;
+  }
+
+  try {
+    let permission = Notification.permission;
+    if (permission === 'default') {
+      permission = await Notification.requestPermission();
+    }
+
+    if (permission === 'granted') {
+      const todayStr = new Date().toISOString().split('T')[0];
+      const dueToday = await db.reminders
+        .where('status')
+        .equals('PENDING')
+        .and((r) => r.dueDate === todayStr)
+        .toArray();
+
+      if (dueToday.length > 0) {
+        const titleList = dueToday.map((r) => r.title).slice(0, 2).join(', ');
+        const extra = dueToday.length > 2 ? ` এবং আরও ${dueToday.length - 2}টি` : '';
+        new Notification('The Goated Farm - আজকের করণীয়', {
+          body: `আজকের জন্য নির্ধারিত কাজ: ${titleList}${extra}`,
+          icon: '/icon.svg'
+        });
+      }
+    }
+  } catch (err) {
+    console.warn('[Reminders] Notification permission or trigger notice:', err);
+  }
+}

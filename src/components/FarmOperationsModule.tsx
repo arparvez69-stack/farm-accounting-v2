@@ -29,6 +29,7 @@ import {
   FishBatch,
   InternalFlow,
   ProcessingRun,
+  Reminder,
   UserRole
 } from '../types';
 import { generateTransactionNumber, generateUniqueId, safeInsert } from '../utils/idGenerator';
@@ -41,11 +42,18 @@ import { AnimalDetailView } from './AnimalDetailView';
 interface Props {
   role: UserRole;
   currentUserId: string;
+  initialAnimalId?: string | null;
+  onClearInitialAnimalId?: () => void;
 }
 
 type OpsTab = 'livestock' | 'fisheries' | 'crops' | 'flows' | 'processing';
 
-export const FarmOperationsModule: React.FC<Props> = ({ role, currentUserId }) => {
+export const FarmOperationsModule: React.FC<Props> = ({
+  role,
+  currentUserId,
+  initialAnimalId,
+  onClearInitialAnimalId
+}) => {
   const [tab, setTab] = useState<OpsTab>('livestock');
   const [loading, setLoading] = useState(false);
   const [msg, setMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
@@ -59,6 +67,13 @@ export const FarmOperationsModule: React.FC<Props> = ({ role, currentUserId }) =
   const [cropCycles, setCropCycles] = useState<CropCycle[]>([]);
   const [internalFlows, setInternalFlows] = useState<InternalFlow[]>([]);
   const [processingRuns, setProcessingRuns] = useState<ProcessingRun[]>([]);
+
+  // Standalone Reminder Form State
+  const [showAddReminderModal, setShowAddReminderModal] = useState(false);
+  const [reminderTitle, setReminderTitle] = useState('');
+  const [reminderCategory, setReminderCategory] = useState<'VACCINE' | 'TREATMENT' | 'MARKET' | 'OTHER'>('MARKET');
+  const [reminderDueDate, setReminderDueDate] = useState<string>(new Date().toISOString().split('T')[0]);
+  const [reminderAnimalId, setReminderAnimalId] = useState<string>('');
 
   // Add Animal
   const [showAddAnimal, setShowAddAnimal] = useState(false);
@@ -120,6 +135,13 @@ export const FarmOperationsModule: React.FC<Props> = ({ role, currentUserId }) =
   useEffect(() => {
     loadOpsData();
   }, [tab]);
+
+  useEffect(() => {
+    if (initialAnimalId) {
+      setTab('livestock');
+      setSelectedAnimalId(initialAnimalId);
+    }
+  }, [initialAnimalId]);
 
   const loadOpsData = async () => {
     setLoading(true);
@@ -305,9 +327,28 @@ export const FarmOperationsModule: React.FC<Props> = ({ role, currentUserId }) =
         currentUserId
       });
 
+      // Automatically create matching PENDING Reminder when nextDueDate is set
+      if ((eventType === 'VACCINE' || eventType === 'TREATMENT') && eventNextDueDate) {
+        const vaccineOrTreatment = eventType === 'VACCINE'
+          ? (eventVaccineName.trim() || 'টিকা')
+          : (eventDetails.trim() || 'চিকিৎসা');
+        const animalTag = eventModalAnimal.tag || eventModalAnimal.id;
+        const autoReminder: Reminder = {
+          id: generateUniqueId('rem'),
+          animalId: eventModalAnimal.id,
+          title: `${animalTag}: ${vaccineOrTreatment} পরবর্তী ডোজ/ফলোআপ`,
+          category: eventType === 'VACCINE' ? 'VACCINE' : 'TREATMENT',
+          dueDate: eventNextDueDate,
+          status: 'PENDING',
+          createdAt: new Date().toISOString(),
+          synced: false
+        };
+        await safeInsert(db.reminders, autoReminder, { idPrefix: 'rem' });
+      }
+
       setMsg({
         type: 'success',
-        text: `পশু ${eventModalAnimal.id} এর ${eventType} কার্যক্রম সফলভাবে যুক্ত ও সংরক্ষিত হয়েছে!${cost > 0 ? ` (ব্যয় ৳${cost} জাবেদায় পোস্ট করা হয়েছে)` : ''}`
+        text: `পশু ${eventModalAnimal.id} এর ${eventType} কার্যক্রম সফলভাবে যুক্ত ও সংরক্ষিত হয়েছে!${cost > 0 ? ` (ব্যয় ৳${cost} জাবেদায় পোস্ট করা হয়েছে)` : ''}${eventNextDueDate ? ' (পরবর্তী তারিখের রিমাইন্ডার তৈরি করা হয়েছে)' : ''}`
       });
       setEventModalAnimal(null);
       setEventCost('0');
@@ -321,6 +362,38 @@ export const FarmOperationsModule: React.FC<Props> = ({ role, currentUserId }) =
       setMsg({ type: 'error', text: `কার্যক্রম সংরক্ষণে ত্রুটি: ${err.message}` });
     } finally {
       setSubmittingEvent(false);
+    }
+  };
+
+  const handleSaveStandaloneReminder = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!reminderTitle.trim()) {
+      setMsg({ type: 'error', text: 'রিমাইন্ডারের শিরোনাম লিখুন।' });
+      return;
+    }
+    try {
+      const newReminder: Reminder = {
+        id: generateUniqueId('rem'),
+        title: reminderTitle.trim(),
+        category: reminderCategory,
+        dueDate: reminderDueDate || new Date().toISOString().split('T')[0],
+        animalId: reminderAnimalId.trim() || undefined,
+        status: 'PENDING',
+        createdAt: new Date().toISOString(),
+        synced: false
+      };
+      await safeInsert(db.reminders, newReminder, { idPrefix: 'rem' });
+      setShowAddReminderModal(false);
+      setReminderTitle('');
+      setReminderCategory('MARKET');
+      setReminderDueDate(new Date().toISOString().split('T')[0]);
+      setReminderAnimalId('');
+      setMsg({
+        type: 'success',
+        text: `রিমাইন্ডার "${newReminder.title}" সফলভাবে তৈরি হয়েছে!`
+      });
+    } catch (err: any) {
+      setMsg({ type: 'error', text: `রিমাইন্ডার তৈরিতে ত্রুটি: ${err.message}` });
     }
   };
 
@@ -464,51 +537,66 @@ export const FarmOperationsModule: React.FC<Props> = ({ role, currentUserId }) =
           </p>
         </div>
 
-        <div className="flex items-center gap-1.5 bg-gray-100 p-1.5 rounded-xl overflow-x-auto text-[13px] font-semibold">
+        <div className="flex flex-wrap items-center gap-2">
           <button
-            onClick={() => {
-              setTab('livestock');
-              setSelectedAnimalId(null);
-            }}
-            className={`px-3.5 py-2 rounded-lg whitespace-nowrap transition-all cursor-pointer min-h-[40px] ${
-              tab === 'livestock' ? 'bg-[#1E5128] text-white shadow-xs' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200/60'
-            }`}
+            type="button"
+            onClick={() => setShowAddReminderModal(true)}
+            className="px-3.5 py-2 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-[#1E5128] border border-emerald-200 text-[13px] font-bold shadow-xs transition-all cursor-pointer flex items-center gap-1.5 min-h-[40px]"
           >
-            গবাদিপশু (Livestock)
+            <Clock className="w-4 h-4 text-[#1E5128]" />
+            <span>+ নতুন রিমাইন্ডার</span>
           </button>
-          <button
-            onClick={() => {
-              setTab('fisheries');
-              setSelectedAnimalId(null);
-            }}
-            className={`px-3.5 py-2 rounded-lg whitespace-nowrap transition-all cursor-pointer min-h-[40px] ${
-              tab === 'fisheries' ? 'bg-[#1E5128] text-white shadow-xs' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200/60'
-            }`}
-          >
-            মৎস্য চাষ (Fisheries)
-          </button>
-          <button
-            onClick={() => {
-              setTab('crops');
-              setSelectedAnimalId(null);
-            }}
-            className={`px-3.5 py-2 rounded-lg whitespace-nowrap transition-all cursor-pointer min-h-[40px] ${
-              tab === 'crops' ? 'bg-[#1E5128] text-white shadow-xs' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200/60'
-            }`}
-          >
-            শস্য ও ঘাস (Crops)
-          </button>
-          <button
-            onClick={() => {
-              setTab('flows');
-              setSelectedAnimalId(null);
-            }}
-            className={`px-3.5 py-2 rounded-lg whitespace-nowrap transition-all cursor-pointer min-h-[40px] ${
-              tab === 'flows' ? 'bg-[#1E5128] text-white shadow-xs' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200/60'
-            }`}
-          >
-            অভ্যন্তরীণ প্রবাহ (Flows)
-          </button>
+
+          <div className="flex items-center gap-1.5 bg-gray-100 p-1.5 rounded-xl overflow-x-auto text-[13px] font-semibold">
+            <button
+              onClick={() => {
+                setTab('livestock');
+                setSelectedAnimalId(null);
+                if (onClearInitialAnimalId) onClearInitialAnimalId();
+              }}
+              className={`px-3.5 py-2 rounded-lg whitespace-nowrap transition-all cursor-pointer min-h-[40px] ${
+                tab === 'livestock' ? 'bg-[#1E5128] text-white shadow-xs' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200/60'
+              }`}
+            >
+              গবাদিপশু (Livestock)
+            </button>
+            <button
+              onClick={() => {
+                setTab('fisheries');
+                setSelectedAnimalId(null);
+                if (onClearInitialAnimalId) onClearInitialAnimalId();
+              }}
+              className={`px-3.5 py-2 rounded-lg whitespace-nowrap transition-all cursor-pointer min-h-[40px] ${
+                tab === 'fisheries' ? 'bg-[#1E5128] text-white shadow-xs' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200/60'
+              }`}
+            >
+              মৎস্য চাষ (Fisheries)
+            </button>
+            <button
+              onClick={() => {
+                setTab('crops');
+                setSelectedAnimalId(null);
+                if (onClearInitialAnimalId) onClearInitialAnimalId();
+              }}
+              className={`px-3.5 py-2 rounded-lg whitespace-nowrap transition-all cursor-pointer min-h-[40px] ${
+                tab === 'crops' ? 'bg-[#1E5128] text-white shadow-xs' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200/60'
+              }`}
+            >
+              শস্য ও ঘাস (Crops)
+            </button>
+            <button
+              onClick={() => {
+                setTab('flows');
+                setSelectedAnimalId(null);
+                if (onClearInitialAnimalId) onClearInitialAnimalId();
+              }}
+              className={`px-3.5 py-2 rounded-lg whitespace-nowrap transition-all cursor-pointer min-h-[40px] ${
+                tab === 'flows' ? 'bg-[#1E5128] text-white shadow-xs' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200/60'
+              }`}
+            >
+              অভ্যন্তরীণ প্রবাহ (Flows)
+            </button>
+          </div>
         </div>
       </div>
 
@@ -532,7 +620,10 @@ export const FarmOperationsModule: React.FC<Props> = ({ role, currentUserId }) =
             <AnimalDetailView
               animal={selectedAnimal}
               events={animalEvents}
-              onBack={() => setSelectedAnimalId(null)}
+              onBack={() => {
+                setSelectedAnimalId(null);
+                if (onClearInitialAnimalId) onClearInitialAnimalId();
+              }}
               onAddEvent={(a) => {
                 setEventModalAnimal(a);
                 setEventType('FEED');
@@ -1693,6 +1784,113 @@ export const FarmOperationsModule: React.FC<Props> = ({ role, currentUserId }) =
                 </div>
               ))
             )}
+          </div>
+        </div>
+      )}
+
+      {/* ================= MODAL: ADD STANDALONE REMINDER ================= */}
+      {showAddReminderModal && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
+          <div className="bg-white rounded-2xl max-w-md w-full p-5 sm:p-6 shadow-2xl border border-gray-200 my-8 space-y-4">
+            <div className="flex items-start justify-between border-b border-gray-100 pb-3">
+              <div>
+                <h4 className="text-[17px] font-bold text-gray-900 flex items-center gap-2">
+                  <Clock className="w-5 h-5 text-[#1E5128]" />
+                  <span>নতুন রিমাইন্ডার / করণীয় কাজ</span>
+                </h4>
+                <p className="text-[13px] text-gray-600 mt-0.5">
+                  পশু বা সাধারণ খামার বিষয়ক সময়মতো করণীয় তালিকা
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowAddReminderModal(false)}
+                className="p-1 rounded-lg hover:bg-gray-100 text-gray-500 hover:text-gray-800 cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveStandaloneReminder} className="space-y-3.5">
+              <div>
+                <label className="block text-[13px] font-semibold text-gray-700 mb-1">
+                  কাজের শিরোনাম (Title) *
+                </label>
+                <input
+                  type="text"
+                  required
+                  placeholder="যেমন: হাটে গরু বিক্রয় সফর / ঘাস কাটার প্রস্তুতি"
+                  value={reminderTitle}
+                  onChange={(e) => setReminderTitle(e.target.value)}
+                  className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900 focus:ring-2 focus:ring-[#1E5128]"
+                />
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[13px] font-semibold text-gray-700 mb-1">
+                    ক্যাটাগরি (Category) *
+                  </label>
+                  <select
+                    value={reminderCategory}
+                    onChange={(e) => setReminderCategory(e.target.value as any)}
+                    className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900 font-medium focus:ring-2 focus:ring-[#1E5128]"
+                  >
+                    <option value="MARKET">বাজার / হাট (MARKET)</option>
+                    <option value="VACCINE">টিকা (VACCINE)</option>
+                    <option value="TREATMENT">চিকিৎসা (TREATMENT)</option>
+                    <option value="OTHER">অন্যান্য (OTHER)</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-[13px] font-semibold text-gray-700 mb-1">
+                    করণের তারিখ (Due Date) *
+                  </label>
+                  <input
+                    type="date"
+                    required
+                    value={reminderDueDate}
+                    onChange={(e) => setReminderDueDate(e.target.value)}
+                    className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900 focus:ring-2 focus:ring-[#1E5128]"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-[13px] font-semibold text-gray-700 mb-1">
+                  নির্দিষ্ট পশু (Optional Animal)
+                </label>
+                <select
+                  value={reminderAnimalId}
+                  onChange={(e) => setReminderAnimalId(e.target.value)}
+                  className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900 focus:ring-2 focus:ring-[#1E5128]"
+                >
+                  <option value="">কোনো নির্দিষ্ট পশু নয় (Standalone)</option>
+                  {animals.map((an) => (
+                    <option key={an.id} value={an.id}>
+                      {an.tag || an.id} - {an.breed} ({an.species})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="flex justify-end gap-2.5 pt-2 border-t border-gray-100">
+                <button
+                  type="button"
+                  onClick={() => setShowAddReminderModal(false)}
+                  className="px-4 py-2.5 rounded-xl bg-gray-100 text-gray-700 hover:bg-gray-200 text-[13px] font-semibold transition cursor-pointer"
+                >
+                  বাতিল
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2.5 rounded-xl bg-[#1E5128] hover:bg-[#173F1F] text-white text-[13px] font-bold shadow-xs transition cursor-pointer"
+                >
+                  রিমাইন্ডার সংরক্ষণ করুন
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}
