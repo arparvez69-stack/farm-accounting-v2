@@ -285,19 +285,27 @@ async function syncRecordToServer(collection: string, data: any): Promise<void> 
   }
 }
 
+let activeSyncPromise: Promise<{ syncedCount: number; errors: string[] }> | null = null;
+
 /**
  * Synchronize pending offline data to server endpoints (Admin SDK write)
  */
 export async function synchronizePendingData(): Promise<{ syncedCount: number; errors: string[] }> {
-  if (!navigator.onLine) {
+  if (typeof navigator !== 'undefined' && !navigator.onLine) {
     return { syncedCount: 0, errors: ['Offline'] };
   }
 
-  let count = 0;
-  const errors: string[] = [];
+  // Prevent duplicate concurrent sync runs
+  if (activeSyncPromise) {
+    return activeSyncPromise;
+  }
 
-  try {
-    // 1. Sync Animals
+  activeSyncPromise = (async () => {
+    let count = 0;
+    const errors: string[] = [];
+
+    try {
+      // 1. Sync Animals
     const pendingAnimals = await db.animals.filter((a) => a.synced === false).toArray();
     for (const animal of pendingAnimals) {
       try {
@@ -384,7 +392,12 @@ export async function synchronizePendingData(): Promise<{ syncedCount: number; e
     errors.push(`Sync failed: ${globalErr.message}`);
   }
 
-  return { syncedCount: count, errors };
+    return { syncedCount: count, errors };
+  })().finally(() => {
+    activeSyncPromise = null;
+  });
+
+  return activeSyncPromise;
 }
 
 /**
@@ -477,3 +490,19 @@ export function listenToOnlineSync(
     clearInterval(interval);
   };
 }
+
+// Autonomous listener for the browser's 'online' event that automatically
+// triggers synchronizePendingData the moment connectivity returns, with no user action needed.
+if (typeof window !== 'undefined') {
+  window.addEventListener('online', () => {
+    console.log('[The Goated Farm] Browser reconnected online. Auto-triggering pending data sync...');
+    synchronizePendingData().then((result) => {
+      if (result.syncedCount > 0) {
+        console.log(`[The Goated Farm] Auto-sync completed: ${result.syncedCount} records synced.`);
+      }
+    }).catch((err) => {
+      console.warn('[The Goated Farm] Auto-sync error on reconnection:', err);
+    });
+  });
+}
+
