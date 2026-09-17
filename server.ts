@@ -20,11 +20,19 @@ app.use(express.json());
 
 // Single-tenant owner allow-list parsed from environment variable APPROVED_OWNER_EMAILS
 export function getApprovedOwnerEmails(): string[] {
-  const envEmails = process.env.APPROVED_OWNER_EMAILS || 'brandingdeshi@gmail.com';
+  const envEmails = process.env.APPROVED_OWNER_EMAILS?.trim();
+  if (!envEmails) return [];
   return envEmails
     .split(',')
     .map((e) => e.trim().toLowerCase())
     .filter(Boolean);
+}
+
+// Checks if required authentication secrets are configured
+export function isSetupComplete(): boolean {
+  const hasEmails = Boolean(process.env.APPROVED_OWNER_EMAILS?.trim());
+  const hasPin = Boolean(process.env.INITIAL_PIN?.trim());
+  return hasEmails && hasPin;
 }
 
 // In-memory record of access events for dashboard & audit
@@ -231,45 +239,63 @@ async function ensureEmailAuthorized(email: string): Promise<void> {
 const cachedAuthSecrets: Record<string, string> = {};
 
 async function initializeAuthSecrets(): Promise<void> {
-  await syncAuthorizedEmails();
-
-  const initialPin = process.env.INITIAL_PIN || '111069';
-  const defaultHash = await bcrypt.hash(initialPin, 12);
-  const emails = getApprovedOwnerEmails();
-
-  // Set memory cache with cost 12 bcrypt hash
-  for (const email of emails) {
-    cachedAuthSecrets[email] = defaultHash;
+  // Seeding logic only runs once both APPROVED_OWNER_EMAILS and INITIAL_PIN secrets are actually present
+  if (!isSetupComplete()) {
+    console.log('[The Goated Farm] Setup incomplete: APPROVED_OWNER_EMAILS or INITIAL_PIN secret is missing. Skipping auth seeding.');
+    return;
   }
 
-  if (!adminDb) return;
+  await syncAuthorizedEmails();
 
-  try {
-    const docRef = adminDb.doc('system/authSecrets');
-    const snap = await docRef.get();
-    if (!snap.exists) {
-      const initialDoc: Record<string, string> = {};
-      for (const email of emails) {
-        initialDoc[email] = defaultHash;
-      }
-      await docRef.set(initialDoc);
-      console.log('[The Goated Farm] Seeded system/authSecrets in Firestore with bcrypt hashes (cost 12)');
-    } else {
-      const data = snap.data() || {};
-      for (const email of emails) {
-        const h = data[email] || data.hashes?.[email];
-        if (h && typeof h === 'string') {
-          cachedAuthSecrets[email] = h;
+  const initialPin = process.env.INITIAL_PIN!.trim();
+  const emails = getApprovedOwnerEmails();
+  if (emails.length === 0) return;
+
+  if (adminDb) {
+    try {
+      const docRef = adminDb.doc('system/authSecrets');
+      const snap = await docRef.get();
+      if (!snap.exists) {
+        // Initial first-time seed using INITIAL_PIN
+        const defaultHash = await bcrypt.hash(initialPin, 12);
+        const initialDoc: Record<string, string> = {};
+        for (const email of emails) {
+          initialDoc[email] = defaultHash;
+          cachedAuthSecrets[email] = defaultHash;
         }
+        await docRef.set(initialDoc);
+        console.log('[The Goated Farm] Seeded system/authSecrets in Firestore with bcrypt hashes (cost 12)');
+      } else {
+        // Note: Changing INITIAL_PIN after the first successful seed has no effect; the PIN can only be updated via the in-app Change PIN screen from then on.
+        const data = snap.data() || {};
+        for (const email of emails) {
+          const h = data[email] || data.hashes?.[email];
+          if (h && typeof h === 'string') {
+            cachedAuthSecrets[email] = h;
+          }
+        }
+        console.log('[The Goated Farm] Loaded bcrypt auth secrets from Firestore');
       }
-      console.log('[The Goated Farm] Loaded bcrypt auth secrets from Firestore');
+    } catch (err: any) {
+      console.warn('[The Goated Farm] Note on Firestore system/authSecrets setup:', err.message);
     }
-  } catch (err: any) {
-    console.warn('[The Goated Farm] Note on Firestore system/authSecrets setup:', err.message);
+  } else {
+    // In-memory fallback (when Firestore Admin DB is not connected)
+    // Note: Changing INITIAL_PIN after the first successful seed has no effect; the PIN can only be updated via the in-app Change PIN screen from then on.
+    if (Object.keys(cachedAuthSecrets).length === 0) {
+      const defaultHash = await bcrypt.hash(initialPin, 12);
+      for (const email of emails) {
+        cachedAuthSecrets[email] = defaultHash;
+      }
+      console.log('[The Goated Farm] Seeded in-memory auth secrets with initial PIN');
+    }
   }
 }
 
 async function getStoredHash(email: string): Promise<string | null> {
+  if (!isSetupComplete()) {
+    return null;
+  }
   if (adminDb) {
     try {
       const snap = await adminDb.doc('system/authSecrets').get();
@@ -284,12 +310,6 @@ async function getStoredHash(email: string): Promise<string | null> {
     } catch {
       // Fall through to memory cache if Firestore query fails
     }
-  }
-  if (!cachedAuthSecrets[email]) {
-    const initialPin = process.env.INITIAL_PIN || '111069';
-    const defaultHash = await bcrypt.hash(initialPin, 12);
-    cachedAuthSecrets[email] = defaultHash;
-    return defaultHash;
   }
   return cachedAuthSecrets[email] || null;
 }
@@ -434,6 +454,13 @@ app.post('/api/verify-login-code', async (req, res) => {
       return res.status(400).json({ error: 'ইমেইল এবং গোপন পিন উভয়ই আবশ্যক।' });
     }
 
+    // 0. Ensure Server Setup is complete with secrets
+    if (!isSetupComplete()) {
+      return res.status(503).json({
+        error: 'সেটআপ অসম্পূর্ণ (Setup incomplete): অনুগ্রহ করে AI Studio-র Secrets প্যানেলে আপনার ইমেইল ও পিন যোগ করুন।'
+      });
+    }
+
     const email = rawEmail.trim().toLowerCase();
     const code = rawCode.trim();
     const ip = req.headers['x-forwarded-for']?.toString() || req.socket.remoteAddress || 'unknown';
@@ -457,7 +484,7 @@ app.post('/api/verify-login-code', async (req, res) => {
 
     // 2. Verify email is in the approved owner allow-list
     const approvedEmails = getApprovedOwnerEmails();
-    const isEmailApproved = approvedEmails.length === 0 || approvedEmails.includes(email);
+    const isEmailApproved = approvedEmails.includes(email);
 
     // 3. Verify Secret PIN using bcrypt against stored hash
     const storedHash = await getStoredHash(email);
@@ -855,9 +882,11 @@ app.get('/api/access-logs', (req, res) => {
 
 // Farm status endpoint
 app.get('/api/farm-info', (req, res) => {
+  const setupComplete = isSetupComplete();
   res.json({
     farmName: 'The Goated Farm',
     mode: 'single-tenant',
+    setupComplete,
     authorizedOwnersCount: getApprovedOwnerEmails().length
   });
 });

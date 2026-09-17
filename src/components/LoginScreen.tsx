@@ -35,6 +35,35 @@ export const LoginScreen: React.FC<Props> = ({ onLoginSuccess }) => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Check setup status on load: if secrets are missing, show setup incomplete banner instead of login form
+  const [setupComplete, setSetupComplete] = useState<boolean | null>(null);
+  const [checkingSetup, setCheckingSetup] = useState(true);
+
+  React.useEffect(() => {
+    let isMounted = true;
+    const checkSetupStatus = async () => {
+      try {
+        const res = await fetch('/api/farm-info');
+        if (res.ok) {
+          const data = await res.json();
+          if (isMounted) {
+            setSetupComplete(data.setupComplete !== false);
+          }
+        } else {
+          if (isMounted) setSetupComplete(true);
+        }
+      } catch {
+        if (isMounted) setSetupComplete(true);
+      } finally {
+        if (isMounted) setCheckingSetup(false);
+      }
+    };
+    checkSetupStatus();
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
   // TASK 8: Forgot PIN state
   const [showForgotModal, setShowForgotModal] = useState(false);
   const [forgotStep, setForgotStep] = useState<1 | 2>(1);
@@ -214,130 +243,185 @@ export const LoginScreen: React.FC<Props> = ({ onLoginSuccess }) => {
             </div>
           )}
 
-          {/* Direct Email + Secret PIN Form */}
-          <form
-            id="secret-pin-login-form"
-            onSubmit={handleLogin}
-            className="space-y-4"
-          >
-            {/* Field 1: User's Email Address */}
-            <div>
-              <label
-                htmlFor="user-email-input"
-                className="block text-[14px] font-bold text-gray-800 mb-1.5"
-              >
-                আপনার ইমেইল ঠিকানা (Your Email)
-              </label>
-              <div className="relative">
-                <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-gray-500">
-                  <Mail className="w-5 h-5" />
-                </div>
-                <input
-                  id="user-email-input"
-                  type="email"
-                  autoComplete="email"
-                  autoFocus
-                  required
-                  placeholder="যেমন: yourname@example.com"
-                  value={email}
-                  onChange={(e) => {
-                    setEmail(e.target.value);
-                    if (error) setError(null);
-                  }}
-                  disabled={loading}
-                  className="w-full pl-11 pr-3.5 py-3 rounded-xl bg-[#F8FAFC] border border-gray-300 focus:border-[#1E5128] focus:ring-2 focus:ring-[#1E5128]/20 text-gray-900 placeholder-gray-400 text-[15px] transition outline-none"
-                />
-              </div>
-            </div>
-
-            {/* Field 2: Master Secret PIN */}
-            <div>
-              <div className="flex items-center justify-between mb-1.5">
-                <label
-                  htmlFor="secret-pin-input"
-                  className="block text-[14px] font-bold text-gray-800"
-                >
-                  গোপন পিন (Secret Master PIN)
-                </label>
-                {/* TASK 8: Forgot PIN Link */}
-                <button
-                  type="button"
-                  id="btn-forgot-pin"
-                  onClick={() => {
-                    setForgotEmail(email.trim());
-                    setShowForgotModal(true);
-                    setForgotStep(1);
-                    setForgotError(null);
-                    setForgotSuccess(null);
-                    setResetCode('');
-                    setNewResetPin('');
-                    setConfirmResetPin('');
-                  }}
-                  className="text-[13px] text-[#1E5128] hover:text-[#173F1F] hover:underline font-semibold cursor-pointer"
-                >
-                  PIN ভুলে গেছেন? / Forgot PIN?
-                </button>
-              </div>
-              <div className="relative">
-                <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-gray-500">
-                  <KeyRound className="w-5 h-5" />
-                </div>
-                <input
-                  id="secret-pin-input"
-                  type={showPin ? 'text' : 'password'}
-                  inputMode="numeric"
-                  maxLength={12}
-                  required
-                  placeholder="গোপন পিন দিন..."
-                  value={pin}
-                  onChange={(e) => {
-                    setPin(e.target.value);
-                    if (error) setError(null);
-                  }}
-                  disabled={loading}
-                  className="w-full pl-11 pr-11 py-3 rounded-xl bg-[#F8FAFC] border border-gray-300 focus:border-[#1E5128] focus:ring-2 focus:ring-[#1E5128]/20 text-gray-900 placeholder-gray-400 text-[16px] font-mono tracking-widest transition outline-none"
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowPin(!showPin)}
-                  className="absolute inset-y-0 right-0 pr-3.5 flex items-center text-gray-500 hover:text-gray-800 cursor-pointer min-h-[44px] min-w-[44px] justify-center"
-                >
-                  {showPin ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
-                </button>
-              </div>
-              <p className="text-[13px] text-gray-500 mt-1.5 leading-snug">
-                ডিফল্ট মাস্টার পিন: <span className="font-mono font-bold text-[#1E5128]">111069</span> (বা পূর্বে পরিবর্তিত আপনার গোপন পিন)
-              </p>
-            </div>
-
-            {/* Submit Button */}
-            <button
-              id="btn-submit-login"
-              type="submit"
-              disabled={loading || !email.trim() || !pin.trim()}
-              className="w-full py-3.5 px-4 rounded-xl bg-[#1E5128] hover:bg-[#173F1F] active:scale-98 disabled:opacity-50 text-white font-bold text-[15px] transition-all flex items-center justify-center gap-2 shadow-xs cursor-pointer min-h-[48px] mt-5"
+          {/* Conditional: Setup Incomplete Message OR Login Form */}
+          {setupComplete === false ? (
+            <div
+              id="setup-incomplete-banner"
+              className="p-5 sm:p-6 rounded-2xl bg-amber-50 border border-amber-300 text-amber-950 space-y-4 shadow-xs"
             >
-              {loading ? (
-                <>
-                  <RefreshCw className="w-5 h-5 animate-spin" />
-                  <span>যাচাই করা হচ্ছে...</span>
-                </>
-              ) : (
-                <>
-                  <span>লগইন করুন ও অ্যাপে প্রবেশ করুন</span>
-                  <ArrowRight className="w-5 h-5" />
-                </>
-              )}
-            </button>
+              <div className="flex items-start gap-3">
+                <div className="w-10 h-10 rounded-xl bg-amber-100 flex items-center justify-center shrink-0 border border-amber-200">
+                  <AlertCircle className="w-6 h-6 text-amber-700" />
+                </div>
+                <div className="space-y-1">
+                  <h3 className="font-bold text-amber-950 text-base leading-tight">
+                    সেটআপ অসম্পূর্ণ (Setup incomplete)
+                  </h3>
+                  <p className="text-[14px] text-amber-900 font-semibold leading-relaxed">
+                    সেটআপ অসম্পূর্ণ (Setup incomplete): অনুগ্রহ করে AI Studio-র Secrets প্যানেলে আপনার ইমেইল ও পিন যোগ করুন।
+                  </p>
+                </div>
+              </div>
 
-            {/* Remember Me Notice */}
-            <div className="pt-3 border-t border-gray-200 flex items-start gap-2.5 text-[13px] text-gray-600 leading-relaxed">
-              <ShieldCheck className="w-5 h-5 text-[#1E5128] shrink-0 mt-0.5" />
-              <span>
-                একবার সঠিক পিন দিয়ে সফলভাবে লগইন করলে এই ডিভাইসে আপনার সেশন সংরক্ষিত থাকবে। পরবর্তীতে লিংক খুললে বারবার পিন দিতে হবে না।
-              </span>
+              <div className="bg-white/80 p-3.5 rounded-xl border border-amber-200 text-[13px] text-amber-800 space-y-1.5">
+                <div className="font-semibold text-gray-900">প্রয়োজনীয় সিক্রেট ভ্যারিয়েবল (Required Secrets):</div>
+                <div className="font-mono text-[12px] text-gray-700 space-y-1">
+                  <div>• <span className="font-bold text-[#1E5128]">APPROVED_OWNER_EMAILS</span> — অনুমোদিত মালিকের ইমেইল (যেমন: your-email@gmail.com)</div>
+                  <div>• <span className="font-bold text-[#1E5128]">INITIAL_PIN</span> — লগইনের প্রাথমিক গোপন মাস্টার পিন (কমপক্ষে ৬ ডিজিট)</div>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                id="btn-retry-setup-check"
+                onClick={async () => {
+                  setCheckingSetup(true);
+                  try {
+                    const res = await fetch('/api/farm-info');
+                    if (res.ok) {
+                      const data = await res.json();
+                      setSetupComplete(data.setupComplete !== false);
+                    }
+                  } catch {
+                    // ignore
+                  } finally {
+                    setCheckingSetup(false);
+                  }
+                }}
+                className="w-full py-3 px-4 rounded-xl bg-[#1E5128] hover:bg-[#173F1F] text-white font-bold text-[14px] flex items-center justify-center gap-2 cursor-pointer transition shadow-xs min-h-[44px]"
+              >
+                <RefreshCw className={`w-4 h-4 ${checkingSetup ? 'animate-spin' : ''}`} />
+                <span>পুনরায় যাচাই করুন (Check Again)</span>
+              </button>
             </div>
-          </form>
+          ) : checkingSetup ? (
+            <div className="py-10 text-center text-gray-500 space-y-2.5">
+              <RefreshCw className="w-7 h-7 text-[#1E5128] animate-spin mx-auto" />
+              <p className="text-[13px] font-medium">নিরাপত্তা স্ট্যাটাস যাচাই করা হচ্ছে...</p>
+            </div>
+          ) : (
+            /* Direct Email + Secret PIN Form */
+            <form
+              id="secret-pin-login-form"
+              onSubmit={handleLogin}
+              className="space-y-4"
+            >
+              {/* Field 1: User's Email Address */}
+              <div>
+                <label
+                  htmlFor="user-email-input"
+                  className="block text-[14px] font-bold text-gray-800 mb-1.5"
+                >
+                  আপনার ইমেইল ঠিকানা (Your Email)
+                </label>
+                <div className="relative">
+                  <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-gray-500">
+                    <Mail className="w-5 h-5" />
+                  </div>
+                  <input
+                    id="user-email-input"
+                    type="email"
+                    autoComplete="email"
+                    autoFocus
+                    required
+                    placeholder="যেমন: yourname@example.com"
+                    value={email}
+                    onChange={(e) => {
+                      setEmail(e.target.value);
+                      if (error) setError(null);
+                    }}
+                    disabled={loading}
+                    className="w-full pl-11 pr-3.5 py-3 rounded-xl bg-[#F8FAFC] border border-gray-300 focus:border-[#1E5128] focus:ring-2 focus:ring-[#1E5128]/20 text-gray-900 placeholder-gray-400 text-[15px] transition outline-none"
+                  />
+                </div>
+              </div>
+
+              {/* Field 2: Master Secret PIN */}
+              <div>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label
+                    htmlFor="secret-pin-input"
+                    className="block text-[14px] font-bold text-gray-800"
+                  >
+                    গোপন পিন (Secret Master PIN)
+                  </label>
+                  {/* TASK 8: Forgot PIN Link */}
+                  <button
+                    type="button"
+                    id="btn-forgot-pin"
+                    onClick={() => {
+                      setForgotEmail(email.trim());
+                      setShowForgotModal(true);
+                      setForgotStep(1);
+                      setForgotError(null);
+                      setForgotSuccess(null);
+                      setResetCode('');
+                      setNewResetPin('');
+                      setConfirmResetPin('');
+                    }}
+                    className="text-[13px] text-[#1E5128] hover:text-[#173F1F] hover:underline font-semibold cursor-pointer"
+                  >
+                    PIN ভুলে গেছেন? / Forgot PIN?
+                  </button>
+                </div>
+                <div className="relative">
+                  <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-gray-500">
+                    <KeyRound className="w-5 h-5" />
+                  </div>
+                  <input
+                    id="secret-pin-input"
+                    type={showPin ? 'text' : 'password'}
+                    inputMode="numeric"
+                    maxLength={12}
+                    required
+                    placeholder="গোপন পিন দিন..."
+                    value={pin}
+                    onChange={(e) => {
+                      setPin(e.target.value);
+                      if (error) setError(null);
+                    }}
+                    disabled={loading}
+                    className="w-full pl-11 pr-11 py-3 rounded-xl bg-[#F8FAFC] border border-gray-300 focus:border-[#1E5128] focus:ring-2 focus:ring-[#1E5128]/20 text-gray-900 placeholder-gray-400 text-[16px] font-mono tracking-widest transition outline-none"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPin(!showPin)}
+                    className="absolute inset-y-0 right-0 pr-3.5 flex items-center text-gray-500 hover:text-gray-800 cursor-pointer min-h-[44px] min-w-[44px] justify-center"
+                  >
+                    {showPin ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+                  </button>
+                </div>
+              </div>
+
+              {/* Submit Button */}
+              <button
+                id="btn-submit-login"
+                type="submit"
+                disabled={loading || !email.trim() || !pin.trim()}
+                className="w-full py-3.5 px-4 rounded-xl bg-[#1E5128] hover:bg-[#173F1F] active:scale-98 disabled:opacity-50 text-white font-bold text-[15px] transition-all flex items-center justify-center gap-2 shadow-xs cursor-pointer min-h-[48px] mt-5"
+              >
+                {loading ? (
+                  <>
+                    <RefreshCw className="w-5 h-5 animate-spin" />
+                    <span>যাচাই করা হচ্ছে...</span>
+                  </>
+                ) : (
+                  <>
+                    <span>লগইন করুন ও অ্যাপে প্রবেশ করুন</span>
+                    <ArrowRight className="w-5 h-5" />
+                  </>
+                )}
+              </button>
+
+              {/* Remember Me Notice */}
+              <div className="pt-3 border-t border-gray-200 flex items-start gap-2.5 text-[13px] text-gray-600 leading-relaxed">
+                <ShieldCheck className="w-5 h-5 text-[#1E5128] shrink-0 mt-0.5" />
+                <span>
+                  একবার সঠিক পিন দিয়ে সফলভাবে লগইন করলে এই ডিভাইসে আপনার সেশন সংরক্ষিত থাকবে। পরবর্তীতে লিংক খুললে বারবার পিন দিতে হবে না।
+                </span>
+              </div>
+            </form>
+          )}
         </div>
       </main>
 
