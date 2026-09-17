@@ -15,13 +15,15 @@ import {
   LogOut,
   Eye,
   EyeOff,
-  AlertCircle
+  AlertCircle,
+  Calculator
 } from 'lucide-react';
 import { db } from '../db/indexedDb';
 import { AuditLog, FixedAsset, SystemConfig, UserRole, AppAccessLog } from '../types';
 import { getStoredAuthorizedEmails, getAppAccessLogs, logoutOwner } from '../services/authService';
 import { generateTransactionNumber, safeInsert } from '../utils/idGenerator';
 import { getLastSyncTime, formatBackupTimestamp } from '../services/exportService';
+import { runAutomatedDepreciation } from '../accounting/depreciationService';
 
 interface Props {
   role: UserRole;
@@ -75,6 +77,9 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
   const [assetCost, setAssetCost] = useState('150000');
   const [assetLifeYears, setAssetLifeYears] = useState('5');
   const [assetSalvage, setAssetSalvage] = useState('15000');
+  const [assetDepreciationRate, setAssetDepreciationRate] = useState('10');
+  const [deprLoading, setDeprLoading] = useState(false);
+  const [deprFeedback, setDeprFeedback] = useState<string | null>(null);
 
   useEffect(() => {
     loadData();
@@ -166,25 +171,48 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
       const cost = parseFloat(assetCost) || 0;
       const life = parseFloat(assetLifeYears) || 5;
       const salvage = parseFloat(assetSalvage) || 0;
+      const rate = parseFloat(assetDepreciationRate) || (life > 0 ? Number((100 / life).toFixed(2)) : 10);
+      const purchaseDateStr = new Date().toISOString().split('T')[0];
 
       const item: FixedAsset = {
         id: generateTransactionNumber('AST'),
         name: assetName.trim(),
         category: assetCategory === 'BUILDING' ? 'BUILDINGS' : (assetCategory as any),
-        purchaseDate: new Date().toISOString().split('T')[0],
+        purchaseDate: purchaseDateStr,
         originalCost: cost,
         salvageValue: salvage,
         usefulLifeYears: life,
         accumulatedDepreciation: 0,
         currentBookValue: cost,
+        depreciationRatePercent: rate,
+        lastDepreciationDate: purchaseDateStr,
         synced: false
       };
       await safeInsert(db.fixedAssets, item, { idPrefix: 'ast' });
       setShowAddAsset(false);
       setAssetName('');
+      setAssetDepreciationRate('10');
       loadData();
     } catch (err: any) {
       alert(err.message);
+    }
+  };
+
+  const handleRunDepreciationNow = async () => {
+    setDeprLoading(true);
+    setDeprFeedback(null);
+    try {
+      const res = await runAutomatedDepreciation(currentUserId);
+      if (res.entriesPosted > 0) {
+        setDeprFeedback(`সফলভাবে ${res.entriesPosted}টি অবচয় জাবেদা (মোট ৳${res.totalDepreciationAmount.toLocaleString()}) দাখিলা করা হয়েছে।`);
+      } else {
+        setDeprFeedback('সকল সক্রিয় স্থায়ী সম্পদের অবচয় ইতোমধ্যে হালনাগাদ রয়েছে। নতুন কোনো বকেয়া অবচয় নেই।');
+      }
+      await loadData();
+    } catch (err: any) {
+      setDeprFeedback(`অবচয় গণনায় ত্রুটি: ${err.message}`);
+    } finally {
+      setDeprLoading(false);
     }
   };
 
@@ -621,18 +649,46 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
               </p>
             </div>
 
-            <button
-              onClick={() => setShowAddAsset(!showAddAsset)}
-              className="px-4 py-2 rounded-xl bg-[#1E5128] hover:bg-[#173F1F] text-white text-[13px] font-bold shadow-xs transition-all flex items-center gap-1.5 cursor-pointer min-h-[40px]"
-            >
-              + নতুন স্থায়ী সম্পদ
-            </button>
+            <div className="flex items-center gap-2 flex-wrap">
+              <button
+                id="btn-run-depreciation-more"
+                type="button"
+                onClick={handleRunDepreciationNow}
+                disabled={deprLoading}
+                className="px-3.5 py-2 rounded-xl bg-amber-50 hover:bg-amber-100 border border-amber-300 text-amber-900 text-[13px] font-bold shadow-xs transition-all flex items-center gap-1.5 cursor-pointer min-h-[40px] disabled:opacity-50"
+              >
+                <Calculator className={`w-4 h-4 text-amber-700 ${deprLoading ? 'animate-spin' : ''}`} />
+                <span>{deprLoading ? 'হিসাব করা হচ্ছে...' : 'এখনই অবচয় হিসাব করুন'}</span>
+              </button>
+              <button
+                onClick={() => setShowAddAsset(!showAddAsset)}
+                className="px-4 py-2 rounded-xl bg-[#1E5128] hover:bg-[#173F1F] text-white text-[13px] font-bold shadow-xs transition-all flex items-center gap-1.5 cursor-pointer min-h-[40px]"
+              >
+                + নতুন স্থায়ী সম্পদ
+              </button>
+            </div>
           </div>
+
+          {deprFeedback && (
+            <div className="p-3.5 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-900 text-[13px] font-medium flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                <span>{deprFeedback}</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setDeprFeedback(null)}
+                className="text-xs text-emerald-700 hover:text-emerald-950 font-bold cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+          )}
 
           {showAddAsset && (
             <form onSubmit={handleAddAsset} className="p-4 bg-[#F8FAFC] border border-gray-300 rounded-xl space-y-3">
               <div className="font-bold text-[#1E5128] text-[15px]">নতুন সম্পদ যুক্ত করুন</div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2.5">
                 <div>
                   <label className="block text-[13px] font-medium text-gray-700 mb-1">সম্পদের নাম</label>
                   <input
@@ -673,8 +729,30 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
                     type="number"
                     required
                     value={assetLifeYears}
-                    onChange={(e) => setAssetLifeYears(e.target.value)}
+                    onChange={(e) => {
+                      const l = parseFloat(e.target.value);
+                      setAssetLifeYears(e.target.value);
+                      if (l > 0) {
+                        setAssetDepreciationRate((100 / l).toFixed(1));
+                      }
+                    }}
                     className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[13px] font-medium text-gray-700 mb-1">
+                    বার্ষিক অবচয় হার (%)
+                  </label>
+                  <input
+                    type="number"
+                    step="0.1"
+                    min="0"
+                    max="100"
+                    required
+                    placeholder="যেমন: 20"
+                    value={assetDepreciationRate}
+                    onChange={(e) => setAssetDepreciationRate(e.target.value)}
+                    className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900 font-mono"
                   />
                 </div>
               </div>
@@ -698,34 +776,48 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
           )}
 
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
-            {assets.map((ast) => (
-              <div key={ast.id} className="p-4 rounded-xl bg-[#F8FAFC] border border-gray-200 space-y-2 shadow-xs">
-                <div className="flex justify-between items-start">
-                  <div>
-                    <h4 className="font-bold text-gray-900 text-[15px]">{ast.name}</h4>
-                    <span className="text-[12px] text-gray-500 font-mono">{ast.id} | {ast.category}</span>
+            {assets.map((ast) => {
+              const rate = ast.depreciationRatePercent ?? (ast.usefulLifeYears ? Number((100 / ast.usefulLifeYears).toFixed(1)) : 10);
+              const monthly = Math.round(((ast.originalCost * rate / 100) / 12) * 100) / 100;
+              return (
+                <div key={ast.id} className="p-4 rounded-xl bg-[#F8FAFC] border border-gray-200 space-y-2 shadow-xs">
+                  <div className="flex justify-between items-start">
+                    <div>
+                      <h4 className="font-bold text-gray-900 text-[15px]">{ast.name}</h4>
+                      <span className="text-[12px] text-gray-500 font-mono">{ast.id} | {ast.category}</span>
+                    </div>
+                    <div className="text-right">
+                      <span className="px-2.5 py-1 rounded-full bg-gray-200 text-gray-700 text-xs font-semibold">
+                        {ast.usefulLifeYears} বছর ({rate}%/বছর)
+                      </span>
+                    </div>
                   </div>
-                  <span className="px-2.5 py-1 rounded-full bg-gray-200 text-gray-700 text-xs font-semibold">
-                    {ast.usefulLifeYears} বছর
-                  </span>
-                </div>
 
-                <div className="space-y-1.5 pt-2.5 border-t border-gray-200 font-mono text-[13px]">
-                  <div className="flex justify-between">
-                    <span className="font-sans text-gray-600">মূল ক্রয়মূল্য:</span>
-                    <span className="text-gray-900 font-semibold">{fmt(ast.originalCost)}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="font-sans text-gray-600">পুঞ্জীভূত অবচয় (1590):</span>
-                    <span className="text-red-600 font-semibold">{fmt(ast.accumulatedDepreciation)}</span>
-                  </div>
-                  <div className="flex justify-between font-bold text-[#15803D] pt-1.5 border-t border-gray-200">
-                    <span className="font-sans text-gray-900">বর্তমান পুস্তক মূল্য:</span>
-                    <span>{fmt(ast.currentBookValue)}</span>
+                  <div className="space-y-1.5 pt-2.5 border-t border-gray-200 font-mono text-[13px]">
+                    <div className="flex justify-between">
+                      <span className="font-sans text-gray-600">মূল ক্রয়মূল্য:</span>
+                      <span className="text-gray-900 font-semibold">{fmt(ast.originalCost)}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="font-sans text-gray-600">মাসিক অবচয় হার:</span>
+                      <span className="text-amber-700 font-semibold">{fmt(monthly)}/মাস</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="font-sans text-gray-600">পুঞ্জীভূত অবচয় (1590):</span>
+                      <span className="text-red-600 font-semibold">{fmt(ast.accumulatedDepreciation)}</span>
+                    </div>
+                    <div className="flex justify-between font-bold text-[#15803D] pt-1.5 border-t border-gray-200">
+                      <span className="font-sans text-gray-900">বর্তমান পুস্তক মূল্য:</span>
+                      <span>{fmt(ast.currentBookValue)}</span>
+                    </div>
+                    <div className="flex justify-between text-[11px] text-gray-500 pt-1 border-t border-gray-100">
+                      <span className="font-sans">সর্বশেষ অবচয় হিসাব:</span>
+                      <span>{ast.lastDepreciationDate || ast.purchaseDate || 'হিসাব হয়নি'}</span>
+                    </div>
                   </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       )}

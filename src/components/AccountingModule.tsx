@@ -7,7 +7,8 @@ import {
   AlertCircle,
   Trash2,
   Layers,
-  ArrowRightLeft
+  ArrowRightLeft,
+  Calculator
 } from 'lucide-react';
 import { db } from '../db/indexedDb';
 import {
@@ -18,6 +19,7 @@ import {
   LedgerEntry,
   validateBalancedLines
 } from '../accounting/accountingEngine';
+import { runAutomatedDepreciation } from '../accounting/depreciationService';
 import { Account, JournalEntry, JournalLine, UserRole, VoucherType } from '../types';
 import { generateTransactionNumber, generateUniqueId, safeInsert } from '../utils/idGenerator';
 
@@ -34,6 +36,7 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
   const [journals, setJournals] = useState<JournalEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const [msg, setMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [deprRunning, setDeprRunning] = useState(false);
 
   // New Voucher Form State
   const [voucherType, setVoucherType] = useState<VoucherType>('JOURNAL');
@@ -254,12 +257,39 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
     }
   };
 
+  const handleRunDepreciationNow = async () => {
+    setDeprRunning(true);
+    setMsg(null);
+    try {
+      const res = await runAutomatedDepreciation(currentUserId);
+      if (res.entriesPosted > 0) {
+        setMsg({
+          type: 'success',
+          text: `স্থায়ী সম্পদ অবচয় সম্পন্ন: ${res.entriesPosted}টি জাবেদা দাখিলা করা হয়েছে (মোট ৳${res.totalDepreciationAmount.toLocaleString('en-IN', { minimumFractionDigits: 2 })})।`
+        });
+      } else {
+        setMsg({
+          type: 'success',
+          text: 'সকল সক্রিয় স্থায়ী সম্পদের অবচয় ইতোমধ্যে হালনাগাদ রয়েছে। নতুন কোনো বকেয়া অবচয় নেই।'
+        });
+      }
+      await loadBaseData();
+    } catch (err: any) {
+      setMsg({
+        type: 'error',
+        text: `অবচয় দাখিলায় ত্রুটি: ${err.message}`
+      });
+    } finally {
+      setDeprRunning(false);
+    }
+  };
+
   const fmt = (n: number) => `৳${Number(n || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`;
 
   return (
     <div className="space-y-4 pb-6 max-w-5xl mx-auto">
       {/* Top Header & Subtabs */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 sm:p-5 rounded-2xl bg-white border border-gray-200 shadow-xs">
+      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 p-4 sm:p-5 rounded-2xl bg-white border border-gray-200 shadow-xs">
         <div>
           <h2 className="text-lg sm:text-xl font-bold text-gray-900 flex items-center gap-2">
             <BookOpen className="w-5 h-5 text-[#1E5128]" />
@@ -270,47 +300,61 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
           </p>
         </div>
 
-        {/* Sub Navigation Bar */}
-        <div className="flex items-center gap-1.5 bg-gray-100 p-1.5 rounded-xl overflow-x-auto text-[13px] font-semibold">
+        {/* Sub Navigation Bar & Run Depreciation Button */}
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="flex items-center gap-1.5 bg-gray-100 p-1.5 rounded-xl overflow-x-auto text-[13px] font-semibold">
+            <button
+              onClick={() => setSubTab('daybook')}
+              className={`px-3.5 py-2 rounded-lg whitespace-nowrap transition-all cursor-pointer min-h-[40px] ${
+                subTab === 'daybook' ? 'bg-[#1E5128] text-white shadow-xs' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200/60'
+              }`}
+            >
+              জাবেদা তালিকা (Daybook)
+            </button>
+            <button
+              onClick={() => setSubTab('vouchers')}
+              className={`px-3.5 py-2 rounded-lg whitespace-nowrap transition-all cursor-pointer min-h-[40px] ${
+                subTab === 'vouchers' ? 'bg-[#1E5128] text-white shadow-xs' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200/60'
+              }`}
+            >
+              + নতুন ভাউচার
+            </button>
+            <button
+              onClick={() => setSubTab('ledger')}
+              className={`px-3.5 py-2 rounded-lg whitespace-nowrap transition-all cursor-pointer min-h-[40px] ${
+                subTab === 'ledger' ? 'bg-[#1E5128] text-white shadow-xs' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200/60'
+              }`}
+            >
+              খতিয়ান (Ledger)
+            </button>
+            <button
+              onClick={() => setSubTab('trialBalance')}
+              className={`px-3.5 py-2 rounded-lg whitespace-nowrap transition-all cursor-pointer min-h-[40px] ${
+                subTab === 'trialBalance' ? 'bg-[#1E5128] text-white shadow-xs' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200/60'
+              }`}
+            >
+              রেওয়ামিল (Trial Balance)
+            </button>
+            <button
+              onClick={() => setSubTab('chart')}
+              className={`px-3.5 py-2 rounded-lg whitespace-nowrap transition-all cursor-pointer min-h-[40px] ${
+                subTab === 'chart' ? 'bg-[#1E5128] text-white shadow-xs' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200/60'
+              }`}
+            >
+              হিসাবের চার্ট (COA)
+            </button>
+          </div>
+
           <button
-            onClick={() => setSubTab('daybook')}
-            className={`px-3.5 py-2 rounded-lg whitespace-nowrap transition-all cursor-pointer min-h-[40px] ${
-              subTab === 'daybook' ? 'bg-[#1E5128] text-white shadow-xs' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200/60'
-            }`}
+            id="btn-run-depreciation-now"
+            type="button"
+            onClick={handleRunDepreciationNow}
+            disabled={deprRunning}
+            className="px-3.5 py-2 rounded-xl bg-amber-50 hover:bg-amber-100 border border-amber-300 text-amber-900 text-[13px] font-bold shadow-xs transition-all flex items-center gap-1.5 cursor-pointer min-h-[40px] whitespace-nowrap disabled:opacity-50"
+            title="বিগত মাসগুলোর বকেয়া স্থায়ী সম্পদ অবচয় জাবেদা হিসাব ও স্বয়ংক্রিয় দাখিলা করুন"
           >
-            জাবেদা তালিকা (Daybook)
-          </button>
-          <button
-            onClick={() => setSubTab('vouchers')}
-            className={`px-3.5 py-2 rounded-lg whitespace-nowrap transition-all cursor-pointer min-h-[40px] ${
-              subTab === 'vouchers' ? 'bg-[#1E5128] text-white shadow-xs' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200/60'
-            }`}
-          >
-            + নতুন ভাউচার
-          </button>
-          <button
-            onClick={() => setSubTab('ledger')}
-            className={`px-3.5 py-2 rounded-lg whitespace-nowrap transition-all cursor-pointer min-h-[40px] ${
-              subTab === 'ledger' ? 'bg-[#1E5128] text-white shadow-xs' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200/60'
-            }`}
-          >
-            খতিয়ান (Ledger)
-          </button>
-          <button
-            onClick={() => setSubTab('trialBalance')}
-            className={`px-3.5 py-2 rounded-lg whitespace-nowrap transition-all cursor-pointer min-h-[40px] ${
-              subTab === 'trialBalance' ? 'bg-[#1E5128] text-white shadow-xs' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200/60'
-            }`}
-          >
-            রেওয়ামিল (Trial Balance)
-          </button>
-          <button
-            onClick={() => setSubTab('chart')}
-            className={`px-3.5 py-2 rounded-lg whitespace-nowrap transition-all cursor-pointer min-h-[40px] ${
-              subTab === 'chart' ? 'bg-[#1E5128] text-white shadow-xs' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200/60'
-            }`}
-          >
-            হিসাবের চার্ট (COA)
+            <Calculator className={`w-4 h-4 text-amber-700 ${deprRunning ? 'animate-spin' : ''}`} />
+            <span>{deprRunning ? 'অবচয় হিসাব হচ্ছে...' : 'এখনই অবচয় হিসাব করুন'}</span>
           </button>
         </div>
       </div>

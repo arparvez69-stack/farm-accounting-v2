@@ -25,6 +25,7 @@ import { MoreModule } from './components/MoreModule';
 import { SyncState, SystemConfig, UserProfile } from './types';
 import { runRegressionTests } from './tests/regressionTests';
 import { triggerForegroundDueTodayNotification } from './db/indexedDb';
+import { runDepreciationOnAppLoad } from './accounting/depreciationService';
 
 export default function App() {
   const [systemConfig, setSystemConfig] = useState<SystemConfig | null>(null);
@@ -71,6 +72,11 @@ export default function App() {
 
       // 1. Initialize IndexedDB default accounts and configuration
       await initializeLocalDatabase();
+
+      // Automated fixed asset depreciation check on app load (runs once per session)
+      runDepreciationOnAppLoad().catch((err) => {
+        console.error('[The Goated Farm] Automated depreciation on app load error:', err);
+      });
 
       // 2. Run accounting integrity regression tests in background
       runRegressionTests().then((testRes) => {

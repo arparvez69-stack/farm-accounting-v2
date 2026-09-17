@@ -474,6 +474,8 @@ export interface FixedAsset {
   salvageValue: number;
   accumulatedDepreciation: number;
   currentBookValue: number;
+  depreciationRatePercent?: number; // annual %, entered once at purchase
+  lastDepreciationDate?: string; // defaults to purchase date, hidden from the user
   synced?: boolean;
 }
 

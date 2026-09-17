@@ -219,3 +219,16 @@ export function getLoanLiabilityAccount(tenureMonths?: number): string {
 export function getInvestorCapitalAccount(): string {
   return CANONICAL_ACCOUNTS.INVESTOR_CAPITAL; // 3020
 }
+
+/**
+ * Maps fixed asset depreciation to Depreciation Expense (6140) and Accumulated Depreciation (1590)
+ */
+export function getDepreciationAccounts(): {
+  expenseCode: string;
+  accumulatedCode: string;
+} {
+  return {
+    expenseCode: CANONICAL_ACCOUNTS.DEPRECIATION_EXPENSE, // 6140
+    accumulatedCode: CANONICAL_ACCOUNTS.ACCUMULATED_DEPRECIATION // 1590
+  };
+}

@@ -17,7 +17,8 @@ import {
   executeSaleTransaction
 } from '../services/transactionService';
 import { generateTransactionNumber, generateUniqueId, safeInsert } from '../utils/idGenerator';
-import { Animal, InventoryItem, JournalLine, Party } from '../types';
+import { Animal, InventoryItem, JournalLine, Party, FixedAsset } from '../types';
+import { runAutomatedDepreciation } from '../accounting/depreciationService';
 
 export interface TestResult {
   success: boolean;
@@ -446,6 +447,55 @@ export async function runRegressionTests(): Promise<TestResult> {
       tbAfterSale.isBalanced,
       'Trial Balance must remain balanced after animal event and sale accounting entries.'
     );
+
+    // ----------------------------------------------------
+    // TEST 14: Automated Fixed Asset Depreciation
+    // ----------------------------------------------------
+    const testAssetId = 'ast_test_depr_regression';
+    // Create an asset purchased 2 months ago
+    const twoMonthsAgo = new Date();
+    twoMonthsAgo.setMonth(twoMonthsAgo.getMonth() - 2);
+    const twoMonthsAgoStr = twoMonthsAgo.toISOString().split('T')[0];
+
+    await safeInsert(db.fixedAssets, {
+      id: testAssetId,
+      name: 'টেস্ট ঘাস কাটার মেশিন',
+      category: 'MACHINERY',
+      purchaseDate: twoMonthsAgoStr,
+      originalCost: 120000,
+      salvageValue: 0,
+      usefulLifeYears: 5,
+      accumulatedDepreciation: 0,
+      currentBookValue: 120000,
+      depreciationRatePercent: 20, // 20% annual = 2% monthly = 2000/month
+      lastDepreciationDate: twoMonthsAgoStr,
+      synced: false
+    });
+
+    const deprResult = await runAutomatedDepreciation(testUserId);
+    assert(
+      deprResult.entriesPosted >= 2,
+      'Automated depreciation should post at least 2 monthly journal entries for 2 elapsed months.'
+    );
+
+    const updatedAsset = await db.fixedAssets.get(testAssetId);
+    assert(
+      !!updatedAsset && updatedAsset.accumulatedDepreciation >= 4000,
+      'Asset accumulated depreciation must be updated accurately after automated run.'
+    );
+    assert(
+      !!updatedAsset && updatedAsset.currentBookValue <= 116000,
+      'Asset currentBookValue must decrease accordingly.'
+    );
+
+    const tbAfterDepr = await generateTrialBalance();
+    assert(
+      tbAfterDepr.isBalanced,
+      'Trial Balance must remain balanced after automated depreciation journal entries.'
+    );
+
+    // Clean up test asset
+    await db.fixedAssets.delete(testAssetId);
 
   } catch (error: any) {
     failures.push(`CRITICAL RUNTIME ERROR: ${error.message}`);
