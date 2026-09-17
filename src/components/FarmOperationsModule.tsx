@@ -885,6 +885,51 @@ export const FarmOperationsModule: React.FC<Props> = ({
             </div>
           </div>
 
+          {/* Animal Live Search Bar - Placed at Top of Animal List */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="relative flex-1">
+              <Search className="w-4 h-4 text-gray-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+              <input
+                type="text"
+                id="animal-search-input"
+                value={animalSearch}
+                onChange={(e) => setAnimalSearch(e.target.value)}
+                placeholder="পশুর ট্যাগ (যেমন: COW-105) বা নাম/জাত দিয়ে খুঁজুন..."
+                className="w-full pl-10 pr-9 py-2 bg-[#F8FAFC] border border-gray-300 rounded-xl text-[14px] text-gray-900 focus:outline-none focus:border-[#1E5128] focus:bg-white transition-all min-h-[42px]"
+              />
+              {animalSearch && (
+                <button
+                  type="button"
+                  id="btn-clear-animal-search"
+                  onClick={() => setAnimalSearch('')}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 p-1 cursor-pointer"
+                  title="অনুসন্ধান মুছুন"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
+            {animalSearch.trim() && (
+              <div className="text-xs text-gray-500 font-medium whitespace-nowrap">
+                ফলাফল:{' '}
+                <span className="font-bold text-[#1E5128]">
+                  {
+                    animals.filter((a) => {
+                      const matchesStatus = animalFilter === 'ACTIVE' ? a.status === 'ACTIVE' : a.status !== 'ACTIVE';
+                      if (!matchesStatus) return false;
+                      const q = animalSearch.toLowerCase().trim();
+                      const tagMatch = (a.tag && a.tag.toLowerCase().includes(q)) || (a.id && a.id.toLowerCase().includes(q));
+                      const nameMatch = ((a as any).name && (a as any).name.toLowerCase().includes(q)) || (a.notes && a.notes.toLowerCase().includes(q));
+                      const breedMatch = a.breed && a.breed.toLowerCase().includes(q);
+                      return tagMatch || nameMatch || breedMatch;
+                    }).length
+                  }
+                </span>{' '}
+                টি পশু
+              </div>
+            )}
+          </div>
+
           {showAddAnimal && (
             <form onSubmit={handleAddAnimal} className="p-4 bg-[#F8FAFC] border border-gray-300 rounded-xl space-y-3">
               <div className="font-bold text-[#1E5128] text-[15px]">নতুন গবাদিপশু তথ্য যোগ করুন</div>
@@ -1013,51 +1058,6 @@ export const FarmOperationsModule: React.FC<Props> = ({
               </div>
             </form>
           )}
-
-          {/* Animal Live Search Bar */}
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-            <div className="relative flex-1">
-              <Search className="w-4 h-4 text-gray-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
-              <input
-                type="text"
-                id="animal-search-input"
-                value={animalSearch}
-                onChange={(e) => setAnimalSearch(e.target.value)}
-                placeholder="পশুর ট্যাগ (যেমন: COW-105) বা নাম/জাত দিয়ে খুঁজুন..."
-                className="w-full pl-10 pr-9 py-2 bg-[#F8FAFC] border border-gray-300 rounded-xl text-[14px] text-gray-900 focus:outline-none focus:border-[#1E5128] focus:bg-white transition-all min-h-[42px]"
-              />
-              {animalSearch && (
-                <button
-                  type="button"
-                  id="btn-clear-animal-search"
-                  onClick={() => setAnimalSearch('')}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 p-1 cursor-pointer"
-                  title="অনুসন্ধান মুছুন"
-                >
-                  <X className="w-3.5 h-3.5" />
-                </button>
-              )}
-            </div>
-            {animalSearch.trim() && (
-              <div className="text-xs text-gray-500 font-medium whitespace-nowrap">
-                ফলাফল:{' '}
-                <span className="font-bold text-[#1E5128]">
-                  {
-                    animals.filter((a) => {
-                      const matchesStatus = animalFilter === 'ACTIVE' ? a.status === 'ACTIVE' : a.status !== 'ACTIVE';
-                      if (!matchesStatus) return false;
-                      const q = animalSearch.toLowerCase().trim();
-                      const tagMatch = (a.tag && a.tag.toLowerCase().includes(q)) || (a.id && a.id.toLowerCase().includes(q));
-                      const nameMatch = (a as any).name && (a as any).name.toLowerCase().includes(q);
-                      const breedMatch = a.breed && a.breed.toLowerCase().includes(q);
-                      return tagMatch || nameMatch || breedMatch;
-                    }).length
-                  }
-                </span>{' '}
-                টি পশু
-              </div>
-            )}
-          </div>
 
           {/* Animals Grid */}
           {(() => {

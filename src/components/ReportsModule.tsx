@@ -26,7 +26,9 @@ import {
   ArrowUpRight,
   GitCompare,
   Lock,
-  Calendar
+  Calendar,
+  BookOpen,
+  X
 } from 'lucide-react';
 import {
   BalanceSheetReport,
@@ -35,12 +37,14 @@ import {
   generateProfitLoss,
   generateTrialBalance,
   getClosedPeriods,
+  getGeneralLedger,
+  LedgerEntry,
   ProfitLossReport,
   TrialBalance
 } from '../accounting/accountingEngine';
 import { exportAllToExcel, createFullJsonBackup, restoreFromJsonBackup } from '../services/exportService';
 import { db } from '../db/indexedDb';
-import { UserRole, Sale, Purchase, PaymentRecord, Loan, Investor, CashBankAccount, JournalEntry, ClosedPeriod } from '../types';
+import { UserRole, Sale, Purchase, PaymentRecord, Loan, Investor, CashBankAccount, JournalEntry, ClosedPeriod, Account } from '../types';
 
 type DatePreset = 'this_month' | 'last_month' | 'this_year' | 'custom';
 
@@ -199,6 +203,7 @@ type ReportType =
   | 'pl'
   | 'balanceSheet'
   | 'trialBalance'
+  | 'ledger'
   | 'animalProfitability'
   | 'aging'
   | 'cashFlow'
@@ -213,6 +218,15 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
   const [pl, setPl] = useState<ProfitLossReport | null>(null);
   const [bs, setBs] = useState<BalanceSheetReport | null>(null);
   const [tb, setTb] = useState<TrialBalance | null>(null);
+
+  // General Ledger Report State
+  const [reportAccounts, setReportAccounts] = useState<Account[]>([]);
+  const [selectedLedgerAccountCode, setSelectedLedgerAccountCode] = useState<string>('1010');
+  const [reportLedgerEntries, setReportLedgerEntries] = useState<LedgerEntry[]>([]);
+  const [reportLedgerAccount, setReportLedgerAccount] = useState<Account | undefined>();
+  const [reportLedgerNetBalance, setReportLedgerNetBalance] = useState<number>(0);
+  const [reportLedgerSearchQuery, setReportLedgerSearchQuery] = useState<string>('');
+  const [reportLedgerVisibleCount, setReportLedgerVisibleCount] = useState<number>(25);
 
   // Cash Flow Report State
   const [cashFlowData, setCashFlowData] = useState<CashFlowReportData | null>(null);
@@ -854,6 +868,33 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
     });
   };
 
+  const loadLedgerReport = async (accountCode?: string) => {
+    const code = accountCode || selectedLedgerAccountCode || '1010';
+    setSelectedLedgerAccountCode(code);
+    setReportLedgerVisibleCount(25);
+
+    let accs = reportAccounts;
+    if (accs.length === 0) {
+      accs = await db.accounts.orderBy('code').toArray();
+      setReportAccounts(accs);
+    }
+
+    const res = await getGeneralLedger(code);
+    setReportLedgerAccount(res.account);
+
+    let entries = res.entries;
+    if (startDate || endDate) {
+      entries = entries.filter((e) => {
+        if (startDate && e.date < startDate) return false;
+        if (endDate && e.date > endDate) return false;
+        return true;
+      });
+    }
+
+    setReportLedgerEntries(entries);
+    setReportLedgerNetBalance(res.netBalance);
+  };
+
   const loadReports = async () => {
     setLoading(true);
     try {
@@ -867,6 +908,8 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
       } else if (activeReport === 'trialBalance') {
         const res = await generateTrialBalance(dateFilter);
         setTb(res);
+      } else if (activeReport === 'ledger') {
+        await loadLedgerReport();
       } else if (activeReport === 'animalProfitability') {
         await loadAnimalProfitability();
       } else if (activeReport === 'aging') {
@@ -1127,6 +1170,20 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
         >
           <Layers className="w-4 h-4" />
           <span>রেওয়ামিল অডিট (Trial Balance)</span>
+        </button>
+
+        <button
+          id="tab-ledger-report"
+          onClick={() => {
+            setActiveReport('ledger');
+            loadLedgerReport(selectedLedgerAccountCode);
+          }}
+          className={`flex items-center gap-1.5 px-3.5 py-2 rounded-lg whitespace-nowrap transition-all cursor-pointer min-h-[40px] ${
+            activeReport === 'ledger' ? 'bg-[#1E5128] text-white shadow-xs' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200/60'
+          }`}
+        >
+          <BookOpen className="w-4 h-4" />
+          <span>খতিয়ান বহি (General Ledger)</span>
         </button>
 
         <button
@@ -1549,8 +1606,17 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
               </thead>
               <tbody className="divide-y divide-gray-100 font-mono">
                 {tb.rows.map((r) => (
-                  <tr key={r.code} className={r.isOrphan ? 'bg-red-50/50' : 'hover:bg-gray-50/80'}>
-                    <td className="p-3 font-bold text-[#1E5128]">{r.code}</td>
+                  <tr
+                    key={r.code}
+                    onClick={() => {
+                      setSelectedLedgerAccountCode(r.code);
+                      loadLedgerReport(r.code);
+                      setActiveReport('ledger');
+                    }}
+                    className={`${r.isOrphan ? 'bg-red-50/50' : 'hover:bg-gray-50/80'} cursor-pointer transition-colors`}
+                    title="এই হিসাবের খতিয়ান দেখতে ক্লিক করুন"
+                  >
+                    <td className="p-3 font-bold text-[#1E5128] underline underline-offset-2">{r.code}</td>
                     <td className="p-3 font-sans text-gray-900 font-medium">{r.nameBn}</td>
                     <td className="p-3 text-gray-500 text-[12px]">{r.accountClass}</td>
                     <td className="p-3 text-right text-[#15803D] font-bold">{r.debit > 0 ? fmt(r.debit) : '-'}</td>
@@ -1567,6 +1633,216 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
               </tfoot>
             </table>
           </div>
+        </div>
+      )}
+
+      {/* ===================== REPORT: GENERAL LEDGER ===================== */}
+      {activeReport === 'ledger' && (
+        <div className="bg-white border border-gray-200 rounded-2xl p-4 sm:p-6 space-y-6 shadow-xs">
+          {/* Header & Account Picker */}
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-gray-100 pb-4">
+            <div>
+              <h3 className="text-base sm:text-lg font-bold text-gray-900 flex items-center gap-2">
+                <BookOpen className="w-5 h-5 text-[#1E5128]" />
+                <span>সাধারণ খতিয়ান ও হিসাব বহি (General Ledger)</span>
+              </h3>
+              <p className="text-[13px] text-gray-500 mt-0.5">
+                হিসাবভিত্তিক সকল ডেবিট-ক্রেডিট লেনদেনের বিস্তারিত ইতিহাস ও ক্রমযোজিত জের
+              </p>
+            </div>
+
+            <div className="flex items-center gap-3">
+              <label htmlFor="report-ledger-account-select" className="text-xs font-bold text-gray-600 whitespace-nowrap">
+                হিসাব নির্বাচন:
+              </label>
+              <select
+                id="report-ledger-account-select"
+                value={selectedLedgerAccountCode}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  setSelectedLedgerAccountCode(val);
+                  loadLedgerReport(val);
+                }}
+                className="bg-[#F8FAFC] border border-gray-300 rounded-xl px-3 py-2 text-[13px] text-gray-900 font-semibold focus:outline-none focus:border-[#1E5128] focus:bg-white transition-all min-h-[40px] max-w-[260px] sm:max-w-[320px]"
+              >
+                {reportAccounts.map((acc) => (
+                  <option key={acc.code} value={acc.code}>
+                    {acc.code} - {acc.nameBn} ({acc.accountClass})
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          {/* Account Summary Banner */}
+          {reportLedgerAccount && (
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 bg-[#F8FAFC] p-4 rounded-xl border border-gray-200">
+              <div>
+                <span className="text-[11px] text-gray-500 font-medium block">হিসাবের নাম ও কোড</span>
+                <span className="text-[14px] font-bold text-gray-900">
+                  {reportLedgerAccount.code} - {reportLedgerAccount.nameBn}
+                </span>
+              </div>
+              <div>
+                <span className="text-[11px] text-gray-500 font-medium block">হিসাবের শ্রেণী</span>
+                <span className="text-[13px] font-semibold text-gray-700">{reportLedgerAccount.accountClass}</span>
+              </div>
+              <div>
+                <span className="text-[11px] text-gray-500 font-medium block">স্বাভাবিক ব্যালেন্স</span>
+                <span className="text-[13px] font-semibold text-gray-700">
+                  {reportLedgerAccount.normalBalance === 'DEBIT' ? 'ডেবিট (Debit)' : 'ক্রেডিট (Credit)'}
+                </span>
+              </div>
+              <div>
+                <span className="text-[11px] text-gray-500 font-medium block">বর্তমান নিট জের (Net Balance)</span>
+                <span
+                  className={`text-[15px] font-bold font-mono ${
+                    reportLedgerNetBalance >= 0 ? 'text-[#1E5128]' : 'text-rose-600'
+                  }`}
+                >
+                  {fmt(reportLedgerNetBalance)}
+                </span>
+              </div>
+            </div>
+          )}
+
+          {/* Live Search Box */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="relative flex-1">
+              <Search className="w-4 h-4 text-gray-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+              <input
+                type="text"
+                id="report-ledger-search-input"
+                value={reportLedgerSearchQuery}
+                onChange={(e) => setReportLedgerSearchQuery(e.target.value)}
+                placeholder="খতিয়ান লেনদেন খুঁজুন (বিবরণ, টাকার পরিমাণ, তারিখ YYYY-MM-DD, ভাউচার)..."
+                className="w-full pl-10 pr-9 py-2.5 bg-[#F8FAFC] border border-gray-300 rounded-xl text-[14px] text-gray-900 focus:outline-none focus:border-[#1E5128] focus:bg-white transition-all min-h-[42px]"
+              />
+              {reportLedgerSearchQuery && (
+                <button
+                  type="button"
+                  id="btn-clear-report-ledger-search"
+                  onClick={() => setReportLedgerSearchQuery('')}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 p-1 cursor-pointer"
+                  title="অনুসন্ধান মুছুন"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
+            {reportLedgerSearchQuery.trim() && (
+              <div className="text-xs text-gray-500 font-medium whitespace-nowrap">
+                অনুসন্ধানের ফলাফল:{' '}
+                <span className="font-bold text-[#1E5128]">
+                  {
+                    reportLedgerEntries.filter((row) => {
+                      const q = reportLedgerSearchQuery.toLowerCase().trim();
+                      const descMatch = row.narration && row.narration.toLowerCase().includes(q);
+                      const amountMatch =
+                        (row.debit > 0 && (row.debit.toString().includes(q) || row.debit.toLocaleString().includes(q))) ||
+                        (row.credit > 0 && (row.credit.toString().includes(q) || row.credit.toLocaleString().includes(q))) ||
+                        row.runningBalance.toString().includes(q) ||
+                        row.runningBalance.toLocaleString().includes(q);
+                      const dateMatch = row.date && row.date.includes(q);
+                      const voucherMatch = row.voucherNumber && row.voucherNumber.toLowerCase().includes(q);
+                      return descMatch || amountMatch || dateMatch || voucherMatch;
+                    }).length
+                  }
+                </span>{' '}
+                টি এন্ট্রি
+              </div>
+            )}
+          </div>
+
+          {/* Ledger Table */}
+          {(() => {
+            const q = reportLedgerSearchQuery.toLowerCase().trim();
+            const reversed = [...reportLedgerEntries].reverse();
+            const filtered = reversed.filter((row) => {
+              if (!q) return true;
+              const descMatch = row.narration && row.narration.toLowerCase().includes(q);
+              const amountMatch =
+                (row.debit > 0 && (row.debit.toString().includes(q) || row.debit.toLocaleString().includes(q))) ||
+                (row.credit > 0 && (row.credit.toString().includes(q) || row.credit.toLocaleString().includes(q))) ||
+                row.runningBalance.toString().includes(q) ||
+                row.runningBalance.toLocaleString().includes(q);
+              const dateMatch = row.date && row.date.includes(q);
+              const voucherMatch = row.voucherNumber && row.voucherNumber.toLowerCase().includes(q);
+              return descMatch || amountMatch || dateMatch || voucherMatch;
+            });
+
+            const visibleRows = filtered.slice(0, reportLedgerVisibleCount);
+
+            if (filtered.length === 0) {
+              return (
+                <div className="p-8 text-center text-gray-500 bg-[#F8FAFC] rounded-xl border border-gray-200">
+                  {reportLedgerSearchQuery.trim()
+                    ? `"${reportLedgerSearchQuery}" দিয়ে এই খতিয়ানে কোনো লেনদেন খুঁজে পাওয়া যায়নি।`
+                    : 'এই খতিয়ান হিসাবে নির্বাচিত সময়সীমার মধ্যে কোনো লেনদেন লিপিবদ্ধ নেই।'}
+                </div>
+              );
+            }
+
+            return (
+              <div className="space-y-3">
+                <div className="overflow-x-auto rounded-xl border border-gray-200">
+                  <table className="w-full text-left text-[13px] text-gray-800">
+                    <thead className="bg-[#F8FAFC] text-gray-600 font-semibold border-b border-gray-200">
+                      <tr>
+                        <th className="p-3">তারিখ</th>
+                        <th className="p-3">ভাউচার নং</th>
+                        <th className="p-3">বিবরণ / সূত্র</th>
+                        <th className="p-3 text-right">ডেবিট (৳)</th>
+                        <th className="p-3 text-right">ক্রেডিট (৳)</th>
+                        <th className="p-3 text-right">জের / ব্যালেন্স (৳)</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100 font-mono">
+                      {visibleRows.map((entry, idx) => (
+                        <tr key={idx} className="hover:bg-gray-50/80 transition-colors">
+                          <td className="p-3 font-sans whitespace-nowrap text-gray-700">{entry.date}</td>
+                          <td className="p-3 font-semibold text-[#1E5128] whitespace-nowrap">
+                            {entry.voucherNumber || entry.journalId.slice(0, 8)}
+                          </td>
+                          <td className="p-3 font-sans max-w-xs text-gray-800 break-words">{entry.narration}</td>
+                          <td className="p-3 text-right text-[#15803D] font-bold whitespace-nowrap">
+                            {entry.debit > 0 ? fmt(entry.debit) : '-'}
+                          </td>
+                          <td className="p-3 text-right text-blue-700 font-bold whitespace-nowrap">
+                            {entry.credit > 0 ? fmt(entry.credit) : '-'}
+                          </td>
+                          <td
+                            className={`p-3 text-right font-bold whitespace-nowrap ${
+                              entry.runningBalance >= 0 ? 'text-gray-900' : 'text-rose-600'
+                            }`}
+                          >
+                            {fmt(entry.runningBalance)}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* Batch / Pagination: "আরও দেখুন" (Load More) Button */}
+                {filtered.length > reportLedgerVisibleCount && (
+                  <div className="pt-3 pb-1 text-center">
+                    <button
+                      type="button"
+                      id="btn-load-more-report-ledger"
+                      onClick={() => setReportLedgerVisibleCount((prev) => prev + 25)}
+                      className="px-6 py-2.5 bg-white border-2 border-[#1E5128] text-[#1E5128] hover:bg-[#1E5128] hover:text-white rounded-xl text-xs font-bold transition-all shadow-xs cursor-pointer inline-flex items-center gap-2 min-h-[42px]"
+                    >
+                      <span>আরও দেখুন (Load More)</span>
+                      <span className="text-[11px] opacity-80 font-normal">
+                        ({Math.min(reportLedgerVisibleCount, filtered.length)} / {filtered.length}টি প্রদর্শিত, +২৫টি যোগ করুন)
+                      </span>
+                    </button>
+                  </div>
+                )}
+              </div>
+            );
+          })()}
         </div>
       )}
 
