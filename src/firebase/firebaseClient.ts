@@ -496,13 +496,15 @@ export function listenToOnlineSync(
 if (typeof window !== 'undefined') {
   window.addEventListener('online', () => {
     console.log('[The Goated Farm] Browser reconnected online. Auto-triggering pending data sync...');
-    synchronizePendingData().then((result) => {
-      if (result.syncedCount > 0) {
-        console.log(`[The Goated Farm] Auto-sync completed: ${result.syncedCount} records synced.`);
-      }
-    }).catch((err) => {
-      console.warn('[The Goated Farm] Auto-sync error on reconnection:', err);
-    });
+    synchronizePendingData()
+      .then((result) => {
+        if (result.syncedCount > 0) {
+          console.log(`[The Goated Farm] Auto-sync completed: ${result.syncedCount} records synced.`);
+        }
+      })
+      .catch((err) => {
+        console.warn('[The Goated Farm] Auto-sync error on reconnection:', err);
+      });
   });
 }
 

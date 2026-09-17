@@ -1,5 +1,5 @@
 // Service Worker for The Goated Farm (Offline-First Agro ERP)
-const CACHE_NAME = 'the-goated-farm-shell-v2';
+const CACHE_NAME = 'the-goated-farm-shell-v1';
 
 // Core app shell assets to precache on install
 const APP_SHELL_ASSETS = [
@@ -9,7 +9,7 @@ const APP_SHELL_ASSETS = [
   '/icon.svg'
 ];
 
-// Install: Precache app shell assets and activate immediately
+// 1. Install: Precache app shell assets and activate immediately
 self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(CACHE_NAME).then((cache) => {
@@ -21,7 +21,7 @@ self.addEventListener('install', (event) => {
   self.skipWaiting();
 });
 
-// Activate: Clean up legacy caches and claim active clients
+// 2. Activate: Clean up legacy caches and claim active clients
 self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches.keys().then((keys) => {
@@ -33,52 +33,56 @@ self.addEventListener('activate', (event) => {
   self.clients.claim();
 });
 
-// Fetch: Stale-while-revalidate for static assets & app shell
-// STRICT RULE: Never cache POST requests or any /api/* responses.
+// 3. Fetch: Stale-While-Revalidate for static assets & app shell
+// STRICT RULE: Never cache POST requests or any /api/* responses — only static assets.
 self.addEventListener('fetch', (event) => {
-  // 1. Only handle GET requests (never cache POST, PUT, DELETE)
+  // Never intercept non-GET requests (e.g. POST, PUT, DELETE)
   if (event.request.method !== 'GET') {
     return;
   }
 
   const url = new URL(event.request.url);
 
-  // 2. Never cache /api/* responses (bypass SW and go straight to network)
+  // Never cache /api/* responses — bypass service worker and go straight to network
   if (url.pathname.startsWith('/api/')) {
     return;
   }
 
-  // 3. Ignore non-HTTP/HTTPS protocols (e.g. chrome-extension:)
+  // Ignore non-http(s) schemes (e.g., chrome-extension:)
   if (url.protocol !== 'http:' && url.protocol !== 'https:') {
     return;
   }
 
-  // 4. Bypass external Firebase and identity endpoints
+  // Bypass Firebase Auth and internal identity endpoints
   if (
-    url.hostname.includes('googleapis.com') ||
-    url.hostname.includes('firebaseio.com') ||
     url.hostname.includes('identitytoolkit') ||
-    url.hostname.includes('securetoken')
+    url.hostname.includes('securetoken') ||
+    url.hostname.includes('firebaseio.com')
   ) {
     return;
   }
 
-  // 5. Stale-While-Revalidate strategy for static assets & app shell
+  // Stale-While-Revalidate caching strategy for app shell and static assets
   event.respondWith(
     caches.open(CACHE_NAME).then(async (cache) => {
-      const cachedResponse = await cache.match(event.request);
+      // 1. Look for matching resource in cache
+      let cachedResponse = await cache.match(event.request);
 
-      // Background network fetch to revalidate/update cache
+      // If navigation request and not directly cached, fall back to cached /index.html
+      if (!cachedResponse && event.request.mode === 'navigate') {
+        cachedResponse = (await cache.match('/index.html')) || (await cache.match('/'));
+      }
+
+      // 2. Network revalidation promise to update cache in the background
       const fetchPromise = fetch(event.request)
         .then((networkResponse) => {
-          // Cache successful 200 responses for static assets
-          if (networkResponse && networkResponse.status === 200) {
+          if (networkResponse && (networkResponse.status === 200 || networkResponse.type === 'opaque')) {
             cache.put(event.request, networkResponse.clone());
           }
           return networkResponse;
         })
         .catch(async () => {
-          // Network failure fallback for navigation requests
+          // If network fetch fails and this is a navigation request, serve cached shell
           if (event.request.mode === 'navigate') {
             const fallback = (await cache.match('/index.html')) || (await cache.match('/'));
             if (fallback) return fallback;
@@ -86,29 +90,29 @@ self.addEventListener('fetch', (event) => {
           return null;
         });
 
-      // If cached response exists, return it immediately (stale)
-      // and revalidate cache in the background
+      // 3. If cached response exists, return it immediately (stale)
+      // and revalidate cache in background
       if (cachedResponse) {
         event.waitUntil(fetchPromise);
         return cachedResponse;
       }
 
-      // If not yet in cache, await the network fetch
+      // 4. If not yet in cache, await the network fetch
       const networkResponse = await fetchPromise;
       if (networkResponse) {
         return networkResponse;
       }
 
-      // If network failed and it is a navigation request, return cached index.html
+      // 5. Final fallback for navigation requests when completely offline
       if (event.request.mode === 'navigate') {
         const fallback = (await cache.match('/index.html')) || (await cache.match('/'));
         if (fallback) return fallback;
       }
 
-      // Final fallback for missing static assets when offline
+      // 6. Return offline status for missing assets
       return new Response('Offline', {
         status: 503,
-        statusText: 'Offline',
+        statusText: 'Service Unavailable',
         headers: { 'Content-Type': 'text/plain; charset=utf-8' }
       });
     })

@@ -17,6 +17,7 @@ import {
 import { verifyOwnerSecretPin } from '../services/authService';
 import { triggerForegroundDueTodayNotification } from '../db/indexedDb';
 import { UserProfile } from '../types';
+import { SyncStatusBadge } from './SyncStatusBadge';
 
 interface Props {
   onLoginSuccess: (profile: UserProfile) => void;
@@ -209,9 +210,12 @@ export const LoginScreen: React.FC<Props> = ({ onLoginSuccess }) => {
             The Goated Farm
           </span>
         </div>
-        <div className="flex items-center gap-1.5 text-xs font-semibold text-[#1E5128] bg-[#F0FDF4] border border-[#BBF7D0] px-3 py-1 rounded-full">
-          <Lock className="w-3.5 h-3.5 text-[#1E5128]" />
-          <span>সুরক্ষিত প্রবেশদ্বার</span>
+        <div className="flex items-center gap-2">
+          <SyncStatusBadge />
+          <div className="hidden sm:flex items-center gap-1.5 text-xs font-semibold text-[#1E5128] bg-[#F0FDF4] border border-[#BBF7D0] px-3 py-1 rounded-full">
+            <Lock className="w-3.5 h-3.5 text-[#1E5128]" />
+            <span>সুরক্ষিত প্রবেশদ্বার</span>
+          </div>
         </div>
       </header>
 

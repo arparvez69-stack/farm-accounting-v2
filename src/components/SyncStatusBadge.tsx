@@ -75,20 +75,18 @@ export const SyncStatusBadge: React.FC<Props> = ({
     >
       {isOffline ? (
         <>
-          <WifiOff className="w-4 h-4 text-amber-700 shrink-0" />
-          <span className="whitespace-nowrap font-semibold">অফলাইন</span>
+          <WifiOff className="w-3.5 h-3.5 text-amber-700 shrink-0" />
+          <span className="whitespace-nowrap font-medium text-xs">অফলাইন</span>
         </>
       ) : isSyncing ? (
         <>
-          <RefreshCw className="w-4 h-4 animate-spin text-blue-600 shrink-0" />
-          <span className="whitespace-nowrap font-semibold">সিঙ্ক হচ্ছে</span>
+          <RefreshCw className="w-3.5 h-3.5 animate-spin text-blue-600 shrink-0" />
+          <span className="whitespace-nowrap font-medium text-xs">সিঙ্ক হচ্ছে</span>
         </>
       ) : (
         <>
-          <CheckCircle2 className="w-4 h-4 text-[#15803D] shrink-0" />
-          <span className="whitespace-nowrap font-semibold">
-            সিঙ্ক সম্পন্ন{currentPendingCount > 0 ? ` (${currentPendingCount})` : ''}
-          </span>
+          <CheckCircle2 className="w-3.5 h-3.5 text-[#15803D] shrink-0" />
+          <span className="whitespace-nowrap font-medium text-xs">সিঙ্ক সম্পন্ন</span>
         </>
       )}
     </button>
