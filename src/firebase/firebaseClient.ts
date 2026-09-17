@@ -26,7 +26,8 @@ export const APPROVED_OWNER_EMAILS: string[] = [
   'arparvez69@gmail.com',
   'arparvez4@gmail.com',
   'arparvez111@gmail.com',
-  'atikurrahman00021@gmail.com'
+  'atikurrahman00021@gmail.com',
+  'lubaiyatasnum111@gmail.com'
 ];
 
 export const DEFAULT_SYSTEM_CONFIG: SystemConfig = {

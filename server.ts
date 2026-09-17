@@ -20,7 +20,8 @@ export const APPROVED_OWNER_EMAILS: string[] = [
   'arparvez69@gmail.com',
   'arparvez4@gmail.com',
   'arparvez111@gmail.com',
-  'atikurrahman00021@gmail.com'
+  'atikurrahman00021@gmail.com',
+  'lubaiyatasnum111@gmail.com'
 ];
 
 // In-memory record of access events for dashboard & audit

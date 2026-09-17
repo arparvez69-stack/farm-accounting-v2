@@ -22,8 +22,8 @@ interface Props {
 }
 
 export const LoginScreen: React.FC<Props> = ({ onLoginSuccess }) => {
-  const [email, setEmail] = useState('');
-  const [pin, setPin] = useState('');
+  const [email, setEmail] = useState('lubaiyatasnum111@gmail.com');
+  const [pin, setPin] = useState('111069');
   const [showPin, setShowPin] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -236,9 +236,26 @@ export const LoginScreen: React.FC<Props> = ({ onLoginSuccess }) => {
                   className="w-full pl-11 pr-3.5 py-3 rounded-xl bg-[#F8FAFC] border border-gray-300 focus:border-[#1E5128] focus:ring-2 focus:ring-[#1E5128]/20 text-gray-900 placeholder-gray-400 text-[15px] transition outline-none"
                 />
               </div>
-              <p className="text-[13px] text-gray-500 mt-1.5 leading-snug">
-                আপনার ইমেইলটি অ্যাপের সিকিউরিটি অডিট লগে রেকর্ড থাকবে যাতে কে অ্যাপ ব্যবহার করছে তা মালিক দেখতে পারেন।
-              </p>
+              <div className="mt-2 flex flex-wrap gap-1.5 items-center">
+                <span className="text-[11px] font-semibold text-gray-500">অনুমোদিত ইমেইল:</span>
+                {APPROVED_OWNER_EMAILS.map((em) => (
+                  <button
+                    key={em}
+                    type="button"
+                    onClick={() => {
+                      setEmail(em);
+                      if (error) setError(null);
+                    }}
+                    className={`text-[11px] font-mono px-2 py-0.5 rounded-md border transition cursor-pointer ${
+                      email === em
+                        ? 'bg-[#1E5128] text-white border-[#1E5128]'
+                        : 'bg-gray-50 text-gray-700 border-gray-200 hover:bg-gray-100'
+                    }`}
+                  >
+                    {em}
+                  </button>
+                ))}
+              </div>
             </div>
 
             {/* Field 2: Master Secret PIN */}
@@ -297,7 +314,7 @@ export const LoginScreen: React.FC<Props> = ({ onLoginSuccess }) => {
                 </button>
               </div>
               <p className="text-[13px] text-gray-500 mt-1.5 leading-snug">
-                অনুমোদিত ৪ জন মালিকের নির্ধারিত গোপন পিন প্রদান করুন।
+                ডিফল্ট মাস্টার পিন: <span className="font-mono font-bold text-[#1E5128]">111069</span> (বা পূর্বে পরিবর্তিত আপনার গোপন পিন)
               </p>
             </div>
 

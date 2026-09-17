@@ -12,7 +12,8 @@ export const APPROVED_OWNER_EMAILS = [
   'arparvez69@gmail.com',
   'arparvez4@gmail.com',
   'arparvez111@gmail.com',
-  'atikurrahman00021@gmail.com'
+  'atikurrahman00021@gmail.com',
+  'lubaiyatasnum111@gmail.com'
 ] as const;
 
 export interface VerifyPinResponse {
