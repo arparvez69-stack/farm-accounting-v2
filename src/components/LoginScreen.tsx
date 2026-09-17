@@ -26,9 +26,9 @@ interface Props {
 export const LoginScreen: React.FC<Props> = ({ onLoginSuccess }) => {
   const [email, setEmail] = useState(() => {
     try {
-      return localStorage.getItem('goted_last_email') || 'arparvez111@gmail.com';
+      return localStorage.getItem('goted_last_email') || 'arparvez4@gmail.com';
     } catch {
-      return 'arparvez111@gmail.com';
+      return 'arparvez4@gmail.com';
     }
   });
   const [pin, setPin] = useState('');

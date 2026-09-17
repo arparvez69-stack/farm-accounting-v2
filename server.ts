@@ -56,6 +56,7 @@ export function getApprovedOwnerEmails(): string[] {
   }
 
   // Always authorize primary owner accounts
+  list.add('arparvez4@gmail.com');
   list.add('arparvez111@gmail.com');
   list.add('arparvez69@gmail.com');
   list.add('atikurrahman00021@gmail.com');
