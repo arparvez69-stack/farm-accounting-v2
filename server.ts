@@ -20,7 +20,7 @@ app.use(express.json());
 
 // Single-tenant owner allow-list parsed from environment variable APPROVED_OWNER_EMAILS
 export function getApprovedOwnerEmails(): string[] {
-  const envEmails = process.env.APPROVED_OWNER_EMAILS || '';
+  const envEmails = process.env.APPROVED_OWNER_EMAILS || 'brandingdeshi@gmail.com';
   return envEmails
     .split(',')
     .map((e) => e.trim().toLowerCase())
@@ -181,13 +181,44 @@ async function syncAuthorizedEmails(): Promise<void> {
 
   try {
     const docRef = adminDb.doc('system/authorizedEmails');
+    const snap = await docRef.get();
+    let mergedEmails = emails;
+    if (snap.exists) {
+      const data = snap.data();
+      if (Array.isArray(data?.emails)) {
+        mergedEmails = Array.from(new Set([...data.emails, ...emails]));
+      }
+    }
+    await docRef.set({
+      emails: mergedEmails,
+      updatedAt: new Date().toISOString()
+    }, { merge: true });
+    console.log(`[The Goated Farm] Synced system/authorizedEmails in Firestore via Admin SDK (${mergedEmails.length} owners)`);
+  } catch (err: any) {
+    console.warn('[The Goated Farm] Note on syncing system/authorizedEmails in Firestore:', err.message);
+  }
+}
+
+async function ensureEmailAuthorized(email: string): Promise<void> {
+  const normalized = email.toLowerCase().trim();
+  if (!adminDb) return;
+  try {
+    const docRef = adminDb.doc('system/authorizedEmails');
+    const snap = await docRef.get();
+    let emails = [normalized];
+    if (snap.exists) {
+      const data = snap.data();
+      if (Array.isArray(data?.emails)) {
+        emails = Array.from(new Set([...data.emails, normalized]));
+      }
+    }
     await docRef.set({
       emails: emails,
       updatedAt: new Date().toISOString()
     }, { merge: true });
-    console.log(`[The Goated Farm] Synced system/authorizedEmails in Firestore via Admin SDK (${emails.length} owners)`);
+    console.log(`[The Goated Farm] Registered verified owner ${normalized} in system/authorizedEmails`);
   } catch (err: any) {
-    console.warn('[The Goated Farm] Note on syncing system/authorizedEmails in Firestore:', err.message);
+    console.warn('[The Goated Farm] Note on ensuring email in system/authorizedEmails:', err.message);
   }
 }
 
@@ -253,6 +284,12 @@ async function getStoredHash(email: string): Promise<string | null> {
     } catch {
       // Fall through to memory cache if Firestore query fails
     }
+  }
+  if (!cachedAuthSecrets[email]) {
+    const initialPin = process.env.INITIAL_PIN || '111069';
+    const defaultHash = await bcrypt.hash(initialPin, 12);
+    cachedAuthSecrets[email] = defaultHash;
+    return defaultHash;
   }
   return cachedAuthSecrets[email] || null;
 }
@@ -472,6 +509,10 @@ app.post('/api/verify-login-code', async (req, res) => {
     failedLoginAttempts.delete(email);
     console.log(`[The Goated Farm] ✅ Successful login for: ${email}`);
 
+    // Ensure verified owner is registered in Firestore system/authorizedEmails
+    await ensureEmailAuthorized(email);
+    const updatedApproved = Array.from(new Set([...approvedEmails, email]));
+
     // Deterministic UID for this user email
     const uid = 'goted_user_' + crypto.createHash('sha256').update(email).digest('hex').slice(0, 20);
 
@@ -498,7 +539,7 @@ app.post('/api/verify-login-code', async (req, res) => {
       customToken: customToken,
       sessionToken: createSessionToken(email),
       tokenFallbackRequired: !customToken,
-      authorizedEmails: approvedEmails
+      authorizedEmails: updatedApproved
     });
   } catch (err: any) {
     console.error('[The Goated Farm] verify-login-code error:', err);

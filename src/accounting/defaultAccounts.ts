@@ -1,4 +1,5 @@
 import { Account } from '../types';
+import { db } from '../db/indexedDb';
 
 export const DEFAULT_CHART_OF_ACCOUNTS: Account[] = [
   // 1000 Assets
@@ -549,7 +550,6 @@ export const DEFAULT_CHART_OF_ACCOUNTS: Account[] = [
 ];
 
 export async function initDefaultAccounts(): Promise<void> {
-  const { db } = await import('../db/indexedDb');
   const count = await db.accounts.count();
   if (count === 0) {
     await db.accounts.bulkPut(DEFAULT_CHART_OF_ACCOUNTS);
