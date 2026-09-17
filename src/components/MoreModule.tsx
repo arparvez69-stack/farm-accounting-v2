@@ -17,8 +17,10 @@ import {
   EyeOff,
   AlertCircle,
   Calculator,
-  FileText
+  FileText,
+  Globe
 } from 'lucide-react';
+import { useLanguage } from '../i18n/translations';
 import { db } from '../db/indexedDb';
 import { AuditLog, FixedAsset, SystemConfig, UserRole, AppAccessLog } from '../types';
 import { getStoredAuthorizedEmails, getAppAccessLogs, logoutOwner } from '../services/authService';
@@ -43,6 +45,9 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
   const [assets, setAssets] = useState<FixedAsset[]>([]);
   const [loading, setLoading] = useState(false);
   const [lastBackupTime, setLastBackupTime] = useState<string | null>(() => getLastSyncTime());
+
+  // Language state (stored in local settings, defaulting to Bengali)
+  const { lang: currentLanguage, setLanguage } = useLanguage();
 
   // VAT/TIN Registered Business State (stored in local settings, off by default)
   const [isVatRegistered, setIsVatRegistered] = useState<boolean>(() => {
@@ -951,6 +956,50 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
             <div className="flex justify-between py-2 border-b border-gray-100">
               <span className="text-gray-500">ইনিশিয়ালাইজেশন:</span>
               <span className="font-mono text-gray-600">The Goated Farm Enterprise</span>
+            </div>
+          </div>
+
+          {/* ভাষা / Language Setting */}
+          <div className="pt-2 border-t border-gray-100">
+            <div className="p-4 rounded-xl bg-gray-50 border border-gray-200 space-y-3">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div>
+                  <h4 className="font-bold text-gray-900 text-[14px] flex items-center gap-1.5">
+                    <Globe className="w-4 h-4 text-[#1E5128]" />
+                    <span>ভাষা / Language</span>
+                  </h4>
+                  <p className="text-xs text-gray-500 mt-0.5">
+                    অ্যাপের দৃশ্যমান লেখার ভাষা পরিবর্তন করুন (Change app display language)
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-1.5 bg-white p-1 rounded-xl border border-gray-300 shadow-2xs self-start sm:self-auto">
+                  <button
+                    type="button"
+                    id="btn-lang-bn"
+                    onClick={() => setLanguage('bn')}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer min-h-[36px] ${
+                      currentLanguage === 'bn'
+                        ? 'bg-[#1E5128] text-white shadow-xs'
+                        : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
+                    }`}
+                  >
+                    বাংলা (ডিফল্ট)
+                  </button>
+                  <button
+                    type="button"
+                    id="btn-lang-en"
+                    onClick={() => setLanguage('en')}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer min-h-[36px] ${
+                      currentLanguage === 'en'
+                        ? 'bg-[#1E5128] text-white shadow-xs'
+                        : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
+                    }`}
+                  >
+                    English
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
 

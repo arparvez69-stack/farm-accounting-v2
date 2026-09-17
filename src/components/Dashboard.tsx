@@ -30,6 +30,7 @@ import { ActiveTab } from './MobileBottomNav';
 import { Reminder, UserRole } from '../types';
 import { createFullJsonBackup, getLastSyncTime, getLastExportTime } from '../services/exportService';
 import { synchronizePendingData } from '../firebase/firebaseClient';
+import { useLanguage } from '../i18n/translations';
 
 interface Props {
   role: UserRole;
@@ -38,6 +39,7 @@ interface Props {
 }
 
 export const Dashboard: React.FC<Props> = ({ role, onNavigate }) => {
+  const { lang, t } = useLanguage();
   const [loading, setLoading] = useState(true);
   const [netProfit, setNetProfit] = useState(0);
   const [totalRevenue, setTotalRevenue] = useState(0);
@@ -317,13 +319,13 @@ export const Dashboard: React.FC<Props> = ({ role, onNavigate }) => {
             </div>
             <div>
               <h4 className="font-bold text-[15px] sm:text-base text-amber-950 leading-snug">
-                আপনার খামারের হিসাব সুরক্ষিত রাখতে নিয়মিত ক্লাউড সিঙ্ক অথবা ব্যাকআপ ডাউনলোড করুন
+                {t('dashboard.backupReminder')}
               </h4>
               <p className="text-xs sm:text-[13px] text-amber-800 mt-1 font-medium">
-                (Sync to cloud or download backup to keep your farm data safe) • 
-                {isSyncOverdue && ' ক্লাউড সিঙ্ক ৫ দিনের বেশি পুরোনো'}
-                {isSyncOverdue && isExportOverdue && ' ও '}
-                {isExportOverdue && ' ফাইল ব্যাকআপ ১৪ দিনের বেশি পুরোনো'}
+                {t('dashboard.backupReminderSub')} • 
+                {isSyncOverdue && ` ${t('dashboard.syncOverdue')}`}
+                {isSyncOverdue && isExportOverdue && ' • '}
+                {isExportOverdue && ` ${t('dashboard.exportOverdue')}`}
               </p>
             </div>
           </div>
@@ -336,7 +338,7 @@ export const Dashboard: React.FC<Props> = ({ role, onNavigate }) => {
               className="px-3.5 py-2 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white text-xs sm:text-[13px] font-bold flex items-center gap-1.5 transition-all shadow-xs cursor-pointer min-h-[40px] active:scale-95 disabled:opacity-60"
             >
               <RefreshCw className={`w-3.5 h-3.5 ${syncingNow ? 'animate-spin' : ''}`} />
-              <span>{syncingNow ? 'সিঙ্ক হচ্ছে...' : 'ক্লাউড সিঙ্ক'}</span>
+              <span>{syncingNow ? t('dashboard.syncing') : t('btn.sync')}</span>
             </button>
             <button
               id="btn-reminder-download-backup"
@@ -345,13 +347,13 @@ export const Dashboard: React.FC<Props> = ({ role, onNavigate }) => {
               className="px-3.5 py-2 rounded-xl bg-amber-200 hover:bg-amber-300 text-amber-950 border border-amber-400 text-xs sm:text-[13px] font-bold flex items-center gap-1.5 transition-all shadow-2xs cursor-pointer min-h-[40px] active:scale-95 disabled:opacity-60"
             >
               <Download className="w-3.5 h-3.5 text-amber-800" />
-              <span>{exportingNow ? 'ডাউনলোড হচ্ছে...' : 'ব্যাকআপ ডাউনলোড'}</span>
+              <span>{exportingNow ? t('dashboard.downloading') : t('btn.downloadBackup')}</span>
             </button>
             <button
               id="btn-reminder-dismiss"
               onClick={handleDismissBanner}
               aria-label="Dismiss banner"
-              title="বন্ধ করুন (Dismiss)"
+              title={t('btn.dismiss')}
               className="p-2 rounded-xl text-amber-800 hover:bg-amber-200 transition-colors cursor-pointer min-h-[40px] min-w-[40px] flex items-center justify-center active:scale-95"
             >
               <X className="w-4 h-4" />
@@ -370,18 +372,20 @@ export const Dashboard: React.FC<Props> = ({ role, onNavigate }) => {
             <div>
               <div className="flex items-center gap-2">
                 <h3 className="text-base sm:text-lg font-bold text-gray-900 tracking-tight">
-                  এই সপ্তাহে করণীয় (Due This Week)
+                  {t('dashboard.dueThisWeek')}
                 </h3>
                 <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${
                   reminders.length > 0
                     ? 'bg-emerald-100 text-[#1E5128] border border-emerald-200'
                     : 'bg-gray-100 text-gray-600'
                 }`}>
-                  {reminders.length}টি পেন্ডিং
+                  {reminders.length} {t('dashboard.pendingCount')}
                 </span>
               </div>
               <p className="text-xs sm:text-[13px] text-gray-600">
-                টিকা, চিকিৎসা ফলোআপ ও খামার পরিচালনার জরুরি সময়সূচি (বকেয়া ও আগামী ৭ দিন)
+                {lang === 'en'
+                  ? 'Vaccine, treatment follow-up & farm operational schedule (overdue & next 7 days)'
+                  : 'টিকা, চিকিৎসা ফলোআপ ও খামার পরিচালনার জরুরি সময়সূচি (বকেয়া ও আগামী ৭ দিন)'}
               </p>
             </div>
           </div>
@@ -390,7 +394,7 @@ export const Dashboard: React.FC<Props> = ({ role, onNavigate }) => {
             onClick={() => onNavigate('operations')}
             className="text-xs sm:text-[13px] font-bold text-[#1E5128] hover:text-[#173F1F] flex items-center gap-1 self-start sm:self-auto cursor-pointer"
           >
-            <span>খামার কার্যক্রমে যান</span>
+            <span>{t('nav.operations')} →</span>
             <ChevronRight className="w-4 h-4" />
           </button>
         </div>
@@ -399,10 +403,12 @@ export const Dashboard: React.FC<Props> = ({ role, onNavigate }) => {
           <div className="p-4 rounded-xl bg-gray-50 border border-gray-200 text-center flex flex-col items-center justify-center py-6 text-gray-600 space-y-1.5">
             <CheckCircle2 className="w-7 h-7 text-[#15803D]" />
             <p className="text-[14px] font-semibold text-gray-900">
-              এই সপ্তাহে কোনো বকেয়া বা জরুরি করণীয় কাজ নেই!
+              {t('dashboard.noReminders')}
             </p>
             <p className="text-xs text-gray-500">
-              খামারের সকল পশু টিকা ও চিকিৎসা সময়সূচি হালনাগাদ রয়েছে।
+              {lang === 'en'
+                ? 'All animal vaccination & medical treatment schedules are up to date.'
+                : 'খামারের সকল পশু টিকা ও চিকিৎসা সময়সূচি হালনাগাদ রয়েছে।'}
             </p>
           </div>
         ) : (
@@ -414,25 +420,25 @@ export const Dashboard: React.FC<Props> = ({ role, onNavigate }) => {
               const isToday = diffDays === 0;
 
               let catBadge = {
-                label: 'অন্যান্য',
+                label: lang === 'en' ? 'Other' : 'অন্যান্য',
                 bg: 'bg-gray-100 text-gray-700 border-gray-200',
                 icon: Clock
               };
               if (rem.category === 'VACCINE') {
                 catBadge = {
-                  label: 'টিকা (Vaccine)',
+                  label: lang === 'en' ? 'Vaccine' : 'টিকা (Vaccine)',
                   bg: 'bg-blue-50 text-blue-700 border-blue-200',
                   icon: Syringe
                 };
               } else if (rem.category === 'TREATMENT') {
                 catBadge = {
-                  label: 'চিকিৎসা (Treatment)',
+                  label: lang === 'en' ? 'Treatment' : 'চিকিৎসা (Treatment)',
                   bg: 'bg-purple-50 text-purple-700 border-purple-200',
                   icon: Stethoscope
                 };
               } else if (rem.category === 'MARKET') {
                 catBadge = {
-                  label: 'বাজার / হাট (Market)',
+                  label: lang === 'en' ? 'Market' : 'বাজার / হাট (Market)',
                   bg: 'bg-amber-50 text-amber-800 border-amber-200',
                   icon: ShoppingBag
                 };
@@ -461,24 +467,24 @@ export const Dashboard: React.FC<Props> = ({ role, onNavigate }) => {
 
                       {isOverdue && (
                         <span className="text-[11px] font-bold px-2 py-0.5 rounded-md bg-red-100 text-red-800 border border-red-300 animate-pulse">
-                          মেয়াদোত্তীর্ণ ({Math.abs(diffDays)} দিন আগে)
+                          {t('dashboard.overdue')} ({Math.abs(diffDays)} {lang === 'en' ? 'days ago' : 'দিন আগে'})
                         </span>
                       )}
 
                       {isToday && (
                         <span className="text-[11px] font-bold px-2 py-0.5 rounded-md bg-amber-100 text-amber-900 border border-amber-300">
-                          আজকের কাজ (Due Today)
+                          {t('dashboard.today')}
                         </span>
                       )}
 
                       {!isOverdue && !isToday && (
                         <span className="text-[11px] font-semibold px-2 py-0.5 rounded-md bg-emerald-50 text-[#15803D] border border-emerald-200">
-                          {diffDays === 1 ? 'আগামীকাল' : `${diffDays} দিন বাকি`}
+                          {diffDays === 1 ? t('dashboard.tomorrow') : `${diffDays} ${t('dashboard.daysRemaining')}`}
                         </span>
                       )}
 
                       <span className="text-[12px] text-gray-500 font-mono">
-                        তারিখ: {rem.dueDate}
+                        {t('dashboard.date')} {rem.dueDate}
                       </span>
                     </div>
 
@@ -488,8 +494,8 @@ export const Dashboard: React.FC<Props> = ({ role, onNavigate }) => {
 
                     {rem.animalId && (
                       <div className="text-[12px] text-[#1E5128] font-semibold flex items-center gap-1 group-hover:underline">
-                        <span>পশু আইডি: {rem.animalId}</span>
-                        <span className="text-gray-400 font-normal">| বিস্তারিত ও ইতিহাস দেখতে ট্যাপ করুন →</span>
+                        <span>{t('dashboard.animalId')} {rem.animalId}</span>
+                        <span className="text-gray-400 font-normal">{t('dashboard.viewDetails')}</span>
                       </div>
                     )}
                   </div>
@@ -499,21 +505,21 @@ export const Dashboard: React.FC<Props> = ({ role, onNavigate }) => {
                     <button
                       type="button"
                       onClick={(e) => handleMarkDone(rem.id, e)}
-                      title="কাজটি সম্পন্ন হিসেবে চিহ্নিত করুন"
+                      title="Mark as done"
                       className="inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg bg-[#15803D] hover:bg-[#166534] text-white text-[12px] font-bold shadow-xs active:scale-95 transition-all cursor-pointer min-h-[36px]"
                     >
                       <Check className="w-3.5 h-3.5 shrink-0 stroke-[3]" />
-                      <span>সম্পন্ন</span>
+                      <span>{t('btn.done')}</span>
                     </button>
 
                     <button
                       type="button"
                       onClick={(e) => handleSkip(rem.id, e)}
-                      title="এই কাজটি এড়িয়ে যান"
+                      title="Skip this item"
                       className="inline-flex items-center justify-center gap-1 px-2.5 py-2 rounded-lg bg-white hover:bg-gray-100 text-gray-700 border border-gray-300 text-[12px] font-semibold active:scale-95 transition-all cursor-pointer min-h-[36px]"
                     >
                       <SkipForward className="w-3.5 h-3.5 shrink-0 text-gray-500" />
-                      <span>এড়িয়ে যান</span>
+                      <span>{t('btn.skip')}</span>
                     </button>
                   </div>
                 </div>
@@ -529,16 +535,16 @@ export const Dashboard: React.FC<Props> = ({ role, onNavigate }) => {
           <div>
             <div className="flex items-center gap-2 flex-wrap">
               <h2 className="text-xl sm:text-2xl font-bold text-gray-900 tracking-tight">
-                খামার সার্বিক চিত্র
+                {t('dashboard.title')}
               </h2>
               {isAccountingBalanced && (
                 <span className="inline-flex items-center gap-1 text-[13px] px-2.5 py-0.5 rounded-full bg-[#F0FDF4] text-[#15803D] border border-[#BBF7D0] font-semibold">
-                  দ্বৈত-দাখিলা নির্ভুল
+                  {t('dashboard.balanced')}
                 </span>
               )}
             </div>
             <p className="text-[14px] text-gray-600 mt-1">
-              রিয়েল-টাইম হিসাবরক্ষণ, গবাদিপশু, মৎস্য ও শস্যের সার্বিক অবস্থা
+              {t('dashboard.subtitle')}
             </p>
           </div>
 
@@ -550,14 +556,14 @@ export const Dashboard: React.FC<Props> = ({ role, onNavigate }) => {
                 className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-[#1E5128] hover:bg-[#173F1F] text-white text-[14px] font-bold shadow-xs transition-all active:scale-95 cursor-pointer min-h-[44px]"
               >
                 <PlusCircle className="w-4 h-4" />
-                <span>নতুন ভাউচার</span>
+                <span>{t('btn.newVoucher')}</span>
               </button>
               <button
                 onClick={() => onNavigate('commerce')}
                 className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-gray-100 hover:bg-gray-200 text-gray-800 border border-gray-200 text-[14px] font-semibold shadow-xs transition-all active:scale-95 cursor-pointer min-h-[44px]"
               >
                 <FileText className="w-4 h-4" />
-                <span>বিক্রয় / চালান</span>
+                <span>{t('btn.salesInvoice')}</span>
               </button>
             </div>
           )}
@@ -568,7 +574,7 @@ export const Dashboard: React.FC<Props> = ({ role, onNavigate }) => {
           {/* Liquidity (Cash + Bank) */}
           <div className="p-4 rounded-xl bg-[#F8FAFC] border border-gray-200/80">
             <div className="flex items-center justify-between text-[14px] text-gray-600 font-medium">
-              <span>তরল তহবিল (নগদ ও ব্যাংক)</span>
+              <span>{t('dashboard.totalLiquidity')}</span>
               <div className="p-2 rounded-lg bg-blue-100/80 text-blue-700">
                 <Wallet className="w-5 h-5" />
               </div>
@@ -577,16 +583,16 @@ export const Dashboard: React.FC<Props> = ({ role, onNavigate }) => {
               {fmtMoney(cashBalance + bankBalance)}
             </div>
             <div className="flex items-center gap-3 text-[13px] text-gray-600 mt-2 pt-2 border-t border-gray-200/60 font-medium">
-              <span>ক্যাশ: <strong className="text-gray-900">{fmtMoney(cashBalance)}</strong></span>
+              <span>{t('dashboard.cash')} <strong className="text-gray-900">{fmtMoney(cashBalance)}</strong></span>
               <span>•</span>
-              <span>ব্যাংক: <strong className="text-gray-900">{fmtMoney(bankBalance)}</strong></span>
+              <span>{t('dashboard.bank')} <strong className="text-gray-900">{fmtMoney(bankBalance)}</strong></span>
             </div>
           </div>
 
           {/* Net Profit / Margin */}
           <div className="p-4 rounded-xl bg-[#F8FAFC] border border-gray-200/80">
             <div className="flex items-center justify-between text-[14px] text-gray-600 font-medium">
-              <span>নিট লাভ / ক্ষতি (Net Profit)</span>
+              <span>{t('dashboard.netProfit')}</span>
               <div className={`p-2 rounded-lg ${netProfit >= 0 ? 'bg-emerald-100/80 text-[#15803D]' : 'bg-red-100/80 text-[#C2410C]'}`}>
                 {netProfit >= 0 ? <TrendingUp className="w-5 h-5" /> : <TrendingDown className="w-5 h-5" />}
               </div>
@@ -595,7 +601,7 @@ export const Dashboard: React.FC<Props> = ({ role, onNavigate }) => {
               {fmtMoney(netProfit)}
             </div>
             <div className="text-[13px] text-gray-600 mt-2 pt-2 border-t border-gray-200/60 font-medium">
-              চলতি হিসাবকাল অনুযায়ী দ্বৈত-দাখিলা মুনাফা
+              {t('dashboard.netProfitNote')}
             </div>
           </div>
         </div>
@@ -606,7 +612,7 @@ export const Dashboard: React.FC<Props> = ({ role, onNavigate }) => {
         <div className="p-4 rounded-2xl bg-amber-50 border border-amber-300 text-amber-900 shadow-xs space-y-2">
           <div className="flex items-center gap-2 font-bold text-[15px] text-amber-900">
             <AlertTriangle className="w-5 h-5 text-amber-700 shrink-0" />
-            <span>জরুরি সতর্কতা ({alerts.length} টি)</span>
+            <span>{t('dashboard.alerts')} ({alerts.length} {t('dashboard.unitPieces')})</span>
           </div>
           <ul className="list-disc list-inside space-y-1 text-[14px] text-amber-900 pl-1">
             {alerts.map((alt, idx) => (
@@ -621,7 +627,7 @@ export const Dashboard: React.FC<Props> = ({ role, onNavigate }) => {
         {/* Total Revenue */}
         <div className="p-4 rounded-xl bg-white border border-gray-200 shadow-xs">
           <div className="flex items-center justify-between text-[13px] text-gray-600 font-medium">
-            <span>মোট রাজস্ব / আয়</span>
+            <span>{t('dashboard.totalRevenue')}</span>
             <div className="p-1.5 rounded-lg bg-emerald-50 text-[#15803D]">
               <ArrowUpRight className="w-4 h-4" />
             </div>
@@ -629,13 +635,13 @@ export const Dashboard: React.FC<Props> = ({ role, onNavigate }) => {
           <div className="text-xl font-bold text-gray-900 tracking-tight mt-1.5">
             {fmtMoney(totalRevenue)}
           </div>
-          <p className="text-[13px] text-gray-600 mt-1">পশু, মাছ, দুধ ও ফসল বিক্রয়</p>
+          <p className="text-[13px] text-gray-600 mt-1">{t('dashboard.revenueDesc')}</p>
         </div>
 
         {/* Total Expenses */}
         <div className="p-4 rounded-xl bg-white border border-gray-200 shadow-xs">
           <div className="flex items-center justify-between text-[13px] text-gray-600 font-medium">
-            <span>মোট খরচ ও COGS</span>
+            <span>{t('dashboard.totalExpenses')}</span>
             <div className="p-1.5 rounded-lg bg-rose-50 text-[#C2410C]">
               <ArrowDownLeft className="w-4 h-4" />
             </div>
@@ -643,25 +649,25 @@ export const Dashboard: React.FC<Props> = ({ role, onNavigate }) => {
           <div className="text-xl font-bold text-gray-900 tracking-tight mt-1.5">
             {fmtMoney(totalExpenses)}
           </div>
-          <p className="text-[13px] text-gray-600 mt-1">খাবার, ওষুধ ও পরিচালন ব্যয়</p>
+          <p className="text-[13px] text-gray-600 mt-1">{t('dashboard.expensesDesc')}</p>
         </div>
 
         {/* AR (Receivable) */}
         <div className="p-4 rounded-xl bg-white border border-gray-200 shadow-xs">
-          <div className="text-[13px] text-gray-600 font-medium">কাস্টমারদের কাছে পাওনা</div>
+          <div className="text-[13px] text-gray-600 font-medium">{t('dashboard.receivables')}</div>
           <div className="text-xl font-bold text-sky-700 tracking-tight mt-1.5">
             {fmtMoney(arBalance)}
           </div>
-          <p className="text-[13px] text-gray-600 mt-1">বকেয়া বিক্রয় বিল</p>
+          <p className="text-[13px] text-gray-600 mt-1">{t('dashboard.receivablesDesc')}</p>
         </div>
 
         {/* AP (Payable) */}
         <div className="p-4 rounded-xl bg-white border border-gray-200 shadow-xs">
-          <div className="text-[13px] text-gray-600 font-medium">সাপ্লায়ার দেনা (AP)</div>
+          <div className="text-[13px] text-gray-600 font-medium">{t('dashboard.payables')}</div>
           <div className="text-xl font-bold text-amber-700 tracking-tight mt-1.5">
             {fmtMoney(apBalance)}
           </div>
-          <p className="text-[13px] text-gray-600 mt-1">খাবার ও কাঁচামাল দেনা</p>
+          <p className="text-[13px] text-gray-600 mt-1">{t('dashboard.payablesDesc')}</p>
         </div>
       </div>
 
@@ -671,14 +677,14 @@ export const Dashboard: React.FC<Props> = ({ role, onNavigate }) => {
           <div className="flex items-center gap-2">
             <Activity className="w-5 h-5 text-[#1E5128]" />
             <h3 className="text-[16px] sm:text-[17px] font-bold text-gray-900">
-              খামারের বর্তমান জৈব সম্পদ সূচক
+              {t('dashboard.bioAssets')}
             </h3>
           </div>
           <button
             onClick={() => onNavigate('operations')}
             className="text-[14px] text-[#1E5128] hover:underline font-bold cursor-pointer py-1 px-2"
           >
-            বিস্তারিত →
+            {t('dashboard.details')}
           </button>
         </div>
 
@@ -688,9 +694,9 @@ export const Dashboard: React.FC<Props> = ({ role, onNavigate }) => {
             onClick={() => onNavigate('operations')}
             className="p-4 rounded-xl bg-[#F8FAFC] border border-gray-200 hover:border-[#1E5128]/60 cursor-pointer transition-all active:scale-98"
           >
-            <div className="text-[13px] text-gray-600 font-medium">সক্রিয় গবাদিপশু</div>
-            <div className="text-2xl font-bold text-gray-900 mt-1">{animalCount} টি</div>
-            <div className="text-[13px] font-semibold text-[#1E5128] mt-1">গরু ও ছাগল পালনে সক্রিয়</div>
+            <div className="text-[13px] text-gray-600 font-medium">{t('dashboard.activeLivestock')}</div>
+            <div className="text-2xl font-bold text-gray-900 mt-1">{animalCount} {t('dashboard.unitPieces')}</div>
+            <div className="text-[13px] font-semibold text-[#1E5128] mt-1">{t('dashboard.livestockDesc')}</div>
           </div>
 
           {/* Fisheries */}
@@ -698,9 +704,9 @@ export const Dashboard: React.FC<Props> = ({ role, onNavigate }) => {
             onClick={() => onNavigate('operations')}
             className="p-4 rounded-xl bg-[#F8FAFC] border border-gray-200 hover:border-[#1E5128]/60 cursor-pointer transition-all active:scale-98"
           >
-            <div className="text-[13px] text-gray-600 font-medium">সক্রিয় মাছের ব্যাচ</div>
-            <div className="text-2xl font-bold text-gray-900 mt-1">{fishBatchCount} টি</div>
-            <div className="text-[13px] font-semibold text-sky-700 mt-1">পুকুরভিত্তিক মাছ চাষ</div>
+            <div className="text-[13px] text-gray-600 font-medium">{t('dashboard.activeFish')}</div>
+            <div className="text-2xl font-bold text-gray-900 mt-1">{fishBatchCount} {t('dashboard.unitPieces')}</div>
+            <div className="text-[13px] font-semibold text-sky-700 mt-1">{t('dashboard.fishDesc')}</div>
           </div>
 
           {/* Crops */}
@@ -708,9 +714,9 @@ export const Dashboard: React.FC<Props> = ({ role, onNavigate }) => {
             onClick={() => onNavigate('operations')}
             className="p-4 rounded-xl bg-[#F8FAFC] border border-gray-200 hover:border-[#1E5128]/60 cursor-pointer transition-all active:scale-98"
           >
-            <div className="text-[13px] text-gray-600 font-medium">চলতি শস্য ও ঘাস চক্র</div>
-            <div className="text-2xl font-bold text-gray-900 mt-1">{cropCycleCount} টি</div>
-            <div className="text-[13px] font-semibold text-amber-700 mt-1">নেপিয়ার ঘাস ও মৌসুমী ফসল</div>
+            <div className="text-[13px] text-gray-600 font-medium">{t('dashboard.activeCrops')}</div>
+            <div className="text-2xl font-bold text-gray-900 mt-1">{cropCycleCount} {t('dashboard.unitPieces')}</div>
+            <div className="text-[13px] font-semibold text-amber-700 mt-1">{t('dashboard.cropDesc')}</div>
           </div>
         </div>
       </div>
@@ -721,20 +727,20 @@ export const Dashboard: React.FC<Props> = ({ role, onNavigate }) => {
           <div className="flex items-center gap-2">
             <Clock className="w-5 h-5 text-gray-500" />
             <h3 className="text-[16px] sm:text-[17px] font-bold text-gray-900">
-              সাম্প্রতিক জাবেদা লেনদেন
+              {t('dashboard.recentTx')}
             </h3>
           </div>
           <button
             onClick={() => onNavigate('accounting')}
             className="text-[14px] text-[#1E5128] hover:underline font-bold cursor-pointer py-1 px-2"
           >
-            সকল জাবেদা →
+            {t('dashboard.allJournals')}
           </button>
         </div>
 
         {recentTransactions.length === 0 ? (
           <div className="p-8 text-center text-gray-500 text-[14px]">
-            এখনও কোন আর্থিক লেনদেন লিপিবদ্ধ করা হয়নি। "নতুন ভাউচার" দিয়ে শুরু করুন।
+            {t('dashboard.noTx')}
           </div>
         ) : (
           <div className="space-y-2.5">
@@ -754,20 +760,20 @@ export const Dashboard: React.FC<Props> = ({ role, onNavigate }) => {
                     </span>
                     {tx.reversedBy && (
                       <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-amber-100 text-amber-900 border border-amber-300">
-                        সংশোধিত
+                        {t('dashboard.corrected')}
                       </span>
                     )}
                     <span className="text-gray-500 text-[13px]">{tx.date}</span>
                   </div>
                   <p className="text-gray-800 text-[14px] truncate mt-1">
-                    {tx.narration || 'কোন বিবরণ নেই'}
+                    {tx.narration || t('dashboard.noNarration')}
                   </p>
                 </div>
                 <div className="text-left sm:text-right shrink-0 pt-1 sm:pt-0 border-t sm:border-t-0 border-gray-200/50">
                   <div className="font-bold text-[16px] text-gray-900">
                     {fmtMoney(tx.totalDebit)}
                   </div>
-                  <div className="text-[12px] text-gray-500 font-medium">ডেবিট = ক্রেডিট</div>
+                  <div className="text-[12px] text-gray-500 font-medium">{t('dashboard.balancedDebitCredit')}</div>
                 </div>
               </div>
             ))}

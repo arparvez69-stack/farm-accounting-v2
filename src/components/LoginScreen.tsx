@@ -18,12 +18,14 @@ import { verifyOwnerSecretPin } from '../services/authService';
 import { triggerForegroundDueTodayNotification } from '../db/indexedDb';
 import { UserProfile } from '../types';
 import { SyncStatusBadge } from './SyncStatusBadge';
+import { useLanguage } from '../i18n/translations';
 
 interface Props {
   onLoginSuccess: (profile: UserProfile) => void;
 }
 
 export const LoginScreen: React.FC<Props> = ({ onLoginSuccess }) => {
+  const { lang, setLanguage, t } = useLanguage();
   const [email, setEmail] = useState(() => {
     try {
       return localStorage.getItem('goted_last_email') || 'arparvez4@gmail.com';
@@ -189,10 +191,10 @@ export const LoginScreen: React.FC<Props> = ({ onLoginSuccess }) => {
         triggerForegroundDueTodayNotification().catch(() => {});
         onLoginSuccess(res.profile);
       } else {
-        setError(res.error || 'অবৈধ ইমেইল অথবা গোপন পিন! সঠিক তথ্য না দিলে অ্যাপে প্রবেশ করা যাবে না।');
+        setError(res.error || t('login.invalidCredentials'));
       }
     } catch (err: any) {
-      setError(err.message || 'যাচাইকরণে ত্রুটি দেখা দিয়েছে। পুনরায় চেষ্টা করুন।');
+      setError(err.message || t('login.verificationError'));
     } finally {
       setLoading(false);
     }
@@ -207,14 +209,37 @@ export const LoginScreen: React.FC<Props> = ({ onLoginSuccess }) => {
             <Sprout className="w-5 h-5 text-white" />
           </div>
           <span className="text-base font-bold tracking-tight text-gray-900">
-            The Goated Farm
+            {t('app.title')}
           </span>
         </div>
         <div className="flex items-center gap-2">
+          {/* Quick Language Toggle */}
+          <div className="flex items-center bg-white border border-gray-200 rounded-lg p-0.5 shadow-2xs text-xs font-semibold">
+            <button
+              type="button"
+              id="login-lang-bn"
+              onClick={() => setLanguage('bn')}
+              className={`px-2 py-1 rounded transition-colors cursor-pointer ${
+                lang === 'bn' ? 'bg-[#1E5128] text-white' : 'text-gray-600 hover:text-gray-900'
+              }`}
+            >
+              বাং
+            </button>
+            <button
+              type="button"
+              id="login-lang-en"
+              onClick={() => setLanguage('en')}
+              className={`px-2 py-1 rounded transition-colors cursor-pointer ${
+                lang === 'en' ? 'bg-[#1E5128] text-white' : 'text-gray-600 hover:text-gray-900'
+              }`}
+            >
+              EN
+            </button>
+          </div>
           <SyncStatusBadge />
           <div className="hidden sm:flex items-center gap-1.5 text-xs font-semibold text-[#1E5128] bg-[#F0FDF4] border border-[#BBF7D0] px-3 py-1 rounded-full">
             <Lock className="w-3.5 h-3.5 text-[#1E5128]" />
-            <span>সুরক্ষিত প্রবেশদ্বার</span>
+            <span>{t('app.secureGate')}</span>
           </div>
         </div>
       </header>
@@ -228,10 +253,10 @@ export const LoginScreen: React.FC<Props> = ({ onLoginSuccess }) => {
               <Sprout className="w-7 h-7 text-white" />
             </div>
             <h1 className="text-2xl sm:text-3xl font-extrabold text-gray-900 tracking-tight">
-              The Goated Farm
+              {t('app.title')}
             </h1>
             <p className="text-[14px] text-gray-600 mt-1 font-medium">
-              সমন্বিত কৃষি ও খামার হিসাবরক্ষণ ব্যবস্থাপনা
+              {t('app.subtitle')}
             </p>
           </div>
 
@@ -259,16 +284,16 @@ export const LoginScreen: React.FC<Props> = ({ onLoginSuccess }) => {
                 </div>
                 <div className="space-y-1">
                   <h3 className="font-bold text-amber-950 text-base leading-tight">
-                    সেটআপ অসম্পূর্ণ (Setup incomplete)
+                    {t('login.setupIncompleteTitle')}
                   </h3>
                   <p className="text-[14px] text-amber-900 font-semibold leading-relaxed">
-                    সেটআপ অসম্পূর্ণ (Setup incomplete): অনুগ্রহ করে AI Studio-র Secrets প্যানেলে আপনার ইমেইল ও পিন যোগ করুন।
+                    {t('login.setupIncompleteMsg')}
                   </p>
                 </div>
               </div>
 
               <div className="bg-white/80 p-3.5 rounded-xl border border-amber-200 text-[13px] text-amber-800 space-y-1.5">
-                <div className="font-semibold text-gray-900">প্রয়োজনীয় সিক্রেট ভ্যারিয়েবল (Required Secrets):</div>
+                <div className="font-semibold text-gray-900">{t('login.requiredSecrets')}</div>
                 <div className="font-mono text-[12px] text-gray-700 space-y-1">
                   <div>• <span className="font-bold text-[#1E5128]">APPROVED_OWNER_EMAILS</span> — অনুমোদিত মালিকের ইমেইল (যেমন: your-email@gmail.com)</div>
                   <div>• <span className="font-bold text-[#1E5128]">INITIAL_PIN</span> — লগইনের প্রাথমিক গোপন মাস্টার পিন (কমপক্ষে ৬ ডিজিট)</div>
@@ -295,13 +320,13 @@ export const LoginScreen: React.FC<Props> = ({ onLoginSuccess }) => {
                 className="w-full py-3 px-4 rounded-xl bg-[#1E5128] hover:bg-[#173F1F] text-white font-bold text-[14px] flex items-center justify-center gap-2 cursor-pointer transition shadow-xs min-h-[44px]"
               >
                 <RefreshCw className={`w-4 h-4 ${checkingSetup ? 'animate-spin' : ''}`} />
-                <span>পুনরায় যাচাই করুন (Check Again)</span>
+                <span>{t('btn.checkAgain')}</span>
               </button>
             </div>
           ) : checkingSetup ? (
             <div className="py-10 text-center text-gray-500 space-y-2.5">
               <RefreshCw className="w-7 h-7 text-[#1E5128] animate-spin mx-auto" />
-              <p className="text-[13px] font-medium">নিরাপত্তা স্ট্যাটাস যাচাই করা হচ্ছে...</p>
+              <p className="text-[13px] font-medium">{t('login.checkingSecurity')}</p>
             </div>
           ) : (
             /* Direct Email + Secret PIN Form */
@@ -316,7 +341,7 @@ export const LoginScreen: React.FC<Props> = ({ onLoginSuccess }) => {
                   htmlFor="user-email-input"
                   className="block text-[14px] font-bold text-gray-800 mb-1.5"
                 >
-                  আপনার ইমেইল ঠিকানা (Your Email)
+                  {t('login.yourEmail')}
                 </label>
                 <div className="relative">
                   <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-gray-500">
@@ -328,7 +353,7 @@ export const LoginScreen: React.FC<Props> = ({ onLoginSuccess }) => {
                     autoComplete="email"
                     autoFocus
                     required
-                    placeholder="যেমন: yourname@example.com"
+                    placeholder={t('login.emailPlaceholder')}
                     value={email}
                     onChange={(e) => {
                       setEmail(e.target.value);
@@ -347,7 +372,7 @@ export const LoginScreen: React.FC<Props> = ({ onLoginSuccess }) => {
                     htmlFor="secret-pin-input"
                     className="block text-[14px] font-bold text-gray-800"
                   >
-                    গোপন পিন (Secret Master PIN)
+                    {t('login.secretPin')}
                   </label>
                   {/* TASK 8: Forgot PIN Link */}
                   <button
@@ -365,7 +390,7 @@ export const LoginScreen: React.FC<Props> = ({ onLoginSuccess }) => {
                     }}
                     className="text-[13px] text-[#1E5128] hover:text-[#173F1F] hover:underline font-semibold cursor-pointer"
                   >
-                    PIN ভুলে গেছেন? / Forgot PIN?
+                    {t('btn.forgotPin')}
                   </button>
                 </div>
                 <div className="relative">
@@ -378,7 +403,7 @@ export const LoginScreen: React.FC<Props> = ({ onLoginSuccess }) => {
                     inputMode="numeric"
                     maxLength={12}
                     required
-                    placeholder="গোপন পিন দিন (ডিফল্ট: 123456)..."
+                    placeholder={t('login.pinPlaceholder')}
                     value={pin}
                     onChange={(e) => {
                       setPin(e.target.value);
@@ -396,13 +421,13 @@ export const LoginScreen: React.FC<Props> = ({ onLoginSuccess }) => {
                   </button>
                 </div>
                 <div className="flex items-center justify-between text-xs text-gray-500 pt-1.5 px-0.5">
-                  <span>ডিফল্ট পিন: <strong className="font-mono text-gray-800 font-semibold">123456</strong></span>
+                  <span>{t('login.defaultPinLabel')} <strong className="font-mono text-gray-800 font-semibold">123456</strong></span>
                   <button
                     type="button"
                     onClick={() => setPin('123456')}
                     className="text-[#1E5128] hover:text-[#173F1F] font-semibold cursor-pointer underline"
                   >
-                    পিন পূরণ করুন (Auto-fill 123456)
+                    {t('login.autoFillPin')}
                   </button>
                 </div>
               </div>
@@ -417,11 +442,11 @@ export const LoginScreen: React.FC<Props> = ({ onLoginSuccess }) => {
                 {loading ? (
                   <>
                     <RefreshCw className="w-5 h-5 animate-spin" />
-                    <span>যাচাই করা হচ্ছে...</span>
+                    <span>{t('btn.verifying')}</span>
                   </>
                 ) : (
                   <>
-                    <span>লগইন করুন ও অ্যাপে প্রবেশ করুন</span>
+                    <span>{t('btn.login')}</span>
                     <ArrowRight className="w-5 h-5" />
                   </>
                 )}
@@ -431,7 +456,7 @@ export const LoginScreen: React.FC<Props> = ({ onLoginSuccess }) => {
               <div className="pt-3 border-t border-gray-200 flex items-start gap-2.5 text-[13px] text-gray-600 leading-relaxed">
                 <ShieldCheck className="w-5 h-5 text-[#1E5128] shrink-0 mt-0.5" />
                 <span>
-                  একবার সঠিক পিন দিয়ে সফলভাবে লগইন করলে এই ডিভাইসে আপনার সেশন সংরক্ষিত থাকবে। পরবর্তীতে লিংক খুললে বারবার পিন দিতে হবে না।
+                  {t('login.rememberNotice')}
                 </span>
               </div>
             </form>
@@ -456,12 +481,10 @@ export const LoginScreen: React.FC<Props> = ({ onLoginSuccess }) => {
               </div>
               <div>
                 <h3 className="font-bold text-gray-900 text-lg">
-                  {forgotStep === 1 ? 'গোপন পিন পুনরুদ্ধার (Step 1 of 2)' : 'নতুন পিন নিশ্চিতকরণ (Step 2 of 2)'}
+                  {t('login.forgotModalTitle')} {forgotStep === 1 ? '(1/2)' : '(2/2)'}
                 </h3>
                 <p className="text-[12px] text-gray-500">
-                  {forgotStep === 1
-                    ? 'ইমেইলে যাচাইকরণ কোড পাঠানো হবে (১৫ মিনিট মেয়াদ)'
-                    : 'কোড ও নতুন ৬+ ডিজিটের গোপন পিন দিন'}
+                  {forgotStep === 1 ? t('login.forgotStep1Desc') : t('login.forgotStep2Desc')}
                 </p>
               </div>
             </div>
@@ -503,7 +526,7 @@ export const LoginScreen: React.FC<Props> = ({ onLoginSuccess }) => {
                     className="w-full px-3.5 py-2.5 rounded-xl bg-[#F8FAFC] border border-gray-300 focus:border-[#1E5128] text-gray-900 text-[14px] font-mono outline-none"
                   />
                   <p className="text-[12px] text-gray-500 mt-1">
-                    অনুমোদিত মালিকের ইমেইলে ৬ ডিজিটের রিসেট কোড পাঠানো হবে।
+                    {t('login.forgotStep1Desc')}
                   </p>
                 </div>
 
@@ -515,12 +538,12 @@ export const LoginScreen: React.FC<Props> = ({ onLoginSuccess }) => {
                   {forgotLoading ? (
                     <>
                       <RefreshCw className="w-4 h-4 animate-spin" />
-                      <span>কোড পাঠানো হচ্ছে...</span>
+                      <span>{t('btn.verifying')}</span>
                     </>
                   ) : (
                     <>
                       <Mail className="w-4 h-4" />
-                      <span>রিসেট কোড পাঠান (Send Reset Code)</span>
+                      <span>{t('btn.sendResetCode')}</span>
                     </>
                   )}
                 </button>
@@ -544,7 +567,7 @@ export const LoginScreen: React.FC<Props> = ({ onLoginSuccess }) => {
 
                 <div>
                   <label className="block text-[13px] font-bold text-gray-800 mb-1">
-                    ৬-সংখ্যার রিসেট কোড (6-digit Reset Code)
+                    {t('login.resetCodeLabel')} (6-digit Reset Code)
                   </label>
                   <input
                     type="text"
@@ -567,7 +590,7 @@ export const LoginScreen: React.FC<Props> = ({ onLoginSuccess }) => {
 
                 <div>
                   <label className="block text-[13px] font-bold text-gray-800 mb-1">
-                    নতুন গোপন পিন (New PIN — 6+ digits)
+                    {t('login.newPinLabel')}
                   </label>
                   <div className="relative">
                     <input
@@ -596,7 +619,7 @@ export const LoginScreen: React.FC<Props> = ({ onLoginSuccess }) => {
 
                 <div>
                   <label className="block text-[13px] font-bold text-gray-800 mb-1">
-                    নতুন পিন নিশ্চিত করুন (Confirm New PIN)
+                    {t('login.confirmPinLabel')}
                   </label>
                   <input
                     type="password"
@@ -625,7 +648,7 @@ export const LoginScreen: React.FC<Props> = ({ onLoginSuccess }) => {
                     className="py-2.5 px-3 rounded-xl border border-gray-300 text-gray-700 hover:bg-gray-100 font-semibold text-[13px] transition flex items-center gap-1 cursor-pointer"
                   >
                     <ArrowLeft className="w-4 h-4" />
-                    <span>পেছনে</span>
+                    <span>{t('btn.back')}</span>
                   </button>
 
                   <button
@@ -636,12 +659,12 @@ export const LoginScreen: React.FC<Props> = ({ onLoginSuccess }) => {
                     {forgotLoading ? (
                       <>
                         <RefreshCw className="w-4 h-4 animate-spin" />
-                        <span>সংরক্ষণ হচ্ছে...</span>
+                        <span>{t('btn.verifying')}</span>
                       </>
                     ) : (
                       <>
                         <CheckCircle2 className="w-4 h-4" />
-                        <span>পিন রিসেট ও সেভ করুন</span>
+                        <span>{t('btn.resetPinConfirm')}</span>
                       </>
                     )}
                   </button>
@@ -654,7 +677,7 @@ export const LoginScreen: React.FC<Props> = ({ onLoginSuccess }) => {
 
       {/* Footer */}
       <footer className="text-center text-xs text-gray-500 py-3 font-medium">
-        © 2025 The Goated Farm • একক মালিকানা সমন্বিত কৃষি খামার ইআরপি
+        © 2025 The Goated Farm • {lang === 'en' ? 'Single-Tenant Integrated Agriculture ERP' : 'একক মালিকানা সমন্বিত কৃষি খামার ইআরপি'}
       </footer>
     </div>
   );

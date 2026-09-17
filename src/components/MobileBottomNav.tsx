@@ -8,6 +8,7 @@ import {
   FileSpreadsheet,
   Menu
 } from 'lucide-react';
+import { useLanguage, t } from '../i18n/translations';
 
 export type ActiveTab =
   | 'dashboard'
@@ -24,14 +25,16 @@ interface Props {
 }
 
 export const MobileBottomNav: React.FC<Props> = ({ activeTab, onChangeTab }) => {
-  const tabs: { id: ActiveTab; label: string; icon: React.ElementType }[] = [
-    { id: 'dashboard', label: 'ড্যাশবোর্ড', icon: LayoutDashboard },
-    { id: 'accounting', label: 'হিসাব', icon: BookOpen },
-    { id: 'operations', label: 'খামার', icon: Tractor },
-    { id: 'commerce', label: 'মজুদ/বিক্রয়', icon: Package },
-    { id: 'finance', label: 'ব্যাংক/ঋণ', icon: Landmark },
-    { id: 'reports', label: 'রিপোর্ট', icon: FileSpreadsheet },
-    { id: 'more', label: 'মেনু', icon: Menu }
+  const { language } = useLanguage();
+
+  const tabs: { id: ActiveTab; labelKey: string; icon: React.ElementType }[] = [
+    { id: 'dashboard', labelKey: 'nav.dashboard', icon: LayoutDashboard },
+    { id: 'accounting', labelKey: 'nav.accounting', icon: BookOpen },
+    { id: 'operations', labelKey: 'nav.operations', icon: Tractor },
+    { id: 'commerce', labelKey: 'nav.commerce', icon: Package },
+    { id: 'finance', labelKey: 'nav.finance', icon: Landmark },
+    { id: 'reports', labelKey: 'nav.reports', icon: FileSpreadsheet },
+    { id: 'more', labelKey: 'nav.more', icon: Menu }
   ];
 
   return (
@@ -58,7 +61,7 @@ export const MobileBottomNav: React.FC<Props> = ({ activeTab, onChangeTab }) => 
                 <Icon className={`w-5 h-5 ${isActive ? 'stroke-[2.5]' : 'stroke-[1.8]'}`} />
               </div>
               <span className="text-[11px] leading-tight mt-0.5 tracking-tight">
-                {tab.label}
+                {t(tab.labelKey, language)}
               </span>
             </button>
           );

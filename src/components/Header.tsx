@@ -3,6 +3,7 @@ import { Shield, LogOut, Sprout, CloudCheck } from 'lucide-react';
 import { SyncState, SystemConfig, UserProfile } from '../types';
 import { SyncStatusBadge } from './SyncStatusBadge';
 import { getLastSyncTime, formatBackupTimestamp } from '../services/exportService';
+import { useLanguage, t } from '../i18n/translations';
 
 interface Props {
   userProfile: UserProfile;
@@ -22,6 +23,7 @@ export const Header: React.FC<Props> = ({
   onSyncNow,
   onLogout
 }) => {
+  const { language } = useLanguage();
   const [lastBackupTime, setLastBackupTime] = useState<string | null>(() => getLastSyncTime());
 
   useEffect(() => {
@@ -45,10 +47,10 @@ export const Header: React.FC<Props> = ({
               {systemConfig?.companyName || 'The Goated Farm'}
             </h1>
             <p className="text-[13px] text-[#1E5128] font-semibold truncate flex items-center gap-1.5">
-              <span>সমন্বিত খামার ও হিসাবরক্ষণ</span>
+              <span>{t('app.tagline', language)}</span>
               <span className="hidden lg:inline text-xs text-gray-400">•</span>
               <span className="hidden lg:inline text-xs text-gray-500 font-normal">
-                সর্বশেষ ব্যাকআপ: {formatBackupTimestamp(lastBackupTime)}
+                {language === 'en' ? 'Last backup: ' : 'সর্বশেষ ব্যাকআপ: '}{formatBackupTimestamp(lastBackupTime)}
               </span>
             </p>
           </div>
@@ -65,7 +67,7 @@ export const Header: React.FC<Props> = ({
           {/* Owner Role Badge */}
           <span className="hidden sm:inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-[#F0FDF4] text-[#1E5128] border border-[#BBF7D0]">
             <Shield className="w-3.5 h-3.5 text-[#1E5128]" />
-            <span>মালিক (OWNER)</span>
+            <span>{language === 'en' ? 'Owner' : 'মালিক (OWNER)'}</span>
           </span>
 
           {/* User & Logout */}
@@ -79,11 +81,11 @@ export const Header: React.FC<Props> = ({
             <button
               id="btn-header-logout"
               onClick={onLogout}
-              title="এই ডিভাইস থেকে লগ আউট করুন (Log out this device)"
+              title={language === 'en' ? 'Log out this device' : 'এই ডিভাইস থেকে লগ আউট করুন (Log out this device)'}
               className="p-2 sm:px-3 sm:py-1.5 rounded-xl text-red-600 hover:text-red-700 hover:bg-red-50 border border-transparent hover:border-red-200 transition-colors cursor-pointer min-h-[44px] flex items-center justify-center gap-1.5 active:scale-95 text-xs font-bold"
             >
               <LogOut className="w-4 h-4 text-red-600" />
-              <span className="hidden md:inline">লগ আউট</span>
+              <span className="hidden md:inline">{t('btn.logout', language)}</span>
             </button>
           </div>
         </div>
