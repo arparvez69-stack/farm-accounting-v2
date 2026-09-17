@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   FileSpreadsheet,
   Download,
@@ -8,7 +8,16 @@ import {
   FileText,
   PieChart,
   Layers,
-  Scale
+  Scale,
+  TrendingUp,
+  TrendingDown,
+  ArrowUpDown,
+  ArrowUp,
+  ArrowDown,
+  Search,
+  Droplets,
+  CalendarDays,
+  Filter
 } from 'lucide-react';
 import {
   BalanceSheetReport,
@@ -19,6 +28,7 @@ import {
   TrialBalance
 } from '../accounting/accountingEngine';
 import { exportAllToExcel, createFullJsonBackup, restoreFromJsonBackup } from '../services/exportService';
+import { db } from '../db/indexedDb';
 import { UserRole } from '../types';
 
 interface Props {
@@ -26,7 +36,31 @@ interface Props {
   currentUserId: string;
 }
 
-type ReportType = 'pl' | 'balanceSheet' | 'trialBalance' | 'backup';
+export interface AnimalProfitabilityRow {
+  id: string;
+  tag: string;
+  species: string;
+  breed: string;
+  gender?: string;
+  status: string;
+  purchaseDate: string;
+  saleDate?: string | number;
+  daysHeld: number;
+  purchaseCost: number;
+  feedCost: number;
+  medCost: number;
+  labourCost: number;
+  otherCosts: number;
+  totalCost: number;
+  saleRevenue: number;
+  milkRevenue: number;
+  milkLiters: number;
+  totalRevenue: number;
+  netProfit: number;
+  costPerDay: number;
+}
+
+type ReportType = 'pl' | 'balanceSheet' | 'trialBalance' | 'animalProfitability' | 'backup';
 
 export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
   const [activeReport, setActiveReport] = useState<ReportType>('pl');
@@ -36,12 +70,108 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
   const [bs, setBs] = useState<BalanceSheetReport | null>(null);
   const [tb, setTb] = useState<TrialBalance | null>(null);
 
+  // Animal Profitability State
+  const [animalRows, setAnimalRows] = useState<AnimalProfitabilityRow[]>([]);
+  const [animalSortKey, setAnimalSortKey] = useState<'netProfit' | 'totalCost' | 'totalRevenue' | 'costPerDay'>('netProfit');
+  const [animalSortDirection, setAnimalSortDirection] = useState<'desc' | 'asc'>('desc');
+  const [animalStatusFilter, setAnimalStatusFilter] = useState<'ALL' | 'ACTIVE' | 'SOLD'>('ALL');
+  const [animalSearchQuery, setAnimalSearchQuery] = useState<string>('');
+
   const [restoreStatus, setRestoreStatus] = useState<{ success: boolean; message: string } | null>(null);
   const [isExporting, setIsExporting] = useState(false);
 
   useEffect(() => {
     loadReports();
   }, [activeReport]);
+
+  const loadAnimalProfitability = async () => {
+    const [allAnimals, allEvents, allSales] = await Promise.all([
+      db.animals.toArray(),
+      db.animalEvents.toArray(),
+      db.sales.toArray()
+    ]);
+
+    const milkEvents = allEvents.filter((ev) => ev.eventType === 'MILK');
+
+    const rows: AnimalProfitabilityRow[] = allAnimals.map((a) => {
+      const purchaseCost = Number(a.purchaseCost) || 0;
+      const feedCost = Number(a.accumulatedFeedCost) || 0;
+      const medCost = Number(a.accumulatedMedCost) || 0;
+      const labourCost = Number(a.accumulatedLabourCost) || 0;
+      const otherCosts = Number(a.otherCosts) || 0;
+      const totalCost = purchaseCost + feedCost + medCost + labourCost + otherCosts;
+
+      const saleRevenue = a.status === 'SOLD' ? Number(a.salePrice) || 0 : 0;
+
+      // Milk events
+      const thisAnimalMilk = milkEvents.filter((ev) => ev.animalId === a.id);
+      const milkLiters =
+        Math.round(
+          thisAnimalMilk.reduce((acc, ev) => acc + (Number(ev.milkLiters) || 0), 0) * 10
+        ) / 10;
+
+      // Trackable milk sales linked to this animal
+      let milkRevenue = 0;
+      for (const s of allSales) {
+        if (
+          s.category === 'MILK' ||
+          s.items?.some((it) => it.itemName?.toLowerCase().includes('milk') || it.itemName?.includes('দুধ'))
+        ) {
+          const isTied =
+            s.items?.some(
+              (it) =>
+                it.itemName?.includes(a.id) ||
+                (a.tag && it.itemName?.includes(a.tag))
+            ) || s.invoiceNumber?.includes(a.id);
+          if (isTied) {
+            milkRevenue += s.grandTotal || s.totalAmount || 0;
+          }
+        }
+      }
+
+      const totalRevenue = saleRevenue + milkRevenue;
+      const netProfit = totalRevenue - totalCost;
+
+      let daysHeld = 1;
+      if (a.purchaseDate) {
+        const pTime = new Date(a.purchaseDate).getTime();
+        if (!isNaN(pTime)) {
+          const endTime =
+            a.status === 'SOLD' && a.saleDate
+              ? new Date(a.saleDate).getTime()
+              : Date.now();
+          daysHeld = Math.max(1, Math.floor((endTime - pTime) / (1000 * 60 * 60 * 24)));
+        }
+      }
+      const costPerDay = daysHeld > 0 ? totalCost / daysHeld : totalCost;
+
+      return {
+        id: a.id,
+        tag: a.tag || '',
+        species: a.species,
+        breed: a.breed || '',
+        gender: a.gender,
+        status: a.status,
+        purchaseDate: a.purchaseDate || '',
+        saleDate: a.saleDate,
+        daysHeld,
+        purchaseCost,
+        feedCost,
+        medCost,
+        labourCost,
+        otherCosts,
+        totalCost,
+        saleRevenue,
+        milkRevenue,
+        milkLiters,
+        totalRevenue,
+        netProfit,
+        costPerDay
+      };
+    });
+
+    setAnimalRows(rows);
+  };
 
   const loadReports = async () => {
     setLoading(true);
@@ -55,6 +185,8 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
       } else if (activeReport === 'trialBalance') {
         const res = await generateTrialBalance();
         setTb(res);
+      } else if (activeReport === 'animalProfitability') {
+        await loadAnimalProfitability();
       }
     } catch (e) {
       console.error(e);
@@ -62,6 +194,62 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
       setLoading(false);
     }
   };
+
+  const toggleSort = (key: 'netProfit' | 'totalCost' | 'totalRevenue' | 'costPerDay') => {
+    if (animalSortKey === key) {
+      setAnimalSortDirection((prev) => (prev === 'desc' ? 'asc' : 'desc'));
+    } else {
+      setAnimalSortKey(key);
+      setAnimalSortDirection('desc');
+    }
+  };
+
+  const sortedAnimalRows = useMemo(() => {
+    let result = [...animalRows];
+
+    if (animalStatusFilter !== 'ALL') {
+      result = result.filter((r) => r.status === animalStatusFilter);
+    }
+
+    if (animalSearchQuery.trim()) {
+      const q = animalSearchQuery.toLowerCase();
+      result = result.filter(
+        (r) =>
+          r.id.toLowerCase().includes(q) ||
+          r.tag.toLowerCase().includes(q) ||
+          r.breed.toLowerCase().includes(q)
+      );
+    }
+
+    result.sort((a, b) => {
+      const valA = a[animalSortKey];
+      const valB = b[animalSortKey];
+      return animalSortDirection === 'desc' ? valB - valA : valA - valB;
+    });
+
+    return result;
+  }, [animalRows, animalStatusFilter, animalSearchQuery, animalSortKey, animalSortDirection]);
+
+  const herdSummary = useMemo(() => {
+    const totalAnimals = animalRows.length;
+    const activeCount = animalRows.filter((r) => r.status === 'ACTIVE').length;
+    const soldCount = animalRows.filter((r) => r.status === 'SOLD').length;
+    const totalHerdCost = animalRows.reduce((acc, r) => acc + r.totalCost, 0);
+    const totalHerdRevenue = animalRows.reduce((acc, r) => acc + r.totalRevenue, 0);
+    const totalHerdProfit = totalHerdRevenue - totalHerdCost;
+    const totalDays = animalRows.reduce((acc, r) => acc + r.daysHeld, 0);
+    const avgDailyCost = totalDays > 0 ? totalHerdCost / totalDays : 0;
+
+    return {
+      totalAnimals,
+      activeCount,
+      soldCount,
+      totalHerdCost,
+      totalHerdRevenue,
+      totalHerdProfit,
+      avgDailyCost
+    };
+  }, [animalRows]);
 
   const handleExportExcel = async () => {
     setIsExporting(true);
@@ -162,6 +350,18 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
         >
           <Layers className="w-4 h-4" />
           <span>রেওয়ামিল অডিট (Trial Balance)</span>
+        </button>
+
+        <button
+          onClick={() => setActiveReport('animalProfitability')}
+          className={`flex items-center gap-1.5 px-3.5 py-2 rounded-lg whitespace-nowrap transition-all cursor-pointer min-h-[40px] ${
+            activeReport === 'animalProfitability'
+              ? 'bg-[#1E5128] text-white shadow-xs'
+              : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200/60'
+          }`}
+        >
+          <TrendingUp className="w-4 h-4" />
+          <span>পশুভিত্তিক লাভ-ক্ষতি (Animal Profitability)</span>
         </button>
 
         <button
@@ -418,6 +618,401 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
                 </tr>
               </tfoot>
             </table>
+          </div>
+        </div>
+      )}
+
+      {/* ===================== REPORT 4: ANIMAL PROFITABILITY ===================== */}
+      {activeReport === 'animalProfitability' && (
+        <div className="bg-white border border-gray-200 rounded-2xl p-4 sm:p-6 space-y-6 shadow-xs">
+          {/* Header */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-gray-100 pb-4">
+            <div>
+              <h3 className="text-base sm:text-lg font-bold text-gray-900 flex items-center gap-2">
+                <TrendingUp className="w-5 h-5 text-[#1E5128]" />
+                <span>পশুভিত্তিক লাভ-ক্ষতি প্রতিবেদন (Per-Animal Profitability Report)</span>
+              </h3>
+              <p className="text-[13px] text-gray-500 mt-0.5">
+                খামারের প্রতিটি পশুর মোট খরচ, অর্জিত রাজস্ব ও নিট লাভ-ক্ষতির তুলনামূলক বিশ্লেষণ
+              </p>
+            </div>
+            <div className="text-[12px] text-gray-500 bg-gray-50 px-3 py-1.5 rounded-lg border border-gray-200 flex items-center gap-1.5">
+              <span>ক্রমানুসারে সাজানো:</span>
+              <span className="font-bold text-[#1E5128]">
+                {animalSortKey === 'netProfit'
+                  ? `নিট লাভ (${animalSortDirection === 'desc' ? 'সর্বোচ্চ ➔ সর্বনিম্ন' : 'সর্বনিম্ন ➔ সর্বোচ্চ'})`
+                  : animalSortKey === 'totalCost'
+                  ? `মোট খরচ (${animalSortDirection === 'desc' ? 'বেশি ➔ কম' : 'কম ➔ বেশি'})`
+                  : animalSortKey === 'totalRevenue'
+                  ? `মোট রাজস্ব (${animalSortDirection === 'desc' ? 'বেশি ➔ কম' : 'কম ➔ বেশি'})`
+                  : `দৈনিক খরচ`}
+              </span>
+            </div>
+          </div>
+
+          {/* Herd KPI Summary Cards */}
+          <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+            <div className="p-3.5 rounded-xl bg-gray-50 border border-gray-200 space-y-1">
+              <span className="text-[11px] font-bold text-gray-500 uppercase tracking-wide">
+                মোট পাল / গবাদিপশু
+              </span>
+              <div className="text-[18px] font-bold text-gray-900">
+                {herdSummary.totalAnimals} <span className="text-[12px] font-normal text-gray-500">টি</span>
+              </div>
+              <div className="text-[11px] text-gray-600">
+                সক্রিয়: {herdSummary.activeCount} | বিক্রিত: {herdSummary.soldCount}
+              </div>
+            </div>
+
+            <div className="p-3.5 rounded-xl bg-amber-50/70 border border-amber-200 space-y-1">
+              <span className="text-[11px] font-bold text-amber-800 uppercase tracking-wide">
+                সর্বমোট ব্যয় (Cost)
+              </span>
+              <div className="text-[18px] font-bold font-mono text-amber-900">
+                {fmt(herdSummary.totalHerdCost)}
+              </div>
+              <div className="text-[11px] text-amber-700">ক্রয় + খাদ্য + চিকিৎসা + শ্রমিক</div>
+            </div>
+
+            <div className="p-3.5 rounded-xl bg-cyan-50/70 border border-cyan-200 space-y-1">
+              <span className="text-[11px] font-bold text-cyan-800 uppercase tracking-wide">
+                সর্বমোট রাজস্ব (Revenue)
+              </span>
+              <div className="text-[18px] font-bold font-mono text-cyan-900">
+                {fmt(herdSummary.totalHerdRevenue)}
+              </div>
+              <div className="text-[11px] text-cyan-700">বিক্রয়মূল্য ও দুধ বিক্রয়</div>
+            </div>
+
+            <div
+              className={`p-3.5 rounded-xl border space-y-1 ${
+                herdSummary.totalHerdProfit >= 0
+                  ? 'bg-emerald-50/70 border-emerald-200 text-emerald-950'
+                  : 'bg-rose-50/70 border-rose-200 text-rose-950'
+              }`}
+            >
+              <span
+                className={`text-[11px] font-bold uppercase tracking-wide ${
+                  herdSummary.totalHerdProfit >= 0 ? 'text-[#15803D]' : 'text-rose-700'
+                }`}
+              >
+                সার্বিক নিট লাভ/ক্ষতি
+              </span>
+              <div
+                className={`text-[18px] font-bold font-mono ${
+                  herdSummary.totalHerdProfit >= 0 ? 'text-[#15803D]' : 'text-rose-700'
+                }`}
+              >
+                {herdSummary.totalHerdProfit >= 0 ? '+' : ''}
+                {fmt(herdSummary.totalHerdProfit)}
+              </div>
+              <div className="text-[11px] opacity-80">
+                {herdSummary.totalHerdProfit >= 0 ? 'সার্বিক উদ্বৃত্ত লাভ' : 'চলতি বিনিয়োগ ঘাটতি'}
+              </div>
+            </div>
+
+            <div className="p-3.5 rounded-xl bg-gray-50 border border-gray-200 space-y-1 col-span-2 sm:col-span-1">
+              <span className="text-[11px] font-bold text-gray-500 uppercase tracking-wide">
+                গড় দৈনিক ব্যয় / পশু
+              </span>
+              <div className="text-[18px] font-bold font-mono text-gray-800">
+                {fmt(herdSummary.avgDailyCost)}
+              </div>
+              <div className="text-[11px] text-gray-500">প্রতি দিনের গড় প্রতিপালন ব্যয়</div>
+            </div>
+          </div>
+
+          {/* Controls: Search, Filter, Sort */}
+          <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3 pt-1">
+            {/* Search */}
+            <div className="relative flex-1 max-w-sm">
+              <Search className="w-4 h-4 text-gray-400 absolute left-3 top-3" />
+              <input
+                type="text"
+                value={animalSearchQuery}
+                onChange={(e) => setAnimalSearchQuery(e.target.value)}
+                placeholder="আইডি, ট্যাগ বা জাত দিয়ে খুঁজুন..."
+                className="w-full pl-9 pr-4 py-2 text-[13px] rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-[#1E5128] focus:border-transparent bg-gray-50"
+              />
+            </div>
+
+            {/* Filter Pills & Sort Button */}
+            <div className="flex items-center gap-2 flex-wrap">
+              <div className="flex items-center bg-gray-100 p-1 rounded-xl text-[12px] font-medium">
+                <button
+                  onClick={() => setAnimalStatusFilter('ALL')}
+                  className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
+                    animalStatusFilter === 'ALL'
+                      ? 'bg-white font-bold text-gray-900 shadow-xs'
+                      : 'text-gray-600 hover:text-gray-900'
+                  }`}
+                >
+                  সবগুলো ({animalRows.length})
+                </button>
+                <button
+                  onClick={() => setAnimalStatusFilter('ACTIVE')}
+                  className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
+                    animalStatusFilter === 'ACTIVE'
+                      ? 'bg-white font-bold text-emerald-800 shadow-xs'
+                      : 'text-gray-600 hover:text-gray-900'
+                  }`}
+                >
+                  সক্রিয় ({herdSummary.activeCount})
+                </button>
+                <button
+                  onClick={() => setAnimalStatusFilter('SOLD')}
+                  className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
+                    animalStatusFilter === 'SOLD'
+                      ? 'bg-white font-bold text-blue-800 shadow-xs'
+                      : 'text-gray-600 hover:text-gray-900'
+                  }`}
+                >
+                  বিক্রিত ({herdSummary.soldCount})
+                </button>
+              </div>
+
+              {/* Sort by Net Profit button */}
+              <button
+                onClick={() => toggleSort('netProfit')}
+                className={`px-3 py-2 rounded-xl border text-[12px] font-bold flex items-center gap-1.5 cursor-pointer transition-all ${
+                  animalSortKey === 'netProfit'
+                    ? 'bg-[#1E5128] text-white border-[#1E5128] shadow-xs'
+                    : 'bg-white text-gray-700 border-gray-200 hover:bg-gray-50'
+                }`}
+              >
+                <span>নিট লাভ অনুযায়ী</span>
+                {animalSortKey === 'netProfit' ? (
+                  animalSortDirection === 'desc' ? (
+                    <ArrowDown className="w-3.5 h-3.5" />
+                  ) : (
+                    <ArrowUp className="w-3.5 h-3.5" />
+                  )
+                ) : (
+                  <ArrowUpDown className="w-3.5 h-3.5" />
+                )}
+              </button>
+            </div>
+          </div>
+
+          {/* Main Profitability Summary Table */}
+          <div className="overflow-x-auto border border-gray-200 rounded-xl shadow-2xs">
+            <table className="w-full text-left border-collapse text-[13px]">
+              <thead>
+                <tr className="bg-gray-100 border-b border-gray-200 text-gray-700 font-bold">
+                  <th className="py-3 px-3.5 whitespace-nowrap">পশু ও ট্যাগ</th>
+                  <th className="py-3 px-3 whitespace-nowrap">স্ট্যাটাস</th>
+                  <th className="py-3 px-3 whitespace-nowrap">প্রতিপালন কাল</th>
+                  <th
+                    onClick={() => toggleSort('totalCost')}
+                    className="py-3 px-3 whitespace-nowrap cursor-pointer hover:bg-gray-200/60 transition-all"
+                  >
+                    <div className="flex items-center gap-1">
+                      <span>সর্বমোট ব্যয়</span>
+                      {animalSortKey === 'totalCost' && (
+                        animalSortDirection === 'desc' ? <ArrowDown className="w-3.5 h-3.5" /> : <ArrowUp className="w-3.5 h-3.5" />
+                      )}
+                    </div>
+                  </th>
+                  <th
+                    onClick={() => toggleSort('totalRevenue')}
+                    className="py-3 px-3 whitespace-nowrap cursor-pointer hover:bg-gray-200/60 transition-all"
+                  >
+                    <div className="flex items-center gap-1">
+                      <span>সর্বমোট রাজস্ব</span>
+                      {animalSortKey === 'totalRevenue' && (
+                        animalSortDirection === 'desc' ? <ArrowDown className="w-3.5 h-3.5" /> : <ArrowUp className="w-3.5 h-3.5" />
+                      )}
+                    </div>
+                  </th>
+                  <th
+                    onClick={() => toggleSort('netProfit')}
+                    className="py-3 px-3.5 whitespace-nowrap cursor-pointer bg-gray-200/50 hover:bg-gray-200 transition-all"
+                  >
+                    <div className="flex items-center gap-1 text-[#1E5128]">
+                      <span>নিট লাভ / ক্ষতি</span>
+                      {animalSortKey === 'netProfit' ? (
+                        animalSortDirection === 'desc' ? <ArrowDown className="w-4 h-4" /> : <ArrowUp className="w-4 h-4" />
+                      ) : (
+                        <ArrowUpDown className="w-3.5 h-3.5" />
+                      )}
+                    </div>
+                  </th>
+                  <th
+                    onClick={() => toggleSort('costPerDay')}
+                    className="py-3 px-3 whitespace-nowrap cursor-pointer hover:bg-gray-200/60 transition-all"
+                  >
+                    <div className="flex items-center gap-1">
+                      <span>দৈনিক খরচ</span>
+                      {animalSortKey === 'costPerDay' && (
+                        animalSortDirection === 'desc' ? <ArrowDown className="w-3.5 h-3.5" /> : <ArrowUp className="w-3.5 h-3.5" />
+                      )}
+                    </div>
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100 font-sans">
+                {sortedAnimalRows.length > 0 ? (
+                  sortedAnimalRows.map((row) => {
+                    const isProfitable = row.netProfit >= 0;
+
+                    return (
+                      <tr key={row.id} className="hover:bg-gray-50/70 transition-colors">
+                        {/* Animal ID & Tag */}
+                        <td className="py-3 px-3.5 whitespace-nowrap">
+                          <div className="flex items-center gap-2">
+                            <span className="font-mono font-bold text-gray-900">{row.id}</span>
+                            {row.tag && (
+                              <span className="px-2 py-0.5 rounded bg-gray-100 text-gray-700 text-[11px] font-mono border border-gray-200">
+                                {row.tag}
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-[11px] text-gray-500 mt-0.5">
+                            {row.species === 'CATTLE' ? 'গরু' : row.species === 'GOAT' ? 'ছাগল' : row.species}
+                            {row.breed ? ` • ${row.breed}` : ''}
+                          </div>
+                        </td>
+
+                        {/* Status */}
+                        <td className="py-3 px-3 whitespace-nowrap">
+                          {row.status === 'ACTIVE' ? (
+                            <span className="px-2.5 py-1 rounded-full text-[11px] font-bold bg-emerald-50 text-emerald-800 border border-emerald-200 inline-flex items-center gap-1">
+                              <span className="w-1.5 h-1.5 rounded-full bg-emerald-600" />
+                              <span>সক্রিয়</span>
+                            </span>
+                          ) : row.status === 'SOLD' ? (
+                            <span className="px-2.5 py-1 rounded-full text-[11px] font-bold bg-blue-50 text-blue-800 border border-blue-200 inline-flex items-center gap-1">
+                              <span className="w-1.5 h-1.5 rounded-full bg-blue-600" />
+                              <span>বিক্রিত</span>
+                            </span>
+                          ) : (
+                            <span className="px-2.5 py-1 rounded-full text-[11px] font-medium bg-gray-100 text-gray-700 border border-gray-200">
+                              {row.status}
+                            </span>
+                          )}
+                        </td>
+
+                        {/* Days Held */}
+                        <td className="py-3 px-3 whitespace-nowrap text-gray-600">
+                          <div className="font-mono font-semibold text-gray-900">
+                            {row.daysHeld} দিন
+                          </div>
+                          <div className="text-[10px] text-gray-400">
+                            {row.purchaseDate || 'ক্রয় তারিখ নেই'}
+                          </div>
+                        </td>
+
+                        {/* Total Cost */}
+                        <td className="py-3 px-3 whitespace-nowrap font-mono">
+                          <div className="font-bold text-gray-900">
+                            {fmt(row.totalCost)}
+                          </div>
+                          <div className="text-[10px] text-gray-500">
+                            ক্রয় {fmt(row.purchaseCost)} + পরিচর্যা {fmt(row.totalCost - row.purchaseCost)}
+                          </div>
+                        </td>
+
+                        {/* Total Revenue */}
+                        <td className="py-3 px-3 whitespace-nowrap font-mono">
+                          <div className="font-bold text-gray-900">
+                            {fmt(row.totalRevenue)}
+                          </div>
+                          <div className="text-[10px] text-gray-500">
+                            {row.status === 'SOLD'
+                              ? `বিক্রয়: ${fmt(row.saleRevenue)}`
+                              : row.milkLiters > 0
+                              ? `দুধ: ${row.milkLiters} লিটার (মেমো)`
+                              : 'অবিক্রিত'}
+                          </div>
+                        </td>
+
+                        {/* Net Profit / Loss */}
+                        <td className="py-3 px-3.5 whitespace-nowrap font-mono bg-gray-50/50">
+                          <div
+                            className={`font-bold text-[14px] flex items-center gap-1 ${
+                              isProfitable ? 'text-[#15803D]' : 'text-rose-700'
+                            }`}
+                          >
+                            <span>{isProfitable ? '+' : ''}</span>
+                            <span>{fmt(row.netProfit)}</span>
+                          </div>
+                          <div className="text-[10px] text-gray-500 mt-0.5">
+                            {isProfitable
+                              ? 'লাভ'
+                              : row.status === 'ACTIVE'
+                              ? 'চলতি ব্যয় (অবিক্রিত)'
+                              : 'ক্ষতি'}
+                          </div>
+                        </td>
+
+                        {/* Cost Per Day */}
+                        <td className="py-3 px-3 whitespace-nowrap font-mono text-gray-700">
+                          <span className="font-semibold">{fmt(row.costPerDay)}</span>
+                          <span className="text-[11px] text-gray-400 font-sans">/দিন</span>
+                        </td>
+                      </tr>
+                    );
+                  })
+                ) : (
+                  <tr>
+                    <td colSpan={7} className="py-8 text-center text-gray-500">
+                      কোনো পশুর তথ্য পাওয়া যায়নি।
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+
+              {/* Table Footer: Herd Totals */}
+              {sortedAnimalRows.length > 0 && (
+                <tfoot>
+                  <tr className="bg-gray-100 font-bold text-gray-900 border-t-2 border-gray-300">
+                    <td colSpan={3} className="py-3 px-3.5">
+                      মোট সমষ্টি ({sortedAnimalRows.length}টি পশু)
+                    </td>
+                    <td className="py-3 px-3 font-mono text-amber-900">
+                      {fmt(sortedAnimalRows.reduce((acc, r) => acc + r.totalCost, 0))}
+                    </td>
+                    <td className="py-3 px-3 font-mono text-cyan-900">
+                      {fmt(sortedAnimalRows.reduce((acc, r) => acc + r.totalRevenue, 0))}
+                    </td>
+                    <td className="py-3 px-3.5 font-mono text-[14px]">
+                      {(() => {
+                        const sumNet = sortedAnimalRows.reduce((acc, r) => acc + r.netProfit, 0);
+                        return (
+                          <span className={sumNet >= 0 ? 'text-[#15803D]' : 'text-rose-700'}>
+                            {sumNet >= 0 ? '+' : ''}
+                            {fmt(sumNet)}
+                          </span>
+                        );
+                      })()}
+                    </td>
+                    <td className="py-3 px-3 font-mono text-gray-700 text-[12px]">
+                      {fmt(
+                        sortedAnimalRows.reduce((acc, r) => acc + r.totalCost, 0) /
+                          Math.max(
+                            1,
+                            sortedAnimalRows.reduce((acc, r) => acc + r.daysHeld, 0)
+                          )
+                      )}
+                      <span className="text-[10px] text-gray-400 font-sans">/দিন</span>
+                    </td>
+                  </tr>
+                </tfoot>
+              )}
+            </table>
+          </div>
+
+          {/* Footnote */}
+          <div className="p-3 bg-gray-50 rounded-xl border border-gray-200 text-[11px] text-gray-500 space-y-1">
+            <p>
+              • <strong>হিসাবের ভিত্তি:</strong> প্রতিটি পশুর মোট ব্যয় = ক্রয়মূল্য + খাদ্য খরচ + ওষুধ/চিকিৎসা খরচ + শ্রমিক ব্যয় + অন্যান্য ব্যয়।
+            </p>
+            <p>
+              • <strong>রাজস্ব ও নিট লাভ:</strong> সক্রিয় পশুর ক্ষেত্রে বিক্রয় না হওয়া পর্যন্ত নিট লাভ-ক্ষতিতে বিনিয়োগ খরচ ঋণাত্মক হিসেবে প্রদর্শিত হয়। পশু বিক্রয়ের পর বিক্রয়লব্ধ মূল্যের ভিত্তিতে চূড়ান্ত লাভ বা ক্ষতি নির্ধারিত হয়।
+            </p>
+            <p>
+              • <strong>দুধ উৎপাদনের হিসাব:</strong> গাভীর ক্ষেত্রে উৎপন্ন দুধের পরিমাণ মেমো লাইন হিসেবে প্রদর্শিত হয়েছে।
+            </p>
           </div>
         </div>
       )}

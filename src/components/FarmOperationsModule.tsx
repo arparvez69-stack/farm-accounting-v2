@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   Tractor,
   Fish,
@@ -18,7 +18,9 @@ import {
   Scale,
   Droplets,
   Clock,
-  FileText
+  FileText,
+  Users,
+  CheckSquare
 } from 'lucide-react';
 import { db } from '../db/indexedDb';
 import {
@@ -85,7 +87,11 @@ export const FarmOperationsModule: React.FC<Props> = ({
   const [currentWeight, setCurrentWeight] = useState('180');
 
   // Add Activity / Event Modal state
+  const [isEventModalOpen, setIsEventModalOpen] = useState(false);
   const [eventModalAnimal, setEventModalAnimal] = useState<Animal | null>(null);
+  const [isBulkMode, setIsBulkMode] = useState<boolean>(false);
+  const [bulkSelectedAnimalIds, setBulkSelectedAnimalIds] = useState<string[]>([]);
+  const [costAllocation, setCostAllocation] = useState<'PER_ANIMAL' | 'SPLIT_EVENLY'>('PER_ANIMAL');
   const [eventType, setEventType] = useState<AnimalEvent['eventType']>('FEED');
   const [eventDate, setEventDate] = useState<string>(new Date().toISOString().split('T')[0]);
   const [eventCost, setEventCost] = useState<string>('0');
@@ -301,62 +307,106 @@ export const FarmOperationsModule: React.FC<Props> = ({
     }
   };
 
+  const activeAnimals = useMemo(() => {
+    return animals.filter((a) => a.status === 'ACTIVE');
+  }, [animals]);
+
+  const handleCloseEventModal = () => {
+    setIsEventModalOpen(false);
+    setEventModalAnimal(null);
+    setIsBulkMode(false);
+    setBulkSelectedAnimalIds([]);
+    setCostAllocation('PER_ANIMAL');
+    setEventCost('0');
+    setEventMilkLiters('');
+    setEventWeightKg('');
+    setEventVaccineName('');
+    setEventNextDueDate('');
+    setEventDetails('');
+  };
+
   const handleSaveEvent = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!eventModalAnimal) return;
+    if (!isEventModalOpen) return;
+
+    const targetAnimals: Animal[] = isBulkMode
+      ? activeAnimals.filter((a) => bulkSelectedAnimalIds.includes(a.id))
+      : (eventModalAnimal ? [eventModalAnimal] : []);
+
+    if (targetAnimals.length === 0) {
+      setMsg({ type: 'error', text: 'অনুগ্রহ করে অন্তত একটি সক্রিয় পশু নির্বাচন করুন।' });
+      return;
+    }
+
     setSubmittingEvent(true);
     try {
-      const cost = Math.max(0, parseFloat(eventCost) || 0);
+      const rawCost = Math.max(0, parseFloat(eventCost) || 0);
       const milk = eventType === 'MILK' && eventMilkLiters ? Math.max(0, parseFloat(eventMilkLiters) || 0) : undefined;
       const weight = eventType === 'WEIGHT' && eventWeightKg ? Math.max(0, parseFloat(eventWeightKg) || 0) : undefined;
 
-      await executeAnimalEventTransaction({
-        animal: eventModalAnimal,
-        event: {
-          animalId: eventModalAnimal.id,
-          eventType,
-          date: eventDate || new Date().toISOString().split('T')[0],
-          cost,
-          milkLiters: milk,
-          weightKg: weight,
-          vaccineName: (eventType === 'VACCINE' || eventType === 'TREATMENT') ? eventVaccineName.trim() || undefined : undefined,
-          nextDueDate: (eventType === 'VACCINE' || eventType === 'TREATMENT') ? eventNextDueDate || undefined : undefined,
-          details: eventDetails.trim() || `${eventType} কার্যক্রম সম্পন্ন`
-        },
-        paymentMethod: eventPaymentMethod,
-        currentUserId
-      });
+      // Calculate cost allocation per animal
+      const costPerAnimal = (isBulkMode && costAllocation === 'SPLIT_EVENLY')
+        ? (targetAnimals.length > 0 ? Math.round((rawCost / targetAnimals.length) * 100) / 100 : 0)
+        : rawCost;
 
-      // Automatically create matching PENDING Reminder when nextDueDate is set
-      if ((eventType === 'VACCINE' || eventType === 'TREATMENT') && eventNextDueDate) {
-        const vaccineOrTreatment = eventType === 'VACCINE'
-          ? (eventVaccineName.trim() || 'টিকা')
-          : (eventDetails.trim() || 'চিকিৎসা');
-        const animalTag = eventModalAnimal.tag || eventModalAnimal.id;
-        const autoReminder: Reminder = {
-          id: generateUniqueId('rem'),
-          animalId: eventModalAnimal.id,
-          title: `${animalTag}: ${vaccineOrTreatment} পরবর্তী ডোজ/ফলোআপ`,
-          category: eventType === 'VACCINE' ? 'VACCINE' : 'TREATMENT',
-          dueDate: eventNextDueDate,
-          status: 'PENDING',
-          createdAt: new Date().toISOString(),
-          synced: false
-        };
-        await safeInsert(db.reminders, autoReminder, { idPrefix: 'rem' });
+      // Process each selected animal: one AnimalEvent (and matching journal entry) per selected animal
+      for (let i = 0; i < targetAnimals.length; i++) {
+        const animal = targetAnimals[i];
+        const animalCost = (isBulkMode && costAllocation === 'SPLIT_EVENLY')
+          ? (i === targetAnimals.length - 1
+              ? Math.max(0, Math.round((rawCost - costPerAnimal * (targetAnimals.length - 1)) * 100) / 100)
+              : costPerAnimal)
+          : rawCost;
+
+        await executeAnimalEventTransaction({
+          animal,
+          event: {
+            animalId: animal.id,
+            eventType,
+            date: eventDate || new Date().toISOString().split('T')[0],
+            cost: animalCost,
+            milkLiters: milk,
+            weightKg: weight,
+            vaccineName: (eventType === 'VACCINE' || eventType === 'TREATMENT') ? eventVaccineName.trim() || undefined : undefined,
+            nextDueDate: (eventType === 'VACCINE' || eventType === 'TREATMENT') ? eventNextDueDate || undefined : undefined,
+            details: eventDetails.trim() || `${eventType} কার্যক্রম সম্পন্ন${isBulkMode ? ' (একত্র এন্ট্রি)' : ''}`
+          },
+          paymentMethod: eventPaymentMethod,
+          currentUserId
+        });
+
+        // Automatically create matching PENDING Reminder when nextDueDate is set
+        if ((eventType === 'VACCINE' || eventType === 'TREATMENT') && eventNextDueDate) {
+          const vaccineOrTreatment = eventType === 'VACCINE'
+            ? (eventVaccineName.trim() || 'টিকা')
+            : (eventDetails.trim() || 'চিকিৎসা');
+          const animalTag = animal.tag || animal.id;
+          const autoReminder: Reminder = {
+            id: generateUniqueId('rem'),
+            animalId: animal.id,
+            title: `${animalTag}: ${vaccineOrTreatment} পরবর্তী ডোজ/ফলোআপ`,
+            category: eventType === 'VACCINE' ? 'VACCINE' : 'TREATMENT',
+            dueDate: eventNextDueDate,
+            status: 'PENDING',
+            createdAt: new Date().toISOString(),
+            synced: false
+          };
+          await safeInsert(db.reminders, autoReminder, { idPrefix: 'rem' });
+        }
       }
+
+      const totalRecordedCost = (isBulkMode && costAllocation === 'SPLIT_EVENLY')
+        ? rawCost
+        : rawCost * targetAnimals.length;
 
       setMsg({
         type: 'success',
-        text: `পশু ${eventModalAnimal.id} এর ${eventType} কার্যক্রম সফলভাবে যুক্ত ও সংরক্ষিত হয়েছে!${cost > 0 ? ` (ব্যয় ৳${cost} জাবেদায় পোস্ট করা হয়েছে)` : ''}${eventNextDueDate ? ' (পরবর্তী তারিখের রিমাইন্ডার তৈরি করা হয়েছে)' : ''}`
+        text: isBulkMode
+          ? `একত্রে ${targetAnimals.length}টি পশুর ${eventType} কার্যক্রম সফলভাবে যুক্ত ও সংরক্ষিত হয়েছে!${totalRecordedCost > 0 ? ` (মোট ব্যয় ৳${totalRecordedCost.toFixed(2)} জাবেদায় পোস্ট করা হয়েছে)` : ''}${eventNextDueDate ? ' (পরবর্তী তারিখের রিমাইন্ডার তৈরি করা হয়েছে)' : ''}`
+          : `পশু ${targetAnimals[0].id} এর ${eventType} কার্যক্রম সফলভাবে যুক্ত ও সংরক্ষিত হয়েছে!${rawCost > 0 ? ` (ব্যয় ৳${rawCost} জাবেদায় পোস্ট করা হয়েছে)` : ''}${eventNextDueDate ? ' (পরবর্তী তারিখের রিমাইন্ডার তৈরি করা হয়েছে)' : ''}`
       });
-      setEventModalAnimal(null);
-      setEventCost('0');
-      setEventMilkLiters('');
-      setEventWeightKg('');
-      setEventVaccineName('');
-      setEventNextDueDate('');
-      setEventDetails('');
+
+      handleCloseEventModal();
       await loadOpsData();
     } catch (err: any) {
       setMsg({ type: 'error', text: `কার্যক্রম সংরক্ষণে ত্রুটি: ${err.message}` });
@@ -626,6 +676,10 @@ export const FarmOperationsModule: React.FC<Props> = ({
               }}
               onAddEvent={(a) => {
                 setEventModalAnimal(a);
+                setIsBulkMode(false);
+                setBulkSelectedAnimalIds([a.id]);
+                setCostAllocation('PER_ANIMAL');
+                setIsEventModalOpen(true);
                 setEventType('FEED');
                 setEventCost('0');
                 setEventMilkLiters('');
@@ -686,6 +740,32 @@ export const FarmOperationsModule: React.FC<Props> = ({
                   নিষ্ক্রিয়/বিক্রিত ({animals.filter((a) => a.status !== 'ACTIVE').length})
                 </button>
               </div>
+
+              {/* Add Activity button (opens modal in bulk or single mode) */}
+              <button
+                type="button"
+                onClick={() => {
+                  const activeList = animals.filter((a) => a.status === 'ACTIVE');
+                  setEventModalAnimal(activeList[0] || null);
+                  setIsBulkMode(activeList.length > 1);
+                  setBulkSelectedAnimalIds(activeList.map((a) => a.id));
+                  setCostAllocation('PER_ANIMAL');
+                  setIsEventModalOpen(true);
+                  setEventType('FEED');
+                  setEventCost('0');
+                  setEventMilkLiters('');
+                  setEventWeightKg('');
+                  setEventVaccineName('');
+                  setEventNextDueDate('');
+                  setEventDetails('');
+                  setEventDate(new Date().toISOString().split('T')[0]);
+                  setEventPaymentMethod('CASH');
+                }}
+                className="px-3.5 py-2 rounded-xl bg-white border border-gray-300 hover:bg-gray-50 text-gray-800 text-[13px] font-bold shadow-xs transition-all cursor-pointer min-h-[40px] flex items-center gap-1.5"
+              >
+                <PlusCircle className="w-4 h-4 text-[#1E5128]" />
+                <span>+ কার্যক্রম এন্ট্রি</span>
+              </button>
 
               {role === 'OWNER' && (
                 <button
@@ -885,6 +965,10 @@ export const FarmOperationsModule: React.FC<Props> = ({
                             onClick={(e) => {
                               e.stopPropagation();
                               setEventModalAnimal(a);
+                              setIsBulkMode(false);
+                              setBulkSelectedAnimalIds([a.id]);
+                              setCostAllocation('PER_ANIMAL');
+                              setIsEventModalOpen(true);
                               setEventType('FEED');
                               setEventCost('0');
                               setEventMilkLiters('');
@@ -949,30 +1033,192 @@ export const FarmOperationsModule: React.FC<Props> = ({
             </div>
           )}
 
-          {/* ================= MODAL 1: ADD ACTIVITY / EVENT ================= */}
-          {eventModalAnimal && (
+          {/* ================= MODAL 1: ADD ACTIVITY / EVENT (SINGLE & BULK MODE) ================= */}
+          {isEventModalOpen && (eventModalAnimal || isBulkMode) && (
             <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
               <div className="bg-white rounded-2xl max-w-lg w-full p-5 sm:p-6 shadow-2xl border border-gray-200 my-8 space-y-4">
                 <div className="flex items-start justify-between border-b border-gray-100 pb-3">
                   <div>
                     <h4 className="text-[17px] font-bold text-gray-900 flex items-center gap-2">
                       <PlusCircle className="w-5 h-5 text-[#1E5128]" />
-                      <span>কার্যক্রম যোগ করুন: {eventModalAnimal.id}</span>
+                      <span>
+                        {isBulkMode
+                          ? `একাধিক পশুর কার্যক্রম যোগ করুন (${bulkSelectedAnimalIds.length}টি নির্বাচিত)`
+                          : `কার্যক্রম যোগ করুন: ${eventModalAnimal?.id || ''}`}
+                      </span>
                     </h4>
                     <p className="text-[13px] text-gray-600 mt-0.5">
-                      জাত: {eventModalAnimal.breed} | বর্তমান ওজন: {eventModalAnimal.currentWeightKg} কেজি
+                      {isBulkMode
+                        ? 'নির্বাচিত প্রতিটি পশুর জন্য আলাদা কার্যক্রম ও জাবেদা ভাউচার তৈরি হবে'
+                        : `জাত: ${eventModalAnimal?.breed || ''} | বর্তমান ওজন: ${eventModalAnimal?.currentWeightKg || ''} কেজি`}
                     </p>
                   </div>
                   <button
                     type="button"
-                    onClick={() => setEventModalAnimal(null)}
-                    className="p-1 rounded-lg hover:bg-gray-100 text-gray-500 hover:text-gray-800"
+                    onClick={handleCloseEventModal}
+                    className="p-1 rounded-lg hover:bg-gray-100 text-gray-500 hover:text-gray-800 cursor-pointer"
                   >
                     <X className="w-5 h-5" />
                   </button>
                 </div>
 
                 <form onSubmit={handleSaveEvent} className="space-y-3.5">
+                  {/* Toggle: "একাধিক পশুর জন্য" (For multiple animals) */}
+                  <div className="flex items-center justify-between p-3 bg-emerald-50/60 border border-emerald-200 rounded-xl">
+                    <div className="flex items-center gap-2.5">
+                      <Users className="w-5 h-5 text-[#1E5128]" />
+                      <div>
+                        <div className="text-[13px] font-bold text-gray-900">
+                          একাধিক পশুর জন্য
+                        </div>
+                        <div className="text-[11px] text-gray-600">
+                          {isBulkMode
+                            ? 'একত্রে একাধিক সক্রিয় পশুর জন্য এন্ট্রি মোড চালু আছে'
+                            : 'একক পশুর পরিবর্তে একাধিক পশুর জন্য একসাথে এন্ট্রি করতে চালু করুন'}
+                        </div>
+                      </div>
+                    </div>
+                    <label className="relative inline-flex items-center cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={isBulkMode}
+                        onChange={(e) => {
+                          const checked = e.target.checked;
+                          setIsBulkMode(checked);
+                          if (checked) {
+                            if (bulkSelectedAnimalIds.length === 0) {
+                              if (eventModalAnimal) {
+                                setBulkSelectedAnimalIds([eventModalAnimal.id]);
+                              } else {
+                                setBulkSelectedAnimalIds(activeAnimals.map((a) => a.id));
+                              }
+                            }
+                          } else {
+                            if (!eventModalAnimal && bulkSelectedAnimalIds.length > 0) {
+                              const found = animals.find((a) => a.id === bulkSelectedAnimalIds[0]);
+                              if (found) setEventModalAnimal(found);
+                            }
+                          }
+                        }}
+                        className="sr-only peer"
+                      />
+                      <div className="w-11 h-6 bg-gray-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#1E5128]"></div>
+                    </label>
+                  </div>
+
+                  {/* Animal Context: Checklist of all ACTIVE animals OR Single Animal Details */}
+                  {isBulkMode ? (
+                    <div className="space-y-2 border border-gray-200 rounded-xl p-3 bg-gray-50/70">
+                      <div className="flex items-center justify-between">
+                        <label className="text-[12px] font-bold text-gray-800 flex items-center gap-1.5">
+                          <CheckSquare className="w-4 h-4 text-[#1E5128]" />
+                          <span>
+                            সক্রিয় পশুর তালিকা ({activeAnimals.length}টির মধ্যে {bulkSelectedAnimalIds.length}টি নির্বাচিত):
+                          </span>
+                        </label>
+                        <div className="flex items-center gap-2 text-[11px]">
+                          <button
+                            type="button"
+                            onClick={() => setBulkSelectedAnimalIds(activeAnimals.map((a) => a.id))}
+                            className="text-[#1E5128] hover:underline font-bold cursor-pointer"
+                          >
+                            সবগুলো নির্বাচন
+                          </button>
+                          <span className="text-gray-300">|</span>
+                          <button
+                            type="button"
+                            onClick={() => setBulkSelectedAnimalIds([])}
+                            className="text-gray-500 hover:underline cursor-pointer"
+                          >
+                            সব বাতিল
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Checklist of all ACTIVE animals */}
+                      <div className="max-h-44 overflow-y-auto border border-gray-200 rounded-lg divide-y divide-gray-100 bg-white shadow-2xs">
+                        {activeAnimals.length > 0 ? (
+                          activeAnimals.map((animal) => {
+                            const isSelected = bulkSelectedAnimalIds.includes(animal.id);
+                            return (
+                              <label
+                                key={animal.id}
+                                className={`flex items-center justify-between px-3 py-2 cursor-pointer text-[12px] transition-colors ${
+                                  isSelected ? 'bg-emerald-50/80 font-medium text-gray-900' : 'hover:bg-gray-50 text-gray-700'
+                                }`}
+                              >
+                                <div className="flex items-center gap-2.5">
+                                  <input
+                                    type="checkbox"
+                                    checked={isSelected}
+                                    onChange={(e) => {
+                                      if (e.target.checked) {
+                                        setBulkSelectedAnimalIds((prev) => [...prev, animal.id]);
+                                      } else {
+                                        setBulkSelectedAnimalIds((prev) => prev.filter((id) => id !== animal.id));
+                                      }
+                                    }}
+                                    className="rounded border-gray-300 text-[#1E5128] focus:ring-[#1E5128] w-4 h-4 cursor-pointer"
+                                  />
+                                  <div>
+                                    <div className="flex items-center gap-1.5">
+                                      <span className="font-mono font-bold text-gray-900">{animal.id}</span>
+                                      {animal.tag && (
+                                        <span className="px-1.5 py-0.5 rounded bg-gray-100 text-gray-700 text-[10px] font-mono border border-gray-200">
+                                          {animal.tag}
+                                        </span>
+                                      )}
+                                    </div>
+                                    <div className="text-[11px] text-gray-500">
+                                      {animal.species === 'CATTLE' ? 'গরু' : animal.species === 'GOAT' ? 'ছাগল' : animal.species}
+                                      {animal.breed ? ` • ${animal.breed}` : ''}
+                                    </div>
+                                  </div>
+                                </div>
+                                <div className="text-right text-[11px] text-gray-500 font-mono">
+                                  {animal.currentWeightKg ? `${animal.currentWeightKg} কেজি` : ''}
+                                </div>
+                              </label>
+                            );
+                          })
+                        ) : (
+                          <div className="p-4 text-center text-[12px] text-gray-500">
+                            কোনো সক্রিয় পশু পাওয়া যায়নি।
+                          </div>
+                        )}
+                      </div>
+                      {bulkSelectedAnimalIds.length === 0 && (
+                        <p className="text-[11px] text-rose-600 font-medium">
+                          * অনুগ্রহ করে কার্যক্রম প্রয়োগের জন্য অন্তত একটি পশু নির্বাচন করুন।
+                        </p>
+                      )}
+                    </div>
+                  ) : (
+                    eventModalAnimal && (
+                      <div className="p-3 bg-gray-50 border border-gray-200 rounded-xl flex items-center justify-between">
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="font-mono font-bold text-gray-900 text-[15px]">
+                              {eventModalAnimal.id}
+                            </span>
+                            {eventModalAnimal.tag && (
+                              <span className="px-2 py-0.5 rounded bg-white border border-gray-200 text-gray-700 text-[11px] font-mono">
+                                {eventModalAnimal.tag}
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-[12px] text-gray-600 mt-0.5">
+                            জাত: {eventModalAnimal.breed} | বর্তমান ওজন: {eventModalAnimal.currentWeightKg} কেজি
+                          </p>
+                        </div>
+                        <span className="text-[11px] font-semibold text-emerald-800 bg-emerald-100 px-2.5 py-1 rounded-md">
+                          একক পশু
+                        </span>
+                      </div>
+                    )
+                  )}
+
+                  {/* Shared Fields: Event Type & Date */}
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <div>
                       <label className="block text-[13px] font-semibold text-gray-700 mb-1">
@@ -1005,9 +1251,9 @@ export const FarmOperationsModule: React.FC<Props> = ({
                     </div>
                   </div>
 
-                  {/* Cost Field */}
-                  <div>
-                    <label className="block text-[13px] font-semibold text-gray-700 mb-1">
+                  {/* Shared Field: Cost Field */}
+                  <div className="space-y-2">
+                    <label className="block text-[13px] font-semibold text-gray-700">
                       খরচ (Cost ৳)
                     </label>
                     <input
@@ -1019,6 +1265,78 @@ export const FarmOperationsModule: React.FC<Props> = ({
                       placeholder="0"
                       className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900 font-mono focus:ring-2 focus:ring-[#1E5128]"
                     />
+
+                    {/* Small Radio Choice for Cost Allocation (Bulk Mode only) */}
+                    {isBulkMode && (
+                      <div className="p-3 bg-gray-50 border border-gray-200 rounded-xl space-y-2">
+                        <label className="block text-[12px] font-bold text-gray-700">
+                          খরচ বণ্টনের পদ্ধতি (Cost Allocation):
+                        </label>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                          <label
+                            className={`flex items-center gap-2 p-2.5 rounded-lg border cursor-pointer text-[12px] font-medium transition-all ${
+                              costAllocation === 'PER_ANIMAL'
+                                ? 'border-[#1E5128] bg-emerald-50 text-[#1E5128] shadow-2xs'
+                                : 'border-gray-200 bg-white text-gray-700 hover:bg-gray-50'
+                            }`}
+                          >
+                            <input
+                              type="radio"
+                              name="costAllocation"
+                              value="PER_ANIMAL"
+                              checked={costAllocation === 'PER_ANIMAL'}
+                              onChange={() => setCostAllocation('PER_ANIMAL')}
+                              className="text-[#1E5128] focus:ring-[#1E5128]"
+                            />
+                            <span>প্রতি পশুর খরচ (per animal)</span>
+                          </label>
+
+                          <label
+                            className={`flex items-center gap-2 p-2.5 rounded-lg border cursor-pointer text-[12px] font-medium transition-all ${
+                              costAllocation === 'SPLIT_EVENLY'
+                                ? 'border-[#1E5128] bg-emerald-50 text-[#1E5128] shadow-2xs'
+                                : 'border-gray-200 bg-white text-gray-700 hover:bg-gray-50'
+                            }`}
+                          >
+                            <input
+                              type="radio"
+                              name="costAllocation"
+                              value="SPLIT_EVENLY"
+                              checked={costAllocation === 'SPLIT_EVENLY'}
+                              onChange={() => setCostAllocation('SPLIT_EVENLY')}
+                              className="text-[#1E5128] focus:ring-[#1E5128]"
+                            />
+                            <span>মোট খরচ সমান ভাগ (total split evenly)</span>
+                          </label>
+                        </div>
+
+                        {/* Informative real-time breakdown calculation */}
+                        {parseFloat(eventCost) > 0 && bulkSelectedAnimalIds.length > 0 && (
+                          <div className="text-[11px] text-gray-600 bg-white p-2.5 rounded-lg border border-gray-200 space-y-0.5">
+                            {costAllocation === 'PER_ANIMAL' ? (
+                              <div>
+                                <span className="font-semibold text-gray-800">হিসাব:</span>{' '}
+                                প্রতি পশুতে ৳{parseFloat(eventCost)} × {bulkSelectedAnimalIds.length}টি পশু ={' '}
+                                <strong className="text-[#1E5128]">
+                                  সর্বমোট ৳{(parseFloat(eventCost) * bulkSelectedAnimalIds.length).toFixed(2)}
+                                </strong>{' '}
+                                (প্রত্যেক পশুর অনুকূলে ৳{parseFloat(eventCost)} জাবেদা হবে)
+                              </div>
+                            ) : (
+                              <div>
+                                <span className="font-semibold text-gray-800">হিসাব:</span>{' '}
+                                মোট ৳{parseFloat(eventCost)} ÷ {bulkSelectedAnimalIds.length}টি পশু ={' '}
+                                <strong className="text-[#1E5128]">
+                                  প্রতি পশুতে ৳{(parseFloat(eventCost) / bulkSelectedAnimalIds.length).toFixed(2)}
+                                </strong>{' '}
+                                (প্রত্যেক পশুর অনুকূলে সমান ভাগে জাবেদা হবে)
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    )}
+
                     {parseFloat(eventCost) > 0 && (
                       <p className="text-[12px] text-gray-500 mt-1">
                         {eventType === 'FEED'
@@ -1155,17 +1473,21 @@ export const FarmOperationsModule: React.FC<Props> = ({
                     <button
                       type="button"
                       disabled={submittingEvent}
-                      onClick={() => setEventModalAnimal(null)}
+                      onClick={handleCloseEventModal}
                       className="px-4 py-2.5 rounded-xl bg-gray-100 hover:bg-gray-200 text-gray-800 text-[13px] font-semibold cursor-pointer min-h-[40px]"
                     >
                       বাতিল
                     </button>
                     <button
                       type="submit"
-                      disabled={submittingEvent}
-                      className="px-5 py-2.5 rounded-xl bg-[#1E5128] hover:bg-[#173F1F] text-white text-[13px] font-bold cursor-pointer shadow-xs min-h-[40px]"
+                      disabled={submittingEvent || (isBulkMode && bulkSelectedAnimalIds.length === 0)}
+                      className="px-5 py-2.5 rounded-xl bg-[#1E5128] hover:bg-[#173F1F] text-white text-[13px] font-bold cursor-pointer shadow-xs min-h-[40px] disabled:opacity-50"
                     >
-                      {submittingEvent ? 'সংরক্ষণ হচ্ছে...' : 'কার্যক্রম সংরক্ষণ করুন'}
+                      {submittingEvent
+                        ? 'সংরক্ষণ হচ্ছে...'
+                        : isBulkMode
+                        ? `${bulkSelectedAnimalIds.length}টি পশুর জন্য সংরক্ষণ করুন`
+                        : 'কার্যক্রম সংরক্ষণ করুন'}
                     </button>
                   </div>
                 </form>

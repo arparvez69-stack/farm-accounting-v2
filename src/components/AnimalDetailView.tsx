@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   ArrowLeft,
   Scale,
@@ -14,7 +14,10 @@ import {
   Tag,
   PlusCircle,
   Clock,
-  FileText
+  FileText,
+  TrendingUp,
+  TrendingDown,
+  CalendarDays
 } from 'lucide-react';
 import {
   ResponsiveContainer,
@@ -25,6 +28,7 @@ import {
   Tooltip,
   CartesianGrid
 } from 'recharts';
+import { db } from '../db/indexedDb';
 import { Animal, AnimalEvent, UserRole } from '../types';
 
 interface AnimalDetailViewProps {
@@ -103,6 +107,86 @@ export const AnimalDetailView: React.FC<AnimalDetailViewProps> = ({
       totalMilkAllTime: Math.round(allSum * 10) / 10
     };
   }, [milkEvents]);
+
+  // 4. Trackable milk-related sales linked to this animal
+  const [milkSalesRevenue, setMilkSalesRevenue] = useState<number>(0);
+
+  useEffect(() => {
+    let isMounted = true;
+    (async () => {
+      try {
+        const allSales = await db.sales.toArray();
+        let linkedRevenue = 0;
+        for (const s of allSales) {
+          if (
+            s.category === 'MILK' ||
+            s.items?.some((it) => it.itemName?.toLowerCase().includes('milk') || it.itemName?.includes('দুধ'))
+          ) {
+            const isTied =
+              s.items?.some(
+                (it) =>
+                  it.itemName?.includes(animal.id) ||
+                  (animal.tag && it.itemName?.includes(animal.tag))
+              ) || s.invoiceNumber?.includes(animal.id);
+            if (isTied) {
+              linkedRevenue += s.grandTotal || s.totalAmount || 0;
+            }
+          }
+        }
+        if (isMounted) setMilkSalesRevenue(linkedRevenue);
+      } catch (e) {
+        console.error('Failed to load linked sales:', e);
+      }
+    })();
+    return () => {
+      isMounted = false;
+    };
+  }, [animal.id, animal.tag]);
+
+  // 5. Total cost so far (purchaseCost + accumulatedFeedCost + accumulatedMedCost + accumulatedLabourCost + otherCosts)
+  const totalCost = useMemo(() => {
+    return (
+      (Number(animal.purchaseCost) || 0) +
+      (Number(animal.accumulatedFeedCost) || 0) +
+      (Number(animal.accumulatedMedCost) || 0) +
+      (Number(animal.accumulatedLabourCost) || 0) +
+      (Number(animal.otherCosts) || 0)
+    );
+  }, [
+    animal.purchaseCost,
+    animal.accumulatedFeedCost,
+    animal.accumulatedMedCost,
+    animal.accumulatedLabourCost,
+    animal.otherCosts
+  ]);
+
+  // 6. Total revenue so far (salePrice if sold, plus sum of any MILK-related sales linked to this animal)
+  const totalRevenue = useMemo(() => {
+    const saleRev = animal.status === 'SOLD' ? Number(animal.salePrice) || 0 : 0;
+    return saleRev + milkSalesRevenue;
+  }, [animal.status, animal.salePrice, milkSalesRevenue]);
+
+  // 7. Net profit/loss = revenue − cost
+  const netProfitLoss = useMemo(() => {
+    return totalRevenue - totalCost;
+  }, [totalRevenue, totalCost]);
+
+  // 8. Days since purchaseDate and cost-per-day-held (totalCost ÷ days since purchaseDate)
+  const daysSincePurchase = useMemo(() => {
+    if (!animal.purchaseDate) return 1;
+    const pTime = new Date(animal.purchaseDate).getTime();
+    if (isNaN(pTime)) return 1;
+    const nowTime =
+      animal.status === 'SOLD' && animal.saleDate
+        ? new Date(animal.saleDate).getTime()
+        : Date.now();
+    const diff = Math.floor((nowTime - pTime) / (1000 * 60 * 60 * 24));
+    return Math.max(1, diff);
+  }, [animal.purchaseDate, animal.status, animal.saleDate]);
+
+  const costPerDayHeld = useMemo(() => {
+    return daysSincePurchase > 0 ? totalCost / daysSincePurchase : totalCost;
+  }, [totalCost, daysSincePurchase]);
 
   // Event icon & styling helper
   const getEventBadge = (type: AnimalEvent['eventType']) => {
@@ -509,97 +593,172 @@ export const AnimalDetailView: React.FC<AnimalDetailViewProps> = ({
           </div>
         </div>
 
-        {/* Right Column: SECTION 4: COST BREAKDOWN BOX */}
+        {/* Right Column: SECTION 4: PROFIT & LOSS (লাভ-ক্ষতি) & COST BREAKDOWN */}
         <div className="space-y-4">
           <div className="bg-white p-4 sm:p-5 rounded-2xl border border-gray-200 shadow-xs space-y-4 sticky top-4">
-            <div className="flex items-center gap-2 border-b border-gray-100 pb-3">
-              <div className="p-2 rounded-lg bg-amber-50 border border-amber-200 text-amber-700">
-                <DollarSign className="w-5 h-5" />
-              </div>
-              <div>
-                <h3 className="font-bold text-gray-900 text-[15px]">
-                  স্বতন্ত্র ব্যয় বিবরণী (Cost Breakdown)
-                </h3>
-                <p className="text-[12px] text-gray-500">
-                  পশুর ক্রয়মূল্য ও পুঞ্জীভূত ব্যয়ের হিসাব
-                </p>
+            {/* Header */}
+            <div className="flex items-center justify-between border-b border-gray-100 pb-3">
+              <div className="flex items-center gap-2">
+                <div className={`p-2 rounded-lg ${netProfitLoss >= 0 ? 'bg-emerald-50 text-[#15803D]' : 'bg-rose-50 text-rose-700'}`}>
+                  {netProfitLoss >= 0 ? <TrendingUp className="w-5 h-5" /> : <TrendingDown className="w-5 h-5" />}
+                </div>
+                <div>
+                  <h3 className="font-bold text-gray-900 text-[15px]">
+                    লাভ-ক্ষতি বিশ্লেষণ (Profit & Loss)
+                  </h3>
+                  <p className="text-[12px] text-gray-500">
+                    আয়, মোট ব্যয় ও লাভ-ক্ষতির পূর্ণাঙ্গ হিসাব
+                  </p>
+                </div>
               </div>
             </div>
 
-            {/* Breakdown Rows */}
+            {/* Prominent Net Profit / Loss Card */}
+            <div
+              className={`p-4 rounded-xl border ${
+                netProfitLoss >= 0
+                  ? 'bg-emerald-50/60 border-emerald-200 text-emerald-950'
+                  : 'bg-rose-50/60 border-rose-200 text-rose-950'
+              }`}
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-[13px] font-semibold">
+                  {netProfitLoss >= 0 ? 'নিট লাভ (Net Profit):' : 'নিট ক্ষতি (Net Loss):'}
+                </span>
+                <span
+                  className={`text-[18px] font-mono font-bold ${
+                    netProfitLoss >= 0 ? 'text-[#15803D]' : 'text-rose-700'
+                  }`}
+                >
+                  {netProfitLoss >= 0 ? '+' : ''}
+                  {fmt(netProfitLoss)}
+                </span>
+              </div>
+              <div className="text-[11px] text-gray-600 mt-1 flex justify-between">
+                <span>সর্বমোট রাজস্ব {fmt(totalRevenue)}</span>
+                <span>−</span>
+                <span>সর্বমোট খরচ {fmt(totalCost)}</span>
+              </div>
+            </div>
+
+            {/* Cost Breakdown Details */}
             <div className="space-y-2 text-[13px]">
-              <div className="flex justify-between items-center py-1.5 border-b border-gray-100">
+              <div className="text-[12px] font-bold text-gray-700 uppercase tracking-wide pt-1">
+                ১. ব্যয়ের বিবরণী (Cost Breakdown)
+              </div>
+              <div className="flex justify-between items-center py-1 border-b border-gray-100">
                 <span className="text-gray-600">ক্রয়মূল্য (Purchase Cost):</span>
                 <span className="font-mono font-bold text-gray-900">
                   {fmt(animal.purchaseCost || 0)}
                 </span>
               </div>
 
-              <div className="flex justify-between items-center py-1.5 border-b border-gray-100">
-                <span className="text-gray-600">পুঞ্জীভূত খাদ্য খরচ (Feed Cost):</span>
+              <div className="flex justify-between items-center py-1 border-b border-gray-100">
+                <span className="text-gray-600">পুঞ্জীভূত খাদ্য খরচ (Feed):</span>
                 <span className="font-mono font-bold text-amber-700">
                   {fmt(animal.accumulatedFeedCost || 0)}
                 </span>
               </div>
 
-              <div className="flex justify-between items-center py-1.5 border-b border-gray-100">
-                <span className="text-gray-600">চিকিৎসা ও ওষুধ খরচ (Med Cost):</span>
+              <div className="flex justify-between items-center py-1 border-b border-gray-100">
+                <span className="text-gray-600">চিকিৎসা ও ওষুধ খরচ (Med):</span>
                 <span className="font-mono font-bold text-blue-700">
                   {fmt(animal.accumulatedMedCost || 0)}
                 </span>
               </div>
 
-              <div className="flex justify-between items-center py-1.5 border-b border-gray-100">
-                <span className="text-gray-600">শ্রমিক ব্যয় (Labour Cost):</span>
+              <div className="flex justify-between items-center py-1 border-b border-gray-100">
+                <span className="text-gray-600">শ্রমিক ব্যয় (Labour):</span>
                 <span className="font-mono font-bold text-gray-800">
                   {fmt(animal.accumulatedLabourCost || 0)}
                 </span>
               </div>
 
-              <div className="flex justify-between items-center py-1.5 border-b border-gray-100">
-                <span className="text-gray-600">অন্যান্য খরচ (Other Costs):</span>
+              <div className="flex justify-between items-center py-1 border-b border-gray-100">
+                <span className="text-gray-600">অন্যান্য খরচ (Other):</span>
                 <span className="font-mono font-bold text-gray-800">
                   {fmt(animal.otherCosts || 0)}
                 </span>
               </div>
 
               {/* Total Cost Highlight */}
-              <div className="flex justify-between items-center py-2.5 px-3 bg-[#F0FDF4] border border-[#BBF7D0] rounded-xl font-bold text-[14px]">
+              <div className="flex justify-between items-center py-2 px-3 bg-gray-50 border border-gray-200 rounded-xl font-bold text-[13px]">
                 <span className="text-gray-900">সর্বমোট খরচ (Total Cost):</span>
-                <span className="font-mono text-[#15803D] text-[15px]">
-                  {fmt(animal.totalCost || 0)}
+                <span className="font-mono text-gray-900 text-[14px]">
+                  {fmt(totalCost)}
                 </span>
               </div>
 
-              {/* If Sold: Show sale price and profit/loss calculation */}
-              {animal.status === 'SOLD' && (
-                <div className="mt-3 p-3 bg-amber-50 border border-amber-200 rounded-xl space-y-2 text-[13px]">
-                  <div className="flex justify-between items-center">
-                    <span className="font-semibold text-amber-900">বিক্রয়মূল্য:</span>
-                    <span className="font-mono font-bold text-amber-800">
-                      {fmt(animal.salePrice || 0)}
-                    </span>
-                  </div>
-                  {animal.saleDate && (
-                    <div className="text-[11px] text-amber-700">
-                      বিক্রয়ের তারিখ: {animal.saleDate}
-                    </div>
-                  )}
-                  {animal.salePrice !== undefined && (
-                    <div className="flex justify-between items-center pt-2 border-t border-amber-200 font-bold">
-                      <span className="text-gray-800">নিট লাভ / ক্ষতি:</span>
-                      <span
-                        className={`font-mono ${
-                          animal.salePrice >= animal.totalCost ? 'text-emerald-700' : 'text-rose-700'
-                        }`}
-                      >
-                        {animal.salePrice >= animal.totalCost ? '+' : ''}
-                        {fmt(animal.salePrice - animal.totalCost)}
-                      </span>
-                    </div>
-                  )}
+              {/* Revenue Breakdown */}
+              <div className="text-[12px] font-bold text-gray-700 uppercase tracking-wide pt-3">
+                ২. আয়ের বিবরণী (Revenue Breakdown)
+              </div>
+
+              <div className="flex justify-between items-center py-1 border-b border-gray-100">
+                <span className="text-gray-600">বিক্রয়মূল্য (Sale Price):</span>
+                <span className="font-mono font-bold text-gray-900">
+                  {animal.status === 'SOLD' ? fmt(animal.salePrice || 0) : 'সক্রিয় (অবিক্রিত)'}
+                </span>
+              </div>
+
+              {animal.status === 'SOLD' && animal.saleDate && (
+                <div className="text-[11px] text-gray-500 text-right">
+                  বিক্রয়ের তারিখ: {animal.saleDate}
                 </div>
               )}
+
+              {milkSalesRevenue > 0 && (
+                <div className="flex justify-between items-center py-1 border-b border-gray-100">
+                  <span className="text-gray-600">সংযুক্ত দুধ বিক্রয় (Milk Sales):</span>
+                  <span className="font-mono font-bold text-cyan-700">
+                    {fmt(milkSalesRevenue)}
+                  </span>
+                </div>
+              )}
+
+              {/* Milk production as memo line */}
+              <div className="p-2.5 bg-cyan-50/70 border border-cyan-200 rounded-xl text-[12px] text-cyan-900 flex items-center justify-between">
+                <span className="flex items-center gap-1.5 font-medium">
+                  <Droplets className="w-4 h-4 text-cyan-600" />
+                  <span>দুধ উৎপাদন (মেমো লাইন / Memo line):</span>
+                </span>
+                <span className="font-mono font-bold">
+                  {totalMilkAllTime} লিটার
+                </span>
+              </div>
+
+              <div className="flex justify-between items-center py-2 px-3 bg-emerald-50/50 border border-emerald-200 rounded-xl font-bold text-[13px]">
+                <span className="text-gray-900">সর্বমোট রাজস্ব (Total Revenue):</span>
+                <span className="font-mono text-[#15803D] text-[14px]">
+                  {fmt(totalRevenue)}
+                </span>
+              </div>
+
+              {/* Cost Per Day Held */}
+              <div className="text-[12px] font-bold text-gray-700 uppercase tracking-wide pt-3">
+                ৩. প্রতিপালন ব্যয় সূচক (Daily Cost)
+              </div>
+
+              <div className="p-3 bg-amber-50/60 border border-amber-200 rounded-xl space-y-1.5 text-[12px]">
+                <div className="flex justify-between items-center">
+                  <span className="text-amber-900 font-medium flex items-center gap-1">
+                    <CalendarDays className="w-3.5 h-3.5 text-amber-700" />
+                    <span>ক্রয়ের পর থেকে দিন সংখ্যা:</span>
+                  </span>
+                  <span className="font-mono font-bold text-amber-950">
+                    {daysSincePurchase} দিন
+                  </span>
+                </div>
+                <div className="flex justify-between items-center pt-1.5 border-t border-amber-200/60">
+                  <span className="text-gray-800 font-bold">দৈনিক খরচ (Cost / Day):</span>
+                  <span className="font-mono font-bold text-amber-800 text-[13px]">
+                    {fmt(costPerDayHeld)} / দিন
+                  </span>
+                </div>
+                <div className="text-[10px] text-gray-500 italic">
+                  (সূত্র: মোট খরচ {fmt(totalCost)} ÷ {daysSincePurchase} দিন)
+                </div>
+              </div>
             </div>
 
             {/* Quick Stats Summary */}
