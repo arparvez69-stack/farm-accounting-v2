@@ -34,6 +34,7 @@ import {
 import { runAutomatedDepreciation } from '../accounting/depreciationService';
 import { Account, ClosedPeriod, JournalEntry, JournalLine, UserRole, VoucherType } from '../types';
 import { generateTransactionNumber, generateUniqueId, safeInsert } from '../utils/idGenerator';
+import { HIGH_AMOUNT_CONFIRMATION_THRESHOLD } from '../constants/validation';
 
 interface Props {
   role: UserRole;
@@ -49,6 +50,7 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
   const [loading, setLoading] = useState(false);
   const [msg, setMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [deprRunning, setDeprRunning] = useState(false);
+  const [confirmHighAmountVoucher, setConfirmHighAmountVoucher] = useState<{ amount: number } | null>(null);
 
   // Closed Periods State
   const [closedPeriods, setClosedPeriods] = useState<ClosedPeriod[]>([]);
@@ -243,25 +245,8 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
     };
   }
 
-  const handleSubmitVoucher = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setMsg(null);
-
-    if (role !== 'OWNER') {
-      setMsg({ type: 'error', text: 'শুধুমাত্র অনুমোদিত মালিক ভাউচার পোস্ট করতে পারেন।' });
-      return;
-    }
-
-    if (latestClosed && date <= latestClosed.endDate) {
-      setMsg({
-        type: 'error',
-        text: `হিসাবরক্ষণ সীমাবদ্ধতা: ${latestClosed.endDate} বা তার পূর্বের সময়কালের হিসাব ইতোমধ্যে বছর সমাপ্তি (Year-End Closed) করা হয়েছে। বন্ধ সময়কালের কোনো তারিখে নতুন জাবেদা পোস্ট বা সংশোধন করা যাবে না। অনুগ্রহ করে সমাপ্তির পরবর্তী কোনো তারিখ নির্বাচন করুন।`
-      });
-      return;
-    }
-
+  const executeSaveVoucher = async () => {
     try {
-      // Validate lines strictly against accounts list
       validateBalancedLines(lines, accounts);
 
       const voucherPrefix = voucherType.substring(0, 3).toUpperCase();
@@ -314,6 +299,47 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
       setSubTab('daybook');
     } catch (err: any) {
       setMsg({ type: 'error', text: err.message || 'ভাউচার সংরক্ষণ করতে ব্যর্থ হয়েছে।' });
+    }
+  };
+
+  const handleSubmitVoucher = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setMsg(null);
+
+    if (role !== 'OWNER') {
+      setMsg({ type: 'error', text: 'শুধুমাত্র অনুমোদিত মালিক ভাউচার পোস্ট করতে পারেন।' });
+      return;
+    }
+
+    const todayStr = new Date().toISOString().split('T')[0];
+    if (date > todayStr) {
+      setMsg({
+        type: 'error',
+        text: `ভাউচারের তারিখ ভবিষ্যতের হতে পারে না (${todayStr} বা তার পূর্বের তারিখ নির্বাচন করুন)।`
+      });
+      return;
+    }
+
+    if (latestClosed && date <= latestClosed.endDate) {
+      setMsg({
+        type: 'error',
+        text: `হিসাবরক্ষণ সীমাবদ্ধতা: ${latestClosed.endDate} বা তার পূর্বের সময়কালের হিসাব ইতোমধ্যে বছর সমাপ্তি (Year-End Closed) করা হয়েছে। বন্ধ সময়কালের কোনো তারিখে নতুন জাবেদা পোস্ট বা সংশোধন করা যাবে না। অনুগ্রহ করে সমাপ্তির পরবর্তী কোনো তারিখ নির্বাচন করুন।`
+      });
+      return;
+    }
+
+    try {
+      // Validate lines strictly against accounts list
+      validateBalancedLines(lines, accounts);
+
+      if (balanceCheck.totalDebit > HIGH_AMOUNT_CONFIRMATION_THRESHOLD) {
+        setConfirmHighAmountVoucher({ amount: balanceCheck.totalDebit });
+        return;
+      }
+
+      await executeSaveVoucher();
+    } catch (err: any) {
+      setMsg({ type: 'error', text: err.message || 'ভাউচার তথ্য সঠিক নয়।' });
     }
   };
 
@@ -621,7 +647,7 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
                   value={date}
                   onChange={(e) => setDate(e.target.value)}
                   className={`w-full bg-[#F8FAFC] border rounded-xl px-3.5 py-2.5 text-[15px] text-gray-900 focus:outline-none min-h-[44px] ${
-                    latestClosed && date <= latestClosed.endDate
+                    (latestClosed && date <= latestClosed.endDate) || date > new Date().toISOString().split('T')[0]
                       ? 'border-red-500 bg-red-50/50 text-red-900 focus:ring-2 focus:ring-red-300'
                       : 'border-gray-300 focus:border-[#1E5128] focus:ring-2 focus:ring-[#1E5128]/20'
                   }`}
@@ -630,6 +656,12 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
                   <p className="text-[12px] text-red-600 font-semibold mt-1 flex items-center gap-1">
                     <AlertCircle className="w-3.5 h-3.5 shrink-0" />
                     <span>বন্ধ হিসাবকাল: {latestClosed.endDate} বা পূর্বের তারিখে জাবেদা পোস্ট নিষিদ্ধ।</span>
+                  </p>
+                )}
+                {date > new Date().toISOString().split('T')[0] && (
+                  <p className="text-[12px] text-rose-600 font-semibold mt-1 flex items-center gap-1">
+                    <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                    <span>ভাউচারের তারিখ ভবিষ্যতের হতে পারে না ({new Date().toISOString().split('T')[0]} বা তার পূর্বের হতে হবে)।</span>
                   </p>
                 )}
               </div>
@@ -1557,6 +1589,50 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
                 className="px-5 py-2.5 rounded-xl bg-[#1E5128] hover:bg-[#173F1F] disabled:bg-gray-300 text-white text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 shadow-xs"
               >
                 {loading ? 'প্রক্রিয়াকরণ হচ্ছে...' : 'বিপরীত দাখিলা নিশ্চিত ও সংশোধন করুন'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {confirmHighAmountVoucher && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl max-w-md w-full p-5 sm:p-6 shadow-xl border border-gray-200 space-y-4">
+            <div className="flex items-start justify-between gap-3 border-b border-gray-100 pb-3">
+              <div className="flex items-center gap-2.5 text-amber-700">
+                <AlertCircle className="w-6 h-6 shrink-0" />
+                <h3 className="text-lg font-bold text-gray-900">পোস্টিং নিশ্চিতকরণ</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setConfirmHighAmountVoucher(null)}
+                className="text-gray-400 hover:text-gray-600 p-1 rounded-lg"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <p className="text-gray-800 text-[15px] font-medium leading-relaxed">
+              আপনি কি {confirmHighAmountVoucher.amount.toLocaleString('en-IN')} টাকার এই এন্ট্রিটি পোস্ট করতে নিশ্চিত?
+            </p>
+
+            <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-gray-100">
+              <button
+                type="button"
+                onClick={() => setConfirmHighAmountVoucher(null)}
+                className="px-4 py-2.5 rounded-xl bg-gray-100 hover:bg-gray-200 text-gray-700 text-xs font-bold transition-colors cursor-pointer"
+              >
+                বাতিল (Cancel)
+              </button>
+              <button
+                type="button"
+                onClick={async () => {
+                  setConfirmHighAmountVoucher(null);
+                  await executeSaveVoucher();
+                }}
+                className="px-5 py-2.5 rounded-xl bg-[#1E5128] hover:bg-[#173F1F] text-white text-xs font-bold transition-all cursor-pointer shadow-xs"
+              >
+                নিশ্চিত করুন (Confirm)
               </button>
             </div>
           </div>

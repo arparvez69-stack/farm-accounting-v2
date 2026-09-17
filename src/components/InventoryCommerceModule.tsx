@@ -7,12 +7,14 @@ import {
   PlusCircle,
   AlertTriangle,
   FileCheck,
-  Phone
+  Phone,
+  X
 } from 'lucide-react';
 import { db } from '../db/indexedDb';
 import { executePurchaseTransaction, executeSaleTransaction } from '../services/transactionService';
 import { generateTransactionNumber, generateUniqueId, safeInsert } from '../utils/idGenerator';
 import { InventoryItem, Party, PaymentRecord, Purchase, Sale, UserRole } from '../types';
+import { HIGH_AMOUNT_CONFIRMATION_THRESHOLD } from '../constants/validation';
 
 interface Props {
   role: UserRole;
@@ -31,6 +33,12 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
   const [sales, setSales] = useState<Sale[]>([]);
   const [purchases, setPurchases] = useState<Purchase[]>([]);
   const [payments, setPayments] = useState<PaymentRecord[]>([]);
+
+  // High amount transaction confirmation modal state
+  const [confirmHighAmountCommerce, setConfirmHighAmountCommerce] = useState<{
+    amount: number;
+    type: 'SALE' | 'PURCHASE';
+  } | null>(null);
 
   // Add Installment Modal State
   const [paymentModal, setPaymentModal] = useState<{
@@ -58,6 +66,7 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
 
   // New Sale Form
   const [showNewSale, setShowNewSale] = useState(false);
+  const [saleDate, setSaleDate] = useState<string>(() => new Date().toISOString().split('T')[0]);
   const [saleCustomerId, setSaleCustomerId] = useState('');
   const [saleItemId, setSaleItemId] = useState('');
   const [saleQty, setSaleQty] = useState('1');
@@ -66,6 +75,7 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
 
   // New Purchase Form
   const [showNewPurchase, setShowNewPurchase] = useState(false);
+  const [purchDate, setPurchDate] = useState<string>(() => new Date().toISOString().split('T')[0]);
   const [purchSupplierId, setPurchSupplierId] = useState('');
   const [purchItemId, setPurchItemId] = useState('');
   const [purchQty, setPurchQty] = useState('1');
@@ -185,6 +195,39 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
   };
 
   // EXECUTE SALE WITH ATOMIC TRANSACTION & CANONICAL MAPPINGS
+  const executeSaveSale = async () => {
+    const item = items.find((i) => i.id === saleItemId);
+    const customer = parties.find((p) => p.id === saleCustomerId);
+    if (!item || !customer) return;
+
+    const qty = parseFloat(saleQty) || 0;
+    const price = parseFloat(saleUnitPrice) || item.sellingPrice || 0;
+
+    try {
+      const res = await executeSaleTransaction({
+        customer,
+        item,
+        quantity: qty,
+        unitPrice: price,
+        paymentMethod: salePaymentMethod,
+        currentUserId,
+        date: saleDate
+      });
+
+      setShowNewSale(false);
+      setSaleQty('1');
+      setSaleUnitPrice('');
+      setSaleDate(new Date().toISOString().split('T')[0]);
+      setMsg({
+        type: 'success',
+        text: `বিক্রয় চালান ${res.sale.invoiceNumber} (৳${res.sale.totalAmount}) সফলভাবে সম্পন্ন এবং দ্বৈত-দাখিলায় পোস্ট হয়েছে!`
+      });
+      loadCommerceData();
+    } catch (err: any) {
+      setMsg({ type: 'error', text: err.message || 'বিক্রয় লেনদেন ব্যর্থ হয়েছে।' });
+    }
+  };
+
   const handleCreateSale = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!saleCustomerId || !saleItemId) {
@@ -204,30 +247,61 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
       return;
     }
 
-    try {
-      const res = await executeSaleTransaction({
-        customer,
-        item,
-        quantity: qty,
-        unitPrice: price,
-        paymentMethod: salePaymentMethod,
-        currentUserId
-      });
-
-      setShowNewSale(false);
-      setSaleQty('1');
-      setSaleUnitPrice('');
+    const todayStr = new Date().toISOString().split('T')[0];
+    if (saleDate > todayStr) {
       setMsg({
-        type: 'success',
-        text: `বিক্রয় চালান ${res.sale.invoiceNumber} (৳${res.sale.totalAmount}) সফলভাবে সম্পন্ন এবং দ্বৈত-দাখিলায় পোস্ট হয়েছে!`
+        type: 'error',
+        text: `বিক্রয় চালানের তারিখ ভবিষ্যতের হতে পারে না (${todayStr} বা তার পূর্বের তারিখ নির্বাচন করুন)।`
       });
-      loadCommerceData();
-    } catch (err: any) {
-      setMsg({ type: 'error', text: err.message || 'বিক্রয় লেনদেন ব্যর্থ হয়েছে।' });
+      return;
     }
+
+    const totalAmount = Math.round(qty * price * 100) / 100;
+    if (totalAmount > HIGH_AMOUNT_CONFIRMATION_THRESHOLD) {
+      setConfirmHighAmountCommerce({ amount: totalAmount, type: 'SALE' });
+      return;
+    }
+
+    await executeSaveSale();
   };
 
   // EXECUTE PURCHASE WITH ATOMIC TRANSACTION & CANONICAL MAPPINGS
+  const executeSavePurchase = async () => {
+    const item = items.find((i) => i.id === purchItemId);
+    const supplier = parties.find((p) => p.id === purchSupplierId);
+    if (!item || !supplier) return;
+
+    const qty = parseFloat(purchQty) || 0;
+    const price = parseFloat(purchUnitPrice) || item.avgCostPrice || 0;
+    const transport = parseFloat(purchTransportCost) || 0;
+
+    try {
+      const res = await executePurchaseTransaction({
+        supplier,
+        item,
+        quantity: qty,
+        unitPrice: price,
+        transportCost: transport,
+        paymentMethod: purchPaymentMethod,
+        currentUserId,
+        date: purchDate
+      });
+
+      setShowNewPurchase(false);
+      setPurchQty('1');
+      setPurchUnitPrice('');
+      setPurchTransportCost('0');
+      setPurchDate(new Date().toISOString().split('T')[0]);
+      setMsg({
+        type: 'success',
+        text: `ক্রয় চালান ${res.purchase.invoiceNumber} (৳${res.purchase.grandTotal}) সফলভাবে সংরক্ষিত এবং স্টকে যুক্ত হয়েছে!`
+      });
+      loadCommerceData();
+    } catch (err: any) {
+      setMsg({ type: 'error', text: err.message || 'ক্রয় লেনদেন ব্যর্থ হয়েছে।' });
+    }
+  };
+
   const handleCreatePurchase = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!purchSupplierId || !purchItemId) {
@@ -248,29 +322,22 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
       return;
     }
 
-    try {
-      const res = await executePurchaseTransaction({
-        supplier,
-        item,
-        quantity: qty,
-        unitPrice: price,
-        transportCost: transport,
-        paymentMethod: purchPaymentMethod,
-        currentUserId
-      });
-
-      setShowNewPurchase(false);
-      setPurchQty('1');
-      setPurchUnitPrice('');
-      setPurchTransportCost('0');
+    const todayStr = new Date().toISOString().split('T')[0];
+    if (purchDate > todayStr) {
       setMsg({
-        type: 'success',
-        text: `ক্রয় চালান ${res.purchase.invoiceNumber} (৳${res.purchase.grandTotal}) সফলভাবে সংরক্ষিত এবং স্টকে যুক্ত হয়েছে!`
+        type: 'error',
+        text: `ক্রয় চালানের তারিখ ভবিষ্যতের হতে পারে না (${todayStr} বা তার পূর্বের তারিখ নির্বাচন করুন)।`
       });
-      loadCommerceData();
-    } catch (err: any) {
-      setMsg({ type: 'error', text: err.message || 'ক্রয় লেনদেন ব্যর্থ হয়েছে।' });
+      return;
     }
+
+    const grandTotal = Math.round((qty * price + transport) * 100) / 100;
+    if (grandTotal > HIGH_AMOUNT_CONFIRMATION_THRESHOLD) {
+      setConfirmHighAmountCommerce({ amount: grandTotal, type: 'PURCHASE' });
+      return;
+    }
+
+    await executeSavePurchase();
   };
 
   const openPaymentModal = (parentType: 'SALE' | 'PURCHASE', item: Sale | Purchase) => {
@@ -602,7 +669,27 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
           {showNewSale && (
             <form onSubmit={handleCreateSale} className="p-4 bg-[#F8FAFC] border border-gray-300 rounded-xl space-y-3">
               <div className="font-bold text-[#1E5128] text-[15px]">নতুন বিক্রয় চালান তৈরি করুন</div>
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+              <div className="grid grid-cols-1 sm:grid-cols-4 gap-2.5">
+                <div>
+                  <label className="block text-[13px] font-medium text-gray-700 mb-1">চালানের তারিখ</label>
+                  <input
+                    type="date"
+                    id="input-sale-date"
+                    value={saleDate}
+                    max={new Date().toISOString().split('T')[0]}
+                    onChange={(e) => setSaleDate(e.target.value)}
+                    className={`w-full bg-white border rounded-lg p-2.5 text-[14px] text-gray-900 ${
+                      saleDate > new Date().toISOString().split('T')[0] ? 'border-rose-500 ring-1 ring-rose-500' : 'border-gray-300'
+                    }`}
+                  />
+                  {saleDate > new Date().toISOString().split('T')[0] && (
+                    <p className="text-[12px] text-rose-600 font-semibold mt-1 flex items-center gap-1">
+                      <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                      ভবিষ্যতের তারিখ গ্রহণযোগ্য নয়
+                    </p>
+                  )}
+                </div>
+
                 <div>
                   <label className="block text-[13px] font-medium text-gray-700 mb-1">ক্রেতা নির্বাচন</label>
                   <select
@@ -820,7 +907,27 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
           {showNewPurchase && (
             <form onSubmit={handleCreatePurchase} className="p-4 bg-[#F8FAFC] border border-gray-300 rounded-xl space-y-3">
               <div className="font-bold text-[#1E5128] text-[15px]">নতুন ক্রয় চালান লিপিবদ্ধ করুন</div>
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+              <div className="grid grid-cols-1 sm:grid-cols-4 gap-2.5">
+                <div>
+                  <label className="block text-[13px] font-medium text-gray-700 mb-1">চালানের তারিখ</label>
+                  <input
+                    type="date"
+                    id="input-purch-date"
+                    value={purchDate}
+                    max={new Date().toISOString().split('T')[0]}
+                    onChange={(e) => setPurchDate(e.target.value)}
+                    className={`w-full bg-white border rounded-lg p-2.5 text-[14px] text-gray-900 ${
+                      purchDate > new Date().toISOString().split('T')[0] ? 'border-rose-500 ring-1 ring-rose-500' : 'border-gray-300'
+                    }`}
+                  />
+                  {purchDate > new Date().toISOString().split('T')[0] && (
+                    <p className="text-[12px] text-rose-600 font-semibold mt-1 flex items-center gap-1">
+                      <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                      ভবিষ্যতের তারিখ গ্রহণযোগ্য নয়
+                    </p>
+                  )}
+                </div>
+
                 <div>
                   <label className="block text-[13px] font-medium text-gray-700 mb-1">সরবরাহকারী নির্বাচন</label>
                   <select
@@ -1238,6 +1345,59 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* High Amount Confirmation Modal */}
+      {confirmHighAmountCommerce && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl max-w-md w-full p-5 sm:p-6 shadow-xl border border-gray-200 space-y-4">
+            <div className="flex items-start justify-between gap-3 border-b border-gray-100 pb-3">
+              <div className="flex items-center gap-2.5 text-amber-700">
+                <AlertTriangle className="w-6 h-6 shrink-0" />
+                <h3 className="text-lg font-bold text-gray-900">পোস্টিং নিশ্চিতকরণ</h3>
+              </div>
+              <button
+                type="button"
+                id="btn-close-high-amount-commerce"
+                onClick={() => setConfirmHighAmountCommerce(null)}
+                className="text-gray-400 hover:text-gray-600 p-1 rounded-lg cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <p className="text-gray-800 text-[15px] font-medium leading-relaxed">
+              আপনি কি {confirmHighAmountCommerce.amount.toLocaleString('en-IN')} টাকার এই এন্ট্রিটি পোস্ট করতে নিশ্চিত?
+            </p>
+
+            <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-gray-100">
+              <button
+                type="button"
+                id="btn-cancel-high-amount-commerce"
+                onClick={() => setConfirmHighAmountCommerce(null)}
+                className="px-4 py-2.5 rounded-xl bg-gray-100 hover:bg-gray-200 text-gray-700 text-xs font-bold transition-colors cursor-pointer min-h-[40px]"
+              >
+                বাতিল (Cancel)
+              </button>
+              <button
+                type="button"
+                id="btn-confirm-high-amount-commerce"
+                onClick={async () => {
+                  const targetType = confirmHighAmountCommerce.type;
+                  setConfirmHighAmountCommerce(null);
+                  if (targetType === 'SALE') {
+                    await executeSaveSale();
+                  } else {
+                    await executeSavePurchase();
+                  }
+                }}
+                className="px-5 py-2.5 rounded-xl bg-[#1E5128] hover:bg-[#173F1F] text-white text-xs font-bold transition-all cursor-pointer shadow-xs min-h-[40px]"
+              >
+                নিশ্চিত করুন (Confirm)
+              </button>
+            </div>
           </div>
         </div>
       )}

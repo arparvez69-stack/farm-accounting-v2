@@ -20,7 +20,8 @@ import {
   Clock,
   FileText,
   Users,
-  CheckSquare
+  CheckSquare,
+  AlertTriangle
 } from 'lucide-react';
 import { db } from '../db/indexedDb';
 import {
@@ -85,6 +86,12 @@ export const FarmOperationsModule: React.FC<Props> = ({
   const [gender, setGender] = useState<'MALE' | 'FEMALE'>('FEMALE');
   const [purchaseCost, setPurchaseCost] = useState('65000');
   const [currentWeight, setCurrentWeight] = useState('180');
+  const [animalBirthDate, setAnimalBirthDate] = useState<string>(() => new Date().toISOString().split('T')[0]);
+  const [animalPurchaseDate, setAnimalPurchaseDate] = useState<string>(() => new Date().toISOString().split('T')[0]);
+  const [duplicateTagWarning, setDuplicateTagWarning] = useState<{
+    tag: string;
+    animalData: Animal;
+  } | null>(null);
 
   // Add Activity / Event Modal state
   const [isEventModalOpen, setIsEventModalOpen] = useState(false);
@@ -273,9 +280,40 @@ export const FarmOperationsModule: React.FC<Props> = ({
     }
   };
 
+  const executeSaveAnimal = async (animalToSave: Animal) => {
+    try {
+      await safeInsert(db.animals, animalToSave, { idPrefix: 'COW' });
+      setShowAddAnimal(false);
+      setDuplicateTagWarning(null);
+      setTagId('');
+      setAnimalBirthDate(new Date().toISOString().split('T')[0]);
+      setAnimalPurchaseDate(new Date().toISOString().split('T')[0]);
+      setMsg({ type: 'success', text: `পশু ট্যাগ ${animalToSave.id} সফলভাবে যুক্ত হয়েছে!` });
+      await loadOpsData();
+    } catch (err: any) {
+      setMsg({ type: 'error', text: err.message });
+    }
+  };
+
   const handleAddAnimal = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
+      const todayStr = new Date().toISOString().split('T')[0];
+      if (animalBirthDate > todayStr) {
+        setMsg({
+          type: 'error',
+          text: `পশুর জন্ম তারিখ ভবিষ্যতের হতে পারে না (${todayStr} বা তার পূর্বের হতে হবে)।`
+        });
+        return;
+      }
+      if (animalBirthDate && animalPurchaseDate && animalPurchaseDate < animalBirthDate) {
+        setMsg({
+          type: 'error',
+          text: `পশুর ক্রয় তারিখ জন্ম তারিখের (${animalBirthDate}) পূর্ববর্তী হতে পারে না।`
+        });
+        return;
+      }
+
       const pCost = parseFloat(purchaseCost) || 0;
       const anId = tagId.trim() || generateTransactionNumber('COW');
       const animal: Animal = {
@@ -284,8 +322,8 @@ export const FarmOperationsModule: React.FC<Props> = ({
         species,
         breed: breed.trim(),
         gender,
-        birthDate: new Date().toISOString().split('T')[0],
-        purchaseDate: new Date().toISOString().split('T')[0],
+        birthDate: animalBirthDate,
+        purchaseDate: animalPurchaseDate,
         purchaseCost: pCost,
         currentWeightKg: parseFloat(currentWeight) || 0,
         accumulatedFeedCost: 0,
@@ -297,11 +335,24 @@ export const FarmOperationsModule: React.FC<Props> = ({
         location: 'প্রধান শেড',
         synced: false
       };
-      await safeInsert(db.animals, animal, { idPrefix: 'COW' });
-      setShowAddAnimal(false);
-      setTagId('');
-      setMsg({ type: 'success', text: `পশু ট্যাগ ${animal.id} সফলভাবে যুক্ত হয়েছে!` });
-      loadOpsData();
+
+      // Check tag field (case-insensitive) against all existing animals' tags
+      const trimmedTag = anId.trim().toLowerCase();
+      const isDuplicate = animals.some(
+        (a) =>
+          (a.tag && a.tag.trim().toLowerCase() === trimmedTag) ||
+          (a.id && a.id.trim().toLowerCase() === trimmedTag)
+      );
+
+      if (isDuplicate) {
+        setDuplicateTagWarning({
+          tag: anId,
+          animalData: animal
+        });
+        return;
+      }
+
+      await executeSaveAnimal(animal);
     } catch (err: any) {
       setMsg({ type: 'error', text: err.message });
     }
@@ -336,6 +387,36 @@ export const FarmOperationsModule: React.FC<Props> = ({
     if (targetAnimals.length === 0) {
       setMsg({ type: 'error', text: 'অনুগ্রহ করে অন্তত একটি সক্রিয় পশু নির্বাচন করুন।' });
       return;
+    }
+
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    const maxFutureDate = tomorrow.toISOString().split('T')[0];
+    const chosenEventDate = eventDate || new Date().toISOString().split('T')[0];
+
+    if (chosenEventDate > maxFutureDate) {
+      setMsg({
+        type: 'error',
+        text: `কার্যক্রমের তারিখ সর্বোচ্চ ১ দিন ভবিষ্যতের হতে পারে (${maxFutureDate} এর পরে গ্রহণযোগ্য নয়)।`
+      });
+      return;
+    }
+
+    for (const an of targetAnimals) {
+      if (an.purchaseDate && chosenEventDate < an.purchaseDate) {
+        setMsg({
+          type: 'error',
+          text: `পশু ${an.tag || an.id} এর কার্যক্রমের তারিখ (${chosenEventDate}) এর ক্রয় তারিখের (${an.purchaseDate}) পূর্ববর্তী হতে পারে না।`
+        });
+        return;
+      }
+      if (an.birthDate && chosenEventDate < an.birthDate) {
+        setMsg({
+          type: 'error',
+          text: `পশু ${an.tag || an.id} এর কার্যক্রমের তারিখ (${chosenEventDate}) এর জন্ম তারিখের (${an.birthDate}) পূর্ববর্তী হতে পারে না।`
+        });
+        return;
+      }
     }
 
     setSubmittingEvent(true);
@@ -450,6 +531,29 @@ export const FarmOperationsModule: React.FC<Props> = ({
   const handleSaveStatus = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!statusModalAnimal) return;
+
+    const todayStr = new Date().toISOString().split('T')[0];
+    const chosenStatusDate = statusDate || todayStr;
+    if (chosenStatusDate > todayStr) {
+      setMsg({
+        type: 'error',
+        text: `তারিখ ভবিষ্যতের হতে পারে না (${todayStr} বা তার পূর্বের তারিখ নির্বাচন করুন)।`
+      });
+      return;
+    }
+
+    if (
+      newStatus === 'SOLD' &&
+      statusModalAnimal.purchaseDate &&
+      chosenStatusDate < statusModalAnimal.purchaseDate
+    ) {
+      setMsg({
+        type: 'error',
+        text: `পশুর বিক্রয় তারিখ (${chosenStatusDate}) এর ক্রয় তারিখের (${statusModalAnimal.purchaseDate}) পূর্ববর্তী হতে পারে না।`
+      });
+      return;
+    }
+
     setSubmittingStatus(true);
     try {
       const price = newStatus === 'SOLD' ? (parseFloat(salePrice) || 0) : undefined;
@@ -783,13 +887,25 @@ export const FarmOperationsModule: React.FC<Props> = ({
             <form onSubmit={handleAddAnimal} className="p-4 bg-[#F8FAFC] border border-gray-300 rounded-xl space-y-3">
               <div className="font-bold text-[#1E5128] text-[15px]">নতুন গবাদিপশু তথ্য যোগ করুন</div>
               <div className="grid grid-cols-1 sm:grid-cols-4 gap-2.5">
-                <input
-                  type="text"
-                  placeholder="ট্যাগ নং (যেমন: COW-105)"
-                  value={tagId}
-                  onChange={(e) => setTagId(e.target.value)}
-                  className="bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900"
-                />
+                <div>
+                  <input
+                    type="text"
+                    placeholder="ট্যাগ নং (যেমন: COW-105)"
+                    value={tagId}
+                    onChange={(e) => setTagId(e.target.value)}
+                    className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900"
+                  />
+                  {tagId.trim() &&
+                    animals.some(
+                      (a) =>
+                        (a.tag && a.tag.trim().toLowerCase() === tagId.trim().toLowerCase()) ||
+                        (a.id && a.id.trim().toLowerCase() === tagId.trim().toLowerCase())
+                    ) && (
+                      <span className="text-[11px] text-amber-700 font-semibold block mt-1">
+                        ⚠️ এই ট্যাগটি ইতিমধ্যে ব্যবহৃত হয়েছে
+                      </span>
+                    )}
+                </div>
                 <select
                   value={species}
                   onChange={(e) => setSpecies(e.target.value as any)}
@@ -814,6 +930,47 @@ export const FarmOperationsModule: React.FC<Props> = ({
                   <option value="FEMALE">মাদি (Female)</option>
                   <option value="MALE">মদ্দা (Male)</option>
                 </select>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                <div>
+                  <label className="block text-[13px] font-medium text-gray-700 mb-1">জন্ম তারিখ (Birth Date) *</label>
+                  <input
+                    type="date"
+                    required
+                    value={animalBirthDate}
+                    onChange={(e) => setAnimalBirthDate(e.target.value)}
+                    className={`w-full bg-white border rounded-lg p-2.5 text-[14px] text-gray-900 ${
+                      animalBirthDate > new Date().toISOString().split('T')[0]
+                        ? 'border-rose-500 bg-rose-50/20'
+                        : 'border-gray-300'
+                    }`}
+                  />
+                  {animalBirthDate > new Date().toISOString().split('T')[0] && (
+                    <p className="text-[11px] text-rose-600 font-semibold mt-1">
+                      জন্ম তারিখ ভবিষ্যতের হতে পারে না ({new Date().toISOString().split('T')[0]} বা তার পূর্বের হতে হবে)
+                    </p>
+                  )}
+                </div>
+                <div>
+                  <label className="block text-[13px] font-medium text-gray-700 mb-1">ক্রয় তারিখ (Purchase Date) *</label>
+                  <input
+                    type="date"
+                    required
+                    value={animalPurchaseDate}
+                    onChange={(e) => setAnimalPurchaseDate(e.target.value)}
+                    className={`w-full bg-white border rounded-lg p-2.5 text-[14px] text-gray-900 ${
+                      animalBirthDate && animalPurchaseDate && animalPurchaseDate < animalBirthDate
+                        ? 'border-rose-500 bg-rose-50/20'
+                        : 'border-gray-300'
+                    }`}
+                  />
+                  {animalBirthDate && animalPurchaseDate && animalPurchaseDate < animalBirthDate && (
+                    <p className="text-[11px] text-rose-600 font-semibold mt-1">
+                      ক্রয় তারিখ জন্ম তারিখের ({animalBirthDate}) পূর্ববর্তী হতে পারে না
+                    </p>
+                  )}
+                </div>
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
@@ -1246,8 +1403,49 @@ export const FarmOperationsModule: React.FC<Props> = ({
                         required
                         value={eventDate}
                         onChange={(e) => setEventDate(e.target.value)}
-                        className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900 focus:ring-2 focus:ring-[#1E5128]"
+                        className={`w-full bg-white border rounded-lg p-2.5 text-[14px] text-gray-900 focus:ring-2 focus:ring-[#1E5128] ${
+                          (() => {
+                            const tomorrow = new Date();
+                            tomorrow.setDate(tomorrow.getDate() + 1);
+                            const maxFuture = tomorrow.toISOString().split('T')[0];
+                            if (eventDate > maxFuture) return 'border-rose-500 bg-rose-50/20';
+                            if (!isBulkMode && eventModalAnimal) {
+                              if (eventModalAnimal.purchaseDate && eventDate < eventModalAnimal.purchaseDate) return 'border-rose-500 bg-rose-50/20';
+                              if (eventModalAnimal.birthDate && eventDate < eventModalAnimal.birthDate) return 'border-rose-500 bg-rose-50/20';
+                            }
+                            return 'border-gray-300';
+                          })()
+                        }`}
                       />
+                      {(() => {
+                        const tomorrow = new Date();
+                        tomorrow.setDate(tomorrow.getDate() + 1);
+                        const maxFuture = tomorrow.toISOString().split('T')[0];
+                        if (eventDate > maxFuture) {
+                          return (
+                            <p className="text-[11px] text-rose-600 font-semibold mt-1">
+                              কার্যক্রমের তারিখ সর্বোচ্চ ১ দিন ভবিষ্যতের হতে পারে ({maxFuture} এর পরে গ্রহণযোগ্য নয়)
+                            </p>
+                          );
+                        }
+                        if (!isBulkMode && eventModalAnimal) {
+                          if (eventModalAnimal.purchaseDate && eventDate < eventModalAnimal.purchaseDate) {
+                            return (
+                              <p className="text-[11px] text-rose-600 font-semibold mt-1">
+                                কার্যক্রমের তারিখ ({eventDate}) পশুর ক্রয় তারিখের ({eventModalAnimal.purchaseDate}) পূর্ববর্তী হতে পারে না
+                              </p>
+                            );
+                          }
+                          if (eventModalAnimal.birthDate && eventDate < eventModalAnimal.birthDate) {
+                            return (
+                              <p className="text-[11px] text-rose-600 font-semibold mt-1">
+                                কার্যক্রমের তারিখ ({eventDate}) পশুর জন্ম তারিখের ({eventModalAnimal.birthDate}) পূর্ববর্তী হতে পারে না
+                              </p>
+                            );
+                          }
+                        }
+                        return null;
+                      })()}
                     </div>
                   </div>
 
@@ -1543,8 +1741,35 @@ export const FarmOperationsModule: React.FC<Props> = ({
                         required
                         value={statusDate}
                         onChange={(e) => setStatusDate(e.target.value)}
-                        className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900 focus:ring-2 focus:ring-amber-500"
+                        className={`w-full bg-white border rounded-lg p-2.5 text-[14px] text-gray-900 focus:ring-2 focus:ring-amber-500 ${
+                          (() => {
+                            const todayStr = new Date().toISOString().split('T')[0];
+                            if (statusDate > todayStr) return 'border-rose-500 bg-rose-50/20';
+                            if (newStatus === 'SOLD' && statusModalAnimal?.purchaseDate && statusDate < statusModalAnimal.purchaseDate) {
+                              return 'border-rose-500 bg-rose-50/20';
+                            }
+                            return 'border-gray-300';
+                          })()
+                        }`}
                       />
+                      {(() => {
+                        const todayStr = new Date().toISOString().split('T')[0];
+                        if (statusDate > todayStr) {
+                          return (
+                            <p className="text-[11px] text-rose-600 font-semibold mt-1">
+                              তারিখ ভবিষ্যতের হতে পারে না ({todayStr} বা তার পূর্বের হতে হবে)
+                            </p>
+                          );
+                        }
+                        if (newStatus === 'SOLD' && statusModalAnimal?.purchaseDate && statusDate < statusModalAnimal.purchaseDate) {
+                          return (
+                            <p className="text-[11px] text-rose-600 font-semibold mt-1">
+                              বিক্রয় তারিখ ({statusDate}) পশুর ক্রয় তারিখের ({statusModalAnimal.purchaseDate}) পূর্ববর্তী হতে পারে না
+                            </p>
+                          );
+                        }
+                        return null;
+                      })()}
                     </div>
                   </div>
 
@@ -2213,6 +2438,57 @@ export const FarmOperationsModule: React.FC<Props> = ({
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+      {/* Duplicate Animal Tag Confirmation Modal */}
+      {duplicateTagWarning && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl max-w-md w-full p-5 sm:p-6 shadow-xl border border-gray-200 space-y-4">
+            <div className="flex items-start justify-between gap-3 border-b border-gray-100 pb-3">
+              <div className="flex items-center gap-2.5 text-amber-700">
+                <AlertTriangle className="w-6 h-6 shrink-0" />
+                <h3 className="text-lg font-bold text-gray-900">ট্যাগ সতর্কতা (Duplicate Tag Warning)</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setDuplicateTagWarning(null)}
+                className="text-gray-400 hover:text-gray-600 p-1 rounded-lg cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-2">
+              <p className="text-gray-900 text-[15px] font-semibold leading-relaxed">
+                এই ট্যাগটি ইতিমধ্যে ব্যবহৃত হয়েছে — এটি কি ডুপ্লিকেট এন্ট্রি?
+              </p>
+              <p className="text-gray-600 text-[13px]">
+                ট্যাগ নং: <span className="font-mono font-bold text-gray-900">{duplicateTagWarning.tag}</span>
+              </p>
+              <p className="text-amber-800 text-[12px] bg-amber-50 border border-amber-200 rounded-lg p-2.5">
+                সতর্কতা: একই ট্যাগ ব্যবহার করলে পশুর সঠিক শনাক্তকরণ ও ট্র্যাকিংয়ে বিভ্রান্তি সৃষ্টি হতে পারে। আপনি চাইলে ফিরে গিয়ে ভিন্ন ট্যাগ দিতে পারেন অথবা এই ট্যাগেই নিবন্ধন সম্পন্ন করতে পারেন।
+              </p>
+            </div>
+
+            <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-gray-100">
+              <button
+                type="button"
+                id="btn-edit-duplicate-tag"
+                onClick={() => setDuplicateTagWarning(null)}
+                className="px-4 py-2.5 rounded-xl bg-gray-100 hover:bg-gray-200 text-gray-700 text-xs font-bold transition-colors cursor-pointer min-h-[40px]"
+              >
+                ফিরে যান ও সম্পাদনা করুন
+              </button>
+              <button
+                type="button"
+                id="btn-proceed-duplicate-tag"
+                onClick={() => executeSaveAnimal(duplicateTagWarning.animalData)}
+                className="px-5 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold transition-all cursor-pointer shadow-xs min-h-[40px]"
+              >
+                তবুও এগিয়ে যান
+              </button>
+            </div>
           </div>
         </div>
       )}

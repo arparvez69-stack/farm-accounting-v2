@@ -36,6 +36,7 @@ export async function executeSaleTransaction(params: {
   paymentMethod: 'CASH' | 'BANK' | 'CREDIT';
   bankAccountId?: string;
   currentUserId: string;
+  date?: string;
 }): Promise<{ sale: Sale; journalEntryId: string }> {
   return await db.transaction(
     'rw',
@@ -50,7 +51,13 @@ export async function executeSaleTransaction(params: {
       db.closedPeriods
     ],
     async () => {
-      const { customer, item, quantity, unitPrice, paymentMethod, bankAccountId, currentUserId } = params;
+      const { customer, item, quantity, unitPrice, paymentMethod, bankAccountId, currentUserId, date } = params;
+
+      const todayStr = new Date().toISOString().split('T')[0];
+      const dateStr = date || todayStr;
+      if (dateStr > todayStr) {
+        throw new Error(`বিক্রয় চালানের তারিখ ভবিষ্যতের হতে পারে না (${todayStr} বা তার পূর্বের তারিখ নির্বাচন করুন)।`);
+      }
 
       // Re-fetch fresh item state inside transaction
       const freshItem = await db.inventoryItems.get(item.id);
@@ -73,7 +80,6 @@ export async function executeSaleTransaction(params: {
 
       const saleId = generateUniqueId('sal');
       const invoiceNumber = generateTransactionNumber('SAL');
-      const dateStr = new Date().toISOString().split('T')[0];
 
       // Canonical account mappings:
       // Credit sale -> 1040 AR
@@ -250,6 +256,7 @@ export async function executePurchaseTransaction(params: {
   paymentMethod: 'CASH' | 'BANK' | 'CREDIT';
   bankAccountId?: string;
   currentUserId: string;
+  date?: string;
 }): Promise<{ purchase: Purchase; journalEntryId: string }> {
   return await db.transaction(
     'rw',
@@ -264,7 +271,13 @@ export async function executePurchaseTransaction(params: {
       db.closedPeriods
     ],
     async () => {
-      const { supplier, item, quantity, unitPrice, transportCost = 0, paymentMethod, bankAccountId, currentUserId } = params;
+      const { supplier, item, quantity, unitPrice, transportCost = 0, paymentMethod, bankAccountId, currentUserId, date } = params;
+
+      const todayStr = new Date().toISOString().split('T')[0];
+      const dateStr = date || todayStr;
+      if (dateStr > todayStr) {
+        throw new Error(`ক্রয় চালানের তারিখ ভবিষ্যতের হতে পারে না (${todayStr} বা তার পূর্বের তারিখ নির্বাচন করুন)।`);
+      }
 
       const freshItem = await db.inventoryItems.get(item.id);
       if (!freshItem) {
@@ -280,7 +293,6 @@ export async function executePurchaseTransaction(params: {
 
       const purchaseId = generateUniqueId('pur');
       const invoiceNumber = generateTransactionNumber('PUR');
-      const dateStr = new Date().toISOString().split('T')[0];
 
       // Canonical account mappings:
       // Feed Purchase -> 1051 Feed Inventory!
@@ -815,6 +827,24 @@ export async function executeAnimalEventTransaction(params: {
     ],
     async () => {
       const { animal, event, paymentMethod = 'CASH', bankAccountId, currentUserId } = params;
+
+      // Date validations for Animal Event:
+      // 1. Cannot be more than 1 day in the future
+      const tomorrow = new Date();
+      tomorrow.setDate(tomorrow.getDate() + 1);
+      const maxFutureDate = tomorrow.toISOString().split('T')[0];
+      if (event.date > maxFutureDate) {
+        throw new Error(`কার্যক্রমের তারিখ সর্বোচ্চ ১ দিন ভবিষ্যতের হতে পারে (${maxFutureDate} এর পরে গ্রহণযোগ্য নয়)।`);
+      }
+
+      // 2. Cannot be before that animal's purchase or birth date
+      if (animal.purchaseDate && event.date < animal.purchaseDate) {
+        throw new Error(`কার্যক্রমের তারিখ (${event.date}) পশুর ক্রয় তারিখের (${animal.purchaseDate}) পূর্ববর্তী হতে পারে না।`);
+      }
+      if (animal.birthDate && event.date < animal.birthDate) {
+        throw new Error(`কার্যক্রমের তারিখ (${event.date}) পশুর জন্ম তারিখের (${animal.birthDate}) পূর্ববর্তী হতে পারে না।`);
+      }
+
       const cost = Math.round((event.cost || 0) * 100) / 100;
       let journalEntryId: string | undefined;
 
@@ -995,6 +1025,17 @@ export async function executeAnimalSaleOrRemovalTransaction(params: {
       } = params;
 
       const freshAnimal = (await db.animals.get(animal.id)) || animal;
+      const todayStr = new Date().toISOString().split('T')[0];
+
+      if (newStatus === 'SOLD') {
+        if (freshAnimal.purchaseDate && date < freshAnimal.purchaseDate) {
+          throw new Error(`পশু বিক্রয়ের তারিখ (${date}) ক্রয় তারিখের (${freshAnimal.purchaseDate}) পূর্ববর্তী হতে পারে না।`);
+        }
+        if (date > todayStr) {
+          throw new Error(`পশু বিক্রয়ের তারিখ ভবিষ্যতের হতে পারে না (${todayStr} বা তার পূর্বের তারিখ নির্বাচন করুন)।`);
+        }
+      }
+
       const cleanPrice = Math.round((salePrice || 0) * 100) / 100;
       let saleRecord: Sale | undefined;
       let journalEntryId: string | undefined;

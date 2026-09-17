@@ -216,6 +216,13 @@ export async function postJournalEntry(
   entry: Omit<JournalEntry, 'totalDebit' | 'totalCredit'>,
   options?: { skipDbPut?: boolean; accounts?: Account[]; isClosingEntry?: boolean }
 ): Promise<JournalEntry> {
+  const todayStr = new Date().toISOString().split('T')[0];
+  if (entry.date > todayStr) {
+    throw new Error(
+      `জাবেদা ভাউচারের তারিখ ভবিষ্যতের হতে পারে না (${todayStr} বা তার পূর্বের তারিখ নির্বাচন করুন)।`
+    );
+  }
+
   // Prevent posting new journal entries on or before the latest closed period's endDate
   if (!options?.isClosingEntry) {
     const latestClosed = await getLatestClosedPeriod();
