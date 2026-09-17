@@ -1053,7 +1053,7 @@ export const FarmOperationsModule: React.FC<Props> = ({
                       return tagMatch || nameMatch || breedMatch;
                     }).length
                   }
-                }{' '}
+                </span>{' '}
                 টি পশু
               </div>
             )}

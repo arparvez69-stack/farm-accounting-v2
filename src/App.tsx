@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { onAuthStateChanged, User } from 'firebase/auth';
 import {
   auth,
@@ -49,8 +49,13 @@ export default function App() {
     }
   };
 
+  const hasRunInitRef = useRef(false);
+
   useEffect(() => {
-    initApp();
+    if (!hasRunInitRef.current) {
+      hasRunInitRef.current = true;
+      initApp();
+    }
 
     const handleOnlineEvent = async () => {
       // When connection returns, re-check restore if local DB was empty
