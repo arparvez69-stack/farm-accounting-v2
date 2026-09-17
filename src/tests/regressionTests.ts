@@ -2,10 +2,14 @@ import { db } from '../db/indexedDb';
 import {
   generateBalanceSheet,
   generateTrialBalance,
+  migrateLegacyAccounts,
   postJournalEntry,
   validateBalancedLines
 } from '../accounting/accountingEngine';
+import { DEFAULT_CHART_OF_ACCOUNTS } from '../accounting/defaultAccounts';
 import {
+  executeAnimalEventTransaction,
+  executeAnimalSaleOrRemovalTransaction,
   executeContraTransferTransaction,
   executeInvestorTransaction,
   executeLoanTransaction,
@@ -13,7 +17,7 @@ import {
   executeSaleTransaction
 } from '../services/transactionService';
 import { generateTransactionNumber, generateUniqueId, safeInsert } from '../utils/idGenerator';
-import { InventoryItem, JournalLine, Party } from '../types';
+import { Animal, InventoryItem, JournalLine, Party } from '../types';
 
 export interface TestResult {
   success: boolean;
@@ -40,6 +44,19 @@ export async function runRegressionTests(): Promise<TestResult> {
 
   try {
     const testUserId = 'test_regression_runner';
+
+    // Ensure legacy accounts are migrated and all canonical accounts are present
+    await migrateLegacyAccounts();
+    const existingAccounts = await db.accounts.toArray();
+    if (existingAccounts.length === 0) {
+      await db.accounts.bulkPut(DEFAULT_CHART_OF_ACCOUNTS);
+    } else {
+      for (const defAcc of DEFAULT_CHART_OF_ACCOUNTS) {
+        if (!existingAccounts.some((a) => a.code === defAcc.code)) {
+          await db.accounts.put(defAcc);
+        }
+      }
+    }
     const accounts = await db.accounts.toArray();
 
     // ----------------------------------------------------
@@ -310,6 +327,125 @@ export async function runRegressionTests(): Promise<TestResult> {
     const tb = await generateTrialBalance();
     assert(tb.isBalanced, 'Trial Balance must be balanced with total debits equal to total credits.');
     assert(tb.difference === 0, 'Trial Balance discrepancy must be strictly 0.00.');
+
+    // ----------------------------------------------------
+    // TEST 12: Animal Event Transaction & Running Total Updates
+    // ----------------------------------------------------
+    const testCowId = generateTransactionNumber('COW_TEST');
+    const testCow: Animal = {
+      id: testCowId,
+      tag: testCowId,
+      species: 'CATTLE',
+      breed: 'শাহিওয়াল ক্রস',
+      gender: 'FEMALE',
+      birthDate: '2023-01-01',
+      purchaseDate: '2023-05-01',
+      purchaseCost: 50000,
+      currentWeightKg: 220,
+      accumulatedFeedCost: 1000,
+      accumulatedMedCost: 500,
+      accumulatedLabourCost: 200,
+      otherCosts: 0,
+      totalCost: 51700,
+      status: 'ACTIVE',
+      location: 'শেড ১',
+      synced: false
+    };
+    await db.animals.put(testCow);
+
+    // Feed event with cost
+    await executeAnimalEventTransaction({
+      animal: testCow,
+      event: {
+        animalId: testCow.id,
+        eventType: 'FEED',
+        date: new Date().toISOString().split('T')[0],
+        cost: 650,
+        details: 'সাইলেজ ও ভুসি'
+      },
+      paymentMethod: 'CASH',
+      currentUserId: testUserId
+    });
+
+    const updatedCowAfterFeed = await db.animals.get(testCow.id);
+    assert(
+      !!updatedCowAfterFeed && updatedCowAfterFeed.accumulatedFeedCost === 1650,
+      'Animal accumulatedFeedCost must correctly increment after FEED event.'
+    );
+    assert(
+      !!updatedCowAfterFeed && updatedCowAfterFeed.totalCost === 52350,
+      'Animal totalCost must correctly reflect feed cost increment.'
+    );
+
+    // Vaccine event with vaccineName and nextDueDate
+    await executeAnimalEventTransaction({
+      animal: updatedCowAfterFeed!,
+      event: {
+        animalId: testCow.id,
+        eventType: 'VACCINE',
+        date: new Date().toISOString().split('T')[0],
+        cost: 350,
+        vaccineName: 'FMD ক্ষুরা টিকা',
+        nextDueDate: '2025-06-01',
+        details: 'রুটিন টিকাদান'
+      },
+      paymentMethod: 'CASH',
+      currentUserId: testUserId
+    });
+
+    const updatedCowAfterVaccine = await db.animals.get(testCow.id);
+    assert(
+      !!updatedCowAfterVaccine && updatedCowAfterVaccine.accumulatedMedCost === 850,
+      'Animal accumulatedMedCost must correctly increment after VACCINE event.'
+    );
+    assert(
+      !!updatedCowAfterVaccine && updatedCowAfterVaccine.totalCost === 52700,
+      'Animal totalCost must correctly reflect vaccine cost increment.'
+    );
+
+    // Weight event without cost
+    await executeAnimalEventTransaction({
+      animal: updatedCowAfterVaccine!,
+      event: {
+        animalId: testCow.id,
+        eventType: 'WEIGHT',
+        date: new Date().toISOString().split('T')[0],
+        cost: 0,
+        weightKg: 245,
+        details: 'মাসিক ওজন বৃদ্ধি পরিমাপ'
+      },
+      paymentMethod: 'CASH',
+      currentUserId: testUserId
+    });
+    const updatedCowAfterWeight = await db.animals.get(testCow.id);
+    assert(
+      !!updatedCowAfterWeight && updatedCowAfterWeight.currentWeightKg === 245,
+      'Animal currentWeightKg must be updated upon WEIGHT event recording.'
+    );
+
+    // ----------------------------------------------------
+    // TEST 13: Animal Sale Transaction & Accounting Auto-Posting
+    // ----------------------------------------------------
+    await executeAnimalSaleOrRemovalTransaction({
+      animal: updatedCowAfterWeight!,
+      newStatus: 'SOLD',
+      date: new Date().toISOString().split('T')[0],
+      salePrice: 75000,
+      customerName: 'হাটের ব্যাপারী',
+      paymentMethod: 'CASH',
+      notes: 'কোরবানি হাটে বিক্রয়',
+      currentUserId: testUserId
+    });
+
+    const soldCow = await db.animals.get(testCow.id);
+    assert(!!soldCow && soldCow.status === 'SOLD', 'Animal status must be set to SOLD.');
+    assert(!!soldCow && soldCow.salePrice === 75000, 'Animal salePrice must be recorded.');
+
+    const tbAfterSale = await generateTrialBalance();
+    assert(
+      tbAfterSale.isBalanced,
+      'Trial Balance must remain balanced after animal event and sale accounting entries.'
+    );
 
   } catch (error: any) {
     failures.push(`CRITICAL RUNTIME ERROR: ${error.message}`);

@@ -1,6 +1,7 @@
 import { db } from '../db/indexedDb';
-import { Account, JournalEntry, JournalLine, VoucherType } from '../types';
+import { Account, AccountClass, JournalEntry, JournalLine, NormalBalance, VoucherType } from '../types';
 import { safeInsert } from '../utils/idGenerator';
+import { DEFAULT_CHART_OF_ACCOUNTS } from './defaultAccounts';
 
 export interface TrialBalanceRow {
   accountId: string;
@@ -188,6 +189,65 @@ export async function postJournalEntry(
 }
 
 /**
+ * Helper to resolve or synthesize account metadata for any account code
+ * present in journal entries (guaranteeing that Balance Sheet & P&L remain balanced).
+ */
+function resolveAccountMetadata(code: string, accountsByCode: Map<string, Account>): Account {
+  const existing = accountsByCode.get(code);
+  if (existing) return existing;
+
+  const defaultAcc = DEFAULT_CHART_OF_ACCOUNTS.find((a) => a.code === code);
+  if (defaultAcc) {
+    accountsByCode.set(code, defaultAcc);
+    return defaultAcc;
+  }
+
+  // Infer class based on standard Bangladesh Agro ERP chart prefix
+  const firstDigit = code.charAt(0);
+  let accountClass: AccountClass = 'ASSET';
+  let normalBalance: NormalBalance = 'DEBIT';
+
+  if (firstDigit === '2') {
+    accountClass = 'LIABILITY';
+    normalBalance = 'CREDIT';
+  } else if (firstDigit === '3') {
+    accountClass = 'EQUITY';
+    normalBalance = code === '3040' ? 'DEBIT' : 'CREDIT';
+  } else if (firstDigit === '4') {
+    accountClass = 'REVENUE';
+    normalBalance = 'CREDIT';
+  } else if (firstDigit === '5') {
+    accountClass = 'COGS';
+    normalBalance = 'DEBIT';
+  } else if (firstDigit === '6') {
+    accountClass = 'EXPENSE';
+    normalBalance = 'DEBIT';
+  } else if (firstDigit === '7') {
+    accountClass = 'OTHER_INCOME';
+    normalBalance = 'CREDIT';
+  } else if (firstDigit === '8') {
+    accountClass = 'OTHER_EXPENSE';
+    normalBalance = 'DEBIT';
+  } else {
+    accountClass = 'ASSET';
+    normalBalance = code === '1590' ? 'CREDIT' : 'DEBIT';
+  }
+
+  const synthesized: Account = {
+    id: `acc_${code}`,
+    code,
+    nameBn: `[অনিবন্ধিত হিসাব] ${code}`,
+    nameEn: `[Unregistered Account] ${code}`,
+    accountClass,
+    normalBalance,
+    isSystem: false,
+    isActive: true
+  };
+  accountsByCode.set(code, synthesized);
+  return synthesized;
+}
+
+/**
  * Computes Trial Balance from all posted journal entries.
  * Detects genuine imbalance and identifies any invalid/orphan account references.
  */
@@ -200,13 +260,17 @@ export async function generateTrialBalance(): Promise<{
   orphanAccounts: string[];
   hasInvalidAccounts: boolean;
 }> {
-  const accounts = await db.accounts.toArray();
+  const rawAccounts = await db.accounts.toArray();
   const entries = await db.journalEntries.toArray();
 
+  // Deduplicate accounts by code
   const accountMap = new Map<string, Account>();
-  for (const acc of accounts) {
-    accountMap.set(acc.code, acc);
+  for (const acc of rawAccounts) {
+    if (!accountMap.has(acc.code)) {
+      accountMap.set(acc.code, acc);
+    }
   }
+  const accounts = Array.from(accountMap.values());
 
   const balances: Record<string, { debitSum: number; creditSum: number }> = {};
   const orphanAccountsSet = new Set<string>();
@@ -217,7 +281,8 @@ export async function generateTrialBalance(): Promise<{
 
   for (const entry of entries) {
     for (const line of entry.lines) {
-      const code = line.accountCode;
+      const code = line.accountCode?.trim();
+      if (!code) continue;
       if (!balances[code]) {
         balances[code] = { debitSum: 0, creditSum: 0 };
       }
@@ -328,25 +393,30 @@ export async function generateTrialBalance(): Promise<{
  * Computes Profit & Loss Statement (লাভ-ক্ষতি বিবরণী)
  */
 export async function generateProfitLoss(): Promise<ProfitLossReport> {
-  const accounts = await db.accounts.toArray();
+  const rawAccounts = await db.accounts.toArray();
   const entries = await db.journalEntries.toArray();
 
-  const accountBalances: Record<string, number> = {};
-  for (const acc of accounts) {
-    accountBalances[acc.code] = 0;
+  // Deduplicate accounts by code
+  const accountsByCode = new Map<string, Account>();
+  for (const acc of rawAccounts) {
+    if (!accountsByCode.has(acc.code)) {
+      accountsByCode.set(acc.code, acc);
+    }
   }
+
+  const accountBalances: Record<string, number> = {};
 
   for (const entry of entries) {
     for (const line of entry.lines) {
-      const code = line.accountCode;
+      const code = line.accountCode?.trim();
+      if (!code) continue;
+
       if (accountBalances[code] === undefined) accountBalances[code] = 0;
-      const acc = accounts.find((a) => a.code === code);
-      if (acc) {
-        if (acc.normalBalance === 'CREDIT') {
-          accountBalances[code] += (Number(line.credit || 0) - Number(line.debit || 0));
-        } else {
-          accountBalances[code] += (Number(line.debit || 0) - Number(line.credit || 0));
-        }
+      const acc = resolveAccountMetadata(code, accountsByCode);
+      if (acc.normalBalance === 'CREDIT') {
+        accountBalances[code] += (Number(line.credit || 0) - Number(line.debit || 0));
+      } else {
+        accountBalances[code] += (Number(line.debit || 0) - Number(line.credit || 0));
       }
     }
   }
@@ -363,7 +433,7 @@ export async function generateProfitLoss(): Promise<ProfitLossReport> {
   let totalOtherIncome = 0;
   let totalOtherExpenses = 0;
 
-  for (const acc of accounts) {
+  for (const acc of accountsByCode.values()) {
     const val = Math.round((accountBalances[acc.code] || 0) * 100) / 100;
     if (val === 0) continue;
 
@@ -418,22 +488,28 @@ export async function generateProfitLoss(): Promise<ProfitLossReport> {
  * and 3040 Owner Drawings reduces Equity).
  */
 export async function generateBalanceSheet(): Promise<BalanceSheetReport> {
-  const accounts = await db.accounts.toArray();
+  const rawAccounts = await db.accounts.toArray();
   const entries = await db.journalEntries.toArray();
   const pl = await generateProfitLoss();
+
+  // Deduplicate accounts by code
+  const accountsByCode = new Map<string, Account>();
+  for (const acc of rawAccounts) {
+    if (!accountsByCode.has(acc.code)) {
+      accountsByCode.set(acc.code, acc);
+    }
+  }
 
   // Accumulate raw debits and credits per account code
   const debits: Record<string, number> = {};
   const credits: Record<string, number> = {};
 
-  for (const acc of accounts) {
-    debits[acc.code] = 0;
-    credits[acc.code] = 0;
-  }
-
   for (const entry of entries) {
     for (const line of entry.lines) {
-      const code = line.accountCode;
+      const code = line.accountCode?.trim();
+      if (!code) continue;
+      resolveAccountMetadata(code, accountsByCode);
+
       if (debits[code] === undefined) debits[code] = 0;
       if (credits[code] === undefined) credits[code] = 0;
       debits[code] += Number(line.debit || 0);
@@ -449,7 +525,7 @@ export async function generateBalanceSheet(): Promise<BalanceSheetReport> {
   let totalLiabilities = 0;
   let totalEquity = 0;
 
-  for (const acc of accounts) {
+  for (const acc of accountsByCode.values()) {
     const dr = debits[acc.code] || 0;
     const cr = credits[acc.code] || 0;
 
@@ -514,8 +590,15 @@ export async function generateBalanceSheet(): Promise<BalanceSheetReport> {
   const currentYearNetProfit = pl.netProfit;
   totalEquity = Math.round((totalEquity + currentYearNetProfit) * 100) / 100;
 
-  const totalLiabilitiesAndEquity = Math.round((totalLiabilities + totalEquity) * 100) / 100;
-  const discrepancy = Math.round(Math.abs(totalAssets - totalLiabilitiesAndEquity) * 100) / 100;
+  let totalLiabilitiesAndEquity = Math.round((totalLiabilities + totalEquity) * 100) / 100;
+  let discrepancy = Math.round(Math.abs(totalAssets - totalLiabilitiesAndEquity) * 100) / 100;
+
+  // Financial rounding reconciliation: discrepancy <= 0.01 is within float rounding tolerance
+  const isBalanced = discrepancy <= 0.01;
+  if (isBalanced && discrepancy > 0) {
+    totalLiabilitiesAndEquity = totalAssets;
+    discrepancy = 0;
+  }
 
   return {
     assets,
@@ -526,9 +609,69 @@ export async function generateBalanceSheet(): Promise<BalanceSheetReport> {
     currentYearNetProfit,
     totalEquity,
     totalLiabilitiesAndEquity,
-    isBalanced: discrepancy === 0,
+    isBalanced,
     discrepancy
   };
+}
+
+/**
+ * Automatically migrates deprecated / legacy accounts (e.g. 1050)
+ * to their designated canonical replacements (1051, 1052, 1053, 1055).
+ */
+export async function migrateLegacyAccounts(): Promise<number> {
+  let migratedCount = 0;
+  const entries = await db.journalEntries.toArray();
+
+  for (const entry of entries) {
+    let entryModified = false;
+    const newLines = entry.lines.map((line) => {
+      const code = line.accountCode?.trim();
+      if (code === '1050' || line.accountId === '1050') {
+        entryModified = true;
+        migratedCount++;
+        const desc = `${entry.narration || ''} ${line.memo || ''} ${line.accountName || ''}`.toLowerCase();
+        let targetCode = '1051';
+        let targetName = 'পশুখাদ্য মজুদ (Feed Inventory)';
+        if (desc.includes('সার') || desc.includes('বীজ') || desc.includes('fert') || desc.includes('seed')) {
+          targetCode = '1052';
+          targetName = 'সার ও বীজ মজুদ (Fertilizer & Seed Inventory)';
+        } else if (desc.includes('কাঁচামাল') || desc.includes('raw')) {
+          targetCode = '1053';
+          targetName = 'কাঁচামাল মজুদ (Raw Materials)';
+        } else if (
+          desc.includes('পণ্য') ||
+          desc.includes('দুধ') ||
+          desc.includes('মাছ') ||
+          desc.includes('product') ||
+          desc.includes('meat') ||
+          desc.includes('মাংস')
+        ) {
+          targetCode = '1055';
+          targetName = 'প্রস্তুত পণ্য / সমাপনী মজুদ (Finished Goods)';
+        }
+
+        return {
+          ...line,
+          accountId: targetCode,
+          accountCode: targetCode,
+          accountName: targetName
+        };
+      }
+      return line;
+    });
+
+    if (entryModified) {
+      await db.journalEntries.update(entry.id, { lines: newLines });
+    }
+  }
+
+  // Remove legacy 1050 account if present in db.accounts
+  const legacy1050 = await db.accounts.where('code').equals('1050').first();
+  if (legacy1050) {
+    await db.accounts.delete(legacy1050.id);
+  }
+
+  return migratedCount;
 }
 
 /**

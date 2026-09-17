@@ -2,16 +2,18 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // Single-tenant fixed owner allow-list for "The Goated Farm"
+    // Single-tenant owner allow-list checked against Admin-provisioned Firestore doc
     function isApprovedOwner() {
       return request.auth != null &&
-        request.auth.token.email in [
-          'arparvez69@gmail.com',
-          'arparvez4@gmail.com',
-          'arparvez111@gmail.com',
-          'atikurrahman00021@gmail.com',
-          'lubaiyatasnum111@gmail.com'
-        ];
+        request.auth.token.email != null &&
+        exists(/databases/$(database)/documents/system/authorizedEmails) &&
+        request.auth.token.email in get(/databases/$(database)/documents/system/authorizedEmails).data.emails;
+    }
+
+    // Authorized emails doc: Admin SDK only write, read by verified owners
+    match /system/authorizedEmails {
+      allow read: if isApprovedOwner();
+      allow write: if false;
     }
 
     // System configuration for "The Goated Farm" - Server/Admin only write

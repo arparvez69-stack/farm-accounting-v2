@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import {
   ShieldCheck,
   Building,
@@ -19,7 +19,7 @@ import {
 } from 'lucide-react';
 import { db } from '../db/indexedDb';
 import { AuditLog, FixedAsset, SystemConfig, UserRole, AppAccessLog } from '../types';
-import { APPROVED_OWNER_EMAILS, getAppAccessLogs, logoutOwner } from '../services/authService';
+import { getStoredAuthorizedEmails, getAppAccessLogs, logoutOwner } from '../services/authService';
 import { generateTransactionNumber, safeInsert } from '../utils/idGenerator';
 
 interface Props {
@@ -39,8 +39,16 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
   const [assets, setAssets] = useState<FixedAsset[]>([]);
   const [loading, setLoading] = useState(false);
 
+  const ownerList = useMemo(() => {
+    const fromStorage = getStoredAuthorizedEmails();
+    if (fromStorage.length > 0) return fromStorage;
+    if (systemConfig?.ownerEmails && systemConfig.ownerEmails.length > 0) return systemConfig.ownerEmails;
+    if (userEmail) return [userEmail];
+    return [];
+  }, [systemConfig, userEmail]);
+
   // Change PIN state
-  const [targetEmail, setTargetEmail] = useState<string>(userEmail || APPROVED_OWNER_EMAILS[0]);
+  const [targetEmail, setTargetEmail] = useState<string>(userEmail || '');
   const [currentPin, setCurrentPin] = useState('');
   const [newPin, setNewPin] = useState('');
   const [confirmPin, setConfirmPin] = useState('');
@@ -304,7 +312,7 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
                 disabled={pinLoading}
                 className="w-full px-3.5 py-2.5 rounded-xl bg-[#F8FAFC] border border-gray-300 focus:border-[#1E5128] focus:ring-2 focus:ring-[#1E5128]/20 text-gray-900 text-[14px] font-mono outline-none"
               >
-                {APPROVED_OWNER_EMAILS.map((email) => (
+                {ownerList.map((email) => (
                   <option key={email} value={email}>
                     {email}
                   </option>
@@ -724,7 +732,7 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
-            {APPROVED_OWNER_EMAILS.map((email, idx) => (
+            {ownerList.map((email, idx) => (
               <div
                 key={email}
                 className="p-4 rounded-xl bg-[#F8FAFC] border border-gray-200 flex items-center justify-between gap-3 shadow-xs"

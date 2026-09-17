@@ -99,7 +99,7 @@ export interface JournalEntry {
 }
 
 export type AnimalSpecies = 'CATTLE' | 'GOAT' | 'SHEEP' | 'OTHER';
-export type AnimalStatus = 'ACTIVE' | 'SOLD' | 'DECEASED' | 'TRANSFERRED';
+export type AnimalStatus = 'ACTIVE' | 'SOLD' | 'DECEASED' | 'TRANSFERRED' | 'STOLEN';
 
 export interface Animal {
   id: string; // e.g. COW-001, GOAT-001
@@ -119,7 +119,7 @@ export interface Animal {
   otherCosts: number;
   totalCost: number;
   salePrice?: number;
-  saleDate?: number;
+  saleDate?: string | number;
   notes?: string;
   synced?: boolean;
 }
@@ -132,6 +132,8 @@ export interface AnimalEvent {
   cost: number;
   milkLiters?: number;
   weightKg?: number;
+  vaccineName?: string;
+  nextDueDate?: string;
   details: string;
   synced?: boolean;
 }

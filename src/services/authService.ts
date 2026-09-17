@@ -8,13 +8,21 @@ import { auth, resolveUserRole, seedSystemConfigIfNecessary } from '../firebase/
 import { UserProfile, AppAccessLog } from '../types';
 import { db } from '../db/indexedDb';
 
-export const APPROVED_OWNER_EMAILS = [
-  'arparvez69@gmail.com',
-  'arparvez4@gmail.com',
-  'arparvez111@gmail.com',
-  'atikurrahman00021@gmail.com',
-  'lubaiyatasnum111@gmail.com'
-] as const;
+/**
+ * Retrieve authorized owner emails received from authenticated server API response
+ */
+export function getStoredAuthorizedEmails(): string[] {
+  try {
+    const raw = typeof window !== 'undefined' ? localStorage.getItem('goted_owner_session') : null;
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed.authorizedEmails)) {
+        return parsed.authorizedEmails;
+      }
+    }
+  } catch {}
+  return [];
+}
 
 export interface VerifyPinResponse {
   success: boolean;
@@ -120,6 +128,7 @@ export async function verifyOwnerSecretPin(
   let customToken: string | null = null;
   let serverSessionToken: string | null = null;
   let uid = `goted_owner_${normalized.replace(/[^a-zA-Z0-9]/g, '_')}`;
+  let serverAuthorizedEmails: string[] = [];
 
   try {
     // 1. Mandatory server verification (BCrypt verified on server against Firestore)
@@ -142,6 +151,7 @@ export async function verifyOwnerSecretPin(
     if (data.customToken) customToken = data.customToken;
     if (data.sessionToken) serverSessionToken = data.sessionToken;
     if (data.uid) uid = data.uid;
+    if (Array.isArray(data.authorizedEmails)) serverAuthorizedEmails = data.authorizedEmails;
   } catch (networkErr) {
     // If request fails or server is offline, show "Cannot verify login while offline" — NEVER fall back to a client-side check
     console.warn('Authentication server network error:', networkErr);
@@ -169,6 +179,7 @@ export async function verifyOwnerSecretPin(
       displayName: normalized.split('@')[0],
       role: 'OWNER',
       sessionToken: serverSessionToken,
+      authorizedEmails: serverAuthorizedEmails,
       authenticatedAt: new Date().toISOString()
     };
     localStorage.setItem('goted_owner_session', JSON.stringify(verifiedSession));
@@ -183,7 +194,7 @@ export async function verifyOwnerSecretPin(
     }
 
     // 6. Silently ensure single-tenant system/config is seeded
-    await seedSystemConfigIfNecessary();
+    await seedSystemConfigIfNecessary(serverAuthorizedEmails);
 
     // 7. Resolve user profile
     const profile = await resolveUserRole(auth.currentUser);

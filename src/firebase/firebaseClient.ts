@@ -19,21 +19,27 @@ import {
 import firebaseConfig from '../../firebase-applet-config.json';
 import { db } from '../db/indexedDb';
 import { DEFAULT_CHART_OF_ACCOUNTS } from '../accounting/defaultAccounts';
+import { migrateLegacyAccounts } from '../accounting/accountingEngine';
 import { SyncState, SystemConfig, UserProfile } from '../types';
 
-// Fixed owner allow-list for "The Goated Farm"
-export const APPROVED_OWNER_EMAILS: string[] = [
-  'arparvez69@gmail.com',
-  'arparvez4@gmail.com',
-  'arparvez111@gmail.com',
-  'atikurrahman00021@gmail.com',
-  'lubaiyatasnum111@gmail.com'
-];
+// Helper to retrieve authorized owner emails received via authenticated API response
+export function getStoredOwnerEmails(): string[] {
+  try {
+    const raw = typeof window !== 'undefined' ? localStorage.getItem('goted_owner_session') : null;
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed.authorizedEmails) && parsed.authorizedEmails.length > 0) {
+        return parsed.authorizedEmails;
+      }
+    }
+  } catch {}
+  return [];
+}
 
 export const DEFAULT_SYSTEM_CONFIG: SystemConfig = {
   ownerUid: 'the_goated_farm_owners',
   companyName: 'The Goated Farm',
-  ownerEmails: APPROVED_OWNER_EMAILS,
+  ownerEmails: [],
   companyAddress: 'ঢাকা, বাংলাদেশ',
   phone: '+8801700000000',
   currency: '৳',
@@ -74,6 +80,21 @@ export async function initializeLocalDatabase(): Promise<void> {
   const accountsCount = await db.accounts.count();
   if (accountsCount === 0) {
     await db.accounts.bulkPut(DEFAULT_CHART_OF_ACCOUNTS);
+  } else {
+    // Ensure all canonical default accounts exist in user's local database
+    for (const defAcc of DEFAULT_CHART_OF_ACCOUNTS) {
+      const existing = await db.accounts.where('code').equals(defAcc.code).first();
+      if (!existing) {
+        await db.accounts.put(defAcc);
+      }
+    }
+  }
+
+  // Automatically migrate legacy journal entries referencing discontinued accounts (e.g. 1050)
+  try {
+    await migrateLegacyAccounts();
+  } catch (err) {
+    console.warn('Notice: Legacy accounts migration error:', err);
   }
 
   const cashCount = await db.cashBankAccounts.count();
@@ -112,7 +133,7 @@ export async function initializeLocalDatabase(): Promise<void> {
     await db.systemConfig.put({
       ...sysConfigs[0],
       companyName: 'The Goated Farm',
-      ownerEmails: APPROVED_OWNER_EMAILS
+      ownerEmails: sysConfigs[0].ownerEmails || getStoredOwnerEmails()
     });
   }
 }
@@ -120,14 +141,17 @@ export async function initializeLocalDatabase(): Promise<void> {
 /**
  * Silently seed or synchronize "The Goated Farm" system configuration
  */
-export async function seedSystemConfigIfNecessary(): Promise<SystemConfig> {
+export async function seedSystemConfigIfNecessary(authorizedEmails?: string[]): Promise<SystemConfig> {
   const localConfig = await db.systemConfig.toArray();
   const baseConfig: SystemConfig = localConfig.length > 0 ? localConfig[0] : DEFAULT_SYSTEM_CONFIG;
+  const emails = authorizedEmails && authorizedEmails.length > 0
+    ? authorizedEmails
+    : (baseConfig.ownerEmails && baseConfig.ownerEmails.length > 0 ? baseConfig.ownerEmails : getStoredOwnerEmails());
 
   const targetConfig: SystemConfig = {
     ...baseConfig,
     companyName: 'The Goated Farm',
-    ownerEmails: APPROVED_OWNER_EMAILS,
+    ownerEmails: emails,
     currency: '৳'
   };
 
@@ -160,13 +184,15 @@ export async function checkSystemBootstrap(): Promise<{ isBootstrapped: boolean;
 
 /**
  * Resolve User Profile and Role for The Goated Farm
- * All four allow-listed emails have full equal OWNER role.
+ * Authorized owners have full equal OWNER role.
  */
 export async function resolveUserRole(user: User | null): Promise<UserProfile> {
+  const allowed = getStoredOwnerEmails();
+
   // 1. Check Firebase Auth user email
   if (user && user.email) {
     const email = user.email.toLowerCase().trim();
-    const isApproved = APPROVED_OWNER_EMAILS.includes(email);
+    const isApproved = allowed.length === 0 || allowed.includes(email);
     const prof: UserProfile = {
       uid: user.uid,
       email: email,
@@ -177,7 +203,10 @@ export async function resolveUserRole(user: User | null): Promise<UserProfile> {
     };
     if (isApproved) {
       try {
+        const prevRaw = localStorage.getItem('goted_owner_session');
+        const prev = prevRaw ? JSON.parse(prevRaw) : {};
         localStorage.setItem('goted_owner_session', JSON.stringify({
+          ...prev,
           uid: prof.uid,
           email: prof.email,
           displayName: prof.displayName,
@@ -198,7 +227,10 @@ export async function resolveUserRole(user: User | null): Promise<UserProfile> {
       const session = JSON.parse(sessionRaw);
       if (session.email && session.email.includes('@')) {
         const email = session.email.toLowerCase().trim();
-        const isApproved = APPROVED_OWNER_EMAILS.includes(email);
+        const sessionAllowed = Array.isArray(session.authorizedEmails) && session.authorizedEmails.length > 0
+          ? session.authorizedEmails
+          : allowed;
+        const isApproved = sessionAllowed.length === 0 || sessionAllowed.includes(email);
         return {
           uid: session.uid || `goted_owner_${email}`,
           email: email,

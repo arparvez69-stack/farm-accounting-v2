@@ -14,7 +14,7 @@ import {
   X,
   ArrowLeft
 } from 'lucide-react';
-import { verifyOwnerSecretPin, APPROVED_OWNER_EMAILS } from '../services/authService';
+import { verifyOwnerSecretPin } from '../services/authService';
 import { UserProfile } from '../types';
 
 interface Props {
@@ -22,8 +22,14 @@ interface Props {
 }
 
 export const LoginScreen: React.FC<Props> = ({ onLoginSuccess }) => {
-  const [email, setEmail] = useState('lubaiyatasnum111@gmail.com');
-  const [pin, setPin] = useState('111069');
+  const [email, setEmail] = useState(() => {
+    try {
+      return localStorage.getItem('goted_last_email') || '';
+    } catch {
+      return '';
+    }
+  });
+  const [pin, setPin] = useState('');
   const [showPin, setShowPin] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -236,26 +242,6 @@ export const LoginScreen: React.FC<Props> = ({ onLoginSuccess }) => {
                   className="w-full pl-11 pr-3.5 py-3 rounded-xl bg-[#F8FAFC] border border-gray-300 focus:border-[#1E5128] focus:ring-2 focus:ring-[#1E5128]/20 text-gray-900 placeholder-gray-400 text-[15px] transition outline-none"
                 />
               </div>
-              <div className="mt-2 flex flex-wrap gap-1.5 items-center">
-                <span className="text-[11px] font-semibold text-gray-500">অনুমোদিত ইমেইল:</span>
-                {APPROVED_OWNER_EMAILS.map((em) => (
-                  <button
-                    key={em}
-                    type="button"
-                    onClick={() => {
-                      setEmail(em);
-                      if (error) setError(null);
-                    }}
-                    className={`text-[11px] font-mono px-2 py-0.5 rounded-md border transition cursor-pointer ${
-                      email === em
-                        ? 'bg-[#1E5128] text-white border-[#1E5128]'
-                        : 'bg-gray-50 text-gray-700 border-gray-200 hover:bg-gray-100'
-                    }`}
-                  >
-                    {em}
-                  </button>
-                ))}
-              </div>
             </div>
 
             {/* Field 2: Master Secret PIN */}
@@ -272,7 +258,7 @@ export const LoginScreen: React.FC<Props> = ({ onLoginSuccess }) => {
                   type="button"
                   id="btn-forgot-pin"
                   onClick={() => {
-                    setForgotEmail(email.trim() || APPROVED_OWNER_EMAILS[0]);
+                    setForgotEmail(email.trim());
                     setShowForgotModal(true);
                     setForgotStep(1);
                     setForgotError(null);
@@ -403,20 +389,17 @@ export const LoginScreen: React.FC<Props> = ({ onLoginSuccess }) => {
                   <label className="block text-[13px] font-bold text-gray-800 mb-1">
                     অনুমোদিত মালিকের ইমেইল (Owner Email)
                   </label>
-                  <select
+                  <input
+                    type="email"
                     value={forgotEmail}
                     onChange={(e) => setForgotEmail(e.target.value)}
                     disabled={forgotLoading}
+                    placeholder="মালিকের ইমেইল প্রদান করুন..."
+                    required
                     className="w-full px-3.5 py-2.5 rounded-xl bg-[#F8FAFC] border border-gray-300 focus:border-[#1E5128] text-gray-900 text-[14px] font-mono outline-none"
-                  >
-                    {APPROVED_OWNER_EMAILS.map((em) => (
-                      <option key={em} value={em}>
-                        {em}
-                      </option>
-                    ))}
-                  </select>
+                  />
                   <p className="text-[12px] text-gray-500 mt-1">
-                    শুধুমাত্র ৪ জন অনুমোদিত মালিকের ইমেইলে কোড পাঠানো যাবে।
+                    অনুমোদিত মালিকের ইমেইলে ৬ ডিজিটের রিসেট কোড পাঠানো হবে।
                   </p>
                 </div>
 

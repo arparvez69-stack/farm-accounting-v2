@@ -8,11 +8,35 @@ import {
   ArrowRightLeft,
   Factory,
   CheckCircle2,
-  AlertCircle
+  AlertCircle,
+  Calendar,
+  DollarSign,
+  Syringe,
+  X,
+  History,
+  Tag,
+  Scale,
+  Droplets,
+  Clock,
+  FileText
 } from 'lucide-react';
 import { db } from '../db/indexedDb';
-import { Animal, CropCycle, FishBatch, InternalFlow, ProcessingRun, UserRole } from '../types';
+import {
+  Animal,
+  AnimalEvent,
+  AnimalStatus,
+  CropCycle,
+  FishBatch,
+  InternalFlow,
+  ProcessingRun,
+  UserRole
+} from '../types';
 import { generateTransactionNumber, generateUniqueId, safeInsert } from '../utils/idGenerator';
+import {
+  executeAnimalEventTransaction,
+  executeAnimalSaleOrRemovalTransaction
+} from '../services/transactionService';
+import { AnimalDetailView } from './AnimalDetailView';
 
 interface Props {
   role: UserRole;
@@ -27,6 +51,10 @@ export const FarmOperationsModule: React.FC<Props> = ({ role, currentUserId }) =
   const [msg, setMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
   const [animals, setAnimals] = useState<Animal[]>([]);
+  const [animalEvents, setAnimalEvents] = useState<AnimalEvent[]>([]);
+  const [animalFilter, setAnimalFilter] = useState<'ACTIVE' | 'INACTIVE'>('ACTIVE');
+  const [selectedAnimalId, setSelectedAnimalId] = useState<string | null>(null);
+  const selectedAnimal = animals.find((a) => a.id === selectedAnimalId) || null;
   const [fishBatches, setFishBatches] = useState<FishBatch[]>([]);
   const [cropCycles, setCropCycles] = useState<CropCycle[]>([]);
   const [internalFlows, setInternalFlows] = useState<InternalFlow[]>([]);
@@ -40,6 +68,32 @@ export const FarmOperationsModule: React.FC<Props> = ({ role, currentUserId }) =
   const [gender, setGender] = useState<'MALE' | 'FEMALE'>('FEMALE');
   const [purchaseCost, setPurchaseCost] = useState('65000');
   const [currentWeight, setCurrentWeight] = useState('180');
+
+  // Add Activity / Event Modal state
+  const [eventModalAnimal, setEventModalAnimal] = useState<Animal | null>(null);
+  const [eventType, setEventType] = useState<AnimalEvent['eventType']>('FEED');
+  const [eventDate, setEventDate] = useState<string>(new Date().toISOString().split('T')[0]);
+  const [eventCost, setEventCost] = useState<string>('0');
+  const [eventMilkLiters, setEventMilkLiters] = useState<string>('');
+  const [eventWeightKg, setEventWeightKg] = useState<string>('');
+  const [eventVaccineName, setEventVaccineName] = useState<string>('');
+  const [eventNextDueDate, setEventNextDueDate] = useState<string>('');
+  const [eventDetails, setEventDetails] = useState<string>('');
+  const [eventPaymentMethod, setEventPaymentMethod] = useState<'CASH' | 'BANK'>('CASH');
+  const [submittingEvent, setSubmittingEvent] = useState(false);
+
+  // Animal Status / Sell / Remove Modal state
+  const [statusModalAnimal, setStatusModalAnimal] = useState<Animal | null>(null);
+  const [newStatus, setNewStatus] = useState<AnimalStatus>('SOLD');
+  const [statusDate, setStatusDate] = useState<string>(new Date().toISOString().split('T')[0]);
+  const [salePrice, setSalePrice] = useState<string>('');
+  const [customerName, setCustomerName] = useState<string>('');
+  const [statusPaymentMethod, setStatusPaymentMethod] = useState<'CASH' | 'BANK'>('CASH');
+  const [statusNotes, setStatusNotes] = useState<string>('');
+  const [submittingStatus, setSubmittingStatus] = useState(false);
+
+  // Animal History Modal state
+  const [historyModalAnimal, setHistoryModalAnimal] = useState<Animal | null>(null);
 
   // Add Fish Batch
   const [showAddFish, setShowAddFish] = useState(false);
@@ -117,6 +171,9 @@ export const FarmOperationsModule: React.FC<Props> = ({ role, currentUserId }) =
         aList = seedA;
       }
       setAnimals(aList);
+
+      const evList = await db.animalEvents.orderBy('date').reverse().toArray();
+      setAnimalEvents(evList);
 
       // Seed default fish batches if empty
       let fList = await db.fishBatches.toArray();
@@ -219,6 +276,90 @@ export const FarmOperationsModule: React.FC<Props> = ({ role, currentUserId }) =
       loadOpsData();
     } catch (err: any) {
       setMsg({ type: 'error', text: err.message });
+    }
+  };
+
+  const handleSaveEvent = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!eventModalAnimal) return;
+    setSubmittingEvent(true);
+    try {
+      const cost = Math.max(0, parseFloat(eventCost) || 0);
+      const milk = eventType === 'MILK' && eventMilkLiters ? Math.max(0, parseFloat(eventMilkLiters) || 0) : undefined;
+      const weight = eventType === 'WEIGHT' && eventWeightKg ? Math.max(0, parseFloat(eventWeightKg) || 0) : undefined;
+
+      await executeAnimalEventTransaction({
+        animal: eventModalAnimal,
+        event: {
+          animalId: eventModalAnimal.id,
+          eventType,
+          date: eventDate || new Date().toISOString().split('T')[0],
+          cost,
+          milkLiters: milk,
+          weightKg: weight,
+          vaccineName: (eventType === 'VACCINE' || eventType === 'TREATMENT') ? eventVaccineName.trim() || undefined : undefined,
+          nextDueDate: (eventType === 'VACCINE' || eventType === 'TREATMENT') ? eventNextDueDate || undefined : undefined,
+          details: eventDetails.trim() || `${eventType} কার্যক্রম সম্পন্ন`
+        },
+        paymentMethod: eventPaymentMethod,
+        currentUserId
+      });
+
+      setMsg({
+        type: 'success',
+        text: `পশু ${eventModalAnimal.id} এর ${eventType} কার্যক্রম সফলভাবে যুক্ত ও সংরক্ষিত হয়েছে!${cost > 0 ? ` (ব্যয় ৳${cost} জাবেদায় পোস্ট করা হয়েছে)` : ''}`
+      });
+      setEventModalAnimal(null);
+      setEventCost('0');
+      setEventMilkLiters('');
+      setEventWeightKg('');
+      setEventVaccineName('');
+      setEventNextDueDate('');
+      setEventDetails('');
+      await loadOpsData();
+    } catch (err: any) {
+      setMsg({ type: 'error', text: `কার্যক্রম সংরক্ষণে ত্রুটি: ${err.message}` });
+    } finally {
+      setSubmittingEvent(false);
+    }
+  };
+
+  const handleSaveStatus = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!statusModalAnimal) return;
+    setSubmittingStatus(true);
+    try {
+      const price = newStatus === 'SOLD' ? (parseFloat(salePrice) || 0) : undefined;
+      if (newStatus === 'SOLD' && (!price || price <= 0)) {
+        throw new Error('পশু বিক্রয়ের ক্ষেত্রে বিক্রয়মূল্য আবশ্যক!');
+      }
+
+      await executeAnimalSaleOrRemovalTransaction({
+        animal: statusModalAnimal,
+        newStatus,
+        date: statusDate || new Date().toISOString().split('T')[0],
+        salePrice: price,
+        customerName: customerName.trim() || undefined,
+        paymentMethod: statusPaymentMethod,
+        notes: statusNotes.trim() || undefined,
+        currentUserId
+      });
+
+      setMsg({
+        type: 'success',
+        text: newStatus === 'SOLD'
+          ? `পশু ${statusModalAnimal.id} সফলভাবে বিক্রয় ও রাজস্ব জাবেদায় পোস্ট করা হয়েছে! (বিক্রয়মূল্য: ৳${price})`
+          : `পশু ${statusModalAnimal.id} এর স্ট্যাটাস '${newStatus}' এ সফলভাবে হালনাগাদ করা হয়েছে!`
+      });
+      setStatusModalAnimal(null);
+      setSalePrice('');
+      setCustomerName('');
+      setStatusNotes('');
+      await loadOpsData();
+    } catch (err: any) {
+      setMsg({ type: 'error', text: `স্ট্যাটাস আপডেটে ত্রুটি: ${err.message}` });
+    } finally {
+      setSubmittingStatus(false);
     }
   };
 
@@ -325,7 +466,10 @@ export const FarmOperationsModule: React.FC<Props> = ({ role, currentUserId }) =
 
         <div className="flex items-center gap-1.5 bg-gray-100 p-1.5 rounded-xl overflow-x-auto text-[13px] font-semibold">
           <button
-            onClick={() => setTab('livestock')}
+            onClick={() => {
+              setTab('livestock');
+              setSelectedAnimalId(null);
+            }}
             className={`px-3.5 py-2 rounded-lg whitespace-nowrap transition-all cursor-pointer min-h-[40px] ${
               tab === 'livestock' ? 'bg-[#1E5128] text-white shadow-xs' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200/60'
             }`}
@@ -333,7 +477,10 @@ export const FarmOperationsModule: React.FC<Props> = ({ role, currentUserId }) =
             গবাদিপশু (Livestock)
           </button>
           <button
-            onClick={() => setTab('fisheries')}
+            onClick={() => {
+              setTab('fisheries');
+              setSelectedAnimalId(null);
+            }}
             className={`px-3.5 py-2 rounded-lg whitespace-nowrap transition-all cursor-pointer min-h-[40px] ${
               tab === 'fisheries' ? 'bg-[#1E5128] text-white shadow-xs' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200/60'
             }`}
@@ -341,7 +488,10 @@ export const FarmOperationsModule: React.FC<Props> = ({ role, currentUserId }) =
             মৎস্য চাষ (Fisheries)
           </button>
           <button
-            onClick={() => setTab('crops')}
+            onClick={() => {
+              setTab('crops');
+              setSelectedAnimalId(null);
+            }}
             className={`px-3.5 py-2 rounded-lg whitespace-nowrap transition-all cursor-pointer min-h-[40px] ${
               tab === 'crops' ? 'bg-[#1E5128] text-white shadow-xs' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200/60'
             }`}
@@ -349,7 +499,10 @@ export const FarmOperationsModule: React.FC<Props> = ({ role, currentUserId }) =
             শস্য ও ঘাস (Crops)
           </button>
           <button
-            onClick={() => setTab('flows')}
+            onClick={() => {
+              setTab('flows');
+              setSelectedAnimalId(null);
+            }}
             className={`px-3.5 py-2 rounded-lg whitespace-nowrap transition-all cursor-pointer min-h-[40px] ${
               tab === 'flows' ? 'bg-[#1E5128] text-white shadow-xs' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200/60'
             }`}
@@ -374,25 +527,85 @@ export const FarmOperationsModule: React.FC<Props> = ({ role, currentUserId }) =
 
       {/* ===================== TAB 1: LIVESTOCK ===================== */}
       {tab === 'livestock' && (
-        <div className="bg-white border border-gray-200 rounded-2xl p-4 sm:p-5 shadow-xs space-y-4">
-          <div className="flex items-center justify-between border-b border-gray-100 pb-3 flex-wrap gap-2">
+        <>
+          {selectedAnimal ? (
+            <AnimalDetailView
+              animal={selectedAnimal}
+              events={animalEvents}
+              onBack={() => setSelectedAnimalId(null)}
+              onAddEvent={(a) => {
+                setEventModalAnimal(a);
+                setEventType('FEED');
+                setEventCost('0');
+                setEventMilkLiters('');
+                setEventWeightKg('');
+                setEventVaccineName('');
+                setEventNextDueDate('');
+                setEventDetails('');
+                setEventDate(new Date().toISOString().split('T')[0]);
+                setEventPaymentMethod('CASH');
+              }}
+              onUpdateStatus={(a) => {
+                setStatusModalAnimal(a);
+                setNewStatus(a.status === 'ACTIVE' ? 'SOLD' : a.status);
+                setStatusDate(new Date().toISOString().split('T')[0]);
+                setSalePrice(a.salePrice ? String(a.salePrice) : '');
+                setCustomerName('');
+                setStatusNotes('');
+                setStatusPaymentMethod('CASH');
+              }}
+              role={role}
+            />
+          ) : (
+            <div className="bg-white border border-gray-200 rounded-2xl p-4 sm:p-5 shadow-xs space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between border-b border-gray-100 pb-4 gap-3">
             <div>
               <h3 className="text-[16px] font-bold text-gray-900 flex items-center gap-2">
                 <Activity className="w-5 h-5 text-[#1E5128]" />
                 <span>গবাদিপশু প্রোফাইল ও উৎপাদন সূচক ({animals.length})</span>
               </h3>
-              <p className="text-[13px] text-gray-600 mt-0.5">প্রতিটি প্রাণীর স্বতন্ত্র ক্রয়মূল্য, ওজন ও ক্রমবর্ধমান খাদ্য খরচ</p>
+              <p className="text-[13px] text-gray-600 mt-0.5">
+                প্রতিটি প্রাণীর স্বতন্ত্র ব্যয়, খাদ্য ও চিকিৎসা ট্র্যাকিং এবং কার্যক্রম ব্যবস্থাপনা
+              </p>
             </div>
 
-            {role === 'OWNER' && (
-              <button
-                onClick={() => setShowAddAnimal(!showAddAnimal)}
-                className="px-3.5 py-2 rounded-xl bg-[#1E5128] hover:bg-[#173F1F] text-white text-[13px] font-bold shadow-xs transition-all cursor-pointer min-h-[40px] flex items-center gap-1.5"
-              >
-                <PlusCircle className="w-4 h-4" />
-                <span>+ নতুন পশু নিবন্ধন</span>
-              </button>
-            )}
+            <div className="flex items-center gap-2 flex-wrap">
+              {/* Active / Inactive Filter Toggle */}
+              <div className="flex items-center bg-gray-100 p-1 rounded-xl text-[13px] font-medium border border-gray-200">
+                <button
+                  type="button"
+                  onClick={() => setAnimalFilter('ACTIVE')}
+                  className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer font-semibold ${
+                    animalFilter === 'ACTIVE'
+                      ? 'bg-white text-[#1E5128] shadow-xs'
+                      : 'text-gray-600 hover:text-gray-900'
+                  }`}
+                >
+                  সক্রিয় পশু ({animals.filter((a) => a.status === 'ACTIVE').length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setAnimalFilter('INACTIVE')}
+                  className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer font-semibold ${
+                    animalFilter === 'INACTIVE'
+                      ? 'bg-white text-rose-700 shadow-xs'
+                      : 'text-gray-600 hover:text-gray-900'
+                  }`}
+                >
+                  নিষ্ক্রিয়/বিক্রিত ({animals.filter((a) => a.status !== 'ACTIVE').length})
+                </button>
+              </div>
+
+              {role === 'OWNER' && (
+                <button
+                  onClick={() => setShowAddAnimal(!showAddAnimal)}
+                  className="px-3.5 py-2 rounded-xl bg-[#1E5128] hover:bg-[#173F1F] text-white text-[13px] font-bold shadow-xs transition-all cursor-pointer min-h-[40px] flex items-center gap-1.5"
+                >
+                  <PlusCircle className="w-4 h-4" />
+                  <span>+ নতুন পশু নিবন্ধন</span>
+                </button>
+              )}
+            </div>
           </div>
 
           {showAddAnimal && (
@@ -471,44 +684,664 @@ export const FarmOperationsModule: React.FC<Props> = ({ role, currentUserId }) =
             </form>
           )}
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
-            {animals.map((a) => (
-              <div
-                key={a.id}
-                className="p-4 rounded-xl bg-[#F8FAFC] border border-gray-200 space-y-2.5 shadow-xs"
-              >
-                <div className="flex items-center justify-between">
+          {/* Animals Grid */}
+          {(() => {
+            const displayedAnimals = animals.filter((a) =>
+              animalFilter === 'ACTIVE' ? a.status === 'ACTIVE' : a.status !== 'ACTIVE'
+            );
+
+            if (displayedAnimals.length === 0) {
+              return (
+                <div className="p-8 text-center bg-gray-50 border border-dashed border-gray-300 rounded-xl text-gray-500">
+                  <p className="text-[15px] font-medium">
+                    {animalFilter === 'ACTIVE'
+                      ? 'কোনো সক্রিয় গবাদিপশু নেই। নতুন পশু নিবন্ধন করতে উপরের বাটনে ক্লিক করুন।'
+                      : 'কোনো নিষ্ক্রিয় বা বিক্রিত পশুর রেকর্ড নেই।'}
+                  </p>
+                </div>
+              );
+            }
+
+            return (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
+                {displayedAnimals.map((a) => {
+                  const eventsForAnimal = animalEvents.filter((ev) => ev.animalId === a.id);
+                  const isInactive = a.status !== 'ACTIVE';
+
+                  return (
+                    <div
+                      key={a.id}
+                      onClick={() => setSelectedAnimalId(a.id)}
+                      className={`p-4 rounded-xl border space-y-3 shadow-xs transition-all flex flex-col justify-between cursor-pointer hover:shadow-md hover:border-[#1E5128]/50 ${
+                        isInactive
+                          ? 'bg-gray-50/90 border-gray-300 hover:bg-gray-100/80'
+                          : 'bg-[#F8FAFC] border-gray-200 hover:bg-emerald-50/20'
+                      }`}
+                    >
+                      <div className="space-y-2.5">
+                        <div className="flex items-start justify-between gap-2">
+                          <div>
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <span className="font-mono font-bold text-[#1E5128] text-[15px]">{a.id}</span>
+                              {isInactive && (
+                                <span
+                                  className={`px-2 py-0.5 rounded text-[11px] font-bold tracking-wide ${
+                                    a.status === 'SOLD'
+                                      ? 'bg-amber-100 text-amber-800 border border-amber-300'
+                                      : a.status === 'DECEASED'
+                                      ? 'bg-rose-100 text-rose-800 border border-rose-300'
+                                      : a.status === 'STOLEN'
+                                      ? 'bg-purple-100 text-purple-800 border border-purple-300'
+                                      : 'bg-blue-100 text-blue-800 border border-blue-300'
+                                  }`}
+                                >
+                                  {a.status === 'SOLD'
+                                    ? 'বিক্রিত (SOLD)'
+                                    : a.status === 'DECEASED'
+                                    ? 'মৃত (DECEASED)'
+                                    : a.status === 'STOLEN'
+                                    ? 'চুরি/হারানো (STOLEN)'
+                                    : 'স্থানান্তরিত (TRANSFERRED)'}
+                                </span>
+                              )}
+                            </div>
+                            <h4 className="font-bold text-gray-900 text-[14px] mt-0.5">{a.breed}</h4>
+                          </div>
+                          <span className="px-2.5 py-1 rounded-full bg-white border border-gray-200 text-xs text-gray-700 font-semibold shrink-0">
+                            {a.gender === 'FEMALE' ? 'গাভী' : 'ষাঁড়'} ({a.currentWeightKg} কেজি)
+                          </span>
+                        </div>
+
+                        {/* Cost & Financial Breakdown */}
+                        <div className="space-y-1.5 text-[13px] pt-2 border-t border-gray-200">
+                          <div className="flex justify-between">
+                            <span className="text-gray-600">ক্রয়মূল্য:</span>
+                            <span className="font-semibold text-gray-900">{fmt(a.purchaseCost)}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-gray-600">খাদ্য খরচ:</span>
+                            <span className="font-semibold text-amber-700">{fmt(a.accumulatedFeedCost)}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-gray-600">চিকিৎসা ও টিকা:</span>
+                            <span className="font-semibold text-blue-700">{fmt(a.accumulatedMedCost)}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-gray-600">লেবার ও অন্যান্য:</span>
+                            <span className="font-semibold text-gray-900">
+                              {fmt(a.accumulatedLabourCost + (a.otherCosts || 0))}
+                            </span>
+                          </div>
+                          <div className="flex justify-between font-bold text-gray-900 pt-1.5 border-t border-gray-200 text-[14px]">
+                            <span>মোট পুঞ্জীভূত খরচ:</span>
+                            <span className="text-[#15803D]">{fmt(a.totalCost)}</span>
+                          </div>
+
+                          {a.status === 'SOLD' && (
+                            <div className="flex justify-between font-bold text-amber-900 pt-1.5 border-t border-amber-200 text-[13px] bg-amber-50/80 px-2.5 py-1.5 rounded-lg">
+                              <span>বিক্রয়মূল্য ({a.saleDate || 'তারিখ অপ্রাপ্ত'}):</span>
+                              <span className="text-amber-700">{fmt(a.salePrice || 0)}</span>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Action Buttons: "+ কার্যক্রম যোগ করুন" and "পশু বিক্রি/হারানো" */}
+                      <div className="pt-2.5 border-t border-gray-200 space-y-2">
+                        <div className="grid grid-cols-2 gap-2">
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setEventModalAnimal(a);
+                              setEventType('FEED');
+                              setEventCost('0');
+                              setEventMilkLiters('');
+                              setEventWeightKg('');
+                              setEventVaccineName('');
+                              setEventNextDueDate('');
+                              setEventDetails('');
+                              setEventDate(new Date().toISOString().split('T')[0]);
+                              setEventPaymentMethod('CASH');
+                            }}
+                            className="w-full py-2 px-2 rounded-lg bg-[#1E5128] hover:bg-[#173F1F] text-white text-[12px] font-bold shadow-xs transition-all cursor-pointer flex items-center justify-center gap-1 min-h-[38px]"
+                          >
+                            <PlusCircle className="w-3.5 h-3.5 shrink-0" />
+                            <span className="whitespace-nowrap">+ কার্যক্রম যোগ করুন</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setStatusModalAnimal(a);
+                              setNewStatus(a.status === 'ACTIVE' ? 'SOLD' : a.status);
+                              setStatusDate(new Date().toISOString().split('T')[0]);
+                              setSalePrice(a.salePrice ? String(a.salePrice) : '');
+                              setCustomerName('');
+                              setStatusNotes('');
+                              setStatusPaymentMethod('CASH');
+                            }}
+                            className="w-full py-2 px-2 rounded-lg bg-amber-50 hover:bg-amber-100 border border-amber-300 text-amber-900 text-[12px] font-bold shadow-xs transition-all cursor-pointer flex items-center justify-center gap-1 min-h-[38px]"
+                          >
+                            <Tag className="w-3.5 h-3.5 shrink-0 text-amber-700" />
+                            <span className="whitespace-nowrap">পশু বিক্রি/হারানো</span>
+                          </button>
+                        </div>
+
+                        {eventsForAnimal.length > 0 && (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setHistoryModalAnimal(a);
+                            }}
+                            className="w-full py-1.5 px-2 rounded-lg bg-white hover:bg-gray-100 border border-gray-200 text-gray-700 text-[12px] font-medium transition-all cursor-pointer flex items-center justify-center gap-1.5"
+                          >
+                            <History className="w-3.5 h-3.5 text-gray-500" />
+                            <span>কার্যক্রম ইতিহাস ({eventsForAnimal.length}টি)</span>
+                          </button>
+                        )}
+
+                        {/* Tap to view detail link */}
+                        <div className="flex items-center justify-between pt-1 border-t border-dashed border-gray-200 text-[12px] font-semibold text-[#1E5128]">
+                          <span>বিস্তারিত তথ্য, ওজন চার্ট ও দুধ উৎপাদন</span>
+                          <span>→</span>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })()}
+            </div>
+          )}
+
+          {/* ================= MODAL 1: ADD ACTIVITY / EVENT ================= */}
+          {eventModalAnimal && (
+            <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
+              <div className="bg-white rounded-2xl max-w-lg w-full p-5 sm:p-6 shadow-2xl border border-gray-200 my-8 space-y-4">
+                <div className="flex items-start justify-between border-b border-gray-100 pb-3">
                   <div>
-                    <span className="font-mono font-bold text-[#1E5128] text-[15px]">{a.id}</span>
-                    <h4 className="font-bold text-gray-900 text-[14px]">{a.breed}</h4>
+                    <h4 className="text-[17px] font-bold text-gray-900 flex items-center gap-2">
+                      <PlusCircle className="w-5 h-5 text-[#1E5128]" />
+                      <span>কার্যক্রম যোগ করুন: {eventModalAnimal.id}</span>
+                    </h4>
+                    <p className="text-[13px] text-gray-600 mt-0.5">
+                      জাত: {eventModalAnimal.breed} | বর্তমান ওজন: {eventModalAnimal.currentWeightKg} কেজি
+                    </p>
                   </div>
-                  <span className="px-2.5 py-1 rounded-full bg-white border border-gray-200 text-xs text-gray-700 font-semibold">
-                    {a.gender === 'FEMALE' ? 'গাভী' : 'ষাঁড়'} ({a.currentWeightKg} কেজি)
-                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setEventModalAnimal(null)}
+                    className="p-1 rounded-lg hover:bg-gray-100 text-gray-500 hover:text-gray-800"
+                  >
+                    <X className="w-5 h-5" />
+                  </button>
                 </div>
 
-                <div className="space-y-1.5 text-[13px] pt-2 border-t border-gray-200">
-                  <div className="flex justify-between">
-                    <span className="text-gray-600">ক্রয়মূল্য:</span>
-                    <span className="font-semibold text-gray-900">{fmt(a.purchaseCost)}</span>
+                <form onSubmit={handleSaveEvent} className="space-y-3.5">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-[13px] font-semibold text-gray-700 mb-1">
+                        কার্যক্রমের ধরন (Event Type) *
+                      </label>
+                      <select
+                        value={eventType}
+                        onChange={(e) => setEventType(e.target.value as any)}
+                        className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900 font-medium focus:ring-2 focus:ring-[#1E5128]"
+                      >
+                        <option value="FEED">খাদ্য প্রদান (FEED)</option>
+                        <option value="VACCINE">টিকা প্রদান (VACCINE)</option>
+                        <option value="TREATMENT">চিকিৎসা ও ওষুধ (TREATMENT)</option>
+                        <option value="WEIGHT">ওজন পরিমাপ (WEIGHT)</option>
+                        <option value="MILK">দুধ উৎপাদন (MILK)</option>
+                        <option value="BREEDING">প্রজনন / এআই (BREEDING)</option>
+                        <option value="MORTALITY">মৃত্যু / মরটালিটি (MORTALITY)</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-[13px] font-semibold text-gray-700 mb-1">তারিখ (Date) *</label>
+                      <input
+                        type="date"
+                        required
+                        value={eventDate}
+                        onChange={(e) => setEventDate(e.target.value)}
+                        className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900 focus:ring-2 focus:ring-[#1E5128]"
+                      />
+                    </div>
                   </div>
-                  <div className="flex justify-between">
-                    <span className="text-gray-600">খাদ্য খরচ:</span>
-                    <span className="font-semibold text-amber-700">{fmt(a.accumulatedFeedCost)}</span>
+
+                  {/* Cost Field */}
+                  <div>
+                    <label className="block text-[13px] font-semibold text-gray-700 mb-1">
+                      খরচ (Cost ৳)
+                    </label>
+                    <input
+                      type="number"
+                      min="0"
+                      step="any"
+                      value={eventCost}
+                      onChange={(e) => setEventCost(e.target.value)}
+                      placeholder="0"
+                      className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900 font-mono focus:ring-2 focus:ring-[#1E5128]"
+                    />
+                    {parseFloat(eventCost) > 0 && (
+                      <p className="text-[12px] text-gray-500 mt-1">
+                        {eventType === 'FEED'
+                          ? 'স্বয়ংক্রিয়ভাবে ৬০১০ (খাদ্য খরচ) ডেবিট ও ক্যাশ/ব্যাংক ক্রেডিট হবে।'
+                          : eventType === 'VACCINE'
+                          ? 'স্বয়ংক্রিয়ভাবে ৬০৫০ (টিকা খরচ) ডেবিট ও ক্যাশ/ব্যাংক ক্রেডিট হবে।'
+                          : eventType === 'TREATMENT'
+                          ? 'স্বয়ংক্রিয়ভাবে ৬০৪০ (চিকিৎসা ও ওষুধ খরচ) ডেবিট ও ক্যাশ/ব্যাংক ক্রেডিট হবে।'
+                          : 'স্বয়ংক্রিয়ভাবে বিবিধ পরিচালন ব্যয় ডেবিট ও ক্যাশ/ব্যাংক ক্রেডিট হবে।'}
+                      </p>
+                    )}
                   </div>
-                  <div className="flex justify-between">
-                    <span className="text-gray-600">ওষুধ ও লেবার:</span>
-                    <span className="font-semibold text-gray-900">{fmt(a.accumulatedMedCost + a.accumulatedLabourCost)}</span>
+
+                  {/* Payment Method Selector if cost > 0 */}
+                  {parseFloat(eventCost) > 0 && (
+                    <div>
+                      <label className="block text-[13px] font-semibold text-gray-700 mb-1">
+                        পরিশোধের মাধ্যম (Payment Account)
+                      </label>
+                      <div className="grid grid-cols-2 gap-2">
+                        <label className={`flex items-center gap-2 p-2.5 rounded-lg border cursor-pointer text-[13px] font-medium ${
+                          eventPaymentMethod === 'CASH' ? 'border-[#1E5128] bg-[#F0FDF4] text-[#1E5128]' : 'border-gray-300'
+                        }`}>
+                          <input
+                            type="radio"
+                            name="evtPayment"
+                            value="CASH"
+                            checked={eventPaymentMethod === 'CASH'}
+                            onChange={() => setEventPaymentMethod('CASH')}
+                            className="text-[#1E5128]"
+                          />
+                          <span>নগদ টাকা (Cash 1010)</span>
+                        </label>
+                        <label className={`flex items-center gap-2 p-2.5 rounded-lg border cursor-pointer text-[13px] font-medium ${
+                          eventPaymentMethod === 'BANK' ? 'border-[#1E5128] bg-[#F0FDF4] text-[#1E5128]' : 'border-gray-300'
+                        }`}>
+                          <input
+                            type="radio"
+                            name="evtPayment"
+                            value="BANK"
+                            checked={eventPaymentMethod === 'BANK'}
+                            onChange={() => setEventPaymentMethod('BANK')}
+                            className="text-[#1E5128]"
+                          />
+                          <span>ব্যাংক হিসাব (Bank 1030)</span>
+                        </label>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* MILK LITERS (Only if eventType === 'MILK') */}
+                  {eventType === 'MILK' && (
+                    <div>
+                      <label className="block text-[13px] font-semibold text-gray-700 mb-1">
+                        দুধের পরিমাণ (Milk Liters) *
+                      </label>
+                      <input
+                        type="number"
+                        step="0.1"
+                        min="0"
+                        placeholder="যেমন: ১২.৫"
+                        value={eventMilkLiters}
+                        onChange={(e) => setEventMilkLiters(e.target.value)}
+                        className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900 focus:ring-2 focus:ring-[#1E5128]"
+                      />
+                    </div>
+                  )}
+
+                  {/* WEIGHT KG (Only if eventType === 'WEIGHT') */}
+                  {eventType === 'WEIGHT' && (
+                    <div>
+                      <label className="block text-[13px] font-semibold text-gray-700 mb-1">
+                        পরিমাপকৃত নতুন ওজন (Weight Kg) *
+                      </label>
+                      <input
+                        type="number"
+                        step="0.1"
+                        min="0"
+                        placeholder="যেমন: ৩৭০"
+                        value={eventWeightKg}
+                        onChange={(e) => setEventWeightKg(e.target.value)}
+                        className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900 focus:ring-2 focus:ring-[#1E5128]"
+                      />
+                      <p className="text-[12px] text-gray-500 mt-1">
+                        সংরক্ষণ করলে পশুর বর্তমান ওজন স্বয়ংক্রিয়ভাবে আপডেট হবে।
+                      </p>
+                    </div>
+                  )}
+
+                  {/* VACCINE OR TREATMENT FIELDS (Only if eventType === 'VACCINE' or 'TREATMENT') */}
+                  {(eventType === 'VACCINE' || eventType === 'TREATMENT') && (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-3 bg-blue-50/60 border border-blue-200 rounded-xl">
+                      <div>
+                        <label className="block text-[13px] font-semibold text-blue-900 mb-1">
+                          টিকা বা ওষুধের নাম (Vaccine Name)
+                        </label>
+                        <input
+                          type="text"
+                          placeholder="যেমন: ক্ষুরা রোগ (FMD) / কৃমিনাশক"
+                          value={eventVaccineName}
+                          onChange={(e) => setEventVaccineName(e.target.value)}
+                          className="w-full bg-white border border-blue-300 rounded-lg p-2.5 text-[14px] text-gray-900 focus:ring-2 focus:ring-blue-600"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[13px] font-semibold text-blue-900 mb-1">
+                          পরবর্তী ডোজের তারিখ (Next Due Date)
+                        </label>
+                        <input
+                          type="date"
+                          value={eventNextDueDate}
+                          onChange={(e) => setEventNextDueDate(e.target.value)}
+                          className="w-full bg-white border border-blue-300 rounded-lg p-2.5 text-[14px] text-gray-900 focus:ring-2 focus:ring-blue-600"
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Details / Notes Text */}
+                  <div>
+                    <label className="block text-[13px] font-semibold text-gray-700 mb-1">
+                      বিবরণ বা নোটস (Details / Notes)
+                    </label>
+                    <textarea
+                      rows={2}
+                      value={eventDetails}
+                      onChange={(e) => setEventDetails(e.target.value)}
+                      placeholder="কার্যক্রমের বিবরণ বা নোট লিখুন..."
+                      className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900 focus:ring-2 focus:ring-[#1E5128]"
+                    />
                   </div>
-                  <div className="flex justify-between font-bold text-gray-900 pt-1.5 border-t border-gray-200 text-[14px]">
-                    <span>মোট পুঞ্জীভূত খরচ:</span>
-                    <span className="text-[#15803D]">{fmt(a.totalCost)}</span>
+
+                  <div className="flex justify-end gap-2.5 pt-2 border-t border-gray-100">
+                    <button
+                      type="button"
+                      disabled={submittingEvent}
+                      onClick={() => setEventModalAnimal(null)}
+                      className="px-4 py-2.5 rounded-xl bg-gray-100 hover:bg-gray-200 text-gray-800 text-[13px] font-semibold cursor-pointer min-h-[40px]"
+                    >
+                      বাতিল
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={submittingEvent}
+                      className="px-5 py-2.5 rounded-xl bg-[#1E5128] hover:bg-[#173F1F] text-white text-[13px] font-bold cursor-pointer shadow-xs min-h-[40px]"
+                    >
+                      {submittingEvent ? 'সংরক্ষণ হচ্ছে...' : 'কার্যক্রম সংরক্ষণ করুন'}
+                    </button>
                   </div>
+                </form>
+              </div>
+            </div>
+          )}
+
+          {/* ================= MODAL 2: SELL / REMOVE ANIMAL ================= */}
+          {statusModalAnimal && (
+            <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
+              <div className="bg-white rounded-2xl max-w-lg w-full p-5 sm:p-6 shadow-2xl border border-gray-200 my-8 space-y-4">
+                <div className="flex items-start justify-between border-b border-gray-100 pb-3">
+                  <div>
+                    <h4 className="text-[17px] font-bold text-gray-900 flex items-center gap-2">
+                      <Tag className="w-5 h-5 text-amber-600" />
+                      <span>পশু বিক্রি বা অপসারণ: {statusModalAnimal.id}</span>
+                    </h4>
+                    <p className="text-[13px] text-gray-600 mt-0.5">
+                      জাত: {statusModalAnimal.breed} | বর্তমান মোট পুঞ্জীভূত খরচ: {fmt(statusModalAnimal.totalCost)}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setStatusModalAnimal(null)}
+                    className="p-1 rounded-lg hover:bg-gray-100 text-gray-500 hover:text-gray-800"
+                  >
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+
+                <form onSubmit={handleSaveStatus} className="space-y-3.5">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-[13px] font-semibold text-gray-700 mb-1">
+                        নতুন স্ট্যাটাস (Status) *
+                      </label>
+                      <select
+                        value={newStatus}
+                        onChange={(e) => setNewStatus(e.target.value as any)}
+                        className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900 font-medium focus:ring-2 focus:ring-amber-500"
+                      >
+                        <option value="SOLD">বিক্রয় (SOLD)</option>
+                        <option value="DECEASED">মৃত (DECEASED)</option>
+                        <option value="TRANSFERRED">স্থানান্তর (TRANSFERRED)</option>
+                        <option value="STOLEN">চুরি / হারানো (STOLEN)</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-[13px] font-semibold text-gray-700 mb-1">তারিখ (Date) *</label>
+                      <input
+                        type="date"
+                        required
+                        value={statusDate}
+                        onChange={(e) => setStatusDate(e.target.value)}
+                        className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900 focus:ring-2 focus:ring-amber-500"
+                      />
+                    </div>
+                  </div>
+
+                  {/* IF SOLD: SALE PRICE & PAYMENT & CUSTOMER */}
+                  {newStatus === 'SOLD' && (
+                    <div className="p-3.5 bg-amber-50/70 border border-amber-200 rounded-xl space-y-3">
+                      <div className="font-bold text-amber-900 text-[14px] flex items-center gap-1.5">
+                        <DollarSign className="w-4 h-4 text-amber-700" />
+                        <span>বিক্রয় চালান ও রাজস্ব তথ্য</span>
+                      </div>
+
+                      <div>
+                        <label className="block text-[13px] font-semibold text-gray-800 mb-1">
+                          বিক্রয়মূল্য (Sale Price ৳) *
+                        </label>
+                        <input
+                          type="number"
+                          required
+                          min="1"
+                          step="any"
+                          placeholder="যেমন: ৯৫০০০"
+                          value={salePrice}
+                          onChange={(e) => setSalePrice(e.target.value)}
+                          className="w-full bg-white border border-amber-300 rounded-lg p-2.5 text-[15px] font-bold text-gray-900 font-mono focus:ring-2 focus:ring-amber-500"
+                        />
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                        <div>
+                          <label className="block text-[13px] font-medium text-gray-700 mb-1">
+                            ক্রেতার নাম (Customer Name)
+                          </label>
+                          <input
+                            type="text"
+                            placeholder="সাধারণ ক্রেতা"
+                            value={customerName}
+                            onChange={(e) => setCustomerName(e.target.value)}
+                            className="w-full bg-white border border-gray-300 rounded-lg p-2 text-[13px] text-gray-900"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="block text-[13px] font-medium text-gray-700 mb-1">
+                            টাকা জমার হিসাব (Deposit To)
+                          </label>
+                          <select
+                            value={statusPaymentMethod}
+                            onChange={(e) => setStatusPaymentMethod(e.target.value as any)}
+                            className="w-full bg-white border border-gray-300 rounded-lg p-2 text-[13px] text-gray-900"
+                          >
+                            <option value="CASH">নগদ ক্যাশ (1010)</option>
+                            <option value="BANK">ব্যাংক হিসাব (1030)</option>
+                          </select>
+                        </div>
+                      </div>
+
+                      <p className="text-[12px] text-amber-800 leading-relaxed">
+                        বিক্রয় সংরক্ষিত হলে স্বয়ংক্রিয়ভাবে পশু বিক্রয় আয় (৪০২০) ক্রেডিট এবং ক্যাশ/ব্যাংক ডেবিট করে জাবেদা ভাউচার ও বিক্রয় চালান তৈরি হবে।
+                      </p>
+                    </div>
+                  )}
+
+                  {newStatus !== 'SOLD' && (
+                    <div className="p-3 bg-gray-50 border border-gray-200 rounded-xl text-[13px] text-gray-600">
+                      পশুটি সক্রিয় তালিকা থেকে অপসারিত হয়ে "নিষ্ক্রিয়/বিক্রিত" ট্যাবে সংরক্ষিত থাকবে।
+                    </div>
+                  )}
+
+                  {/* Notes */}
+                  <div>
+                    <label className="block text-[13px] font-semibold text-gray-700 mb-1">
+                      মন্তব্য বা বিবরণ (Notes)
+                    </label>
+                    <textarea
+                      rows={2}
+                      value={statusNotes}
+                      onChange={(e) => setStatusNotes(e.target.value)}
+                      placeholder="অপসারণ বা বিক্রয়ের কারণ বা মন্তব্য লিখুন..."
+                      className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900 focus:ring-2 focus:ring-amber-500"
+                    />
+                  </div>
+
+                  <div className="flex justify-end gap-2.5 pt-2 border-t border-gray-100">
+                    <button
+                      type="button"
+                      disabled={submittingStatus}
+                      onClick={() => setStatusModalAnimal(null)}
+                      className="px-4 py-2.5 rounded-xl bg-gray-100 hover:bg-gray-200 text-gray-800 text-[13px] font-semibold cursor-pointer min-h-[40px]"
+                    >
+                      বাতিল
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={submittingStatus}
+                      className="px-5 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-[13px] font-bold cursor-pointer shadow-xs min-h-[40px]"
+                    >
+                      {submittingStatus ? 'সংরক্ষণ হচ্ছে...' : 'স্ট্যাটাস নিশ্চিত করুন'}
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          )}
+
+          {/* ================= MODAL 3: ACTIVITY HISTORY ================= */}
+          {historyModalAnimal && (
+            <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
+              <div className="bg-white rounded-2xl max-w-xl w-full p-5 sm:p-6 shadow-2xl border border-gray-200 my-8 space-y-4">
+                <div className="flex items-start justify-between border-b border-gray-100 pb-3">
+                  <div>
+                    <h4 className="text-[17px] font-bold text-gray-900 flex items-center gap-2">
+                      <History className="w-5 h-5 text-[#1E5128]" />
+                      <span>কার্যক্রমের ইতিহাস: {historyModalAnimal.id}</span>
+                    </h4>
+                    <p className="text-[13px] text-gray-600 mt-0.5">
+                      জাত: {historyModalAnimal.breed} | সর্বমোট খরচ: {fmt(historyModalAnimal.totalCost)}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setHistoryModalAnimal(null)}
+                    className="p-1 rounded-lg hover:bg-gray-100 text-gray-500 hover:text-gray-800"
+                  >
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+
+                <div className="max-h-[60vh] overflow-y-auto space-y-2.5 pr-1">
+                  {(() => {
+                    const evs = animalEvents
+                      .filter((e) => e.animalId === historyModalAnimal.id)
+                      .sort((a, b) => (b.date > a.date ? 1 : -1));
+
+                    if (evs.length === 0) {
+                      return (
+                        <p className="text-[14px] text-gray-500 text-center py-6">
+                          এই পশুর কোনো কার্যক্রম রেকর্ড করা নেই।
+                        </p>
+                      );
+                    }
+
+                    return evs.map((ev) => (
+                      <div
+                        key={ev.id}
+                        className="p-3 rounded-xl bg-gray-50 border border-gray-200 space-y-1.5 text-[13px]"
+                      >
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <span
+                              className={`px-2 py-0.5 rounded text-[11px] font-bold ${
+                                ev.eventType === 'FEED'
+                                  ? 'bg-amber-100 text-amber-800'
+                                  : ev.eventType === 'VACCINE'
+                                  ? 'bg-blue-100 text-blue-800'
+                                  : ev.eventType === 'TREATMENT'
+                                  ? 'bg-purple-100 text-purple-800'
+                                  : ev.eventType === 'WEIGHT'
+                                  ? 'bg-emerald-100 text-emerald-800'
+                                  : ev.eventType === 'MILK'
+                                  ? 'bg-cyan-100 text-cyan-800'
+                                  : 'bg-gray-200 text-gray-800'
+                              }`}
+                            >
+                              {ev.eventType}
+                            </span>
+                            <span className="text-gray-500 font-mono text-[12px]">{ev.date}</span>
+                          </div>
+                          {ev.cost > 0 && (
+                            <span className="font-bold text-rose-700 font-mono">{fmt(ev.cost)}</span>
+                          )}
+                        </div>
+
+                        {ev.details && <p className="text-gray-800">{ev.details}</p>}
+
+                        {ev.vaccineName && (
+                          <div className="text-[12px] text-blue-700 font-medium">
+                            টিকা/ওষুধ: {ev.vaccineName}
+                            {ev.nextDueDate && ` | পরবর্তী ডোজ: ${ev.nextDueDate}`}
+                          </div>
+                        )}
+
+                        {ev.milkLiters !== undefined && ev.milkLiters > 0 && (
+                          <div className="text-[12px] text-cyan-800 font-medium">
+                            দুধের পরিমাণ: {ev.milkLiters} লিটার
+                          </div>
+                        )}
+
+                        {ev.weightKg !== undefined && ev.weightKg > 0 && (
+                          <div className="text-[12px] text-emerald-800 font-medium">
+                            পরিমাপকৃত ওজন: {ev.weightKg} কেজি
+                          </div>
+                        )}
+                      </div>
+                    ));
+                  })()}
+                </div>
+
+                <div className="flex justify-end pt-2 border-t border-gray-100">
+                  <button
+                    type="button"
+                    onClick={() => setHistoryModalAnimal(null)}
+                    className="px-4 py-2 rounded-xl bg-gray-200 text-gray-800 text-[13px] font-semibold cursor-pointer"
+                  >
+                    বন্ধ করুন
+                  </button>
                 </div>
               </div>
-            ))}
-          </div>
-        </div>
+            </div>
+          )}
+        </>
       )}
 
       {/* ===================== TAB 2: FISHERIES ===================== */}

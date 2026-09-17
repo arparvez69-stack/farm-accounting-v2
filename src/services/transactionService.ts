@@ -8,7 +8,7 @@ import {
   getLoanLiabilityAccount,
   getInvestorCapitalAccount
 } from '../accounting/accountMapping';
-import { postJournalEntry } from '../accounting/accountingEngine';
+import { postJournalEntry, validateBalancedLines } from '../accounting/accountingEngine';
 import { generateTransactionNumber, generateUniqueId, safeInsert } from '../utils/idGenerator';
 import {
   InventoryItem,
@@ -19,7 +19,10 @@ import {
   Investor,
   CashBankAccount,
   VoucherType,
-  JournalLine
+  JournalLine,
+  Animal,
+  AnimalEvent,
+  AnimalStatus
 } from '../types';
 
 /**
@@ -775,6 +778,351 @@ export async function executeContraTransferTransaction(params: {
       });
 
       return { voucherNumber, journalEntryId: journalEntry.id };
+    }
+  );
+}
+
+/**
+ * Atomic Execution of Animal Activity / Event Logging with optional Expense Auto-Posting
+ * Updates matching running totals on Animal record:
+ * - accumulatedFeedCost for FEED
+ * - accumulatedMedCost for VACCINE / TREATMENT
+ * - totalCost
+ * Auto-posts expense to 6010 / 6050 / 6040 if cost > 0 and strictly validates double-entry balance.
+ */
+export async function executeAnimalEventTransaction(params: {
+  animal: Animal;
+  event: Omit<AnimalEvent, 'id' | 'synced'>;
+  paymentMethod?: 'CASH' | 'BANK';
+  bankAccountId?: string;
+  currentUserId: string;
+}): Promise<{ event: AnimalEvent; journalEntryId?: string }> {
+  return await db.transaction(
+    'rw',
+    [
+      db.animalEvents,
+      db.animals,
+      db.journalEntries,
+      db.cashBankAccounts,
+      db.accounts,
+      db.auditLogs
+    ],
+    async () => {
+      const { animal, event, paymentMethod = 'CASH', bankAccountId, currentUserId } = params;
+      const cost = Math.round((event.cost || 0) * 100) / 100;
+      let journalEntryId: string | undefined;
+
+      // If cost > 0, auto-post the expense using existing feed/medicine expense accounts
+      if (cost > 0) {
+        let expenseCode: string = CANONICAL_ACCOUNTS.MISCELLANEOUS_EXPENSE;
+        let expenseName = 'বিবিধ পরিচালন ব্যয় (Miscellaneous Expense)';
+
+        if (event.eventType === 'FEED') {
+          expenseCode = CANONICAL_ACCOUNTS.FEED_EXPENSE; // 6010
+          expenseName = 'খাদ্য ক্রয় খরচ (Feed Expense)';
+        } else if (event.eventType === 'VACCINE') {
+          expenseCode = CANONICAL_ACCOUNTS.VACCINATION; // 6050
+          expenseName = 'টিকা প্রদান খরচ (Vaccination Expense)';
+        } else if (event.eventType === 'TREATMENT') {
+          expenseCode = CANONICAL_ACCOUNTS.VET_MEDICINE; // 6040
+          expenseName = 'চিকিৎসা ও ওষুধ (Veterinary & Medicine)';
+        }
+
+        const paymentCode = paymentMethod === 'BANK' ? CANONICAL_ACCOUNTS.BANK : CANONICAL_ACCOUNTS.CASH;
+        const paymentName = paymentMethod === 'BANK' ? 'ব্যাংক হিসাব (Bank Accounts)' : 'নগদ টাকা (Cash on Hand)';
+
+        const journalLines: JournalLine[] = [
+          {
+            accountId: expenseCode,
+            accountCode: expenseCode,
+            accountName: expenseName,
+            debit: cost,
+            credit: 0,
+            memo: `${animal.id} (${animal.breed}) - ${event.eventType} ব্যয়`
+          },
+          {
+            accountId: paymentCode,
+            accountCode: paymentCode,
+            accountName: paymentName,
+            debit: 0,
+            credit: cost,
+            memo: 'কার্যক্রম ব্যয় পরিশোধ'
+          }
+        ];
+
+        // Explicit double-entry validation: Do not let this event save if unbalanced
+        const accounts = await db.accounts.toArray();
+        const check = validateBalancedLines(journalLines, accounts);
+        if (!check.isBalanced) {
+          throw new Error('জাবেদা দাখিলা ভারসাম্যহীন! কার্যক্রম সংরক্ষণ বাতিল করা হলো।');
+        }
+
+        const voucherNumber = generateTransactionNumber('EVV');
+        const journalEntry = await postJournalEntry(
+          {
+            id: generateUniqueId('j_evt'),
+            voucherNumber,
+            voucherType: 'PAYMENT',
+            date: event.date,
+            narration: `গবাদিপশু ${animal.id}: ${event.eventType}${event.vaccineName ? ` (${event.vaccineName})` : ''} কার্যক্রম ব্যয়`,
+            reference: animal.id,
+            lines: journalLines,
+            createdBy: currentUserId,
+            createdAt: new Date().toISOString()
+          },
+          { accounts, skipDbPut: true }
+        );
+
+        await safeInsert(db.journalEntries, journalEntry, { idPrefix: 'j' });
+        journalEntryId = journalEntry.id;
+
+        // Update operational Cash / Bank balance consistently with GL
+        if (paymentMethod === 'CASH') {
+          const cashAcc = await db.cashBankAccounts.where('accountType').equals('CASH').first();
+          if (cashAcc) {
+            await db.cashBankAccounts.update(cashAcc.id, {
+              currentBalance: Math.round((cashAcc.currentBalance - cost) * 100) / 100
+            });
+          }
+        } else if (paymentMethod === 'BANK') {
+          let bankAcc: CashBankAccount | undefined;
+          if (bankAccountId) bankAcc = await db.cashBankAccounts.get(bankAccountId);
+          if (!bankAcc) bankAcc = await db.cashBankAccounts.where('accountType').equals('BANK').first();
+          if (bankAcc) {
+            await db.cashBankAccounts.update(bankAcc.id, {
+              currentBalance: Math.round((bankAcc.currentBalance - cost) * 100) / 100
+            });
+          }
+        }
+      }
+
+      // Insert AnimalEvent
+      const eventId = generateUniqueId('evt');
+      const eventRecord: AnimalEvent = {
+        ...event,
+        id: eventId,
+        cost,
+        synced: false
+      };
+      await safeInsert(db.animalEvents, eventRecord, { idPrefix: 'evt' });
+
+      // Update matching running total on Animal record
+      // accumulatedFeedCost for FEED, accumulatedMedCost for VACCINE/TREATMENT, accumulatedLabourCost stays manual, plus totalCost.
+      const freshAnimal = (await db.animals.get(animal.id)) || animal;
+      const newFeed = (freshAnimal.accumulatedFeedCost || 0) + (event.eventType === 'FEED' ? cost : 0);
+      const newMed = (freshAnimal.accumulatedMedCost || 0) + (event.eventType === 'VACCINE' || event.eventType === 'TREATMENT' ? cost : 0);
+      const newOther = (freshAnimal.otherCosts || 0) + (event.eventType !== 'FEED' && event.eventType !== 'VACCINE' && event.eventType !== 'TREATMENT' ? cost : 0);
+      const newTotal = (freshAnimal.purchaseCost || 0) + newFeed + newMed + (freshAnimal.accumulatedLabourCost || 0) + newOther;
+
+      const animalUpdates: Partial<Animal> = {
+        accumulatedFeedCost: Math.round(newFeed * 100) / 100,
+        accumulatedMedCost: Math.round(newMed * 100) / 100,
+        otherCosts: Math.round(newOther * 100) / 100,
+        totalCost: Math.round(newTotal * 100) / 100,
+        synced: false
+      };
+
+      if (event.eventType === 'WEIGHT' && event.weightKg && event.weightKg > 0) {
+        animalUpdates.currentWeightKg = event.weightKg;
+      }
+      if (event.eventType === 'MORTALITY') {
+        animalUpdates.status = 'DECEASED';
+      }
+
+      await db.animals.update(freshAnimal.id, animalUpdates);
+
+      // Audit Log
+      await safeInsert(db.auditLogs, {
+        id: generateUniqueId('audit'),
+        timestamp: new Date().toISOString(),
+        userId: currentUserId,
+        role: 'OWNER',
+        action: 'ANIMAL_EVENT',
+        module: 'LIVESTOCK',
+        recordId: freshAnimal.id,
+        status: 'SUCCESS',
+        details: `${freshAnimal.id} (${freshAnimal.breed}) এ ${event.eventType} কার্যক্রম যুক্ত (ব্যয়: ৳${cost})`
+      });
+
+      return { event: eventRecord, journalEntryId };
+    }
+  );
+}
+
+/**
+ * Atomic Execution of Animal Sell or Removal (Sold, Deceased, Transferred, Stolen)
+ * If SOLD, auto-posts revenue using the same sales-posting pattern as InventoryCommerceModule.
+ */
+export async function executeAnimalSaleOrRemovalTransaction(params: {
+  animal: Animal;
+  newStatus: AnimalStatus;
+  date: string;
+  salePrice?: number;
+  customerName?: string;
+  paymentMethod?: 'CASH' | 'BANK';
+  bankAccountId?: string;
+  notes?: string;
+  currentUserId: string;
+}): Promise<{ updatedAnimal: Animal; sale?: Sale; journalEntryId?: string }> {
+  return await db.transaction(
+    'rw',
+    [
+      db.animals,
+      db.sales,
+      db.journalEntries,
+      db.cashBankAccounts,
+      db.accounts,
+      db.auditLogs
+    ],
+    async () => {
+      const {
+        animal,
+        newStatus,
+        date,
+        salePrice = 0,
+        customerName,
+        paymentMethod = 'CASH',
+        bankAccountId,
+        notes,
+        currentUserId
+      } = params;
+
+      const freshAnimal = (await db.animals.get(animal.id)) || animal;
+      const cleanPrice = Math.round((salePrice || 0) * 100) / 100;
+      let saleRecord: Sale | undefined;
+      let journalEntryId: string | undefined;
+
+      // If SOLD and cleanPrice > 0, auto-post revenue using the same sales-posting pattern as InventoryCommerceModule
+      if (newStatus === 'SOLD' && cleanPrice > 0) {
+        const paymentCode = paymentMethod === 'BANK' ? CANONICAL_ACCOUNTS.BANK : CANONICAL_ACCOUNTS.CASH;
+        const revenueCode = CANONICAL_ACCOUNTS.LIVESTOCK_REVENUE; // 4020
+        const accounts = await db.accounts.toArray();
+
+        const journalLines: JournalLine[] = [
+          {
+            accountId: paymentCode,
+            accountCode: paymentCode,
+            accountName: paymentMethod === 'BANK' ? 'ব্যাংক হিসাব (Bank Accounts)' : 'নগদ টাকা (Cash on Hand)',
+            debit: cleanPrice,
+            credit: 0,
+            memo: `পশু বিক্রয়: ${freshAnimal.id}`
+          },
+          {
+            accountId: revenueCode,
+            accountCode: revenueCode,
+            accountName: 'পশু বিক্রয় আয় (Livestock Sales Revenue)',
+            debit: 0,
+            credit: cleanPrice,
+            memo: `${freshAnimal.breed} (ট্যাগ: ${freshAnimal.id}) বিক্রয় রাজস্ব`
+          }
+        ];
+
+        // Double check balance
+        const check = validateBalancedLines(journalLines, accounts);
+        if (!check.isBalanced) {
+          throw new Error('বিক্রয় জাবেদা ভারসাম্যহীন! বিক্রয় বাতিল করা হলো।');
+        }
+
+        const voucherNumber = generateTransactionNumber('SLV');
+        const invoiceNumber = generateTransactionNumber('SAL');
+
+        const journalEntry = await postJournalEntry(
+          {
+            id: generateUniqueId('j_sale'),
+            voucherNumber,
+            voucherType: 'SALES',
+            date,
+            narration: `পশু বিক্রয় চালান: ${customerName || 'সাধারণ ক্রেতা'} এর নিকট ${freshAnimal.id} (${freshAnimal.breed}) বিক্রয়`,
+            reference: invoiceNumber,
+            lines: journalLines,
+            createdBy: currentUserId,
+            createdAt: new Date().toISOString()
+          },
+          { accounts, skipDbPut: true }
+        );
+        await safeInsert(db.journalEntries, journalEntry, { idPrefix: 'j' });
+        journalEntryId = journalEntry.id;
+
+        // Create Sale Record in sales table
+        const saleId = generateUniqueId('sal');
+        saleRecord = {
+          id: saleId,
+          invoiceNumber,
+          date,
+          customerId: 'pty_walkin',
+          customerName: customerName?.trim() || 'সাধারণ ক্রেতা (Walk-in Buyer)',
+          category: 'LIVESTOCK',
+          items: [
+            {
+              itemId: freshAnimal.id,
+              itemName: `${freshAnimal.breed} (ট্যাগ: ${freshAnimal.id})`,
+              quantity: 1,
+              unit: 'টি',
+              unitPrice: cleanPrice,
+              lineTotal: cleanPrice
+            }
+          ],
+          subtotal: cleanPrice,
+          totalAmount: cleanPrice,
+          grandTotal: cleanPrice,
+          paidAmount: cleanPrice,
+          dueAmount: 0,
+          paymentMethod,
+          bankAccountId,
+          journalEntryId: journalEntry.id,
+          status: 'PAID',
+          synced: false
+        };
+        await safeInsert(db.sales, saleRecord, { idPrefix: 'sal' });
+
+        // Update Cash/Bank account balance
+        if (paymentMethod === 'CASH') {
+          const cashAcc = await db.cashBankAccounts.where('accountType').equals('CASH').first();
+          if (cashAcc) {
+            await db.cashBankAccounts.update(cashAcc.id, {
+              currentBalance: Math.round((cashAcc.currentBalance + cleanPrice) * 100) / 100
+            });
+          }
+        } else if (paymentMethod === 'BANK') {
+          let bankAcc: CashBankAccount | undefined;
+          if (bankAccountId) bankAcc = await db.cashBankAccounts.get(bankAccountId);
+          if (!bankAcc) bankAcc = await db.cashBankAccounts.where('accountType').equals('BANK').first();
+          if (bankAcc) {
+            await db.cashBankAccounts.update(bankAcc.id, {
+              currentBalance: Math.round((bankAcc.currentBalance + cleanPrice) * 100) / 100
+            });
+          }
+        }
+      }
+
+      // Update animal status/salePrice/saleDate/notes
+      const noteAddition = notes?.trim() ? `[${newStatus} - ${date}: ${notes.trim()}]` : `[${newStatus} - ${date}]`;
+      const combinedNotes = freshAnimal.notes ? `${freshAnimal.notes} | ${noteAddition}` : noteAddition;
+
+      const updatedAnimal: Animal = {
+        ...freshAnimal,
+        status: newStatus,
+        salePrice: newStatus === 'SOLD' ? cleanPrice : freshAnimal.salePrice,
+        saleDate: date,
+        notes: combinedNotes,
+        synced: false
+      };
+      await db.animals.put(updatedAnimal);
+
+      // Audit Log
+      await safeInsert(db.auditLogs, {
+        id: generateUniqueId('audit'),
+        timestamp: new Date().toISOString(),
+        userId: currentUserId,
+        role: 'OWNER',
+        action: newStatus === 'SOLD' ? 'ANIMAL_SOLD' : 'ANIMAL_REMOVED',
+        module: 'LIVESTOCK',
+        recordId: freshAnimal.id,
+        status: 'SUCCESS',
+        details: `${freshAnimal.id} স্ট্যাটাস পরিবর্তন: ${newStatus}${newStatus === 'SOLD' ? ` (বিক্রয়মূল্য: ৳${cleanPrice})` : ''}`
+      });
+
+      return { updatedAnimal, sale: saleRecord, journalEntryId };
     }
   );
 }

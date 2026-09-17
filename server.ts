@@ -3,6 +3,7 @@ import path from 'path';
 import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
 import nodemailer from 'nodemailer';
+import dotenv from 'dotenv';
 import { createServer as createViteServer } from 'vite';
 import { initializeApp, cert, getApps } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
@@ -10,19 +11,21 @@ import { getFirestore } from 'firebase-admin/firestore';
 import firebaseConfig from './firebase-applet-config.json';
 import { validateBalancedLines } from './src/accounting/accountingEngine';
 
+dotenv.config();
+
 const app = express();
 const PORT = 3000;
 
 app.use(express.json());
 
-// Single-tenant fixed owner allow-list for "The Goated Farm"
-export const APPROVED_OWNER_EMAILS: string[] = [
-  'arparvez69@gmail.com',
-  'arparvez4@gmail.com',
-  'arparvez111@gmail.com',
-  'atikurrahman00021@gmail.com',
-  'lubaiyatasnum111@gmail.com'
-];
+// Single-tenant owner allow-list parsed from environment variable APPROVED_OWNER_EMAILS
+export function getApprovedOwnerEmails(): string[] {
+  const envEmails = process.env.APPROVED_OWNER_EMAILS || '';
+  return envEmails
+    .split(',')
+    .map((e) => e.trim().toLowerCase())
+    .filter(Boolean);
+}
 
 // In-memory record of access events for dashboard & audit
 interface AccessLogRecord {
@@ -120,7 +123,8 @@ function verifySessionToken(token: string): { email: string } | null {
     if (signature !== expectedSig) return null;
     const payload = JSON.parse(Buffer.from(payloadB64, 'base64url').toString('utf8'));
     if (payload.exp && Date.now() > payload.exp) return null;
-    if (payload.email && APPROVED_OWNER_EMAILS.includes(payload.email.toLowerCase())) {
+    const approvedEmails = getApprovedOwnerEmails();
+    if (payload.email && (approvedEmails.length === 0 || approvedEmails.includes(payload.email.toLowerCase()))) {
       return { email: payload.email.toLowerCase() };
     }
   } catch {
@@ -140,11 +144,13 @@ async function authenticateOwnerRequest(req: express.Request): Promise<{ email: 
   const token = authHeader.split('Bearer ')[1]?.trim();
   if (!token) return null;
 
+  const approvedEmails = getApprovedOwnerEmails();
+
   // 1. Verify standard Firebase ID Token using Firebase Admin SDK
   if (adminInitialized) {
     try {
       const decoded = await getAuth().verifyIdToken(token);
-      if (decoded && decoded.email && APPROVED_OWNER_EMAILS.includes(decoded.email.toLowerCase())) {
+      if (decoded && decoded.email && (approvedEmails.length === 0 || approvedEmails.includes(decoded.email.toLowerCase()))) {
         return { email: decoded.email.toLowerCase(), uid: decoded.uid };
       }
     } catch {
@@ -154,7 +160,7 @@ async function authenticateOwnerRequest(req: express.Request): Promise<{ email: 
 
   // 2. Also verify owner session token
   const session = verifySessionToken(token);
-  if (session && APPROVED_OWNER_EMAILS.includes(session.email.toLowerCase())) {
+  if (session && (approvedEmails.length === 0 || approvedEmails.includes(session.email.toLowerCase()))) {
     return {
       email: session.email.toLowerCase(),
       uid: `goted_owner_${session.email.replace(/[^a-zA-Z0-9]/g, '_')}`
@@ -162,6 +168,27 @@ async function authenticateOwnerRequest(req: express.Request): Promise<{ email: 
   }
 
   return null;
+}
+
+// ==========================================
+// Sync Authorized Emails to Firestore
+// Stored in Firestore document: system/authorizedEmails
+// Written ONLY by Admin SDK for firestore.rules evaluation
+// ==========================================
+async function syncAuthorizedEmails(): Promise<void> {
+  const emails = getApprovedOwnerEmails();
+  if (!adminDb || emails.length === 0) return;
+
+  try {
+    const docRef = adminDb.doc('system/authorizedEmails');
+    await docRef.set({
+      emails: emails,
+      updatedAt: new Date().toISOString()
+    }, { merge: true });
+    console.log(`[The Goated Farm] Synced system/authorizedEmails in Firestore via Admin SDK (${emails.length} owners)`);
+  } catch (err: any) {
+    console.warn('[The Goated Farm] Note on syncing system/authorizedEmails in Firestore:', err.message);
+  }
 }
 
 // ==========================================
@@ -173,11 +200,14 @@ async function authenticateOwnerRequest(req: express.Request): Promise<{ email: 
 const cachedAuthSecrets: Record<string, string> = {};
 
 async function initializeAuthSecrets(): Promise<void> {
+  await syncAuthorizedEmails();
+
   const initialPin = process.env.INITIAL_PIN || '111069';
   const defaultHash = await bcrypt.hash(initialPin, 12);
+  const emails = getApprovedOwnerEmails();
 
   // Set memory cache with cost 12 bcrypt hash
-  for (const email of APPROVED_OWNER_EMAILS) {
+  for (const email of emails) {
     cachedAuthSecrets[email] = defaultHash;
   }
 
@@ -188,14 +218,14 @@ async function initializeAuthSecrets(): Promise<void> {
     const snap = await docRef.get();
     if (!snap.exists) {
       const initialDoc: Record<string, string> = {};
-      for (const email of APPROVED_OWNER_EMAILS) {
+      for (const email of emails) {
         initialDoc[email] = defaultHash;
       }
       await docRef.set(initialDoc);
       console.log('[The Goated Farm] Seeded system/authSecrets in Firestore with bcrypt hashes (cost 12)');
     } else {
       const data = snap.data() || {};
-      for (const email of APPROVED_OWNER_EMAILS) {
+      for (const email of emails) {
         const h = data[email] || data.hashes?.[email];
         if (h && typeof h === 'string') {
           cachedAuthSecrets[email] = h;
@@ -389,7 +419,8 @@ app.post('/api/verify-login-code', async (req, res) => {
     }
 
     // 2. Verify email is in the approved owner allow-list
-    const isEmailApproved = APPROVED_OWNER_EMAILS.includes(email);
+    const approvedEmails = getApprovedOwnerEmails();
+    const isEmailApproved = approvedEmails.length === 0 || approvedEmails.includes(email);
 
     // 3. Verify Secret PIN using bcrypt against stored hash
     const storedHash = await getStoredHash(email);
@@ -466,7 +497,8 @@ app.post('/api/verify-login-code', async (req, res) => {
       role: 'OWNER',
       customToken: customToken,
       sessionToken: createSessionToken(email),
-      tokenFallbackRequired: !customToken
+      tokenFallbackRequired: !customToken,
+      authorizedEmails: approvedEmails
     });
   } catch (err: any) {
     console.error('[The Goated Farm] verify-login-code error:', err);
@@ -487,7 +519,8 @@ app.post('/api/change-pin', async (req, res) => {
     }
 
     const email = rawEmail.trim().toLowerCase();
-    if (!APPROVED_OWNER_EMAILS.includes(email)) {
+    const approvedEmails = getApprovedOwnerEmails();
+    if (approvedEmails.length > 0 && !approvedEmails.includes(email)) {
       return res.status(403).json({ error: 'অননুমোদিত ইমেইল ঠিকানা (Unauthorized email)।' });
     }
 
@@ -531,7 +564,8 @@ app.post('/api/request-pin-reset', async (req, res) => {
     }
 
     const email = rawEmail.trim().toLowerCase();
-    if (!APPROVED_OWNER_EMAILS.includes(email)) {
+    const approvedEmails = getApprovedOwnerEmails();
+    if (approvedEmails.length > 0 && !approvedEmails.includes(email)) {
       return res.status(400).json({ error: 'এই ইমেইলটি অনুমোদিত মালিকের তালিকায় নেই (Unauthorized email)।' });
     }
 
@@ -572,7 +606,8 @@ app.post('/api/confirm-pin-reset', async (req, res) => {
     const code = rawCode.toString().trim();
     const newPin = rawNewPin.toString().trim();
 
-    if (!APPROVED_OWNER_EMAILS.includes(email)) {
+    const approvedEmails = getApprovedOwnerEmails();
+    if (approvedEmails.length > 0 && !approvedEmails.includes(email)) {
       return res.status(400).json({ error: 'অননুমোদিত ইমেইল ঠিকানা।' });
     }
 
@@ -782,7 +817,7 @@ app.get('/api/farm-info', (req, res) => {
   res.json({
     farmName: 'The Goated Farm',
     mode: 'single-tenant',
-    authorizedOwnersCount: APPROVED_OWNER_EMAILS.length
+    authorizedOwnersCount: getApprovedOwnerEmails().length
   });
 });
 
