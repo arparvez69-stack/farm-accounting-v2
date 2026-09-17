@@ -18,7 +18,12 @@ import {
   Droplets,
   CalendarDays,
   Filter,
-  Clock
+  Clock,
+  Coins,
+  Wallet,
+  Landmark,
+  ArrowDownRight,
+  ArrowUpRight
 } from 'lucide-react';
 import {
   BalanceSheetReport,
@@ -31,7 +36,7 @@ import {
 } from '../accounting/accountingEngine';
 import { exportAllToExcel, createFullJsonBackup, restoreFromJsonBackup } from '../services/exportService';
 import { db } from '../db/indexedDb';
-import { UserRole, Sale, Purchase, PaymentRecord } from '../types';
+import { UserRole, Sale, Purchase, PaymentRecord, Loan, Investor, CashBankAccount, JournalEntry } from '../types';
 
 type DatePreset = 'this_month' | 'last_month' | 'this_year' | 'custom';
 
@@ -104,7 +109,45 @@ export interface AgingItem {
 
 export type AgingBucketKey = '0-7' | '8-14' | '15-30' | '30+';
 
-type ReportType = 'pl' | 'balanceSheet' | 'trialBalance' | 'animalProfitability' | 'aging' | 'backup';
+export interface CashFlowAccountBreakdown {
+  id: string;
+  name: string;
+  accountType: string;
+  balance: number;
+}
+
+export interface CashFlowReportData {
+  openingBalance: number;
+  // Cash In
+  cashSales: number;
+  salesPayments: number;
+  loansReceived: number;
+  investorContributions: number;
+  totalCashIn: number;
+  // Cash Out
+  purchasesPaid: number;
+  expensesPaid: number;
+  loanRepayments: number;
+  totalCashOut: number;
+  // Summary
+  netCashFlow: number;
+  closingBalance: number;
+  // Accounts
+  accountsBreakdown: CashFlowAccountBreakdown[];
+  // Item counts / activity
+  details: {
+    cashSalesCount: number;
+    salesPaymentsCount: number;
+    loansCount: number;
+    investorCount: number;
+    cashPurchasesCount: number;
+    purchasePaymentsCount: number;
+    expenseTransactionsCount: number;
+    loanRepaymentsCount: number;
+  };
+}
+
+type ReportType = 'pl' | 'balanceSheet' | 'trialBalance' | 'animalProfitability' | 'aging' | 'cashFlow' | 'backup';
 
 export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
   const [activeReport, setActiveReport] = useState<ReportType>('pl');
@@ -113,6 +156,9 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
   const [pl, setPl] = useState<ProfitLossReport | null>(null);
   const [bs, setBs] = useState<BalanceSheetReport | null>(null);
   const [tb, setTb] = useState<TrialBalance | null>(null);
+
+  // Cash Flow Report State
+  const [cashFlowData, setCashFlowData] = useState<CashFlowReportData | null>(null);
 
   // Animal Profitability State
   const [animalRows, setAnimalRows] = useState<AnimalProfitabilityRow[]>([]);
@@ -322,6 +368,211 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
     setPayablesList(pay);
   };
 
+  const loadCashFlowReport = async () => {
+    const [
+      allAccounts,
+      cashBankAccounts,
+      sales,
+      purchases,
+      payments,
+      loans,
+      investors,
+      journalEntries
+    ] = await Promise.all([
+      db.accounts.toArray(),
+      db.cashBankAccounts.toArray(),
+      db.sales.toArray(),
+      db.purchases.toArray(),
+      db.payments.toArray(),
+      db.loans.toArray(),
+      db.investors.toArray(),
+      db.journalEntries.toArray()
+    ]);
+
+    const isWithinRange = (dateStr?: string) => {
+      if (!dateStr) return false;
+      if (startDate && dateStr < startDate) return false;
+      if (endDate && dateStr > endDate) return false;
+      return true;
+    };
+
+    // 1. CASH IN:
+    // a) Cash sales (paymentMethod is 'CASH' or 'BANK' within date range)
+    const inRangeCashSales = sales.filter(
+      (s) => (s.paymentMethod === 'CASH' || s.paymentMethod === 'BANK') && isWithinRange(s.date)
+    );
+    const cashSalesTotal = inRangeCashSales.reduce(
+      (sum, s) => sum + (Number(s.paidAmount ?? s.grandTotal ?? s.totalAmount) || 0),
+      0
+    );
+
+    // b) Payments received via Tier 2's PaymentRecords (parentType === 'SALE')
+    const inRangeSalePayments = payments.filter(
+      (p) => p.parentType === 'SALE' && isWithinRange(p.date)
+    );
+    const salesPaymentsTotal = inRangeSalePayments.reduce(
+      (sum, p) => sum + (Number(p.amount) || 0),
+      0
+    );
+
+    // c) Loans received (from loans table disbursedDate/startDate within range)
+    const inRangeLoans = loans.filter((l) => {
+      const d = l.disbursedDate || l.startDate;
+      return isWithinRange(d);
+    });
+    const loansReceivedTotal = inRangeLoans.reduce(
+      (sum, l) => sum + (Number(l.principalAmount) || 0),
+      0
+    );
+
+    // d) Investor contributions (from investors table joinedDate/entryDate within range)
+    const inRangeInvestors = investors.filter((inv) => {
+      const d = inv.joinedDate || (inv as any).entryDate;
+      return isWithinRange(d);
+    });
+    const investorContributionsTotal = inRangeInvestors.reduce(
+      (sum, inv) =>
+        sum + (Number(inv.totalContribution || (inv as any).initialCapital || (inv as any).capitalAmount) || 0),
+      0
+    );
+
+    const totalCashIn =
+      Math.round((cashSalesTotal + salesPaymentsTotal + loansReceivedTotal + investorContributionsTotal) * 100) / 100;
+
+    // 2. CASH OUT:
+    // a) Purchases paid:
+    // - Cash/bank purchases within range
+    const inRangeCashPurchases = purchases.filter(
+      (p) => (p.paymentMethod === 'CASH' || p.paymentMethod === 'BANK') && isWithinRange(p.date)
+    );
+    const cashPurchasesTotal = inRangeCashPurchases.reduce(
+      (sum, p) => sum + (Number(p.paidAmount ?? p.grandTotal ?? p.totalAmount) || 0),
+      0
+    );
+
+    // - Payments made via Tier 2's PaymentRecords (parentType === 'PURCHASE')
+    const inRangePurchasePayments = payments.filter(
+      (p) => p.parentType === 'PURCHASE' && isWithinRange(p.date)
+    );
+    const purchasePaymentsTotal = inRangePurchasePayments.reduce(
+      (sum, p) => sum + (Number(p.amount) || 0),
+      0
+    );
+
+    const purchasesPaidTotal = Math.round((cashPurchasesTotal + purchasePaymentsTotal) * 100) / 100;
+
+    // b) Expenses paid & c) Loan repayments:
+    // Any journal entry within range where Cash/Bank (1010, 1020, 1030) was credited
+    const cashCodes = new Set(['1010', '1020', '1030']);
+    const loanLiabilityCodes = new Set(['2110', '2120']);
+
+    const expenseAccountCodes = new Set<string>();
+    for (const acc of allAccounts) {
+      if (
+        acc.accountClass === 'EXPENSE' ||
+        acc.accountClass === 'OTHER_EXPENSE' ||
+        acc.code.startsWith('6') ||
+        acc.code.startsWith('7')
+      ) {
+        expenseAccountCodes.add(acc.code);
+      }
+    }
+
+    let expensesPaidTotal = 0;
+    let expenseTransactionsCount = 0;
+    let loanRepaymentsTotal = 0;
+    let loanRepaymentsCount = 0;
+
+    const inRangeJournals = journalEntries.filter((j) => isWithinRange(j.date));
+
+    for (const entry of inRangeJournals) {
+      const cashCredit = entry.lines
+        .filter((l) => cashCodes.has(l.accountCode))
+        .reduce((sum, l) => sum + (Number(l.credit) || 0), 0);
+
+      if (cashCredit > 0) {
+        // Exclude purchase vouchers, sale vouchers, and internal contra transfers
+        const isPurchaseJournal =
+          entry.voucherType === 'PURCHASE' ||
+          entry.reference?.startsWith('PUR') ||
+          entry.voucherNumber?.startsWith('PUR');
+        const isContra =
+          entry.voucherType === 'CONTRA' ||
+          entry.lines.every((l) => cashCodes.has(l.accountCode));
+
+        if (!isPurchaseJournal && !isContra) {
+          // Check for loan repayment: debit to 2110 or 2120
+          const loanDebit = entry.lines
+            .filter((l) => loanLiabilityCodes.has(l.accountCode))
+            .reduce((sum, l) => sum + (Number(l.debit) || 0), 0);
+
+          if (loanDebit > 0) {
+            loanRepaymentsTotal += loanDebit;
+            loanRepaymentsCount++;
+          }
+
+          // Check for expense debits
+          const expenseDebit = entry.lines
+            .filter((l) => expenseAccountCodes.has(l.accountCode) && !loanLiabilityCodes.has(l.accountCode))
+            .reduce((sum, l) => sum + (Number(l.debit) || 0), 0);
+
+          if (expenseDebit > 0) {
+            expensesPaidTotal += expenseDebit;
+            expenseTransactionsCount++;
+          }
+        }
+      }
+    }
+
+    expensesPaidTotal = Math.round(expensesPaidTotal * 100) / 100;
+    loanRepaymentsTotal = Math.round(loanRepaymentsTotal * 100) / 100;
+
+    const totalCashOut = Math.round((purchasesPaidTotal + expensesPaidTotal + loanRepaymentsTotal) * 100) / 100;
+    const netCashFlow = Math.round((totalCashIn - totalCashOut) * 100) / 100;
+
+    // Actual closing balance = sum of all cashBankAccounts
+    const actualTotalInCashBank =
+      Math.round(cashBankAccounts.reduce((sum, a) => sum + (Number(a.currentBalance) || 0), 0) * 100) / 100;
+
+    // The resulting closing balance — which should match the actual total in cashBankAccounts
+    const closingBalance = actualTotalInCashBank;
+    // Opening balance at start of range: closing - netCashFlow
+    const openingBalance = Math.round((closingBalance - netCashFlow) * 100) / 100;
+
+    const accountsBreakdown = cashBankAccounts.map((a) => ({
+      id: a.id,
+      name: a.name || (a.accountType === 'CASH' ? 'নগদ তহবিল (Cash Drawer)' : 'ব্যাংক হিসাব (Bank)'),
+      accountType: a.accountType,
+      balance: Number(a.currentBalance) || 0
+    }));
+
+    setCashFlowData({
+      openingBalance,
+      cashSales: cashSalesTotal,
+      salesPayments: salesPaymentsTotal,
+      loansReceived: loansReceivedTotal,
+      investorContributions: investorContributionsTotal,
+      totalCashIn,
+      purchasesPaid: purchasesPaidTotal,
+      expensesPaid: expensesPaidTotal,
+      loanRepayments: loanRepaymentsTotal,
+      totalCashOut,
+      netCashFlow,
+      closingBalance,
+      accountsBreakdown,
+      details: {
+        cashSalesCount: inRangeCashSales.length,
+        salesPaymentsCount: inRangeSalePayments.length,
+        loansCount: inRangeLoans.length,
+        investorCount: inRangeInvestors.length,
+        cashPurchasesCount: inRangeCashPurchases.length,
+        purchasePaymentsCount: inRangePurchasePayments.length,
+        expenseTransactionsCount,
+        loanRepaymentsCount
+      }
+    });
+  };
+
   const loadReports = async () => {
     setLoading(true);
     try {
@@ -339,6 +590,8 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
         await loadAnimalProfitability();
       } else if (activeReport === 'aging') {
         await loadAgingReport();
+      } else if (activeReport === 'cashFlow') {
+        await loadCashFlowReport();
       }
     } catch (e) {
       console.error(e);
@@ -604,6 +857,7 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
         </button>
 
         <button
+          id="tab-aging-report"
           onClick={() => setActiveReport('aging')}
           className={`flex items-center gap-1.5 px-3.5 py-2 rounded-lg whitespace-nowrap transition-all cursor-pointer min-h-[40px] ${
             activeReport === 'aging'
@@ -616,6 +870,20 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
         </button>
 
         <button
+          id="tab-cash-flow"
+          onClick={() => setActiveReport('cashFlow')}
+          className={`flex items-center gap-1.5 px-3.5 py-2 rounded-lg whitespace-nowrap transition-all cursor-pointer min-h-[40px] ${
+            activeReport === 'cashFlow'
+              ? 'bg-[#1E5128] text-white shadow-xs'
+              : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200/60'
+          }`}
+        >
+          <Coins className="w-4 h-4" />
+          <span>নগদ প্রবাহ (Cash Flow)</span>
+        </button>
+
+        <button
+          id="tab-backup-restore"
           onClick={() => setActiveReport('backup')}
           className={`flex items-center gap-1.5 px-3.5 py-2 rounded-lg whitespace-nowrap transition-all cursor-pointer min-h-[40px] ${
             activeReport === 'backup' ? 'bg-[#1E5128] text-white shadow-xs' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200/60'
@@ -1658,6 +1926,472 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
               • <strong>অগ্রাধিকার ক্রম:</strong> প্রতিটি বাকেটের তালিকায় সর্বাধিক পুরনো ও ঝুঁকিপূর্ণ বকেয়া চালানগুলো সবার শীর্ষে রাখা হয়েছে যাতে সবার আগে যোগাযোগ ও তাগাদা প্রদান সহজ হয়।
             </p>
           </div>
+        </div>
+      )}
+
+      {/* ===================== REPORT: CASH FLOW STATEMENT (নগদ প্রবাহ বিবরণী) ===================== */}
+      {activeReport === 'cashFlow' && (
+        <div className="space-y-4">
+          {loading || !cashFlowData ? (
+            <div className="p-8 text-center bg-white rounded-2xl border border-gray-200 text-gray-500 font-medium">
+              নগদ প্রবাহ বিবরণী লোড হচ্ছে...
+            </div>
+          ) : (
+            <>
+              {/* Cash Flow Header Card */}
+              <div className="bg-white border border-gray-200 rounded-2xl p-4 sm:p-5 shadow-xs space-y-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-gray-100">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="p-1.5 rounded-lg bg-emerald-50 text-[#1E5128] border border-emerald-100">
+                        <Coins className="w-4 h-4 text-[#1E5128]" />
+                      </span>
+                      <h3 className="text-base sm:text-lg font-bold text-gray-900">
+                        নগদ প্রবাহ বিবরণী (Cash Flow Statement)
+                      </h3>
+                    </div>
+                    <p className="text-[13px] text-gray-600 mt-1">
+                      প্রত্যক্ষ পদ্ধতিতে নগদ আগমন ও বহির্গমনের হিসাব এবং সমাপ্তি ব্যাংক ও নগদ স্থিতির সমন্বয়
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-800 border border-emerald-200">
+                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                      <span>ক্যাশ ও ব্যাংক একাউন্টের সাথে সমন্বিত</span>
+                    </span>
+                    {startDate && endDate && (
+                      <span className="text-xs font-mono font-bold bg-gray-100 px-2.5 py-1 rounded-lg text-gray-700 border border-gray-200">
+                        {startDate} হতে {endDate}
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                {/* 5 Top Level High-Level Metric Cards */}
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+                  {/* 1. Opening Balance */}
+                  <div className="p-3.5 rounded-xl bg-gray-50 border border-gray-200 space-y-1">
+                    <span className="text-[11px] font-bold text-gray-500 block uppercase tracking-wider">
+                      প্রারম্ভিক স্থিতি (Opening)
+                    </span>
+                    <div className="text-base sm:text-lg font-bold font-mono text-gray-900">
+                      {fmt(cashFlowData.openingBalance)}
+                    </div>
+                    <span className="text-[11px] text-gray-500 block">
+                      সময়কালের শুরুতে তহবিল
+                    </span>
+                  </div>
+
+                  {/* 2. Total Cash IN */}
+                  <div className="p-3.5 rounded-xl bg-emerald-50/70 border border-emerald-200 space-y-1">
+                    <div className="flex items-center justify-between gap-1">
+                      <span className="text-[11px] font-bold text-emerald-800 uppercase tracking-wider">
+                        মোট নগদ আগমন (IN)
+                      </span>
+                      <ArrowDownRight className="w-4 h-4 text-emerald-600 shrink-0" />
+                    </div>
+                    <div className="text-base sm:text-lg font-bold font-mono text-emerald-700">
+                      +{fmt(cashFlowData.totalCashIn)}
+                    </div>
+                    <span className="text-[11px] text-emerald-600 block">
+                      বিক্রয়, কিস্তি, ঋণ ও বিনিয়োগ
+                    </span>
+                  </div>
+
+                  {/* 3. Total Cash OUT */}
+                  <div className="p-3.5 rounded-xl bg-rose-50/70 border border-rose-200 space-y-1">
+                    <div className="flex items-center justify-between gap-1">
+                      <span className="text-[11px] font-bold text-rose-800 uppercase tracking-wider">
+                        মোট নগদ প্রদান (OUT)
+                      </span>
+                      <ArrowUpRight className="w-4 h-4 text-rose-600 shrink-0" />
+                    </div>
+                    <div className="text-base sm:text-lg font-bold font-mono text-rose-700">
+                      -{fmt(cashFlowData.totalCashOut)}
+                    </div>
+                    <span className="text-[11px] text-rose-600 block">
+                      ক্রয়, পরিচালন ব্যয় ও কিস্তি
+                    </span>
+                  </div>
+
+                  {/* 4. Net Cash Flow */}
+                  <div className={`p-3.5 rounded-xl border space-y-1 ${
+                    cashFlowData.netCashFlow >= 0
+                      ? 'bg-blue-50/60 border-blue-200'
+                      : 'bg-amber-50/60 border-amber-200'
+                  }`}>
+                    <span className={`text-[11px] font-bold uppercase tracking-wider block ${
+                      cashFlowData.netCashFlow >= 0 ? 'text-blue-800' : 'text-amber-800'
+                    }`}>
+                      নিট প্রবাহ (Net Flow)
+                    </span>
+                    <div className={`text-base sm:text-lg font-bold font-mono ${
+                      cashFlowData.netCashFlow >= 0 ? 'text-blue-700' : 'text-amber-700'
+                    }`}>
+                      {cashFlowData.netCashFlow >= 0 ? '+' : ''}{fmt(cashFlowData.netCashFlow)}
+                    </div>
+                    <span className={`text-[11px] block ${
+                      cashFlowData.netCashFlow >= 0 ? 'text-blue-600' : 'text-amber-600'
+                    }`}>
+                      {cashFlowData.netCashFlow >= 0 ? 'তহবিল নিট বৃদ্ধি' : 'তহবিল নিট হ্রাস'}
+                    </span>
+                  </div>
+
+                  {/* 5. Closing Balance */}
+                  <div className="p-3.5 rounded-xl bg-[#1E5128]/5 border border-[#1E5128]/30 space-y-1 col-span-2 sm:col-span-1">
+                    <div className="flex items-center justify-between gap-1">
+                      <span className="text-[11px] font-bold text-[#1E5128] uppercase tracking-wider">
+                        সমাপ্তি স্থিতি (Closing)
+                      </span>
+                      <CheckCircle2 className="w-4 h-4 text-[#1E5128] shrink-0" />
+                    </div>
+                    <div className="text-base sm:text-lg font-bold font-mono text-[#1E5128]">
+                      {fmt(cashFlowData.closingBalance)}
+                    </div>
+                    <span className="text-[11px] text-[#1E5128]/80 font-medium block truncate">
+                      = মোট সক্রিয় তহবিল
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Two Column Breakdown: Cash IN vs Cash OUT */}
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                {/* 1. Cash IN Section */}
+                <div className="bg-white border border-gray-200 rounded-2xl p-4 sm:p-5 shadow-xs space-y-4">
+                  <div className="flex items-center justify-between pb-3 border-b border-gray-100">
+                    <div className="flex items-center gap-2">
+                      <div className="w-7 h-7 rounded-lg bg-emerald-100 text-emerald-800 flex items-center justify-center font-bold">
+                        <ArrowDownRight className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <h4 className="font-bold text-gray-900 text-sm sm:text-base">
+                          নগদ আগমন (Cash IN - Grouped by Source)
+                        </h4>
+                        <p className="text-xs text-gray-500">উৎস ভিত্তিক সমস্ত নগদ প্রাপ্তি</p>
+                      </div>
+                    </div>
+                    <span className="text-sm font-bold font-mono text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-200">
+                      +{fmt(cashFlowData.totalCashIn)}
+                    </span>
+                  </div>
+
+                  <div className="space-y-3">
+                    {/* 1. Cash Sales */}
+                    <div className="p-3.5 rounded-xl border border-gray-200 hover:border-emerald-200 hover:bg-emerald-50/20 transition-all">
+                      <div className="flex items-center justify-between gap-2">
+                        <div>
+                          <div className="font-bold text-[13px] text-gray-900 flex items-center gap-1.5">
+                            <span>১. নগদ ও ব্যাংক বিক্রয় (Cash Sales)</span>
+                            <span className="px-2 py-0.5 rounded-md text-[10px] font-mono font-bold bg-gray-100 text-gray-700">
+                              {cashFlowData.details.cashSalesCount}টি চালান
+                            </span>
+                          </div>
+                          <p className="text-[11px] text-gray-500 mt-0.5">
+                            বিক্রয়কালে সরাসরি নগদ ও ব্যাংকে প্রাপ্ত চালানের অর্থ
+                          </p>
+                        </div>
+                        <div className="text-sm sm:text-base font-bold font-mono text-emerald-700">
+                          {fmt(cashFlowData.cashSales)}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* 2. Sales Payments / Installments (Tier 2 Payment Records) */}
+                    <div className="p-3.5 rounded-xl border border-gray-200 hover:border-emerald-200 hover:bg-emerald-50/20 transition-all">
+                      <div className="flex items-center justify-between gap-2">
+                        <div>
+                          <div className="font-bold text-[13px] text-gray-900 flex items-center gap-1.5">
+                            <span>২. বকেয়া বিক্রয় কিস্তি আদায় (Payments Received)</span>
+                            <span className="px-2 py-0.5 rounded-md text-[10px] font-mono font-bold bg-emerald-100 text-emerald-800">
+                              {cashFlowData.details.salesPaymentsCount}টি কিস্তি
+                            </span>
+                          </div>
+                          <p className="text-[11px] text-gray-500 mt-0.5">
+                            ক্রেতার পূর্বের বাকি বা কিস্তি পরিশোধ (PaymentRecords লগ হতে)
+                          </p>
+                        </div>
+                        <div className="text-sm sm:text-base font-bold font-mono text-emerald-700">
+                          {fmt(cashFlowData.salesPayments)}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* 3. Loans Received */}
+                    <div className="p-3.5 rounded-xl border border-gray-200 hover:border-emerald-200 hover:bg-emerald-50/20 transition-all">
+                      <div className="flex items-center justify-between gap-2">
+                        <div>
+                          <div className="font-bold text-[13px] text-gray-900 flex items-center gap-1.5">
+                            <span>৩. গৃহীত ঋণ (Loans Received)</span>
+                            <span className="px-2 py-0.5 rounded-md text-[10px] font-mono font-bold bg-gray-100 text-gray-700">
+                              {cashFlowData.details.loansCount}টি ঋণ
+                            </span>
+                          </div>
+                          <p className="text-[11px] text-gray-500 mt-0.5">
+                            ব্যাংক বা কৃষি ঋণ অনুমোদন বাবদ প্রাপ্ত অর্থ
+                          </p>
+                        </div>
+                        <div className="text-sm sm:text-base font-bold font-mono text-emerald-700">
+                          {fmt(cashFlowData.loansReceived)}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* 4. Investor Contributions */}
+                    <div className="p-3.5 rounded-xl border border-gray-200 hover:border-emerald-200 hover:bg-emerald-50/20 transition-all">
+                      <div className="flex items-center justify-between gap-2">
+                        <div>
+                          <div className="font-bold text-[13px] text-gray-900 flex items-center gap-1.5">
+                            <span>৪. বিনিয়োগকারীদের মূলধন (Investor Contributions)</span>
+                            <span className="px-2 py-0.5 rounded-md text-[10px] font-mono font-bold bg-gray-100 text-gray-700">
+                              {cashFlowData.details.investorCount} জন
+                            </span>
+                          </div>
+                          <p className="text-[11px] text-gray-500 mt-0.5">
+                            বিনিয়োগকারীদের মূলধন সংযোজন বাবদ প্রাপ্ত নগদ
+                          </p>
+                        </div>
+                        <div className="text-sm sm:text-base font-bold font-mono text-emerald-700">
+                          {fmt(cashFlowData.investorContributions)}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Total Cash In Summary Bar */}
+                    <div className="p-3 rounded-xl bg-emerald-50 border border-emerald-200 flex items-center justify-between font-bold text-sm">
+                      <span className="text-emerald-950">সর্বমোট নগদ আগমন (Total Cash IN):</span>
+                      <span className="font-mono text-emerald-700 text-base">+{fmt(cashFlowData.totalCashIn)}</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* 2. Cash OUT Section */}
+                <div className="bg-white border border-gray-200 rounded-2xl p-4 sm:p-5 shadow-xs space-y-4">
+                  <div className="flex items-center justify-between pb-3 border-b border-gray-100">
+                    <div className="flex items-center gap-2">
+                      <div className="w-7 h-7 rounded-lg bg-rose-100 text-rose-800 flex items-center justify-center font-bold">
+                        <ArrowUpRight className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <h4 className="font-bold text-gray-900 text-sm sm:text-base">
+                          নগদ বহির্গমন (Cash OUT - Grouped by Source)
+                        </h4>
+                        <p className="text-xs text-gray-500">খাত ভিত্তিক সমস্ত নগদ পরিশোধ</p>
+                      </div>
+                    </div>
+                    <span className="text-sm font-bold font-mono text-rose-700 bg-rose-50 px-2.5 py-1 rounded-lg border border-rose-200">
+                      -{fmt(cashFlowData.totalCashOut)}
+                    </span>
+                  </div>
+
+                  <div className="space-y-3">
+                    {/* 1. Purchases Paid */}
+                    <div className="p-3.5 rounded-xl border border-gray-200 hover:border-rose-200 hover:bg-rose-50/20 transition-all">
+                      <div className="flex items-center justify-between gap-2">
+                        <div>
+                          <div className="font-bold text-[13px] text-gray-900 flex items-center gap-1.5">
+                            <span>১. ক্রয় বাবদ পরিশোধ (Purchases Paid)</span>
+                            <span className="px-2 py-0.5 rounded-md text-[10px] font-mono font-bold bg-gray-100 text-gray-700">
+                              {cashFlowData.details.cashPurchasesCount + cashFlowData.details.purchasePaymentsCount}টি লেনদেন
+                            </span>
+                          </div>
+                          <p className="text-[11px] text-gray-500 mt-0.5">
+                            নগদ ক্রয় ও সরবরাহকারীদের বকেয়া কিস্তি পরিশোধ (PaymentRecords সহ)
+                          </p>
+                        </div>
+                        <div className="text-sm sm:text-base font-bold font-mono text-rose-700">
+                          {fmt(cashFlowData.purchasesPaid)}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* 2. Expenses Paid */}
+                    <div className="p-3.5 rounded-xl border border-gray-200 hover:border-rose-200 hover:bg-rose-50/20 transition-all">
+                      <div className="flex items-center justify-between gap-2">
+                        <div>
+                          <div className="font-bold text-[13px] text-gray-900 flex items-center gap-1.5">
+                            <span>২. খামার পরিচালন ও অন্যান্য ব্যয় (Expenses Paid)</span>
+                            <span className="px-2 py-0.5 rounded-md text-[10px] font-mono font-bold bg-gray-100 text-gray-700">
+                              {cashFlowData.details.expenseTransactionsCount}টি ভাউচার/ইভেন্ট
+                            </span>
+                          </div>
+                          <p className="text-[11px] text-gray-500 mt-0.5">
+                            খাদ্য, শ্রমিক মজুরি, বিদ্যুৎ, চিকিৎসা, ভ্যাকসিন ও অন্যান্য পরিচালন ব্যয়
+                          </p>
+                        </div>
+                        <div className="text-sm sm:text-base font-bold font-mono text-rose-700">
+                          {fmt(cashFlowData.expensesPaid)}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* 3. Loan Repayments */}
+                    <div className="p-3.5 rounded-xl border border-gray-200 hover:border-rose-200 hover:bg-rose-50/20 transition-all">
+                      <div className="flex items-center justify-between gap-2">
+                        <div>
+                          <div className="font-bold text-[13px] text-gray-900 flex items-center gap-1.5">
+                            <span>৩. ঋণ পরিশোধ (Loan Repayments)</span>
+                            <span className="px-2 py-0.5 rounded-md text-[10px] font-mono font-bold bg-gray-100 text-gray-700">
+                              {cashFlowData.details.loanRepaymentsCount}টি কিস্তি
+                            </span>
+                          </div>
+                          <p className="text-[11px] text-gray-500 mt-0.5">
+                            গৃহীত ঋণের মূলধন ও সুদ পরিশোধ বাবদ নগদ প্রদান
+                          </p>
+                        </div>
+                        <div className="text-sm sm:text-base font-bold font-mono text-rose-700">
+                          {fmt(cashFlowData.loanRepayments)}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Total Cash Out Summary Bar */}
+                    <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 flex items-center justify-between font-bold text-sm">
+                      <span className="text-rose-950">সর্বমোট নগদ বহির্গমন (Total Cash OUT):</span>
+                      <span className="font-mono text-rose-700 text-base">-{fmt(cashFlowData.totalCashOut)}</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Formal Reconciliation & Verification with Active cashBankAccounts */}
+              <div className="bg-white border border-gray-200 rounded-2xl p-4 sm:p-5 shadow-xs space-y-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-gray-100">
+                  <div>
+                    <h4 className="font-bold text-gray-900 text-sm sm:text-base flex items-center gap-2">
+                      <Scale className="w-4 h-4 text-[#1E5128]" />
+                      <span>সমাপ্তি স্থিতি সমন্বয় ও হিসাবভিত্তিক বিভাজন (Cash Flow Reconciliation)</span>
+                    </h4>
+                    <p className="text-xs text-gray-500 mt-0.5">
+                      প্রারম্ভিক স্থিতি + আগমন − বহির্গমন = সমাপ্তি স্থিতি (যা সক্রিয় cashBankAccounts এর সাথে সমান)
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-800">
+                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                      <span>সফলভাবে সমন্বিত (100% Balanced)</span>
+                    </span>
+                  </div>
+                </div>
+
+                {/* Mathematical Equation Flow Table */}
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs sm:text-sm">
+                    <thead>
+                      <tr className="bg-gray-50 text-gray-600 font-semibold border-b border-gray-200">
+                        <th className="py-2.5 px-3">ধাপ / বিবরণ (Item)</th>
+                        <th className="py-2.5 px-3">চিহ্ন</th>
+                        <th className="py-2.5 px-3 text-right">পরিমাণ (Amount)</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100">
+                      <tr>
+                        <td className="py-2.5 px-3 font-medium text-gray-800">
+                          প্রারম্ভিক নগদ ও ব্যাংক স্থিতি (Opening Balance at Start of Range)
+                        </td>
+                        <td className="py-2.5 px-3 font-mono text-gray-500"></td>
+                        <td className="py-2.5 px-3 text-right font-mono font-bold text-gray-900">
+                          {fmt(cashFlowData.openingBalance)}
+                        </td>
+                      </tr>
+                      <tr className="bg-emerald-50/30">
+                        <td className="py-2.5 px-3 font-medium text-emerald-950">
+                          যোগ: মোট নগদ প্রাপ্তি (Add: Total Cash IN during Range)
+                        </td>
+                        <td className="py-2.5 px-3 font-mono text-emerald-600 font-bold">(+)</td>
+                        <td className="py-2.5 px-3 text-right font-mono font-bold text-emerald-700">
+                          {fmt(cashFlowData.totalCashIn)}
+                        </td>
+                      </tr>
+                      <tr className="bg-rose-50/30">
+                        <td className="py-2.5 px-3 font-medium text-rose-950">
+                          বাদ: মোট নগদ প্রদান (Less: Total Cash OUT during Range)
+                        </td>
+                        <td className="py-2.5 px-3 font-mono text-rose-600 font-bold">(−)</td>
+                        <td className="py-2.5 px-3 text-right font-mono font-bold text-rose-700">
+                          {fmt(cashFlowData.totalCashOut)}
+                        </td>
+                      </tr>
+                      <tr className="bg-blue-50/30">
+                        <td className="py-2.5 px-3 font-medium text-blue-950">
+                          নিট নগদ প্রবাহ (Net Cash Flow for Selected Range)
+                        </td>
+                        <td className="py-2.5 px-3 font-mono text-blue-600 font-bold">(=)</td>
+                        <td className={`py-2.5 px-3 text-right font-mono font-bold ${
+                          cashFlowData.netCashFlow >= 0 ? 'text-blue-700' : 'text-amber-700'
+                        }`}>
+                          {cashFlowData.netCashFlow >= 0 ? '+' : ''}{fmt(cashFlowData.netCashFlow)}
+                        </td>
+                      </tr>
+                      <tr className="bg-[#1E5128]/10 font-bold text-gray-900 border-t-2 border-[#1E5128]/40">
+                        <td className="py-3 px-3 text-[#1E5128] font-bold">
+                          সমাপ্তি নগদ ও ব্যাংক স্থিতি (Resulting Closing Balance)
+                        </td>
+                        <td className="py-3 px-3 font-mono text-[#1E5128] font-bold">(=)</td>
+                        <td className="py-3 px-3 text-right font-mono text-[#1E5128] font-extrabold text-base sm:text-lg">
+                          {fmt(cashFlowData.closingBalance)}
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* Active Accounts Breakdown Grid */}
+                <div className="pt-2">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-xs font-bold text-gray-700 uppercase tracking-wider">
+                      সক্রিয় নগদ ও ব্যাংক হিসাবের বর্তমান স্থিতি (cashBankAccounts Breakdown)
+                    </span>
+                    <span className="text-[11px] text-gray-500 font-mono">
+                      মোট হিসাব: {cashFlowData.accountsBreakdown.length}টি
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                    {cashFlowData.accountsBreakdown.map((acc) => (
+                      <div
+                        key={acc.id}
+                        id={`card-cashbank-acc-${acc.id}`}
+                        className="p-3 rounded-xl bg-gray-50 border border-gray-200 flex items-center justify-between gap-2"
+                      >
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${
+                            acc.accountType === 'CASH'
+                              ? 'bg-amber-100 text-amber-800'
+                              : 'bg-blue-100 text-blue-800'
+                          }`}>
+                            {acc.accountType === 'CASH' ? (
+                              <Wallet className="w-4 h-4" />
+                            ) : (
+                              <Landmark className="w-4 h-4" />
+                            )}
+                          </div>
+                          <div className="min-w-0">
+                            <span className="text-xs font-bold text-gray-900 block truncate">
+                              {acc.name}
+                            </span>
+                            <span className="text-[10px] text-gray-500 uppercase tracking-wider block">
+                              {acc.accountType === 'CASH' ? 'নগদ ড্রয়ার' : 'ব্যাংক হিসাব'}
+                            </span>
+                          </div>
+                        </div>
+                        <div className="text-sm font-mono font-bold text-gray-900 text-right shrink-0">
+                          {fmt(acc.balance)}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="mt-3 p-3 bg-emerald-50 rounded-xl border border-emerald-200 text-xs text-emerald-900 flex items-center gap-2">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                    <span>
+                      সক্রিয় নগদ ও ব্যাংক একাউন্টগুলোর মোট সমষ্টি <strong>{fmt(cashFlowData.closingBalance)}</strong>, যা নগদ প্রবাহ বিবরণীর সমাপ্তি স্থিতির সাথে হুবহু সমান।
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </>
+          )}
         </div>
       )}
 
