@@ -21,6 +21,7 @@ import {
 } from 'lucide-react';
 import {
   BalanceSheetReport,
+  DateRangeFilter,
   generateBalanceSheet,
   generateProfitLoss,
   generateTrialBalance,
@@ -30,6 +31,35 @@ import {
 import { exportAllToExcel, createFullJsonBackup, restoreFromJsonBackup } from '../services/exportService';
 import { db } from '../db/indexedDb';
 import { UserRole } from '../types';
+
+type DatePreset = 'this_month' | 'last_month' | 'this_year' | 'custom';
+
+function formatYMD(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+function getPresetDates(preset: 'this_month' | 'last_month' | 'this_year'): { startDate: string; endDate: string } {
+  const now = new Date();
+  if (preset === 'this_month') {
+    const start = new Date(now.getFullYear(), now.getMonth(), 1);
+    const end = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+    return { startDate: formatYMD(start), endDate: formatYMD(end) };
+  }
+  if (preset === 'last_month') {
+    const start = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const end = new Date(now.getFullYear(), now.getMonth(), 0);
+    return { startDate: formatYMD(start), endDate: formatYMD(end) };
+  }
+  if (preset === 'this_year') {
+    const start = new Date(now.getFullYear(), 0, 1);
+    const end = new Date(now.getFullYear(), 11, 31);
+    return { startDate: formatYMD(start), endDate: formatYMD(end) };
+  }
+  return { startDate: '', endDate: '' };
+}
 
 interface Props {
   role: UserRole;
@@ -80,9 +110,31 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
   const [restoreStatus, setRestoreStatus] = useState<{ success: boolean; message: string } | null>(null);
   const [isExporting, setIsExporting] = useState(false);
 
+  // Date Range Filtering State (Defaults to 'This Month' on first load)
+  const [datePreset, setDatePreset] = useState<DatePreset>('this_month');
+  const [startDate, setStartDate] = useState<string>(() => getPresetDates('this_month').startDate);
+  const [endDate, setEndDate] = useState<string>(() => getPresetDates('this_month').endDate);
+
+  const handleSelectPreset = (preset: 'this_month' | 'last_month' | 'this_year') => {
+    const dates = getPresetDates(preset);
+    setDatePreset(preset);
+    setStartDate(dates.startDate);
+    setEndDate(dates.endDate);
+  };
+
+  const handleCustomStartDateChange = (val: string) => {
+    setDatePreset('custom');
+    setStartDate(val);
+  };
+
+  const handleCustomEndDateChange = (val: string) => {
+    setDatePreset('custom');
+    setEndDate(val);
+  };
+
   useEffect(() => {
     loadReports();
-  }, [activeReport]);
+  }, [activeReport, startDate, endDate]);
 
   const loadAnimalProfitability = async () => {
     const [allAnimals, allEvents, allSales] = await Promise.all([
@@ -176,14 +228,15 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
   const loadReports = async () => {
     setLoading(true);
     try {
+      const dateFilter: DateRangeFilter | undefined = (startDate || endDate) ? { startDate, endDate } : undefined;
       if (activeReport === 'pl') {
-        const res = await generateProfitLoss();
+        const res = await generateProfitLoss(dateFilter);
         setPl(res);
       } else if (activeReport === 'balanceSheet') {
-        const res = await generateBalanceSheet();
+        const res = await generateBalanceSheet(dateFilter);
         setBs(res);
       } else if (activeReport === 'trialBalance') {
-        const res = await generateTrialBalance();
+        const res = await generateTrialBalance(dateFilter);
         setTb(res);
       } else if (activeReport === 'animalProfitability') {
         await loadAnimalProfitability();
@@ -375,6 +428,101 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
         </button>
       </div>
 
+      {/* Date Range Control (Visible for Financial Reports: pl, balanceSheet, trialBalance, animalProfitability) */}
+      {activeReport !== 'backup' && (
+        <div className="p-4 rounded-2xl bg-white border border-gray-200 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-3">
+          <div className="flex items-center gap-2.5">
+            <div className="w-9 h-9 rounded-xl bg-emerald-50 text-[#1E5128] border border-emerald-100 flex items-center justify-center shrink-0">
+              <CalendarDays className="w-5 h-5 text-[#1E5128]" />
+            </div>
+            <div>
+              <span className="text-[11px] font-bold text-gray-500 uppercase tracking-wider block">সময়সীমা নির্বাচন (Report Date Range)</span>
+              <div className="text-[13px] font-bold text-gray-900 flex items-center gap-1.5 flex-wrap">
+                <span>
+                  {datePreset === 'this_month' && 'এই মাস (This Month)'}
+                  {datePreset === 'last_month' && 'গত মাস (Last Month)'}
+                  {datePreset === 'this_year' && 'এই বছর (This Year)'}
+                  {datePreset === 'custom' && 'কাস্টম সময়কাল (Custom Range)'}
+                </span>
+                {startDate && endDate && (
+                  <span className="text-gray-600 font-mono text-xs font-semibold bg-gray-100 px-2 py-0.5 rounded-md border border-gray-200">
+                    {startDate} হতে {endDate}
+                  </span>
+                )}
+              </div>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2.5">
+            {/* Quick Presets: এই মাস, গত মাস, এই বছর */}
+            <div className="flex items-center gap-1 bg-gray-100 p-1 rounded-xl">
+              <button
+                type="button"
+                id="btn-preset-this-month"
+                onClick={() => handleSelectPreset('this_month')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer min-h-[36px] ${
+                  datePreset === 'this_month'
+                    ? 'bg-[#1E5128] text-white shadow-xs'
+                    : 'text-gray-700 hover:text-gray-900 hover:bg-gray-200/70'
+                }`}
+              >
+                এই মাস
+              </button>
+              <button
+                type="button"
+                id="btn-preset-last-month"
+                onClick={() => handleSelectPreset('last_month')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer min-h-[36px] ${
+                  datePreset === 'last_month'
+                    ? 'bg-[#1E5128] text-white shadow-xs'
+                    : 'text-gray-700 hover:text-gray-900 hover:bg-gray-200/70'
+                }`}
+              >
+                গত মাস
+              </button>
+              <button
+                type="button"
+                id="btn-preset-this-year"
+                onClick={() => handleSelectPreset('this_year')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer min-h-[36px] ${
+                  datePreset === 'this_year'
+                    ? 'bg-[#1E5128] text-white shadow-xs'
+                    : 'text-gray-700 hover:text-gray-900 hover:bg-gray-200/70'
+                }`}
+              >
+                এই বছর
+              </button>
+            </div>
+
+            {/* Custom From/To Date Picker */}
+            <div className="flex items-center gap-2 bg-gray-50 p-1 rounded-xl border border-gray-200">
+              <div className="flex items-center gap-1.5 pl-1.5">
+                <span className="text-xs font-semibold text-gray-600">হতে:</span>
+                <input
+                  type="date"
+                  id="filter-start-date"
+                  value={startDate}
+                  onChange={(e) => handleCustomStartDateChange(e.target.value)}
+                  className="px-2 py-1 bg-white border border-gray-300 rounded-lg text-gray-800 text-base font-sans cursor-pointer focus:outline-hidden focus:ring-1 focus:ring-[#1E5128]"
+                  title="শুরুর তারিখ (From Date)"
+                />
+              </div>
+              <div className="flex items-center gap-1.5 pr-1.5">
+                <span className="text-xs font-semibold text-gray-600">পর্যন্ত:</span>
+                <input
+                  type="date"
+                  id="filter-end-date"
+                  value={endDate}
+                  onChange={(e) => handleCustomEndDateChange(e.target.value)}
+                  className="px-2 py-1 bg-white border border-gray-300 rounded-lg text-gray-800 text-base font-sans cursor-pointer focus:outline-hidden focus:ring-1 focus:ring-[#1E5128]"
+                  title="শেষ তারিখ (To Date)"
+                />
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ===================== REPORT 1: PROFIT & LOSS ===================== */}
       {activeReport === 'pl' && pl && (
         <div className="bg-white border border-gray-200 rounded-2xl p-4 sm:p-6 space-y-6 shadow-xs">
@@ -382,7 +530,9 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
             <h3 className="text-base sm:text-lg font-bold text-gray-900 tracking-tight">
               লাভ ও ক্ষতি হিসাব বিবরণী (Statement of Profit or Loss)
             </h3>
-            <p className="text-[13px] text-gray-500 mt-0.5">আন্তর্জাতিক হিসাবরক্ষণ মান (IAS 1 & IFRS) অনুযায়ী প্রস্তুতকৃত</p>
+            <p className="text-[13px] text-gray-500 mt-0.5">
+              আন্তর্জাতিক হিসাবরক্ষণ মান (IAS 1 & IFRS) অনুযায়ী প্রস্তুতকৃত • সময়সীমা: {startDate || 'শুরু'} হতে {endDate || 'বর্তমান'}
+            </p>
           </div>
 
           <div className="space-y-4 max-w-3xl mx-auto font-mono text-[14px]">
@@ -473,7 +623,7 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
               উদ্বৃত্তপত্র / স্থিতিপত্র (Statement of Financial Position - Balance Sheet)
             </h3>
             <p className="text-[13px] text-gray-500 mt-0.5">
-              সম্পদ = দায় + মূলধন (Assets = Liabilities + Equity)
+              সম্পদ = দায় + মূলধন (Assets = Liabilities + Equity) • তারিখ: {endDate || 'বর্তমান'} অনুযায়ী
             </p>
             {/* Balance check indicator */}
             <div className="mt-2.5 inline-flex items-center gap-1.5">
@@ -571,7 +721,9 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
           <div className="flex items-center justify-between border-b border-gray-100 pb-3 flex-wrap gap-2">
             <div>
               <h3 className="text-base font-bold text-gray-900">রেওয়ামিল নিরীক্ষা ও বিশ্লেষণ (Trial Balance Audit)</h3>
-              <p className="text-[13px] text-gray-500 mt-0.5">লিপিবদ্ধ সকল খতিয়ান স্থিতির সমতা নিশ্চিতকরণ</p>
+              <p className="text-[13px] text-gray-500 mt-0.5">
+                লিপিবদ্ধ সকল খতিয়ান স্থিতির সমতা নিশ্চিতকরণ • সময়সীমা: {startDate || 'শুরু'} হতে {endDate || 'বর্তমান'}
+              </p>
             </div>
             <span className={`px-3 py-1 rounded-full text-xs font-semibold ${
               tb.isBalanced && tb.orphanAccounts.length === 0

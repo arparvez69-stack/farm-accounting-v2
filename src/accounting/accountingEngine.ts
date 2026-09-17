@@ -63,6 +63,11 @@ export interface BalanceSheetReport {
   discrepancy: number;
 }
 
+export interface DateRangeFilter {
+  startDate?: string;
+  endDate?: string;
+}
+
 export type ProfitLossResult = ProfitLossReport;
 export type BalanceSheetResult = BalanceSheetReport;
 
@@ -251,7 +256,7 @@ function resolveAccountMetadata(code: string, accountsByCode: Map<string, Accoun
  * Computes Trial Balance from all posted journal entries.
  * Detects genuine imbalance and identifies any invalid/orphan account references.
  */
-export async function generateTrialBalance(): Promise<{
+export async function generateTrialBalance(dateRange?: DateRangeFilter): Promise<{
   rows: TrialBalanceRow[];
   totalDebit: number;
   totalCredit: number;
@@ -261,7 +266,16 @@ export async function generateTrialBalance(): Promise<{
   hasInvalidAccounts: boolean;
 }> {
   const rawAccounts = await db.accounts.toArray();
-  const entries = await db.journalEntries.toArray();
+  let entries = await db.journalEntries.toArray();
+
+  if (dateRange?.startDate || dateRange?.endDate) {
+    entries = entries.filter((e) => {
+      if (!e.date) return false;
+      if (dateRange.startDate && e.date < dateRange.startDate) return false;
+      if (dateRange.endDate && e.date > dateRange.endDate) return false;
+      return true;
+    });
+  }
 
   // Deduplicate accounts by code
   const accountMap = new Map<string, Account>();
@@ -392,9 +406,18 @@ export async function generateTrialBalance(): Promise<{
 /**
  * Computes Profit & Loss Statement (লাভ-ক্ষতি বিবরণী)
  */
-export async function generateProfitLoss(): Promise<ProfitLossReport> {
+export async function generateProfitLoss(dateRange?: DateRangeFilter): Promise<ProfitLossReport> {
   const rawAccounts = await db.accounts.toArray();
-  const entries = await db.journalEntries.toArray();
+  let entries = await db.journalEntries.toArray();
+
+  if (dateRange?.startDate || dateRange?.endDate) {
+    entries = entries.filter((e) => {
+      if (!e.date) return false;
+      if (dateRange.startDate && e.date < dateRange.startDate) return false;
+      if (dateRange.endDate && e.date > dateRange.endDate) return false;
+      return true;
+    });
+  }
 
   // Deduplicate accounts by code
   const accountsByCode = new Map<string, Account>();
@@ -487,10 +510,20 @@ export async function generateProfitLoss(): Promise<ProfitLossReport> {
  * Correctly handles Contra accounts (e.g. 1590 Accumulated Depreciation reduces Assets,
  * and 3040 Owner Drawings reduces Equity).
  */
-export async function generateBalanceSheet(): Promise<BalanceSheetReport> {
+export async function generateBalanceSheet(dateRange?: DateRangeFilter): Promise<BalanceSheetReport> {
   const rawAccounts = await db.accounts.toArray();
-  const entries = await db.journalEntries.toArray();
-  const pl = await generateProfitLoss();
+  let entries = await db.journalEntries.toArray();
+
+  if (dateRange?.startDate || dateRange?.endDate) {
+    entries = entries.filter((e) => {
+      if (!e.date) return false;
+      if (dateRange.startDate && e.date < dateRange.startDate) return false;
+      if (dateRange.endDate && e.date > dateRange.endDate) return false;
+      return true;
+    });
+  }
+
+  const pl = await generateProfitLoss(dateRange);
 
   // Deduplicate accounts by code
   const accountsByCode = new Map<string, Account>();
