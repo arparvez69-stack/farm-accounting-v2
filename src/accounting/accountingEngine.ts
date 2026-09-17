@@ -27,6 +27,7 @@ export interface TrialBalance {
 
 export interface LedgerEntry {
   journalEntryId?: string;
+  journalId?: string;
   date: string;
   voucherNumber: string;
   voucherType: VoucherType;

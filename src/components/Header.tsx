@@ -1,15 +1,17 @@
 import React, { useState, useEffect } from 'react';
-import { Shield, LogOut, Sprout, CloudCheck } from 'lucide-react';
+import { Shield, LogOut, Sprout, CloudCheck, AlertTriangle, RefreshCw, X, ChevronRight } from 'lucide-react';
 import { SyncState, SystemConfig, UserProfile } from '../types';
 import { SyncStatusBadge } from './SyncStatusBadge';
 import { getLastSyncTime, formatBackupTimestamp } from '../services/exportService';
 import { useLanguage, t } from '../i18n/translations';
+import { runRegressionTests, getLatestRegressionTestResult, TestResult } from '../utils/regressionTests';
 
 interface Props {
   userProfile: UserProfile;
   systemConfig: SystemConfig | null;
   syncState: SyncState;
   pendingCount: number;
+  regressionTestResult?: TestResult | null;
   onSyncNow: () => void;
   onLogout: () => void;
   onOpenProfile?: () => void;
@@ -20,11 +22,21 @@ export const Header: React.FC<Props> = ({
   systemConfig,
   syncState,
   pendingCount,
+  regressionTestResult,
   onSyncNow,
   onLogout
 }) => {
   const { language } = useLanguage();
   const [lastBackupTime, setLastBackupTime] = useState<string | null>(() => getLastSyncTime());
+  const [testResult, setTestResult] = useState<TestResult | null>(() => regressionTestResult || getLatestRegressionTestResult());
+  const [showFailuresModal, setShowFailuresModal] = useState(false);
+  const [isRerunningTests, setIsRerunningTests] = useState(false);
+
+  useEffect(() => {
+    if (regressionTestResult) {
+      setTestResult(regressionTestResult);
+    }
+  }, [regressionTestResult]);
 
   useEffect(() => {
     const handleSyncTimeUpdated = () => {
@@ -34,62 +46,208 @@ export const Header: React.FC<Props> = ({
     return () => window.removeEventListener('goted-sync-time-updated', handleSyncTimeUpdated);
   }, []);
 
+  useEffect(() => {
+    const handleTestsFinished = (e: Event) => {
+      const customEvent = e as CustomEvent<TestResult>;
+      if (customEvent.detail) {
+        setTestResult(customEvent.detail);
+      }
+    };
+    window.addEventListener('regression-tests-finished', handleTestsFinished);
+    return () => window.removeEventListener('regression-tests-finished', handleTestsFinished);
+  }, []);
+
+  const handleRerunTests = async () => {
+    setIsRerunningTests(true);
+    try {
+      const res = await runRegressionTests();
+      setTestResult(res);
+    } catch (err) {
+      console.error('Error re-running regression tests:', err);
+    } finally {
+      setIsRerunningTests(false);
+    }
+  };
+
+  const hasTestFailures = !!(testResult && !testResult.success && testResult.failures && testResult.failures.length > 0);
+
   return (
-    <header className="sticky top-0 z-30 bg-white/95 backdrop-blur-md border-b border-gray-200 text-gray-900 pt-safe px-3.5 sm:px-6 py-2.5 shadow-xs">
-      <div className="max-w-5xl mx-auto flex items-center justify-between gap-2">
-        {/* Left: Brand / Farm Info */}
-        <div className="flex items-center gap-2.5 min-w-0">
-          <div className="w-10 h-10 rounded-xl bg-[#1E5128] flex items-center justify-center shadow-sm shrink-0">
-            <Sprout className="w-5 h-5 text-white" />
+    <>
+      <header className="sticky top-0 z-30 bg-white/95 backdrop-blur-md border-b border-gray-200 text-gray-900 pt-safe px-3.5 sm:px-6 py-2.5 shadow-xs">
+        <div className="max-w-5xl mx-auto flex items-center justify-between gap-2">
+          {/* Left: Brand / Farm Info */}
+          <div className="flex items-center gap-2.5 min-w-0">
+            <div className="w-10 h-10 rounded-xl bg-[#1E5128] flex items-center justify-center shadow-sm shrink-0">
+              <Sprout className="w-5 h-5 text-white" />
+            </div>
+            <div className="truncate">
+              <h1 className="text-[15px] sm:text-base font-bold text-gray-900 tracking-tight leading-tight truncate">
+                {systemConfig?.companyName || 'The Goated Farm'}
+              </h1>
+              <p className="text-[13px] text-[#1E5128] font-semibold truncate flex items-center gap-1.5">
+                <span>{t('app.tagline', language)}</span>
+                <span className="hidden lg:inline text-xs text-gray-400">•</span>
+                <span className="hidden lg:inline text-xs text-gray-500 font-normal">
+                  {language === 'en' ? 'Last backup: ' : 'সর্বশেষ ব্যাকআপ: '}{formatBackupTimestamp(lastBackupTime)}
+                </span>
+              </p>
+            </div>
           </div>
-          <div className="truncate">
-            <h1 className="text-[15px] sm:text-base font-bold text-gray-900 tracking-tight leading-tight truncate">
-              {systemConfig?.companyName || 'The Goated Farm'}
-            </h1>
-            <p className="text-[13px] text-[#1E5128] font-semibold truncate flex items-center gap-1.5">
-              <span>{t('app.tagline', language)}</span>
-              <span className="hidden lg:inline text-xs text-gray-400">•</span>
-              <span className="hidden lg:inline text-xs text-gray-500 font-normal">
-                {language === 'en' ? 'Last backup: ' : 'সর্বশেষ ব্যাকআপ: '}{formatBackupTimestamp(lastBackupTime)}
+
+          {/* Right: Sync Status & User Role / Action */}
+          <div className="flex items-center gap-2 sm:gap-3 shrink-0">
+            <SyncStatusBadge
+              syncState={syncState}
+              pendingCount={pendingCount}
+              onSyncNow={onSyncNow}
+            />
+
+            {/* Owner Role Badge */}
+            <span className="hidden sm:inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-[#F0FDF4] text-[#1E5128] border border-[#BBF7D0]">
+              <Shield className="w-3.5 h-3.5 text-[#1E5128]" />
+              <span>{language === 'en' ? 'Owner' : 'মালিক (OWNER)'}</span>
+            </span>
+
+            {/* User & Logout */}
+            <div className="flex items-center gap-1.5 border-l border-gray-200 pl-2">
+              <span
+                title={userProfile.email || 'Owner'}
+                className="text-xs text-gray-600 max-w-[120px] sm:max-w-[180px] truncate font-medium hidden md:inline-block"
+              >
+                {userProfile.email || userProfile.displayName || 'Owner'}
               </span>
-            </p>
+              <button
+                id="btn-header-logout"
+                onClick={onLogout}
+                title={language === 'en' ? 'Log out this device' : 'এই ডিভাইস থেকে লগ আউট করুন (Log out this device)'}
+                className="p-2 sm:px-3 sm:py-1.5 rounded-xl text-red-600 hover:text-red-700 hover:bg-red-50 border border-transparent hover:border-red-200 transition-colors cursor-pointer min-h-[44px] flex items-center justify-center gap-1.5 active:scale-95 text-xs font-bold"
+              >
+                <LogOut className="w-4 h-4 text-red-600" />
+                <span className="hidden md:inline">{t('btn.logout', language)}</span>
+              </button>
+            </div>
           </div>
         </div>
 
-        {/* Right: Sync Status & User Role / Action */}
-        <div className="flex items-center gap-2 sm:gap-3 shrink-0">
-          <SyncStatusBadge
-            syncState={syncState}
-            pendingCount={pendingCount}
-            onSyncNow={onSyncNow}
-          />
-
-          {/* Owner Role Badge */}
-          <span className="hidden sm:inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-[#F0FDF4] text-[#1E5128] border border-[#BBF7D0]">
-            <Shield className="w-3.5 h-3.5 text-[#1E5128]" />
-            <span>{language === 'en' ? 'Owner' : 'মালিক (OWNER)'}</span>
-          </span>
-
-          {/* User & Logout */}
-          <div className="flex items-center gap-1.5 border-l border-gray-200 pl-2">
-            <span
-              title={userProfile.email || 'Owner'}
-              className="text-xs text-gray-600 max-w-[120px] sm:max-w-[180px] truncate font-medium hidden md:inline-block"
-            >
-              {userProfile.email || userProfile.displayName || 'Owner'}
-            </span>
+        {/* Small persistent warning banner on system test failure */}
+        {hasTestFailures && (
+          <div className="max-w-5xl mx-auto mt-2 pt-2 border-t border-amber-200/80">
             <button
-              id="btn-header-logout"
-              onClick={onLogout}
-              title={language === 'en' ? 'Log out this device' : 'এই ডিভাইস থেকে লগ আউট করুন (Log out this device)'}
-              className="p-2 sm:px-3 sm:py-1.5 rounded-xl text-red-600 hover:text-red-700 hover:bg-red-50 border border-transparent hover:border-red-200 transition-colors cursor-pointer min-h-[44px] flex items-center justify-center gap-1.5 active:scale-95 text-xs font-bold"
+              type="button"
+              id="btn-system-test-warning-banner"
+              onClick={() => setShowFailuresModal(true)}
+              className="w-full flex items-center justify-between gap-2 px-3 py-1.5 rounded-xl bg-amber-50 hover:bg-amber-100/90 border border-amber-300 text-amber-950 transition-colors text-xs sm:text-[13px] font-semibold cursor-pointer active:scale-[0.99] text-left shadow-2xs group"
             >
-              <LogOut className="w-4 h-4 text-red-600" />
-              <span className="hidden md:inline">{t('btn.logout', language)}</span>
+              <div className="flex items-center gap-2 truncate">
+                <AlertTriangle className="w-4 h-4 text-amber-700 shrink-0 animate-pulse" />
+                <span className="truncate font-bold">
+                  সিস্টেম পরীক্ষায় সমস্যা পাওয়া গেছে, বিস্তারিত দেখতে ট্যাপ করুন
+                </span>
+                <span className="hidden sm:inline text-amber-800 font-normal">
+                  (System check found an issue, tap for details)
+                </span>
+              </div>
+              <div className="flex items-center gap-1.5 shrink-0">
+                <span className="px-2 py-0.5 rounded-md bg-amber-200 text-amber-950 text-[11px] font-bold">
+                  {testResult?.failures.length}টি সমস্যা
+                </span>
+                <ChevronRight className="w-4 h-4 text-amber-700 group-hover:translate-x-0.5 transition-transform" />
+              </div>
             </button>
           </div>
+        )}
+      </header>
+
+      {/* System Test Failures Details Modal */}
+      {showFailuresModal && testResult && (
+        <div
+          id="modal-system-test-failures"
+          role="dialog"
+          aria-modal="true"
+          className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 animate-in fade-in duration-150"
+        >
+          <div className="bg-white rounded-2xl shadow-xl border border-gray-200 max-w-lg w-full overflow-hidden flex flex-col max-h-[90vh]">
+            {/* Modal Header */}
+            <div className="px-4 py-3 sm:px-5 sm:py-3.5 bg-amber-50 border-b border-amber-200 flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-lg bg-amber-200 text-amber-900 flex items-center justify-center shrink-0">
+                  <AlertTriangle className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-sm sm:text-base font-bold text-gray-900 leading-tight">
+                    সিস্টেম স্ব-পরীক্ষার ফলাফল
+                  </h3>
+                  <p className="text-[11px] sm:text-xs text-amber-900 font-medium">
+                    System Self-Test Diagnostic Report
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowFailuresModal(false)}
+                className="p-1.5 rounded-lg text-gray-500 hover:text-gray-700 hover:bg-amber-100 transition-colors cursor-pointer"
+                title="বন্ধ করুন"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Stats row */}
+            <div className="px-4 sm:px-5 py-3 bg-gray-50 border-b border-gray-200 flex items-center justify-between text-xs sm:text-[13px] font-medium text-gray-600">
+              <div>
+                মোট পরীক্ষা: <strong className="text-gray-900">{testResult.total}</strong>
+              </div>
+              <div>
+                সফল: <strong className="text-emerald-700">{testResult.passed}</strong>
+              </div>
+              <div>
+                ব্যর্থ: <strong className="text-rose-700">{testResult.failed}</strong>
+              </div>
+            </div>
+
+            {/* Failure items */}
+            <div className="p-4 sm:p-5 overflow-y-auto space-y-2.5 flex-1">
+              <p className="text-xs text-gray-600 font-medium">
+                নিচের পরীক্ষাগুলোতে সমস্যা ধরা পড়েছে। এগুলো অবিলম্বে সংশোধন করা প্রয়োজন:
+              </p>
+              <ul className="space-y-2">
+                {testResult.failures.map((fail, idx) => (
+                  <li
+                    key={idx}
+                    className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-900 text-xs sm:text-[13px] font-mono leading-relaxed"
+                  >
+                    <div className="flex items-start gap-2">
+                      <span className="w-2 h-2 rounded-full bg-rose-600 mt-1.5 shrink-0" />
+                      <span className="break-words">{fail}</span>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </div>
+
+            {/* Modal Actions */}
+            <div className="p-3.5 sm:p-4 bg-gray-50 border-t border-gray-200 flex items-center justify-between gap-3">
+              <button
+                type="button"
+                onClick={handleRerunTests}
+                disabled={isRerunningTests}
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-[#1E5128] hover:bg-[#173F1F] text-white text-xs sm:text-sm font-bold shadow-xs active:scale-95 transition-all disabled:opacity-60 cursor-pointer min-h-[40px]"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${isRerunningTests ? 'animate-spin' : ''}`} />
+                <span>{isRerunningTests ? 'পরীক্ষা চলছে...' : 'পুনরায় পরীক্ষা করুন'}</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setShowFailuresModal(false)}
+                className="px-4 py-2 rounded-xl bg-white border border-gray-300 hover:bg-gray-100 text-gray-700 text-xs sm:text-sm font-semibold transition-colors cursor-pointer min-h-[40px]"
+              >
+                বন্ধ করুন
+              </button>
+            </div>
+          </div>
         </div>
-      </div>
-    </header>
+      )}
+    </>
   );
 };

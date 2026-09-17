@@ -430,6 +430,10 @@ export interface Loan {
   loanType: 'BANK' | 'NGO' | 'INDIVIDUAL';
   principalAmount: number;
   interestRateAnnual: number;
+  loanNumber?: string;
+  term?: string;
+  interestRate?: number;
+  remainingBalance?: number;
   startDate?: string;
   disbursedDate?: string;
   termMonths?: number;
@@ -450,6 +454,10 @@ export interface Investor {
   entryDate?: string;
   joinedDate?: string;
   initialCapital?: number;
+  capitalAmount?: number;
+  sharePercentage?: number;
+  drawings?: number;
+  currentBalance?: number;
   totalContribution?: number;
   additionalCapital?: number;
   withdrawals?: number;
@@ -480,6 +488,7 @@ export interface FixedAsset {
   category:
     | 'LAND'
     | 'BUILDINGS'
+    | 'BUILDING'
     | 'PONDS'
     | 'MACHINERY'
     | 'EQUIPMENT'
@@ -502,6 +511,7 @@ export interface AuditLogEntry {
   role: string;
   action: string;
   module: string;
+  entity?: string;
   recordId: string;
   status: 'SUCCESS' | 'FAILURE';
   details: string;

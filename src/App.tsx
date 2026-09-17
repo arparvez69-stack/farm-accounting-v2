@@ -23,15 +23,17 @@ import { BankingInvestorsModule } from './components/BankingInvestorsModule';
 import { ReportsModule } from './components/ReportsModule';
 import { MoreModule } from './components/MoreModule';
 import { SyncState, SystemConfig, UserProfile } from './types';
-import { runRegressionTests } from './tests/regressionTests';
+import { runRegressionTests, getLatestRegressionTestResult, TestResult } from './utils/regressionTests';
 import { triggerForegroundDueTodayNotification } from './db/indexedDb';
 import { runDepreciationOnAppLoad } from './accounting/depreciationService';
+import { ErrorBoundary } from './components/ErrorBoundary';
 
 export default function App() {
   const [systemConfig, setSystemConfig] = useState<SystemConfig | null>(null);
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
+  const [regressionTestResult, setRegressionTestResult] = useState<TestResult | null>(() => getLatestRegressionTestResult());
 
   // Sync state
   const [syncState, setSyncState] = useState<SyncState>('ONLINE');
@@ -87,6 +89,7 @@ export default function App() {
 
       // 2. Run accounting integrity regression tests in background
       runRegressionTests().then((testRes) => {
+        setRegressionTestResult(testRes);
         if (testRes.success) {
           console.log(`[The Goated Farm] Accounting regression test suite passed (${testRes.passed}/${testRes.total} assertions).`);
         } else {
@@ -212,85 +215,89 @@ export default function App() {
         systemConfig={systemConfig}
         syncState={syncState}
         pendingCount={pendingCount}
+        regressionTestResult={regressionTestResult}
         onSyncNow={handleSyncNow}
         onLogout={handleLogout}
       />
 
       {/* Main App Content Viewport */}
       <main className="flex-1 px-3.5 py-4 sm:px-6 sm:py-6 max-w-5xl w-full mx-auto pb-28 md:pb-12">
-        {/* TASK 4: Clear warning when opened by known owner with empty local DB and no internet */}
-        {offlineEmptyWarning && (
-          <div
-            id="empty-offline-restore-warning"
-            role="alert"
-            className="mb-5 p-4 sm:p-5 rounded-2xl bg-amber-50 border-2 border-amber-400 text-amber-950 flex items-start gap-3.5 shadow-sm"
-          >
-            <div className="w-10 h-10 rounded-xl bg-amber-200 text-amber-900 flex items-center justify-center shrink-0">
-              <AlertTriangle className="w-5 h-5 text-amber-800" />
+        <ErrorBoundary resetKey={activeTab}>
+          {/* TASK 4: Clear warning when opened by known owner with empty local DB and no internet */}
+          {offlineEmptyWarning && (
+            <div
+              id="empty-offline-restore-warning"
+              role="alert"
+              className="mb-5 p-4 sm:p-5 rounded-2xl bg-amber-50 border-2 border-amber-400 text-amber-950 flex items-start gap-3.5 shadow-sm"
+            >
+              <div className="w-10 h-10 rounded-xl bg-amber-200 text-amber-900 flex items-center justify-center shrink-0">
+                <AlertTriangle className="w-5 h-5 text-amber-800" />
+              </div>
+              <div className="flex-1">
+                <h4 className="font-bold text-base text-amber-950">
+                  ইন্টারনেট সংযোগ ছাড়া পুরোনো ডেটা পুনরুদ্ধার করা যাচ্ছে না, সংযুক্ত হলে আবার চেষ্টা করুন
+                </h4>
+                <p className="text-xs sm:text-sm text-amber-800 mt-1 font-medium">
+                  (Cannot restore your old data without internet — try again once connected). আপনার ডিভাইসের স্টোরেজ খালি দেখাচ্ছে এবং ইন্টারনেট সংযোগ না থাকায় ক্লাউড ব্যাকআপ থেকে পূর্বের খামারের তথ্য নামিয়ে আনা সম্ভব হয়নি। ইন্টারনেট পেলে অ্যাপ স্বয়ংক্রিয়ভাবে ক্লাউড ডাটা পুনরুদ্ধার করবে।
+                </p>
+              </div>
             </div>
-            <div className="flex-1">
-              <h4 className="font-bold text-base text-amber-950">
-                ইন্টারনেট সংযোগ ছাড়া পুরোনো ডেটা পুনরুদ্ধার করা যাচ্ছে না, সংযুক্ত হলে আবার চেষ্টা করুন
-              </h4>
-              <p className="text-xs sm:text-sm text-amber-800 mt-1 font-medium">
-                (Cannot restore your old data without internet — try again once connected). আপনার ডিভাইসের স্টোরেজ খালি দেখাচ্ছে এবং ইন্টারনেট সংযোগ না থাকায় ক্লাউড ব্যাকআপ থেকে পূর্বের খামারের তথ্য নামিয়ে আনা সম্ভব হয়নি। ইন্টারনেট পেলে অ্যাপ স্বয়ংক্রিয়ভাবে ক্লাউড ডাটা পুনরুদ্ধার করবে।
-              </p>
-            </div>
-          </div>
-        )}
-        {activeTab === 'dashboard' && (
-          <Dashboard
-            role={userProfile.role}
-            onNavigate={handleNavigate}
-          />
-        )}
+          )}
+          {activeTab === 'dashboard' && (
+            <Dashboard
+              role={userProfile.role}
+              onNavigate={handleNavigate}
+              regressionTestResult={regressionTestResult}
+            />
+          )}
 
-        {activeTab === 'accounting' && (
-          <AccountingModule
-            role={userProfile.role}
-            currentUserId={userProfile.uid}
-          />
-        )}
+          {activeTab === 'accounting' && (
+            <AccountingModule
+              role={userProfile.role}
+              currentUserId={userProfile.uid}
+            />
+          )}
 
-        {activeTab === 'operations' && (
-          <FarmOperationsModule
-            role={userProfile.role}
-            currentUserId={userProfile.uid}
-            initialAnimalId={selectedAnimalIdForOps}
-            onClearInitialAnimalId={() => setSelectedAnimalIdForOps(null)}
-          />
-        )}
+          {activeTab === 'operations' && (
+            <FarmOperationsModule
+              role={userProfile.role}
+              currentUserId={userProfile.uid}
+              initialAnimalId={selectedAnimalIdForOps}
+              onClearInitialAnimalId={() => setSelectedAnimalIdForOps(null)}
+            />
+          )}
 
-        {activeTab === 'commerce' && (
-          <InventoryCommerceModule
-            role={userProfile.role}
-            currentUserId={userProfile.uid}
-          />
-        )}
+          {activeTab === 'commerce' && (
+            <InventoryCommerceModule
+              role={userProfile.role}
+              currentUserId={userProfile.uid}
+            />
+          )}
 
-        {activeTab === 'finance' && (
-          <BankingInvestorsModule
-            role={userProfile.role}
-            currentUserId={userProfile.uid}
-          />
-        )}
+          {activeTab === 'finance' && (
+            <BankingInvestorsModule
+              role={userProfile.role}
+              currentUserId={userProfile.uid}
+            />
+          )}
 
-        {activeTab === 'reports' && (
-          <ReportsModule
-            role={userProfile.role}
-            currentUserId={userProfile.uid}
-          />
-        )}
+          {activeTab === 'reports' && (
+            <ReportsModule
+              role={userProfile.role}
+              currentUserId={userProfile.uid}
+            />
+          )}
 
-        {activeTab === 'more' && (
-          <MoreModule
-            role={userProfile.role}
-            currentUserId={userProfile.uid}
-            systemConfig={systemConfig}
-            userEmail={userProfile.email}
-            onLogout={handleLogout}
-          />
-        )}
+          {activeTab === 'more' && (
+            <MoreModule
+              role={userProfile.role}
+              currentUserId={userProfile.uid}
+              systemConfig={systemConfig}
+              userEmail={userProfile.email}
+              onLogout={handleLogout}
+            />
+          )}
+        </ErrorBoundary>
       </main>
 
       {/* Persistent Bottom Mobile Navigation Bar */}

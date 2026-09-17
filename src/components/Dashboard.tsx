@@ -31,15 +31,20 @@ import { Reminder, UserRole } from '../types';
 import { createFullJsonBackup, getLastSyncTime, getLastExportTime } from '../services/exportService';
 import { synchronizePendingData } from '../firebase/firebaseClient';
 import { useLanguage } from '../i18n/translations';
+import { runRegressionTests, getLatestRegressionTestResult, TestResult } from '../utils/regressionTests';
 
 interface Props {
   role: UserRole;
   onNavigate: (tab: ActiveTab, animalId?: string) => void;
   onOpenQuickVoucher?: () => void;
+  regressionTestResult?: TestResult | null;
 }
 
-export const Dashboard: React.FC<Props> = ({ role, onNavigate }) => {
+export const Dashboard: React.FC<Props> = ({ role, onNavigate, regressionTestResult }) => {
   const { lang, t } = useLanguage();
+  const [testResult, setTestResult] = useState<TestResult | null>(() => regressionTestResult || getLatestRegressionTestResult());
+  const [showTestModal, setShowTestModal] = useState(false);
+  const [isRerunningTests, setIsRerunningTests] = useState(false);
   const [loading, setLoading] = useState(true);
   const [netProfit, setNetProfit] = useState(0);
   const [totalRevenue, setTotalRevenue] = useState(0);
@@ -71,6 +76,35 @@ export const Dashboard: React.FC<Props> = ({ role, onNavigate }) => {
   const [exportingNow, setExportingNow] = useState(false);
   const [lastSyncTimeVal, setLastSyncTimeVal] = useState<string | null>(() => getLastSyncTime());
   const [lastExportTimeVal, setLastExportTimeVal] = useState<string | null>(() => getLastExportTime());
+
+  useEffect(() => {
+    if (regressionTestResult) {
+      setTestResult(regressionTestResult);
+    }
+  }, [regressionTestResult]);
+
+  useEffect(() => {
+    const handleTestsFinished = (e: Event) => {
+      const customEvent = e as CustomEvent<TestResult>;
+      if (customEvent.detail) {
+        setTestResult(customEvent.detail);
+      }
+    };
+    window.addEventListener('regression-tests-finished', handleTestsFinished);
+    return () => window.removeEventListener('regression-tests-finished', handleTestsFinished);
+  }, []);
+
+  const handleRerunTestsInDashboard = async () => {
+    setIsRerunningTests(true);
+    try {
+      const res = await runRegressionTests();
+      setTestResult(res);
+    } catch (err) {
+      console.error('Error re-running regression tests:', err);
+    } finally {
+      setIsRerunningTests(false);
+    }
+  };
 
   useEffect(() => {
     const handleUpdate = () => {
@@ -608,6 +642,32 @@ export const Dashboard: React.FC<Props> = ({ role, onNavigate }) => {
       </div>
 
       {/* 2. System Alerts Section (if active) */}
+      {testResult && !testResult.success && testResult.failures.length > 0 && (
+        <div className="p-4 rounded-2xl bg-amber-50 border-2 border-amber-400 text-amber-950 shadow-xs space-y-2">
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <div className="flex items-center gap-2.5">
+              <AlertTriangle className="w-5 h-5 text-amber-700 shrink-0 animate-pulse" />
+              <div>
+                <h4 className="font-bold text-[15px] text-amber-950">
+                  সিস্টেম পরীক্ষায় সমস্যা পাওয়া গেছে, বিস্তারিত দেখতে ট্যাপ করুন
+                </h4>
+                <p className="text-xs text-amber-800 font-medium mt-0.5">
+                  (System check found an issue, tap for details) • {testResult.failures.length}টি পরীক্ষা ব্যর্থ হয়েছে
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              id="btn-dashboard-test-failures"
+              onClick={() => setShowTestModal(true)}
+              className="px-3.5 py-1.5 rounded-xl bg-amber-200 hover:bg-amber-300 text-amber-950 border border-amber-400 text-xs font-bold transition-all cursor-pointer min-h-[36px]"
+            >
+              বিস্তারিত দেখুন →
+            </button>
+          </div>
+        </div>
+      )}
+
       {alerts.length > 0 && (
         <div className="p-4 rounded-2xl bg-amber-50 border border-amber-300 text-amber-900 shadow-xs space-y-2">
           <div className="flex items-center gap-2 font-bold text-[15px] text-amber-900">
@@ -780,6 +840,93 @@ export const Dashboard: React.FC<Props> = ({ role, onNavigate }) => {
           </div>
         )}
       </div>
+
+      {/* System Test Failures Details Modal */}
+      {showTestModal && testResult && (
+        <div
+          id="modal-dashboard-system-test-failures"
+          role="dialog"
+          aria-modal="true"
+          className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 animate-in fade-in duration-150"
+        >
+          <div className="bg-white rounded-2xl shadow-xl border border-gray-200 max-w-lg w-full overflow-hidden flex flex-col max-h-[90vh]">
+            <div className="px-4 py-3 sm:px-5 sm:py-3.5 bg-amber-50 border-b border-amber-200 flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-lg bg-amber-200 text-amber-900 flex items-center justify-center shrink-0">
+                  <AlertTriangle className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-sm sm:text-base font-bold text-gray-900 leading-tight">
+                    সিস্টেম স্ব-পরীক্ষার ফলাফল
+                  </h3>
+                  <p className="text-[11px] sm:text-xs text-amber-900 font-medium">
+                    System Self-Test Diagnostic Report
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowTestModal(false)}
+                className="p-1.5 rounded-lg text-gray-500 hover:text-gray-700 hover:bg-amber-100 transition-colors cursor-pointer"
+                title="বন্ধ করুন"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="px-4 sm:px-5 py-3 bg-gray-50 border-b border-gray-200 flex items-center justify-between text-xs sm:text-[13px] font-medium text-gray-600">
+              <div>
+                মোট পরীক্ষা: <strong className="text-gray-900">{testResult.total}</strong>
+              </div>
+              <div>
+                সফল: <strong className="text-emerald-700">{testResult.passed}</strong>
+              </div>
+              <div>
+                ব্যর্থ: <strong className="text-rose-700">{testResult.failed}</strong>
+              </div>
+            </div>
+
+            <div className="p-4 sm:p-5 overflow-y-auto space-y-2.5 flex-1">
+              <p className="text-xs text-gray-600 font-medium">
+                নিচের পরীক্ষাগুলোতে সমস্যা ধরা পড়েছে। এগুলো অবিলম্বে সংশোধন করা প্রয়োজন:
+              </p>
+              <ul className="space-y-2">
+                {testResult.failures.map((fail, idx) => (
+                  <li
+                    key={idx}
+                    className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-900 text-xs sm:text-[13px] font-mono leading-relaxed"
+                  >
+                    <div className="flex items-start gap-2">
+                      <span className="w-2 h-2 rounded-full bg-rose-600 mt-1.5 shrink-0" />
+                      <span className="break-words">{fail}</span>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </div>
+
+            <div className="p-3.5 sm:p-4 bg-gray-50 border-t border-gray-200 flex items-center justify-between gap-3">
+              <button
+                type="button"
+                onClick={handleRerunTestsInDashboard}
+                disabled={isRerunningTests}
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-[#1E5128] hover:bg-[#173F1F] text-white text-xs sm:text-sm font-bold shadow-xs active:scale-95 transition-all disabled:opacity-60 cursor-pointer min-h-[40px]"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${isRerunningTests ? 'animate-spin' : ''}`} />
+                <span>{isRerunningTests ? 'পরীক্ষা চলছে...' : 'পুনরায় পরীক্ষা করুন'}</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setShowTestModal(false)}
+                className="px-4 py-2 rounded-xl bg-white border border-gray-300 hover:bg-gray-100 text-gray-700 text-xs sm:text-sm font-semibold transition-colors cursor-pointer min-h-[40px]"
+              >
+                বন্ধ করুন
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

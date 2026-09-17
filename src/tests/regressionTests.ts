@@ -29,6 +29,11 @@ export interface TestResult {
 }
 
 let activeRegressionTestPromise: Promise<TestResult> | null = null;
+let latestRegressionTestResult: TestResult | null = null;
+
+export function getLatestRegressionTestResult(): TestResult | null {
+  return latestRegressionTestResult;
+}
 
 export async function runRegressionTests(): Promise<TestResult> {
   if (activeRegressionTestPromise) {
@@ -527,6 +532,11 @@ async function runRegressionTestsInternal(): Promise<TestResult> {
     failed: failures.length,
     failures
   };
+
+  latestRegressionTestResult = res;
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('regression-tests-finished', { detail: res }));
+  }
 
   return res;
 }
