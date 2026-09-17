@@ -24,13 +24,15 @@ import {
   SystemConfig,
   AppAccessLog,
   Reminder,
-  PaymentRecord
+  PaymentRecord,
+  ClosedPeriod
 } from '../types';
 
 export class AgroDatabase extends Dexie {
   systemConfig!: Table<SystemConfig, string>;
   accounts!: Table<Account, string>;
   journalEntries!: Table<JournalEntry, string>;
+  closedPeriods!: Table<ClosedPeriod, string>;
   animals!: Table<Animal, string>;
   animalEvents!: Table<AnimalEvent, string>;
   reminders!: Table<Reminder, string>;
@@ -104,6 +106,10 @@ export class AgroDatabase extends Dexie {
 
     this.version(5).stores({
       payments: 'id, parentType, parentId, date, synced'
+    });
+
+    this.version(6).stores({
+      closedPeriods: 'id, endDate, closedAt, synced'
     });
   }
 }

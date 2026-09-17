@@ -201,6 +201,7 @@ export async function createFullJsonBackup(): Promise<string> {
     systemConfig: await db.systemConfig.toArray(),
     accounts: await db.accounts.toArray(),
     journalEntries: await db.journalEntries.toArray(),
+    closedPeriods: await db.closedPeriods.toArray(),
     animals: await db.animals.toArray(),
     animalEvents: await db.animalEvents.toArray(),
     ponds: await db.ponds.toArray(),
@@ -255,6 +256,7 @@ export async function restoreFromJsonBackup(
         db.systemConfig,
         db.accounts,
         db.journalEntries,
+        db.closedPeriods,
         db.animals,
         db.animalEvents,
         db.ponds,
@@ -287,6 +289,10 @@ export async function restoreFromJsonBackup(
         if (data.journalEntries?.length) {
           await db.journalEntries.clear();
           await db.journalEntries.bulkPut(data.journalEntries);
+        }
+        if (data.closedPeriods?.length) {
+          await db.closedPeriods.clear();
+          await db.closedPeriods.bulkPut(data.closedPeriods);
         }
         if (data.animals?.length) {
           await db.animals.clear();

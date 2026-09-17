@@ -1,6 +1,6 @@
 import { db } from '../db/indexedDb';
-import { Account, AccountClass, JournalEntry, JournalLine, NormalBalance, VoucherType } from '../types';
-import { safeInsert } from '../utils/idGenerator';
+import { Account, AccountClass, ClosedPeriod, JournalEntry, JournalLine, NormalBalance, VoucherType } from '../types';
+import { generateTransactionNumber, generateUniqueId, safeInsert } from '../utils/idGenerator';
 import { DEFAULT_CHART_OF_ACCOUNTS } from './defaultAccounts';
 
 export interface TrialBalanceRow {
@@ -160,12 +160,47 @@ export function validateJournalEntry(
 }
 
 /**
+ * Retrieve the most recent closed accounting period (if any)
+ */
+export async function getLatestClosedPeriod(): Promise<ClosedPeriod | null> {
+  try {
+    const periods = await db.closedPeriods.orderBy('endDate').reverse().toArray();
+    return periods.length > 0 ? periods[0] : null;
+  } catch (err) {
+    console.error('Failed to get latest closed period:', err);
+    return null;
+  }
+}
+
+/**
+ * Retrieve all closed accounting periods ordered from newest to oldest
+ */
+export async function getClosedPeriods(): Promise<ClosedPeriod[]> {
+  try {
+    return await db.closedPeriods.orderBy('endDate').reverse().toArray();
+  } catch (err) {
+    console.error('Failed to get closed periods:', err);
+    return [];
+  }
+}
+
+/**
  * Post a balanced journal entry into IndexedDB with full schema and integrity validation
  */
 export async function postJournalEntry(
   entry: Omit<JournalEntry, 'totalDebit' | 'totalCredit'>,
-  options?: { skipDbPut?: boolean; accounts?: Account[] }
+  options?: { skipDbPut?: boolean; accounts?: Account[]; isClosingEntry?: boolean }
 ): Promise<JournalEntry> {
+  // Prevent posting new journal entries on or before the latest closed period's endDate
+  if (!options?.isClosingEntry) {
+    const latestClosed = await getLatestClosedPeriod();
+    if (latestClosed && entry.date <= latestClosed.endDate) {
+      throw new Error(
+        `হিসাবরক্ষণ সীমাবদ্ধতা: ${latestClosed.endDate} বা তার পূর্বের সময়কালের হিসাব ইতোমধ্যে বছর সমাপ্তি (Year-End Closed) করা হয়েছে। বন্ধ সময়কালের কোনো তারিখে নতুন জাবেদা পোস্ট বা পরিবর্তন করা যাবে না। সংশোধনের জন্য সমাপ্তির পরবর্তী তারিখের নতুন সমন্বয় দাখিলা প্রদান করুন। (Cannot post journal entry dated on or before closed period end date: ${latestClosed.endDate}).`
+      );
+    }
+  }
+
   const accounts = options?.accounts ?? (await db.accounts.toArray());
   const check = validateBalancedLines(entry.lines, accounts);
 
@@ -746,5 +781,246 @@ export async function getGeneralLedger(accountCode: string): Promise<{ account?:
     account,
     entries: ledgerEntries,
     netBalance: Math.round(running * 100) / 100
+  };
+}
+
+export interface YearEndClosingPreview {
+  closingDate: string;
+  previousClosingDate?: string;
+  totalRevenue: number;
+  totalCogs: number;
+  grossProfit: number;
+  totalOperatingExpenses: number;
+  operatingProfit: number;
+  totalOtherIncome: number;
+  totalOtherExpenses: number;
+  netProfit: number;
+  previousTransferred: number;
+  netProfitToTransfer: number;
+  canClose: boolean;
+  blockReason?: string;
+}
+
+/**
+ * Calculates a preview of the year-end closing up to the chosen date.
+ * Reuses the existing Profit & Loss logic from the beginning up to the chosen date.
+ */
+export async function previewYearEndClosing(closingDate: string): Promise<YearEndClosingPreview> {
+  if (!closingDate) {
+    throw new Error('সমাপ্তি তারিখ নির্বাচন করুন (Closing date is required).');
+  }
+
+  const latestClosed = await getLatestClosedPeriod();
+  if (latestClosed && closingDate <= latestClosed.endDate) {
+    return {
+      closingDate,
+      previousClosingDate: latestClosed.endDate,
+      totalRevenue: 0,
+      totalCogs: 0,
+      grossProfit: 0,
+      totalOperatingExpenses: 0,
+      operatingProfit: 0,
+      totalOtherIncome: 0,
+      totalOtherExpenses: 0,
+      netProfit: 0,
+      previousTransferred: 0,
+      netProfitToTransfer: 0,
+      canClose: false,
+      blockReason: `সমাপ্তি তারিখটি পূর্ববর্তী বন্ধ সময়কালের শেষ তারিখ (${latestClosed.endDate}) এর পরের হতে হবে।`
+    };
+  }
+
+  // Calculate profit and loss from the beginning to the chosen date
+  const pl = await generateProfitLoss({ endDate: closingDate });
+  const allClosed = await getClosedPeriods();
+  const previousTransferred = Math.round(
+    allClosed.reduce((sum, p) => sum + (Number(p.netProfitTransferred) || 0), 0) * 100
+  ) / 100;
+
+  const netProfitToTransfer = Math.round((pl.netProfit - previousTransferred) * 100) / 100;
+
+  return {
+    closingDate,
+    previousClosingDate: latestClosed ? latestClosed.endDate : undefined,
+    totalRevenue: pl.totalRevenue,
+    totalCogs: pl.totalCogs,
+    grossProfit: pl.grossProfit,
+    totalOperatingExpenses: pl.totalOperatingExpenses,
+    operatingProfit: pl.operatingProfit,
+    totalOtherIncome: pl.totalOtherIncome,
+    totalOtherExpenses: pl.totalOtherExpenses,
+    netProfit: pl.netProfit,
+    previousTransferred,
+    netProfitToTransfer,
+    canClose: true
+  };
+}
+
+/**
+ * Executes Year-End Closing:
+ * 1. Validates that closingDate is strictly after any previously closed period.
+ * 2. Reuses existing Profit & Loss logic from the beginning up to the chosen date.
+ * 3. Never deletes or alters existing journal entries.
+ * 4. Posts ONE summary journal entry transferring the net profit into Retained Earnings (acc_3050).
+ * 5. Records the closed period in db.closedPeriods.
+ */
+export async function executeYearEndClosing(params: {
+  closingDate: string;
+  currentUserId: string;
+  notes?: string;
+}): Promise<{
+  closedPeriod: ClosedPeriod;
+  journalEntry?: JournalEntry;
+  netProfitTransferred: number;
+}> {
+  const { closingDate, currentUserId, notes } = params;
+
+  if (!closingDate) {
+    throw new Error('সমাপ্তি তারিখ প্রদান করা বাধ্যতামূলক।');
+  }
+
+  const latestClosed = await getLatestClosedPeriod();
+  if (latestClosed && closingDate <= latestClosed.endDate) {
+    throw new Error(
+      `সমাপ্তি তারিখটি পূর্ববর্তী বন্ধ সময়কালের শেষ তারিখ (${latestClosed.endDate}) এর পরের হতে হবে।`
+    );
+  }
+
+  // Ensure accounts 3050 (Retained Earnings) and 3060 (Income Summary) exist
+  let reAcc = await db.accounts.where('code').equals('3050').first();
+  if (!reAcc) {
+    reAcc = {
+      id: 'acc_3050',
+      code: '3050',
+      nameBn: 'পুঞ্জীভূত লাভ/মুনাফা (Retained Earnings)',
+      nameEn: 'Retained Earnings',
+      accountClass: 'EQUITY',
+      normalBalance: 'CREDIT',
+      isSystem: true,
+      isActive: true
+    };
+    await safeInsert(db.accounts, reAcc);
+  }
+
+  let isAcc = await db.accounts.where('code').equals('3060').first();
+  if (!isAcc) {
+    isAcc = {
+      id: 'acc_3060',
+      code: '3060',
+      nameBn: 'আয় সারাংশ হিসাব (Income Summary)',
+      nameEn: 'Income Summary',
+      accountClass: 'EQUITY',
+      normalBalance: 'DEBIT',
+      isSystem: true,
+      isActive: true
+    };
+    await safeInsert(db.accounts, isAcc);
+  }
+
+  const accounts = await db.accounts.toArray();
+
+  // 1. Calculate P&L from the beginning to the chosen date
+  const pl = await generateProfitLoss({ endDate: closingDate });
+  const allClosed = await getClosedPeriods();
+  const previousTransferred = Math.round(
+    allClosed.reduce((sum, p) => sum + (Number(p.netProfitTransferred) || 0), 0) * 100
+  ) / 100;
+  const netProfitToTransfer = Math.round((pl.netProfit - previousTransferred) * 100) / 100;
+
+  const voucherNum = generateTransactionNumber('YEC');
+  const entryId = generateUniqueId('j');
+  let postedEntry: JournalEntry | undefined;
+
+  // 2. Post ONE summary journal entry transferring net profit into Retained Earnings
+  if (netProfitToTransfer !== 0) {
+    const amount = Math.abs(netProfitToTransfer);
+    const lines: JournalLine[] =
+      netProfitToTransfer > 0
+        ? [
+            {
+              accountId: isAcc.id,
+              accountCode: '3060',
+              accountName: isAcc.nameBn,
+              debit: amount,
+              credit: 0,
+              memo: `বছর সমাপ্তি আয় সারাংশ (${closingDate})`
+            },
+            {
+              accountId: reAcc.id,
+              accountCode: '3050',
+              accountName: reAcc.nameBn,
+              debit: 0,
+              credit: amount,
+              memo: `পুঞ্জীভূত লাভে নিট লাভ স্থানান্তর (${closingDate})`
+            }
+          ]
+        : [
+            {
+              accountId: reAcc.id,
+              accountCode: '3050',
+              accountName: reAcc.nameBn,
+              debit: amount,
+              credit: 0,
+              memo: `পুঞ্জীভূত লাভে নিট ক্ষতি সমন্বয় (${closingDate})`
+            },
+            {
+              accountId: isAcc.id,
+              accountCode: '3060',
+              accountName: isAcc.nameBn,
+              debit: 0,
+              credit: amount,
+              memo: `বছর সমাপ্তি আয় সারাংশ (${closingDate})`
+            }
+          ];
+
+    postedEntry = await postJournalEntry(
+      {
+        id: entryId,
+        voucherNumber: voucherNum,
+        voucherType: 'ADJUSTMENT',
+        date: closingDate,
+        narration: `বছর সমাপ্তি সমন্বয় দাখিলা (${closingDate}) - পুঞ্জীভূত লাভে নিট মুনাফা/ক্ষতি স্থানান্তর (Year-End Closing Transfer)`,
+        reference: `YEC-${closingDate}`,
+        lines,
+        createdBy: currentUserId,
+        createdAt: new Date().toISOString()
+      },
+      { accounts, isClosingEntry: true }
+    );
+  }
+
+  // 3. Record closing in closedPeriods list
+  const closedPeriod: ClosedPeriod = {
+    id: generateUniqueId('cp'),
+    endDate: closingDate,
+    startDate: latestClosed ? latestClosed.endDate : undefined,
+    netProfitTransferred: netProfitToTransfer,
+    closedAt: new Date().toISOString(),
+    closedBy: currentUserId,
+    journalEntryId: postedEntry ? entryId : undefined,
+    voucherNumber: postedEntry ? voucherNum : undefined,
+    notes: notes?.trim() || undefined,
+    synced: false
+  };
+
+  await safeInsert(db.closedPeriods, closedPeriod);
+
+  // 4. Audit log entry
+  await safeInsert(db.auditLogs, {
+    id: generateUniqueId('audit'),
+    timestamp: new Date().toISOString(),
+    userId: currentUserId,
+    role: 'OWNER',
+    action: 'YEAR_END_CLOSING',
+    module: 'ACCOUNTING',
+    recordId: closedPeriod.id,
+    status: 'SUCCESS',
+    details: `বছর সমাপ্তি সম্পন্ন (${closingDate}): পুঞ্জীভূত লাভে স্থানান্তরিত ৳${netProfitToTransfer}${postedEntry ? ` (ভাউচার: ${voucherNum})` : ''}`
+  });
+
+  return {
+    closedPeriod,
+    journalEntry: postedEntry,
+    netProfitTransferred: netProfitToTransfer
   };
 }

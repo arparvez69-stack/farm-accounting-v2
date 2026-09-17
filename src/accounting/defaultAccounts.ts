@@ -267,6 +267,16 @@ export const DEFAULT_CHART_OF_ACCOUNTS: Account[] = [
     isSystem: true,
     isActive: true
   },
+  {
+    id: 'acc_3060',
+    code: '3060',
+    nameBn: 'আয় সারাংশ হিসাব (Income Summary)',
+    nameEn: 'Income Summary',
+    accountClass: 'EQUITY',
+    normalBalance: 'DEBIT',
+    isSystem: true,
+    isActive: true
+  },
 
   // 4000 Revenue
   {

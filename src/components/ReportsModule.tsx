@@ -23,7 +23,10 @@ import {
   Wallet,
   Landmark,
   ArrowDownRight,
-  ArrowUpRight
+  ArrowUpRight,
+  GitCompare,
+  Lock,
+  Calendar
 } from 'lucide-react';
 import {
   BalanceSheetReport,
@@ -31,12 +34,13 @@ import {
   generateBalanceSheet,
   generateProfitLoss,
   generateTrialBalance,
+  getClosedPeriods,
   ProfitLossReport,
   TrialBalance
 } from '../accounting/accountingEngine';
 import { exportAllToExcel, createFullJsonBackup, restoreFromJsonBackup } from '../services/exportService';
 import { db } from '../db/indexedDb';
-import { UserRole, Sale, Purchase, PaymentRecord, Loan, Investor, CashBankAccount, JournalEntry } from '../types';
+import { UserRole, Sale, Purchase, PaymentRecord, Loan, Investor, CashBankAccount, JournalEntry, ClosedPeriod } from '../types';
 
 type DatePreset = 'this_month' | 'last_month' | 'this_year' | 'custom';
 
@@ -157,7 +161,50 @@ export interface VatSummaryReportData {
   purchasesWithVat: Purchase[];
 }
 
-type ReportType = 'pl' | 'balanceSheet' | 'trialBalance' | 'animalProfitability' | 'aging' | 'cashFlow' | 'backup' | 'vatSummary';
+export interface YoyMetric {
+  thisYear: number;
+  lastYear: number;
+  diff: number;
+  pctChange: number;
+}
+
+export interface YoyComparisonData {
+  thisYearLabel: string;
+  thisYearRange: { startDate: string; endDate: string };
+  lastYearLabel: string;
+  lastYearRange: { startDate: string; endDate: string };
+  isLastYearClosed: boolean;
+  closedPeriodRecord?: ClosedPeriod;
+  thisYearPl: ProfitLossReport;
+  lastYearPl: ProfitLossReport;
+  metrics: {
+    revenue: YoyMetric;
+    cogs: YoyMetric;
+    grossProfit: YoyMetric;
+    operatingExpenses: YoyMetric;
+    operatingProfit: YoyMetric;
+    otherNet: YoyMetric;
+    netProfit: YoyMetric;
+  };
+  expenseBreakdown: Array<{
+    category: string;
+    thisYear: number;
+    lastYear: number;
+    diff: number;
+    pctChange: number;
+  }>;
+}
+
+type ReportType =
+  | 'pl'
+  | 'balanceSheet'
+  | 'trialBalance'
+  | 'animalProfitability'
+  | 'aging'
+  | 'cashFlow'
+  | 'backup'
+  | 'vatSummary'
+  | 'yoyComparison';
 
 export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
   const [activeReport, setActiveReport] = useState<ReportType>('pl');
@@ -181,6 +228,12 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
     return localStorage.getItem('goted_bin_number') || '';
   });
   const [vatData, setVatData] = useState<VatSummaryReportData | null>(null);
+
+  // This Year vs Last Year Comparison State (using closedPeriods)
+  const [closedPeriodsList, setClosedPeriodsList] = useState<ClosedPeriod[]>([]);
+  const [comparisonMode, setComparisonMode] = useState<'calendar' | 'closed_period'>('calendar');
+  const [selectedClosedPeriodId, setSelectedClosedPeriodId] = useState<string>('');
+  const [yoyData, setYoyData] = useState<YoyComparisonData | null>(null);
 
   useEffect(() => {
     const handleSettingsChanged = () => {
@@ -241,7 +294,7 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
 
   useEffect(() => {
     loadReports();
-  }, [activeReport, startDate, endDate]);
+  }, [activeReport, startDate, endDate, comparisonMode, selectedClosedPeriodId]);
 
   const loadAnimalProfitability = async () => {
     const [allAnimals, allEvents, allSales] = await Promise.all([
@@ -672,6 +725,135 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
     });
   };
 
+  const calcMetric = (thisVal: number, lastVal: number): YoyMetric => {
+    const diff = Math.round((thisVal - lastVal) * 100) / 100;
+    let pctChange = 0;
+    if (lastVal !== 0) {
+      pctChange = Math.round(((thisVal - lastVal) / Math.abs(lastVal)) * 1000) / 10;
+    } else if (thisVal !== 0) {
+      pctChange = 100;
+    }
+    return { thisYear: thisVal, lastYear: lastVal, diff, pctChange };
+  };
+
+  const loadYoyComparison = async () => {
+    const periods = await getClosedPeriods();
+    setClosedPeriodsList(periods);
+
+    const now = new Date();
+    const currentCalYear = now.getFullYear();
+    const lastCalYear = currentCalYear - 1;
+
+    let thisYearLabel = `চলতি বছর (${currentCalYear})`;
+    let thisYearRange = { startDate: `${currentCalYear}-01-01`, endDate: `${currentCalYear}-12-31` };
+    let lastYearLabel = `বিগত বছর (${lastCalYear})`;
+    let lastYearRange = { startDate: `${lastCalYear}-01-01`, endDate: `${lastCalYear}-12-31` };
+    let isLastYearClosed = false;
+    let closedPeriodRecord: ClosedPeriod | undefined = undefined;
+
+    if (comparisonMode === 'closed_period' && periods.length > 0) {
+      const selected = periods.find((p) => p.id === selectedClosedPeriodId) || periods[0];
+      closedPeriodRecord = selected;
+      isLastYearClosed = true;
+      lastYearLabel = `সমাপ্ত হিসাবকাল (${selected.endDate} পর্যন্ত)`;
+
+      // Look for previous closed period to determine start date
+      const sorted = [...periods].sort((a, b) => b.endDate.localeCompare(a.endDate));
+      const idx = sorted.findIndex((p) => p.id === selected.id);
+      const prevClosed = idx >= 0 && idx + 1 < sorted.length ? sorted[idx + 1] : null;
+
+      const lastStart = prevClosed
+        ? new Date(new Date(prevClosed.endDate).getTime() + 86400000).toISOString().split('T')[0]
+        : `${selected.endDate.substring(0, 4)}-01-01`;
+
+      lastYearRange = { startDate: lastStart, endDate: selected.endDate };
+
+      // This year is the ongoing period following this closed period up to today
+      const thisStart = new Date(new Date(selected.endDate).getTime() + 86400000).toISOString().split('T')[0];
+      thisYearRange = { startDate: thisStart, endDate: formatYMD(now) };
+      thisYearLabel = `সমাপ্তির পরবর্তী চলতি সময়কাল (${thisStart} হতে)`;
+    } else {
+      // Calendar year mode: check if last calendar year is closed
+      const matchingClosed = periods.find((p) => p.endDate >= `${lastCalYear}-12-31`);
+      if (matchingClosed) {
+        isLastYearClosed = true;
+        closedPeriodRecord = matchingClosed;
+      }
+    }
+
+    const [thisPl, lastPl] = await Promise.all([
+      generateProfitLoss(thisYearRange),
+      generateProfitLoss(lastYearRange)
+    ]);
+
+    // Build expense category breakdown from operatingExpenses array
+    const catMap = new Map<string, { nameBn: string; code: string; thisYear: number; lastYear: number }>();
+
+    for (const exp of thisPl.operatingExpenses) {
+      catMap.set(exp.code, {
+        code: exp.code,
+        nameBn: exp.nameBn,
+        thisYear: exp.amount,
+        lastYear: 0
+      });
+    }
+
+    for (const exp of lastPl.operatingExpenses) {
+      const existing = catMap.get(exp.code);
+      if (existing) {
+        existing.lastYear = exp.amount;
+      } else {
+        catMap.set(exp.code, {
+          code: exp.code,
+          nameBn: exp.nameBn,
+          thisYear: 0,
+          lastYear: exp.amount
+        });
+      }
+    }
+
+    const expenseBreakdown = Array.from(catMap.values()).map((item) => {
+      const diff = Math.round((item.thisYear - item.lastYear) * 100) / 100;
+      let pctChange = 0;
+      if (item.lastYear !== 0) {
+        pctChange = Math.round(((item.thisYear - item.lastYear) / Math.abs(item.lastYear)) * 1000) / 10;
+      } else if (item.thisYear !== 0) {
+        pctChange = 100;
+      }
+      return {
+        category: `${item.code} - ${item.nameBn}`,
+        thisYear: item.thisYear,
+        lastYear: item.lastYear,
+        diff,
+        pctChange
+      };
+    });
+
+    setYoyData({
+      thisYearLabel,
+      thisYearRange,
+      lastYearLabel,
+      lastYearRange,
+      isLastYearClosed,
+      closedPeriodRecord,
+      thisYearPl: thisPl,
+      lastYearPl: lastPl,
+      metrics: {
+        revenue: calcMetric(thisPl.totalRevenue, lastPl.totalRevenue),
+        cogs: calcMetric(thisPl.totalCogs, lastPl.totalCogs),
+        grossProfit: calcMetric(thisPl.grossProfit, lastPl.grossProfit),
+        operatingExpenses: calcMetric(thisPl.totalOperatingExpenses, lastPl.totalOperatingExpenses),
+        operatingProfit: calcMetric(thisPl.operatingProfit, lastPl.operatingProfit),
+        otherNet: calcMetric(
+          (thisPl.totalOtherIncome || 0) - (thisPl.totalOtherExpenses || 0),
+          (lastPl.totalOtherIncome || 0) - (lastPl.totalOtherExpenses || 0)
+        ),
+        netProfit: calcMetric(thisPl.netProfit, lastPl.netProfit)
+      },
+      expenseBreakdown
+    });
+  };
+
   const loadReports = async () => {
     setLoading(true);
     try {
@@ -693,6 +875,8 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
         await loadCashFlowReport();
       } else if (activeReport === 'vatSummary') {
         await loadVatSummary();
+      } else if (activeReport === 'yoyComparison') {
+        await loadYoyComparison();
       }
     } catch (e) {
       console.error(e);
@@ -999,6 +1183,19 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
         )}
 
         <button
+          id="tab-yoy-comparison"
+          onClick={() => setActiveReport('yoyComparison')}
+          className={`flex items-center gap-1.5 px-3.5 py-2 rounded-lg whitespace-nowrap transition-all cursor-pointer min-h-[40px] ${
+            activeReport === 'yoyComparison'
+              ? 'bg-[#1E5128] text-white shadow-xs'
+              : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200/60'
+          }`}
+        >
+          <GitCompare className="w-4 h-4" />
+          <span>বার্ষিক তুলনা (This Year vs Last Year)</span>
+        </button>
+
+        <button
           id="tab-backup-restore"
           onClick={() => setActiveReport('backup')}
           className={`flex items-center gap-1.5 px-3.5 py-2 rounded-lg whitespace-nowrap transition-all cursor-pointer min-h-[40px] ${
@@ -1010,8 +1207,8 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
         </button>
       </div>
 
-      {/* Date Range Control (Visible for Financial Reports: pl, balanceSheet, trialBalance, animalProfitability) */}
-      {activeReport !== 'backup' && activeReport !== 'aging' && (
+      {/* Date Range Control (Visible for Financial Reports: pl, balanceSheet, trialBalance, animalProfitability, vatSummary) */}
+      {activeReport !== 'backup' && activeReport !== 'aging' && activeReport !== 'yoyComparison' && (
         <div className="p-4 rounded-2xl bg-white border border-gray-200 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-3">
           <div className="flex items-center gap-2.5">
             <div className="w-9 h-9 rounded-xl bg-emerald-50 text-[#1E5128] border border-emerald-100 flex items-center justify-center shrink-0">
@@ -1192,6 +1389,23 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
               <span className="font-mono">
                 {fmt(pl.netProfit)}
               </span>
+            </div>
+
+            {/* Quick compare link */}
+            <div className="p-3 bg-purple-50/70 border border-purple-200 rounded-xl flex items-center justify-between flex-wrap gap-2 text-xs text-purple-950">
+              <div className="flex items-center gap-2">
+                <GitCompare className="w-4 h-4 text-purple-700 shrink-0" />
+                <span>
+                  <strong>বার্ষিক তুলনা চান?</strong> চলতি বছরের পারফরম্যান্স বিগত বছর বা সমাপ্ত হিসাবকালের সাথে পাশাপাশি তুলনা করতে পারবেন।
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setActiveReport('yoyComparison')}
+                className="px-3 py-1.5 rounded-lg bg-purple-700 text-white font-bold hover:bg-purple-800 transition-colors cursor-pointer"
+              >
+                তুলনামূলক বিবরণী দেখুন →
+              </button>
             </div>
           </div>
         </div>
@@ -2836,6 +3050,381 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
               )}
             </div>
           </div>
+        </div>
+      )}
+
+      {/* ===================== REPORT: YEAR-OVER-YEAR / CLOSED PERIOD COMPARISON ===================== */}
+      {activeReport === 'yoyComparison' && (
+        <div className="space-y-5">
+          {/* Header & Mode Switcher */}
+          <div className="bg-white border border-gray-200 rounded-2xl p-5 shadow-xs space-y-4">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 border-b border-gray-100 pb-4">
+              <div>
+                <h3 className="text-base sm:text-lg font-bold text-gray-900 flex items-center gap-2">
+                  <GitCompare className="w-5 h-5 text-purple-700" />
+                  <span>চলতি বছর বনাম বিগত বছর আর্থিক তুলনা (This Year vs Last Year)</span>
+                </h3>
+                <p className="text-xs sm:text-sm text-gray-600 mt-0.5">
+                  সমাপ্ত হিসাবকাল (Closed Periods) ও পূর্ববর্তী বছরের সাথে আয়, ব্যয় ও মুনাফার তুলনামূলক আর্থিক পর্যালোচনা
+                </p>
+              </div>
+
+              {/* Mode Selector */}
+              <div className="flex items-center gap-1.5 bg-gray-100 p-1 rounded-xl text-xs font-bold">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setComparisonMode('calendar');
+                    setSelectedClosedPeriodId('');
+                  }}
+                  className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
+                    comparisonMode === 'calendar'
+                      ? 'bg-purple-700 text-white shadow-xs'
+                      : 'text-gray-700 hover:text-gray-900 hover:bg-gray-200/70'
+                  }`}
+                >
+                  ক্যালেন্ডার বছরভিত্তিক
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setComparisonMode('closed_period')}
+                  className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer flex items-center gap-1 ${
+                    comparisonMode === 'closed_period'
+                      ? 'bg-purple-700 text-white shadow-xs'
+                      : 'text-gray-700 hover:text-gray-900 hover:bg-gray-200/70'
+                  }`}
+                >
+                  <Lock className="w-3.5 h-3.5" />
+                  <span>সমাপ্ত হিসাবকালভিত্তিক</span>
+                  {closedPeriodsList.length > 0 && (
+                    <span className="ml-1 px-1.5 py-0.2 bg-purple-200 text-purple-900 rounded-full text-[10px]">
+                      {closedPeriodsList.length}
+                    </span>
+                  )}
+                </button>
+              </div>
+            </div>
+
+            {/* Closed period selection dropdown if mode is closed_period */}
+            {comparisonMode === 'closed_period' && (
+              <div className="p-3.5 rounded-xl bg-purple-50/70 border border-purple-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+                <div className="flex items-center gap-2 text-purple-950">
+                  <Lock className="w-4 h-4 text-purple-700 shrink-0" />
+                  <span>তুলনার জন্য সমাপ্ত হিসাবকাল নির্বাচন করুন:</span>
+                </div>
+                {closedPeriodsList.length === 0 ? (
+                  <span className="text-gray-500 italic">এখনও কোনো হিসাবকাল সমাপ্ত (Year-End Closed) করা হয়নি।</span>
+                ) : (
+                  <select
+                    value={selectedClosedPeriodId || (closedPeriodsList[0]?.id || '')}
+                    onChange={(e) => setSelectedClosedPeriodId(e.target.value)}
+                    className="bg-white border border-purple-300 rounded-lg px-3 py-1.5 text-xs text-purple-950 font-bold focus:outline-none focus:ring-2 focus:ring-purple-600/30 min-h-[36px]"
+                  >
+                    {closedPeriodsList.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        সমাপ্তির তারিখ: {p.endDate} (স্থানান্তরিত লাভ: ৳{p.netProfitTransferred.toLocaleString('en-IN')})
+                      </option>
+                    ))}
+                  </select>
+                )}
+              </div>
+            )}
+
+            {/* Periods Range Banner */}
+            {yoyData && (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1 text-xs">
+                <div className="p-3 rounded-xl bg-emerald-50/70 border border-emerald-200">
+                  <div className="font-bold text-emerald-900 flex items-center justify-between">
+                    <span>চলতি সময়কাল (Current Period)</span>
+                    <span className="px-2 py-0.5 rounded bg-emerald-100 text-emerald-800 text-[11px]">সক্রিয় / চলমান</span>
+                  </div>
+                  <div className="text-sm font-bold text-gray-900 mt-1">{yoyData.thisYearLabel}</div>
+                  <div className="text-gray-600 font-mono text-[11px]">
+                    {yoyData.thisYearRange.startDate} হতে {yoyData.thisYearRange.endDate}
+                  </div>
+                </div>
+
+                <div className="p-3 rounded-xl bg-purple-50/70 border border-purple-200">
+                  <div className="font-bold text-purple-900 flex items-center justify-between">
+                    <span>বিগত সময়কাল (Prior Comparison Period)</span>
+                    {yoyData.isLastYearClosed ? (
+                      <span className="px-2 py-0.5 rounded bg-purple-200 text-purple-900 text-[11px] font-bold flex items-center gap-1">
+                        <Lock className="w-3 h-3" /> সমাপ্ত হিসাবকাল (Closed)
+                      </span>
+                    ) : (
+                      <span className="px-2 py-0.5 rounded bg-gray-200 text-gray-700 text-[11px]">ক্যালেন্ডার বছর</span>
+                    )}
+                  </div>
+                  <div className="text-sm font-bold text-gray-900 mt-1">{yoyData.lastYearLabel}</div>
+                  <div className="text-gray-600 font-mono text-[11px]">
+                    {yoyData.lastYearRange.startDate} হতে {yoyData.lastYearRange.endDate}
+                    {yoyData.closedPeriodRecord && (
+                      <span className="ml-2 font-sans text-purple-800 font-semibold">
+                        • পুঞ্জীভূত লাভে স্থানান্তর: ৳{yoyData.closedPeriodRecord.netProfitTransferred.toLocaleString('en-IN')}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Top 4 KPI Comparison Cards */}
+          {yoyData && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+              {/* Revenue Card */}
+              <div className="p-4 rounded-2xl bg-white border border-gray-200 shadow-xs space-y-2">
+                <div className="text-xs font-bold text-gray-500 uppercase tracking-wider">মোট বিক্রয় ও আয় (Revenue)</div>
+                <div className="flex items-baseline justify-between">
+                  <div className="text-lg font-bold font-mono text-gray-900">{fmt(yoyData.metrics.revenue.thisYear)}</div>
+                  <div className={`text-xs font-bold flex items-center gap-0.5 ${
+                    yoyData.metrics.revenue.diff >= 0 ? 'text-emerald-700' : 'text-red-600'
+                  }`}>
+                    {yoyData.metrics.revenue.diff >= 0 ? <TrendingUp className="w-3.5 h-3.5" /> : <TrendingDown className="w-3.5 h-3.5" />}
+                    <span>{yoyData.metrics.revenue.diff >= 0 ? '+' : ''}{yoyData.metrics.revenue.pctChange}%</span>
+                  </div>
+                </div>
+                <div className="text-[11px] text-gray-500 flex justify-between pt-1 border-t border-gray-100">
+                  <span>বিগত বছর:</span>
+                  <span className="font-mono text-gray-700 font-semibold">{fmt(yoyData.metrics.revenue.lastYear)}</span>
+                </div>
+              </div>
+
+              {/* Gross Profit Card */}
+              <div className="p-4 rounded-2xl bg-white border border-gray-200 shadow-xs space-y-2">
+                <div className="text-xs font-bold text-gray-500 uppercase tracking-wider">মোট লাভ (Gross Profit)</div>
+                <div className="flex items-baseline justify-between">
+                  <div className="text-lg font-bold font-mono text-emerald-800">{fmt(yoyData.metrics.grossProfit.thisYear)}</div>
+                  <div className={`text-xs font-bold flex items-center gap-0.5 ${
+                    yoyData.metrics.grossProfit.diff >= 0 ? 'text-emerald-700' : 'text-red-600'
+                  }`}>
+                    {yoyData.metrics.grossProfit.diff >= 0 ? <TrendingUp className="w-3.5 h-3.5" /> : <TrendingDown className="w-3.5 h-3.5" />}
+                    <span>{yoyData.metrics.grossProfit.diff >= 0 ? '+' : ''}{yoyData.metrics.grossProfit.pctChange}%</span>
+                  </div>
+                </div>
+                <div className="text-[11px] text-gray-500 flex justify-between pt-1 border-t border-gray-100">
+                  <span>বিগত বছর:</span>
+                  <span className="font-mono text-gray-700 font-semibold">{fmt(yoyData.metrics.grossProfit.lastYear)}</span>
+                </div>
+              </div>
+
+              {/* Operating Expenses Card */}
+              <div className="p-4 rounded-2xl bg-white border border-gray-200 shadow-xs space-y-2">
+                <div className="text-xs font-bold text-gray-500 uppercase tracking-wider">পরিচালন ব্যয় (Operating Exp.)</div>
+                <div className="flex items-baseline justify-between">
+                  <div className="text-lg font-bold font-mono text-red-700">{fmt(yoyData.metrics.operatingExpenses.thisYear)}</div>
+                  <div className={`text-xs font-bold flex items-center gap-0.5 ${
+                    yoyData.metrics.operatingExpenses.diff <= 0 ? 'text-emerald-700' : 'text-amber-700'
+                  }`}>
+                    {yoyData.metrics.operatingExpenses.diff <= 0 ? <ArrowDown className="w-3.5 h-3.5" /> : <ArrowUp className="w-3.5 h-3.5" />}
+                    <span>{yoyData.metrics.operatingExpenses.diff >= 0 ? '+' : ''}{yoyData.metrics.operatingExpenses.pctChange}%</span>
+                  </div>
+                </div>
+                <div className="text-[11px] text-gray-500 flex justify-between pt-1 border-t border-gray-100">
+                  <span>বিগত বছর:</span>
+                  <span className="font-mono text-gray-700 font-semibold">{fmt(yoyData.metrics.operatingExpenses.lastYear)}</span>
+                </div>
+              </div>
+
+              {/* Net Profit Card */}
+              <div className={`p-4 rounded-2xl border shadow-xs space-y-2 ${
+                yoyData.metrics.netProfit.thisYear >= 0
+                  ? 'bg-emerald-50/50 border-emerald-200'
+                  : 'bg-red-50/50 border-red-200'
+              }`}>
+                <div className="text-xs font-bold text-gray-700 uppercase tracking-wider">নিট মুনাফা / (ক্ষতি) (Net Profit)</div>
+                <div className="flex items-baseline justify-between">
+                  <div className={`text-lg font-bold font-mono ${
+                    yoyData.metrics.netProfit.thisYear >= 0 ? 'text-emerald-900' : 'text-red-700'
+                  }`}>
+                    {fmt(yoyData.metrics.netProfit.thisYear)}
+                  </div>
+                  <div className={`text-xs font-bold flex items-center gap-0.5 ${
+                    yoyData.metrics.netProfit.diff >= 0 ? 'text-emerald-700' : 'text-red-700'
+                  }`}>
+                    {yoyData.metrics.netProfit.diff >= 0 ? <TrendingUp className="w-3.5 h-3.5" /> : <TrendingDown className="w-3.5 h-3.5" />}
+                    <span>{yoyData.metrics.netProfit.diff >= 0 ? '+' : ''}{yoyData.metrics.netProfit.pctChange}%</span>
+                  </div>
+                </div>
+                <div className="text-[11px] text-gray-600 flex justify-between pt-1 border-t border-gray-200">
+                  <span>বিগত বছর:</span>
+                  <span className="font-mono font-semibold">{fmt(yoyData.metrics.netProfit.lastYear)}</span>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Detailed Comparative Financial Statement Table */}
+          {yoyData && (
+            <div className="bg-white border border-gray-200 rounded-2xl p-5 shadow-xs space-y-4">
+              <div className="flex items-center justify-between pb-3 border-b border-gray-100">
+                <h4 className="font-bold text-gray-900 text-sm sm:text-base flex items-center gap-2">
+                  <FileSpreadsheet className="w-4 h-4 text-[#1E5128]" />
+                  <span>তুলনামূলক লাভ-ক্ষতি বিবরণী (Comparative Profit & Loss Statement)</span>
+                </h4>
+                <span className="text-xs text-gray-500 font-mono">মান: বিডিটি (BDT)</span>
+              </div>
+
+              <div className="overflow-x-auto border border-gray-200 rounded-xl">
+                <table className="w-full text-left text-xs sm:text-sm border-collapse font-mono">
+                  <thead className="bg-gray-100 text-gray-700 font-semibold border-b border-gray-200 font-sans">
+                    <tr>
+                      <th className="py-3 px-4 text-left">হিসাবের বিবরণ / খাত (Component)</th>
+                      <th className="py-3 px-4 text-right">চলতি সময়কাল</th>
+                      <th className="py-3 px-4 text-right">বিগত সময়কাল</th>
+                      <th className="py-3 px-4 text-right">পার্থক্য (Variance)</th>
+                      <th className="py-3 px-4 text-right">শতকরা পরিবর্তন</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {/* Revenue Row */}
+                    <tr className="hover:bg-gray-50 font-bold">
+                      <td className="py-2.5 px-4 font-sans text-gray-900">মোট বিক্রয় ও পরিচালন আয় (Total Revenue)</td>
+                      <td className="py-2.5 px-4 text-right text-gray-900">{fmt(yoyData.metrics.revenue.thisYear)}</td>
+                      <td className="py-2.5 px-4 text-right text-gray-700">{fmt(yoyData.metrics.revenue.lastYear)}</td>
+                      <td className={`py-2.5 px-4 text-right ${
+                        yoyData.metrics.revenue.diff >= 0 ? 'text-emerald-700' : 'text-red-600'
+                      }`}>
+                        {yoyData.metrics.revenue.diff >= 0 ? '+' : ''}{fmt(yoyData.metrics.revenue.diff)}
+                      </td>
+                      <td className={`py-2.5 px-4 text-right font-sans font-semibold ${
+                        yoyData.metrics.revenue.pctChange >= 0 ? 'text-emerald-700' : 'text-red-600'
+                      }`}>
+                        {yoyData.metrics.revenue.pctChange >= 0 ? '+' : ''}{yoyData.metrics.revenue.pctChange}%
+                      </td>
+                    </tr>
+
+                    {/* COGS Row */}
+                    <tr className="hover:bg-gray-50 text-gray-700">
+                      <td className="py-2 px-4 font-sans pl-8 text-gray-600">বাদ: বিক্রিত পণ্যের ব্যয় (Cost of Goods Sold - COGS)</td>
+                      <td className="py-2 px-4 text-right text-red-700">({fmt(yoyData.metrics.cogs.thisYear)})</td>
+                      <td className="py-2 px-4 text-right text-red-700">({fmt(yoyData.metrics.cogs.lastYear)})</td>
+                      <td className="py-2 px-4 text-right text-gray-600 font-sans">
+                        {fmt(yoyData.metrics.cogs.diff)}
+                      </td>
+                      <td className="py-2 px-4 text-right font-sans text-gray-600">
+                        {yoyData.metrics.cogs.pctChange >= 0 ? '+' : ''}{yoyData.metrics.cogs.pctChange}%
+                      </td>
+                    </tr>
+
+                    {/* Gross Profit Row */}
+                    <tr className="bg-emerald-50/50 font-bold border-y border-emerald-100">
+                      <td className="py-2.5 px-4 font-sans text-emerald-950">মোট লাভ / প্রান্তিক আয় (Gross Profit)</td>
+                      <td className="py-2.5 px-4 text-right text-emerald-900">{fmt(yoyData.metrics.grossProfit.thisYear)}</td>
+                      <td className="py-2.5 px-4 text-right text-gray-800">{fmt(yoyData.metrics.grossProfit.lastYear)}</td>
+                      <td className={`py-2.5 px-4 text-right ${
+                        yoyData.metrics.grossProfit.diff >= 0 ? 'text-emerald-700' : 'text-red-600'
+                      }`}>
+                        {yoyData.metrics.grossProfit.diff >= 0 ? '+' : ''}{fmt(yoyData.metrics.grossProfit.diff)}
+                      </td>
+                      <td className={`py-2.5 px-4 text-right font-sans font-bold ${
+                        yoyData.metrics.grossProfit.pctChange >= 0 ? 'text-emerald-700' : 'text-red-600'
+                      }`}>
+                        {yoyData.metrics.grossProfit.pctChange >= 0 ? '+' : ''}{yoyData.metrics.grossProfit.pctChange}%
+                      </td>
+                    </tr>
+
+                    {/* Section Header: Operating Expenses */}
+                    <tr className="bg-gray-50/70 text-gray-800 font-bold font-sans">
+                      <td colSpan={5} className="py-2 px-4 text-xs tracking-wider uppercase text-gray-500">
+                        পরিচালন ব্যয়সমূহ (Operating Expenses Breakdown)
+                      </td>
+                    </tr>
+
+                    {/* Expense Categories Breakdown */}
+                    {yoyData.expenseBreakdown.map((item) => (
+                      <tr key={item.category} className="hover:bg-gray-50 text-gray-700">
+                        <td className="py-1.5 px-4 font-sans pl-8 text-gray-700">{item.category}</td>
+                        <td className="py-1.5 px-4 text-right text-gray-900">{fmt(item.thisYear)}</td>
+                        <td className="py-1.5 px-4 text-right text-gray-600">{fmt(item.lastYear)}</td>
+                        <td className="py-1.5 px-4 text-right text-gray-600">
+                          {item.diff >= 0 ? '+' : ''}{fmt(item.diff)}
+                        </td>
+                        <td className="py-1.5 px-4 text-right font-sans text-gray-600">
+                          {item.pctChange >= 0 ? '+' : ''}{item.pctChange}%
+                        </td>
+                      </tr>
+                    ))}
+
+                    {/* Total Operating Expenses Row */}
+                    <tr className="bg-red-50/40 font-bold border-t border-red-100 text-red-900">
+                      <td className="py-2.5 px-4 font-sans">মোট পরিচালন ব্যয় (Total Operating Expenses)</td>
+                      <td className="py-2.5 px-4 text-right">({fmt(yoyData.metrics.operatingExpenses.thisYear)})</td>
+                      <td className="py-2.5 px-4 text-right">({fmt(yoyData.metrics.operatingExpenses.lastYear)})</td>
+                      <td className="py-2.5 px-4 text-right">
+                        {yoyData.metrics.operatingExpenses.diff >= 0 ? '+' : ''}{fmt(yoyData.metrics.operatingExpenses.diff)}
+                      </td>
+                      <td className="py-2.5 px-4 text-right font-sans">
+                        {yoyData.metrics.operatingExpenses.pctChange >= 0 ? '+' : ''}{yoyData.metrics.operatingExpenses.pctChange}%
+                      </td>
+                    </tr>
+
+                    {/* Operating Profit Row */}
+                    <tr className="hover:bg-gray-50 font-bold">
+                      <td className="py-2 px-4 font-sans text-gray-800">পরিচালন মুনাফা (Operating Profit)</td>
+                      <td className="py-2 px-4 text-right text-gray-900">{fmt(yoyData.metrics.operatingProfit.thisYear)}</td>
+                      <td className="py-2 px-4 text-right text-gray-700">{fmt(yoyData.metrics.operatingProfit.lastYear)}</td>
+                      <td className="py-2 px-4 text-right text-gray-700">
+                        {yoyData.metrics.operatingProfit.diff >= 0 ? '+' : ''}{fmt(yoyData.metrics.operatingProfit.diff)}
+                      </td>
+                      <td className="py-2 px-4 text-right font-sans">
+                        {yoyData.metrics.operatingProfit.pctChange >= 0 ? '+' : ''}{yoyData.metrics.operatingProfit.pctChange}%
+                      </td>
+                    </tr>
+
+                    {/* Other Net Income / Expense Row */}
+                    <tr className="hover:bg-gray-50 text-gray-700">
+                      <td className="py-1.5 px-4 font-sans pl-8 text-gray-600">অন্যান্য নিট আয় / (ব্যয়)</td>
+                      <td className="py-1.5 px-4 text-right text-gray-800">{fmt(yoyData.metrics.otherNet.thisYear)}</td>
+                      <td className="py-1.5 px-4 text-right text-gray-600">{fmt(yoyData.metrics.otherNet.lastYear)}</td>
+                      <td className="py-1.5 px-4 text-right text-gray-600">
+                        {yoyData.metrics.otherNet.diff >= 0 ? '+' : ''}{fmt(yoyData.metrics.otherNet.diff)}
+                      </td>
+                      <td className="py-1.5 px-4 text-right font-sans text-gray-600">
+                        {yoyData.metrics.otherNet.pctChange >= 0 ? '+' : ''}{yoyData.metrics.otherNet.pctChange}%
+                      </td>
+                    </tr>
+
+                    {/* NET PROFIT FINAL ROW */}
+                    <tr className={`border-t-2 font-bold text-sm ${
+                      yoyData.metrics.netProfit.thisYear >= 0
+                        ? 'bg-emerald-100/70 border-emerald-400 text-emerald-950'
+                        : 'bg-red-100/70 border-red-400 text-red-950'
+                    }`}>
+                      <td className="py-3 px-4 font-sans">খামারের নিট লাভ / (ক্ষতি) (Net Farm Profit / Loss)</td>
+                      <td className="py-3 px-4 text-right text-base">{fmt(yoyData.metrics.netProfit.thisYear)}</td>
+                      <td className="py-3 px-4 text-right">{fmt(yoyData.metrics.netProfit.lastYear)}</td>
+                      <td className={`py-3 px-4 text-right ${
+                        yoyData.metrics.netProfit.diff >= 0 ? 'text-emerald-800' : 'text-red-700'
+                      }`}>
+                        {yoyData.metrics.netProfit.diff >= 0 ? '+' : ''}{fmt(yoyData.metrics.netProfit.diff)}
+                      </td>
+                      <td className={`py-3 px-4 text-right font-sans text-base ${
+                        yoyData.metrics.netProfit.pctChange >= 0 ? 'text-emerald-800' : 'text-red-700'
+                      }`}>
+                        {yoyData.metrics.netProfit.pctChange >= 0 ? '+' : ''}{yoyData.metrics.netProfit.pctChange}%
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Retained Earnings Note if Closed Period was matched */}
+              {yoyData.closedPeriodRecord && (
+                <div className="p-3.5 rounded-xl bg-purple-50/90 border border-purple-200 text-xs text-purple-950 flex items-center justify-between flex-wrap gap-2">
+                  <div className="flex items-center gap-2">
+                    <Lock className="w-4 h-4 text-purple-700 shrink-0" />
+                    <span>
+                      <strong>সমাপ্তি দাখিলা ও মালিকানা তহবিল:</strong> বিগত হিসাবকালের মোট নিট লাভ <strong>৳{yoyData.closedPeriodRecord.netProfitTransferred.toLocaleString('en-IN')}</strong> সফলভাবে পুঞ্জীভূত লাভ/মুনাফা (Retained Earnings - Code 3050) হিসেবে স্থানান্তরিত হয়েছে।
+                    </span>
+                  </div>
+                  <span className="font-mono text-[11px] bg-purple-200/80 text-purple-900 px-2 py-0.5 rounded font-semibold">
+                    সমাপ্তির সময়: {new Date(yoyData.closedPeriodRecord.closedAt).toLocaleDateString('bn-BD')}
+                  </span>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
     </div>

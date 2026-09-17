@@ -98,6 +98,19 @@ export interface JournalEntry {
   synced?: boolean;
 }
 
+export interface ClosedPeriod {
+  id: string;
+  endDate: string;
+  startDate?: string;
+  netProfitTransferred: number;
+  closedAt: string;
+  closedBy?: string;
+  journalEntryId?: string;
+  voucherNumber?: string;
+  notes?: string;
+  synced?: boolean;
+}
+
 export type AnimalSpecies = 'CATTLE' | 'GOAT' | 'SHEEP' | 'OTHER';
 export type AnimalStatus = 'ACTIVE' | 'SOLD' | 'DECEASED' | 'TRANSFERRED' | 'STOLEN';
 

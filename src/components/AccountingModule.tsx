@@ -8,7 +8,12 @@ import {
   Trash2,
   Layers,
   ArrowRightLeft,
-  Calculator
+  Calculator,
+  Lock,
+  Calendar,
+  History,
+  X,
+  Check
 } from 'lucide-react';
 import { db } from '../db/indexedDb';
 import {
@@ -17,10 +22,15 @@ import {
   postJournalEntry,
   TrialBalanceRow,
   LedgerEntry,
-  validateBalancedLines
+  validateBalancedLines,
+  getLatestClosedPeriod,
+  getClosedPeriods,
+  previewYearEndClosing,
+  executeYearEndClosing,
+  YearEndClosingPreview
 } from '../accounting/accountingEngine';
 import { runAutomatedDepreciation } from '../accounting/depreciationService';
-import { Account, JournalEntry, JournalLine, UserRole, VoucherType } from '../types';
+import { Account, ClosedPeriod, JournalEntry, JournalLine, UserRole, VoucherType } from '../types';
 import { generateTransactionNumber, generateUniqueId, safeInsert } from '../utils/idGenerator';
 
 interface Props {
@@ -37,6 +47,19 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
   const [loading, setLoading] = useState(false);
   const [msg, setMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [deprRunning, setDeprRunning] = useState(false);
+
+  // Closed Periods State
+  const [closedPeriods, setClosedPeriods] = useState<ClosedPeriod[]>([]);
+  const [latestClosed, setLatestClosed] = useState<ClosedPeriod | null>(null);
+  const [showClosingModal, setShowClosingModal] = useState(false);
+  const [closingDate, setClosingDate] = useState(() => {
+    const now = new Date();
+    return `${now.getFullYear()}-12-31`;
+  });
+  const [closingNotes, setClosingNotes] = useState('');
+  const [closingPreview, setClosingPreview] = useState<YearEndClosingPreview | null>(null);
+  const [closingLoading, setClosingLoading] = useState(false);
+  const [closingExecuting, setClosingExecuting] = useState(false);
 
   // New Voucher Form State
   const [voucherType, setVoucherType] = useState<VoucherType>('JOURNAL');
@@ -80,6 +103,10 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
       const accList = await db.accounts.orderBy('code').toArray();
       setAccounts(accList);
 
+      const periods = await getClosedPeriods();
+      setClosedPeriods(periods);
+      setLatestClosed(periods.length > 0 ? periods[0] : null);
+
       if (subTab === 'daybook') {
         const jList = await db.journalEntries.orderBy('date').reverse().toArray();
         setJournals(jList);
@@ -101,6 +128,51 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
       console.error(e);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleOpenClosingModal = async () => {
+    setShowClosingModal(true);
+    const dateToPreview = closingDate || new Date().toISOString().split('T')[0];
+    await handleFetchClosingPreview(dateToPreview);
+  };
+
+  const handleFetchClosingPreview = async (selectedDate: string) => {
+    setClosingLoading(true);
+    try {
+      const preview = await previewYearEndClosing(selectedDate);
+      setClosingPreview(preview);
+    } catch (err: any) {
+      console.error(err);
+      setClosingPreview(null);
+    } finally {
+      setClosingLoading(false);
+    }
+  };
+
+  const handleConfirmClosing = async () => {
+    if (!closingPreview || !closingPreview.canClose || closingExecuting) return;
+    setClosingExecuting(true);
+    try {
+      const res = await executeYearEndClosing({
+        closingDate,
+        currentUserId,
+        notes: closingNotes
+      });
+      setMsg({
+        type: 'success',
+        text: `বছর সমাপ্তি (${closingDate}) সফলভাবে সম্পন্ন হয়েছে! পুঞ্জীভূত লাভ/মুনাফা (Retained Earnings) হিসেবে ৳${res.netProfitTransferred.toLocaleString('en-IN')} স্থানান্তর করা হয়েছে${res.journalEntry ? ` (দাখিলা ভাউচার নং: ${res.journalEntry.voucherNumber})` : ''}।`
+      });
+      setShowClosingModal(false);
+      setClosingNotes('');
+      await loadBaseData();
+    } catch (err: any) {
+      setMsg({
+        type: 'error',
+        text: err.message || 'বছর সমাপ্তি প্রক্রিয়া ব্যর্থ হয়েছে।'
+      });
+    } finally {
+      setClosingExecuting(false);
     }
   };
 
@@ -169,6 +241,14 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
 
     if (role !== 'OWNER') {
       setMsg({ type: 'error', text: 'শুধুমাত্র অনুমোদিত মালিক ভাউচার পোস্ট করতে পারেন।' });
+      return;
+    }
+
+    if (latestClosed && date <= latestClosed.endDate) {
+      setMsg({
+        type: 'error',
+        text: `হিসাবরক্ষণ সীমাবদ্ধতা: ${latestClosed.endDate} বা তার পূর্বের সময়কালের হিসাব ইতোমধ্যে বছর সমাপ্তি (Year-End Closed) করা হয়েছে। বন্ধ সময়কালের কোনো তারিখে নতুন জাবেদা পোস্ট বা সংশোধন করা যাবে না। অনুগ্রহ করে সমাপ্তির পরবর্তী কোনো তারিখ নির্বাচন করুন।`
+      });
       return;
     }
 
@@ -345,17 +425,32 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
             </button>
           </div>
 
-          <button
-            id="btn-run-depreciation-now"
-            type="button"
-            onClick={handleRunDepreciationNow}
-            disabled={deprRunning}
-            className="px-3.5 py-2 rounded-xl bg-amber-50 hover:bg-amber-100 border border-amber-300 text-amber-900 text-[13px] font-bold shadow-xs transition-all flex items-center gap-1.5 cursor-pointer min-h-[40px] whitespace-nowrap disabled:opacity-50"
-            title="বিগত মাসগুলোর বকেয়া স্থায়ী সম্পদ অবচয় জাবেদা হিসাব ও স্বয়ংক্রিয় দাখিলা করুন"
-          >
-            <Calculator className={`w-4 h-4 text-amber-700 ${deprRunning ? 'animate-spin' : ''}`} />
-            <span>{deprRunning ? 'অবচয় হিসাব হচ্ছে...' : 'এখনই অবচয় হিসাব করুন'}</span>
-          </button>
+          <div className="flex items-center gap-2 flex-wrap">
+            <button
+              id="btn-run-depreciation-now"
+              type="button"
+              onClick={handleRunDepreciationNow}
+              disabled={deprRunning}
+              className="px-3.5 py-2 rounded-xl bg-amber-50 hover:bg-amber-100 border border-amber-300 text-amber-900 text-[13px] font-bold shadow-xs transition-all flex items-center gap-1.5 cursor-pointer min-h-[40px] whitespace-nowrap disabled:opacity-50"
+              title="বিগত মাসগুলোর বকেয়া স্থায়ী সম্পদ অবচয় জাবেদা হিসাব ও স্বয়ংক্রিয় দাখিলা করুন"
+            >
+              <Calculator className={`w-4 h-4 text-amber-700 ${deprRunning ? 'animate-spin' : ''}`} />
+              <span>{deprRunning ? 'অবচয় হিসাব হচ্ছে...' : 'এখনই অবচয় হিসাব করুন'}</span>
+            </button>
+
+            {role === 'OWNER' && (
+              <button
+                id="btn-year-end-closing"
+                type="button"
+                onClick={handleOpenClosingModal}
+                className="px-3.5 py-2 rounded-xl bg-purple-50 hover:bg-purple-100 border border-purple-300 text-purple-900 text-[13px] font-bold shadow-xs transition-all flex items-center gap-1.5 cursor-pointer min-h-[40px] whitespace-nowrap"
+                title="বছর সমাপ্তি: নির্বাচিত তারিখ পর্যন্ত নিট লাভ হিসাব করে পুঞ্জীভূত লাভ/মুনাফায় স্থানান্তর ও হিসাবকাল সমাপ্ত করুন"
+              >
+                <Lock className="w-4 h-4 text-purple-700" />
+                <span>বছর সমাপ্তি (Year-End Closing)</span>
+              </button>
+            )}
+          </div>
         </div>
       </div>
 
@@ -428,8 +523,18 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
                   required
                   value={date}
                   onChange={(e) => setDate(e.target.value)}
-                  className="w-full bg-[#F8FAFC] border border-gray-300 rounded-xl px-3.5 py-2.5 text-[15px] text-gray-900 focus:outline-none focus:border-[#1E5128] focus:ring-2 focus:ring-[#1E5128]/20 min-h-[44px]"
+                  className={`w-full bg-[#F8FAFC] border rounded-xl px-3.5 py-2.5 text-[15px] text-gray-900 focus:outline-none min-h-[44px] ${
+                    latestClosed && date <= latestClosed.endDate
+                      ? 'border-red-500 bg-red-50/50 text-red-900 focus:ring-2 focus:ring-red-300'
+                      : 'border-gray-300 focus:border-[#1E5128] focus:ring-2 focus:ring-[#1E5128]/20'
+                  }`}
                 />
+                {latestClosed && date <= latestClosed.endDate && (
+                  <p className="text-[12px] text-red-600 font-semibold mt-1 flex items-center gap-1">
+                    <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                    <span>বন্ধ হিসাবকাল: {latestClosed.endDate} বা পূর্বের তারিখে জাবেদা পোস্ট নিষিদ্ধ।</span>
+                  </p>
+                )}
               </div>
 
               <div>
@@ -567,6 +672,31 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
               + নতুন ভাউচার
             </button>
           </div>
+
+          {latestClosed && (
+            <div className="mb-4 p-3.5 rounded-xl bg-purple-50/80 border border-purple-200 flex items-center justify-between flex-wrap gap-2 text-[13px] text-purple-950">
+              <div className="flex items-center gap-2">
+                <Lock className="w-4 h-4 text-purple-700 shrink-0" />
+                <span>
+                  <strong>সর্বশেষ সমাপ্ত হিসাবকাল:</strong> {latestClosed.endDate} পর্যন্ত সময়কাল সমাপ্ত (Year-End Closed)। পুঞ্জীভূত লাভে স্থানান্তরিত: <strong>৳{latestClosed.netProfitTransferred.toLocaleString('en-IN')}</strong>
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-[11px] bg-purple-100 text-purple-800 px-2.5 py-1 rounded-full font-semibold border border-purple-200">
+                  {latestClosed.endDate} বা পূর্বের তারিখে নতুন দাখিলা নিষিদ্ধ
+                </span>
+                {role === 'OWNER' && (
+                  <button
+                    type="button"
+                    onClick={handleOpenClosingModal}
+                    className="text-[12px] text-purple-700 font-bold hover:underline cursor-pointer flex items-center gap-1"
+                  >
+                    <span>নতুন সমাপ্তি / বিবরণ</span>
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
 
           {journals.length === 0 ? (
             <div className="p-8 text-center text-gray-500 text-[14px]">
@@ -871,6 +1001,231 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
                 </div>
               </div>
             ))}
+          </div>
+        </div>
+      )}
+
+      {/* YEAR-END CLOSING MODAL */}
+      {showClosingModal && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-white rounded-2xl max-w-2xl w-full max-h-[90vh] flex flex-col shadow-2xl border border-gray-100 animate-in fade-in zoom-in-95 duration-150">
+            {/* Modal Header */}
+            <div className="flex items-center justify-between p-5 border-b border-gray-100 bg-purple-50/50 rounded-t-2xl">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-purple-100 text-purple-800 flex items-center justify-center">
+                  <Lock className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-gray-900">বছর সমাপ্তি প্রক্রিয়া (Year-End Closing)</h3>
+                  <p className="text-xs text-gray-600">হিসাবকাল সমাপ্তি ও পুঞ্জীভূত লাভে (Retained Earnings) স্থানান্তর</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowClosingModal(false)}
+                className="p-2 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-lg cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-5 overflow-y-auto space-y-4 text-sm text-gray-800">
+              {/* Notice Banner */}
+              <div className="p-3.5 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-900 space-y-1">
+                <div className="font-bold flex items-center gap-1.5 text-amber-950">
+                  <AlertCircle className="w-4 h-4 text-amber-700 shrink-0" />
+                  <span>হিসাবরক্ষণ বিধি ও অপরিবর্তনীয়তা নীতি</span>
+                </div>
+                <p>
+                  • এই প্রক্রিয়ায় পূর্ববর্তী কোনো জাবেদা ভাউচার ডিলিট বা পরিবর্তন হবে না।
+                </p>
+                <p>
+                  • শুধুমাত্র একটি সারসংক্ষেপ সমন্বয় দাখিলা দ্বারা পুঞ্জীভূত লাভ/মুনাফা (Retained Earnings - কোড ৩০৫০) হিসাবে নিট লাভ স্থানান্তর হবে।
+                </p>
+                <p>
+                  • সমাপ্তি তারিখ বা তার পূর্বের যেকোনো তারিখে আর কোনো নতুন জাবেদা পোস্ট করা যাবে না (হিসাব সিলগালা)।
+                </p>
+              </div>
+
+              {/* Date Input */}
+              <div className="space-y-1.5">
+                <label className="block text-xs font-bold text-gray-800">
+                  সমাপ্তি তারিখ (Closing End Date)
+                </label>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="date"
+                    value={closingDate}
+                    onChange={(e) => {
+                      setClosingDate(e.target.value);
+                      handleFetchClosingPreview(e.target.value);
+                    }}
+                    className="flex-1 bg-[#F8FAFC] border border-gray-300 rounded-xl px-3.5 py-2.5 text-sm font-sans focus:outline-none focus:border-purple-600 focus:ring-2 focus:ring-purple-600/20"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => handleFetchClosingPreview(closingDate)}
+                    disabled={closingLoading}
+                    className="px-3.5 py-2.5 bg-gray-100 hover:bg-gray-200 text-gray-800 rounded-xl text-xs font-bold cursor-pointer transition-colors"
+                  >
+                    {closingLoading ? 'গণনা হচ্ছে...' : 'হিসাব রিফ্রেশ'}
+                  </button>
+                </div>
+              </div>
+
+              {/* Preview calculation */}
+              {closingPreview && (
+                <div className="space-y-3">
+                  {!closingPreview.canClose ? (
+                    <div className="p-3.5 rounded-xl bg-red-50 border border-red-200 text-xs text-red-800 flex items-start gap-2">
+                      <AlertCircle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
+                      <div>
+                        <strong>সমাপ্তি সম্ভব নয়:</strong> {closingPreview.blockReason}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="p-4 rounded-xl bg-gray-50 border border-gray-200 space-y-2.5">
+                      <div className="text-xs font-bold text-gray-700 pb-1.5 border-b border-gray-200 flex justify-between">
+                        <span>শুরু হতে {closingDate} পর্যন্ত আর্থিক সারাংশ</span>
+                        <span className="text-purple-700">লাভ-ক্ষতি বিবরণী হতে গণনাকৃত</span>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-2 text-xs">
+                        <div className="text-gray-600">মোট বিক্রয় ও পরিচালন আয়:</div>
+                        <div className="text-right font-mono font-bold text-gray-900">৳{closingPreview.totalRevenue.toLocaleString('en-IN')}</div>
+
+                        <div className="text-gray-600">বিক্রিত পণ্যের ব্যয় (COGS):</div>
+                        <div className="text-right font-mono font-bold text-red-700">(৳{closingPreview.totalCogs.toLocaleString('en-IN')})</div>
+
+                        <div className="text-gray-600 font-semibold">মোট লাভ (Gross Profit):</div>
+                        <div className="text-right font-mono font-bold text-emerald-800">৳{closingPreview.grossProfit.toLocaleString('en-IN')}</div>
+
+                        <div className="text-gray-600">মোট পরিচালন ব্যয়:</div>
+                        <div className="text-right font-mono font-bold text-red-700">(৳{closingPreview.totalOperatingExpenses.toLocaleString('en-IN')})</div>
+
+                        <div className="text-gray-600 font-semibold">পরিচালন মুনাফা (Operating Profit):</div>
+                        <div className="text-right font-mono font-bold text-gray-900">৳{closingPreview.operatingProfit.toLocaleString('en-IN')}</div>
+
+                        <div className="text-gray-600">অন্যান্য নিট আয়/ব্যয়:</div>
+                        <div className="text-right font-mono text-gray-700">৳{(closingPreview.totalOtherIncome - closingPreview.totalOtherExpenses).toLocaleString('en-IN')}</div>
+                      </div>
+
+                      <div className="pt-2 border-t border-gray-200 space-y-1.5 text-xs">
+                        <div className="flex justify-between items-center text-gray-700">
+                          <span>মোট গণনাকৃত নিট লাভ (শুরু হতে {closingDate}):</span>
+                          <span className="font-mono font-bold text-gray-900">৳{closingPreview.netProfit.toLocaleString('en-IN')}</span>
+                        </div>
+
+                        {closingPreview.previousTransferred !== 0 && (
+                          <div className="flex justify-between items-center text-gray-600">
+                            <span>পূর্ববর্তী সমাপ্তিতে স্থানান্তরিত লাভ:</span>
+                            <span className="font-mono text-gray-700">৳{closingPreview.previousTransferred.toLocaleString('en-IN')}</span>
+                          </div>
+                        )}
+
+                        <div className="flex justify-between items-center p-2.5 rounded-lg bg-purple-100/70 text-purple-950 font-bold text-sm">
+                          <span>এই সমাপ্তিতে স্থানান্তরিতব্য নিট লাভ:</span>
+                          <span className="font-mono text-base text-purple-900">৳{closingPreview.netProfitToTransfer.toLocaleString('en-IN')}</span>
+                        </div>
+                      </div>
+
+                      {/* Journal Entry Preview */}
+                      <div className="pt-2 border-t border-purple-200/60 text-xs space-y-1 text-purple-900">
+                        <div className="font-bold">সমন্বয় দাখিলা পূর্বরূপ (Journal Entry Preview):</div>
+                        <div className="p-2.5 rounded-lg bg-white border border-purple-200 font-mono text-[11px] space-y-1">
+                          {closingPreview.netProfitToTransfer >= 0 ? (
+                            <>
+                              <div className="flex justify-between text-gray-700">
+                                <span>ডেবিট: ৩০৬০ - আয় সারাংশ হিসাব (Income Summary)</span>
+                                <span>৳{Math.abs(closingPreview.netProfitToTransfer).toLocaleString('en-IN')}</span>
+                              </div>
+                              <div className="flex justify-between text-emerald-800 font-bold">
+                                <span>ক্রেডিট: ৩০৫০ - পুঞ্জীভূত লাভ/মুনাফা (Retained Earnings)</span>
+                                <span>৳{Math.abs(closingPreview.netProfitToTransfer).toLocaleString('en-IN')}</span>
+                              </div>
+                            </>
+                          ) : (
+                            <>
+                              <div className="flex justify-between text-red-800 font-bold">
+                                <span>ডেবিট: ৩০৫০ - পুঞ্জীভূত লাভ/মুনাফা (Retained Earnings)</span>
+                                <span>৳{Math.abs(closingPreview.netProfitToTransfer).toLocaleString('en-IN')}</span>
+                              </div>
+                              <div className="flex justify-between text-gray-700">
+                                <span>ক্রেডিট: ৩০৬০ - আয় সারাংশ হিসাব (Income Summary)</span>
+                                <span>৳{Math.abs(closingPreview.netProfitToTransfer).toLocaleString('en-IN')}</span>
+                              </div>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Notes Field */}
+              <div className="space-y-1">
+                <label className="block text-xs font-bold text-gray-700">সমাপ্তি মন্তব্য / বিবরণ (Notes)</label>
+                <input
+                  type="text"
+                  value={closingNotes}
+                  onChange={(e) => setClosingNotes(e.target.value)}
+                  placeholder="যেমন: ২০২৫ অর্থবছর সমাপ্তি ও পুঞ্জীভূত লাভে স্থানান্তর"
+                  className="w-full bg-[#F8FAFC] border border-gray-300 rounded-xl px-3 py-2 text-xs focus:outline-none focus:border-purple-600 focus:ring-2 focus:ring-purple-600/20"
+                />
+              </div>
+
+              {/* Previous Closed Periods List if any */}
+              {closedPeriods.length > 0 && (
+                <div className="space-y-1.5 pt-2 border-t border-gray-100">
+                  <div className="text-xs font-bold text-gray-700 flex items-center gap-1.5">
+                    <History className="w-3.5 h-3.5 text-gray-500" />
+                    <span>পূর্ববর্তী সমাপ্ত হিসাবকালসমূহ ({closedPeriods.length})</span>
+                  </div>
+                  <div className="space-y-1.5 max-h-32 overflow-y-auto">
+                    {closedPeriods.map((p) => (
+                      <div key={p.id} className="p-2 rounded-lg bg-gray-50 border border-gray-200 text-xs flex items-center justify-between">
+                        <div>
+                          <span className="font-bold text-gray-900">শেষ তারিখ: {p.endDate}</span>
+                          <span className="text-gray-500 text-[11px] ml-2">({new Date(p.closedAt).toLocaleDateString('bn-BD')})</span>
+                        </div>
+                        <div className="font-mono font-bold text-purple-900">
+                          ৳{p.netProfitTransferred.toLocaleString('en-IN')}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Modal Footer */}
+            <div className="p-4 border-t border-gray-100 flex items-center justify-end gap-3 bg-gray-50 rounded-b-2xl">
+              <button
+                type="button"
+                onClick={() => setShowClosingModal(false)}
+                disabled={closingExecuting}
+                className="px-4 py-2.5 rounded-xl border border-gray-300 bg-white text-gray-700 text-xs font-bold hover:bg-gray-100 cursor-pointer transition-colors"
+              >
+                বাতিল করুন
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmClosing}
+                disabled={!closingPreview?.canClose || closingExecuting || closingLoading}
+                className="px-5 py-2.5 rounded-xl bg-purple-700 hover:bg-purple-800 disabled:bg-gray-300 disabled:cursor-not-allowed text-white text-xs font-bold cursor-pointer transition-colors shadow-xs flex items-center gap-2"
+              >
+                {closingExecuting ? (
+                  <span>সমাপ্তি পোস্ট হচ্ছে...</span>
+                ) : (
+                  <>
+                    <Check className="w-4 h-4" />
+                    <span>বছর সমাপ্তি নিশ্চিত করুন</span>
+                  </>
+                )}
+              </button>
+            </div>
           </div>
         </div>
       )}
