@@ -528,7 +528,7 @@ export const LoginScreen: React.FC<Props> = ({ onLoginSuccess }) => {
                     type="text"
                     disabled
                     value={forgotEmail}
-                    className="w-full px-3.5 py-2 rounded-xl bg-gray-100 border border-gray-300 text-gray-600 font-mono text-[13px]"
+                    className="w-full px-3.5 py-2 rounded-xl bg-gray-100 border border-gray-300 text-gray-600 font-mono text-base"
                   />
                 </div>
 
