@@ -12,7 +12,7 @@ import {
 import { db } from '../db/indexedDb';
 import { executePurchaseTransaction, executeSaleTransaction } from '../services/transactionService';
 import { generateTransactionNumber, generateUniqueId, safeInsert } from '../utils/idGenerator';
-import { InventoryItem, Party, Purchase, Sale, UserRole } from '../types';
+import { InventoryItem, Party, PaymentRecord, Purchase, Sale, UserRole } from '../types';
 
 interface Props {
   role: UserRole;
@@ -30,6 +30,21 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
   const [parties, setParties] = useState<Party[]>([]);
   const [sales, setSales] = useState<Sale[]>([]);
   const [purchases, setPurchases] = useState<Purchase[]>([]);
+  const [payments, setPayments] = useState<PaymentRecord[]>([]);
+
+  // Add Installment Modal State
+  const [paymentModal, setPaymentModal] = useState<{
+    parentType: 'SALE' | 'PURCHASE';
+    parentId: string;
+    invoiceNumber: string;
+    partyName: string;
+    totalAmount: number;
+    paidAmount: number;
+    dueAmount: number;
+  } | null>(null);
+  const [paymentAmount, setPaymentAmount] = useState<string>('');
+  const [paymentDate, setPaymentDate] = useState<string>(() => new Date().toISOString().split('T')[0]);
+  const [paymentNote, setPaymentNote] = useState<string>('');
 
   // Add Item Modal
   const [showAddItem, setShowAddItem] = useState(false);
@@ -98,6 +113,9 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
         partyList = defaultParties;
       }
       setParties(partyList);
+
+      const pmtList = await db.payments.toArray();
+      setPayments(pmtList);
 
       if (tab === 'sales') {
         const sList = await db.sales.orderBy('date').reverse().toArray();
@@ -252,6 +270,79 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
       loadCommerceData();
     } catch (err: any) {
       setMsg({ type: 'error', text: err.message || 'ক্রয় লেনদেন ব্যর্থ হয়েছে।' });
+    }
+  };
+
+  const openPaymentModal = (parentType: 'SALE' | 'PURCHASE', item: Sale | Purchase) => {
+    const total = Number(item.grandTotal || item.totalAmount || 0);
+    const paid = Number(item.paidAmount || 0);
+    const due = Number(item.dueAmount !== undefined ? item.dueAmount : Math.max(0, total - paid));
+    setPaymentModal({
+      parentType,
+      parentId: item.id,
+      invoiceNumber: item.invoiceNumber,
+      partyName: 'customerName' in item ? item.customerName : item.supplierName,
+      totalAmount: total,
+      paidAmount: paid,
+      dueAmount: due
+    });
+    setPaymentAmount(due > 0 ? due.toString() : '');
+    setPaymentDate(new Date().toISOString().split('T')[0]);
+    setPaymentNote('');
+  };
+
+  const handleSavePayment = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!paymentModal) return;
+
+    const amt = parseFloat(paymentAmount);
+    if (isNaN(amt) || amt <= 0) {
+      setMsg({ type: 'error', text: 'সঠিক কিস্তির পরিমাণ প্রদান করুন।' });
+      return;
+    }
+
+    try {
+      const paymentRecord: PaymentRecord = {
+        id: generateUniqueId('pmt'),
+        parentType: paymentModal.parentType,
+        parentId: paymentModal.parentId,
+        amount: amt,
+        date: paymentDate || new Date().toISOString().split('T')[0],
+        note: paymentNote.trim() || undefined,
+        synced: false
+      };
+
+      await safeInsert(db.payments, paymentRecord, { idPrefix: 'pmt' });
+
+      // Recalculate that sale/purchase's paidAmount as the sum of all its PaymentRecords, and dueAmount = total − paidAmount
+      const allPaymentsForParent = await db.payments.where('parentId').equals(paymentModal.parentId).toArray();
+      const totalPaid = allPaymentsForParent.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+      const invoiceTotal = paymentModal.totalAmount;
+      const newDue = Math.max(0, invoiceTotal - totalPaid);
+      const newStatus = newDue <= 0 ? 'PAID' : (totalPaid > 0 ? 'PARTIAL' : 'DUE');
+
+      if (paymentModal.parentType === 'SALE') {
+        await db.sales.update(paymentModal.parentId, {
+          paidAmount: totalPaid,
+          dueAmount: newDue,
+          status: newStatus,
+          synced: false
+        });
+      } else {
+        await db.purchases.update(paymentModal.parentId, {
+          paidAmount: totalPaid,
+          dueAmount: newDue,
+          status: newStatus,
+          synced: false
+        });
+      }
+
+      setPaymentModal(null);
+      setMsg({ type: 'success', text: `৳${amt.toLocaleString()} কিস্তি সফলভাবে সংরক্ষিত হয়েছে!` });
+      await loadCommerceData();
+    } catch (err: any) {
+      console.error(err);
+      setMsg({ type: 'error', text: err.message || 'কিস্তি সংরক্ষণে ত্রুটি হয়েছে।' });
     }
   };
 
@@ -611,39 +702,91 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                   <th className="p-3">মোট মূল্য</th>
                   <th className="p-3">পরিশোধ মাধ্যম</th>
                   <th className="p-3">স্থিতি</th>
+                  <th className="p-3 text-right">কার্যক্রম</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
                 {sales.length === 0 ? (
                   <tr>
-                    <td colSpan={7} className="p-8 text-center text-gray-500 text-[14px]">
+                    <td colSpan={8} className="p-8 text-center text-gray-500 text-[14px]">
                       এখনো কোনো বিক্রয় চালান ইস্যু করা হয়নি।
                     </td>
                   </tr>
                 ) : (
-                  sales.map((s) => (
-                    <tr key={s.id} className="hover:bg-gray-50/80">
-                      <td className="p-3 font-bold text-[#1E5128] font-mono">{s.invoiceNumber}</td>
-                      <td className="p-3 text-gray-600">{s.date}</td>
-                      <td className="p-3 font-semibold text-gray-900">{s.customerName}</td>
-                      <td className="p-3">
-                        {s.items.map((i, idx) => (
-                          <div key={idx} className="text-gray-700 text-[13px]">
-                            {i.itemName} ({i.quantity} × {fmt(i.unitPrice || 0)})
-                          </div>
-                        ))}
-                      </td>
-                      <td className="p-3 text-[#15803D] font-bold font-mono">{fmt(s.totalAmount || s.grandTotal || 0)}</td>
-                      <td className="p-3 text-gray-700 text-[13px]">{s.paymentMethod}</td>
-                      <td className="p-3">
-                        <span className={`px-2.5 py-1 rounded-full text-xs font-semibold ${
-                          s.status === 'PAID' ? 'bg-[#F0FDF4] text-[#15803D] border border-[#BBF7D0]' : 'bg-amber-50 text-amber-800 border border-amber-200'
-                        }`}>
-                          {s.status === 'PAID' ? 'পরিশোধিত' : 'বাকি (DUE)'}
-                        </span>
-                      </td>
-                    </tr>
-                  ))
+                  sales.map((s) => {
+                    const sPayments = payments.filter((pmt) => pmt.parentId === s.id);
+                    const total = Number(s.grandTotal || s.totalAmount || 0);
+                    const paid = Number(s.paidAmount || 0);
+                    const due = Number(s.dueAmount !== undefined ? s.dueAmount : Math.max(0, total - paid));
+                    const hasDue = due > 0;
+
+                    return (
+                      <React.Fragment key={s.id}>
+                        <tr className="hover:bg-gray-50/80">
+                          <td className="p-3 font-bold text-[#1E5128] font-mono">{s.invoiceNumber}</td>
+                          <td className="p-3 text-gray-600">{s.date}</td>
+                          <td className="p-3 font-semibold text-gray-900">{s.customerName}</td>
+                          <td className="p-3">
+                            {s.items.map((i, idx) => (
+                              <div key={idx} className="text-gray-700 text-[13px]">
+                                {i.itemName} ({i.quantity} × {fmt(i.unitPrice || 0)})
+                              </div>
+                            ))}
+                          </td>
+                          <td className="p-3 font-mono">
+                            <div className="text-[#15803D] font-bold">{fmt(total)}</div>
+                            {(s.paymentMethod === 'CREDIT' || paid > 0 || due > 0) && (
+                              <div className="text-xs text-gray-500 font-sans">
+                                পরিশোধ: ৳{fmt(paid)} | বাকি: <span className={due > 0 ? "text-amber-700 font-bold" : "text-emerald-700"}>৳{fmt(due)}</span>
+                              </div>
+                            )}
+                          </td>
+                          <td className="p-3 text-gray-700 text-[13px]">{s.paymentMethod}</td>
+                          <td className="p-3">
+                            <span className={`px-2.5 py-1 rounded-full text-xs font-semibold ${
+                              due <= 0 || s.status === 'PAID'
+                                ? 'bg-[#F0FDF4] text-[#15803D] border border-[#BBF7D0]'
+                                : (paid > 0 ? 'bg-blue-50 text-blue-800 border border-blue-200' : 'bg-amber-50 text-amber-800 border border-amber-200')
+                            }`}>
+                              {due <= 0 || s.status === 'PAID' ? 'পরিশোধিত' : (paid > 0 ? `আংশিক বাকি (৳${fmt(due)})` : `বাকি (৳${fmt(due)})`)}
+                            </span>
+                          </td>
+                          <td className="p-3 text-right">
+                            {hasDue && (
+                              <button
+                                type="button"
+                                id={`btn-add-installment-sale-${s.id}`}
+                                onClick={() => openPaymentModal('SALE', s)}
+                                className="px-2.5 py-1.5 rounded-lg bg-[#1E5128] hover:bg-[#173F1F] text-white text-xs font-bold shadow-2xs transition-all cursor-pointer inline-flex items-center gap-1 whitespace-nowrap min-h-[36px]"
+                              >
+                                <PlusCircle className="w-3.5 h-3.5" />
+                                <span>কিস্তি যোগ করুন</span>
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+                        {sPayments.length > 0 && (
+                          <tr className="bg-emerald-50/40 border-b border-gray-100">
+                            <td colSpan={8} className="px-4 py-2">
+                              <div className="flex items-center gap-2 flex-wrap text-xs text-gray-700">
+                                <span className="font-semibold text-[#1E5128]">পরিশোধের ইতিহাস:</span>
+                                {sPayments.map((pmt) => (
+                                  <span
+                                    key={pmt.id}
+                                    className="inline-flex items-center gap-1 bg-white px-2.5 py-1 rounded-md border border-gray-200 text-gray-800 font-mono shadow-2xs"
+                                  >
+                                    <span className="text-gray-500">{pmt.date}:</span>
+                                    <span className="font-bold text-[#15803D]">৳{fmt(pmt.amount)}</span>
+                                    {pmt.note && <span className="text-gray-400 font-sans text-[11px]">({pmt.note})</span>}
+                                  </span>
+                                ))}
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                      </React.Fragment>
+                    );
+                  })
                 )}
               </tbody>
             </table>
@@ -788,40 +931,92 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                   <th className="p-3">মোট চালান মূল্য</th>
                   <th className="p-3">পরিশোধ মাধ্যম</th>
                   <th className="p-3">স্থিতি</th>
+                  <th className="p-3 text-right">কার্যক্রম</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
                 {purchases.length === 0 ? (
                   <tr>
-                    <td colSpan={8} className="p-8 text-center text-gray-500 text-[14px]">
+                    <td colSpan={9} className="p-8 text-center text-gray-500 text-[14px]">
                       এখনো কোনো ক্রয় চালান রেকর্ড করা হয়নি।
                     </td>
                   </tr>
                 ) : (
-                  purchases.map((p) => (
-                    <tr key={p.id} className="hover:bg-gray-50/80">
-                      <td className="p-3 font-bold text-sky-700 font-mono">{p.invoiceNumber}</td>
-                      <td className="p-3 text-gray-600">{p.date}</td>
-                      <td className="p-3 font-semibold text-gray-900">{p.supplierName}</td>
-                      <td className="p-3">
-                        {p.items.map((i, idx) => (
-                          <div key={idx} className="text-gray-700 text-[13px]">
-                            {i.itemName} ({i.quantity} × {fmt(i.unitPrice || 0)})
-                          </div>
-                        ))}
-                      </td>
-                      <td className="p-3 text-amber-700 font-medium">{fmt(p.transportCost || 0)}</td>
-                      <td className="p-3 text-red-600 font-bold font-mono">{fmt(p.grandTotal || p.totalAmount || 0)}</td>
-                      <td className="p-3 text-gray-700 text-[13px]">{p.paymentMethod}</td>
-                      <td className="p-3">
-                        <span className={`px-2.5 py-1 rounded-full text-xs font-semibold ${
-                          p.status === 'PAID' ? 'bg-[#F0FDF4] text-[#15803D] border border-[#BBF7D0]' : 'bg-amber-50 text-amber-800 border border-amber-200'
-                        }`}>
-                          {p.status === 'PAID' ? 'পরিশোধিত' : 'বাকি (DUE)'}
-                        </span>
-                      </td>
-                    </tr>
-                  ))
+                  purchases.map((p) => {
+                    const pPayments = payments.filter((pmt) => pmt.parentId === p.id);
+                    const total = Number(p.grandTotal || p.totalAmount || 0);
+                    const paid = Number(p.paidAmount || 0);
+                    const due = Number(p.dueAmount !== undefined ? p.dueAmount : Math.max(0, total - paid));
+                    const hasDue = due > 0;
+
+                    return (
+                      <React.Fragment key={p.id}>
+                        <tr className="hover:bg-gray-50/80">
+                          <td className="p-3 font-bold text-sky-700 font-mono">{p.invoiceNumber}</td>
+                          <td className="p-3 text-gray-600">{p.date}</td>
+                          <td className="p-3 font-semibold text-gray-900">{p.supplierName}</td>
+                          <td className="p-3">
+                            {p.items.map((i, idx) => (
+                              <div key={idx} className="text-gray-700 text-[13px]">
+                                {i.itemName} ({i.quantity} × {fmt(i.unitPrice || 0)})
+                              </div>
+                            ))}
+                          </td>
+                          <td className="p-3 text-amber-700 font-medium">{fmt(p.transportCost || 0)}</td>
+                          <td className="p-3 font-mono">
+                            <div className="text-red-600 font-bold">{fmt(total)}</div>
+                            {(p.paymentMethod === 'CREDIT' || paid > 0 || due > 0) && (
+                              <div className="text-xs text-gray-500 font-sans">
+                                পরিশোধ: ৳{fmt(paid)} | বাকি: <span className={due > 0 ? "text-amber-700 font-bold" : "text-emerald-700"}>৳{fmt(due)}</span>
+                              </div>
+                            )}
+                          </td>
+                          <td className="p-3 text-gray-700 text-[13px]">{p.paymentMethod}</td>
+                          <td className="p-3">
+                            <span className={`px-2.5 py-1 rounded-full text-xs font-semibold ${
+                              due <= 0 || p.status === 'PAID'
+                                ? 'bg-[#F0FDF4] text-[#15803D] border border-[#BBF7D0]'
+                                : (paid > 0 ? 'bg-blue-50 text-blue-800 border border-blue-200' : 'bg-amber-50 text-amber-800 border border-amber-200')
+                            }`}>
+                              {due <= 0 || p.status === 'PAID' ? 'পরিশোধিত' : (paid > 0 ? `আংশিক বাকি (৳${fmt(due)})` : `বাকি (৳${fmt(due)})`)}
+                            </span>
+                          </td>
+                          <td className="p-3 text-right">
+                            {hasDue && (
+                              <button
+                                type="button"
+                                id={`btn-add-installment-purchase-${p.id}`}
+                                onClick={() => openPaymentModal('PURCHASE', p)}
+                                className="px-2.5 py-1.5 rounded-lg bg-[#1E5128] hover:bg-[#173F1F] text-white text-xs font-bold shadow-2xs transition-all cursor-pointer inline-flex items-center gap-1 whitespace-nowrap min-h-[36px]"
+                              >
+                                <PlusCircle className="w-3.5 h-3.5" />
+                                <span>কিস্তি যোগ করুন</span>
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+                        {pPayments.length > 0 && (
+                          <tr className="bg-sky-50/40 border-b border-gray-100">
+                            <td colSpan={9} className="px-4 py-2">
+                              <div className="flex items-center gap-2 flex-wrap text-xs text-gray-700">
+                                <span className="font-semibold text-sky-800">পরিশোধের ইতিহাস:</span>
+                                {pPayments.map((pmt) => (
+                                  <span
+                                    key={pmt.id}
+                                    className="inline-flex items-center gap-1 bg-white px-2.5 py-1 rounded-md border border-gray-200 text-gray-800 font-mono shadow-2xs"
+                                  >
+                                    <span className="text-gray-500">{pmt.date}:</span>
+                                    <span className="font-bold text-[#15803D]">৳{fmt(pmt.amount)}</span>
+                                    {pmt.note && <span className="text-gray-400 font-sans text-[11px]">({pmt.note})</span>}
+                                  </span>
+                                ))}
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                      </React.Fragment>
+                    );
+                  })
                 )}
               </tbody>
             </table>
@@ -935,6 +1130,114 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                 </div>
               </div>
             ))}
+          </div>
+        </div>
+      )}
+
+      {/* ===================== MODAL: ADD INSTALLMENT / PAYMENT ===================== */}
+      {paymentModal && (
+        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4 backdrop-blur-xs">
+          <div className="bg-white rounded-2xl max-w-md w-full p-5 sm:p-6 shadow-xl border border-gray-200 space-y-4">
+            <div className="flex items-center justify-between border-b border-gray-100 pb-3">
+              <div>
+                <h3 className="text-base font-bold text-gray-900">
+                  {paymentModal.parentType === 'SALE' ? 'বিক্রয় কিস্তি গ্রহণ' : 'ক্রয় কিস্তি পরিশোধ'}
+                </h3>
+                <p className="text-xs text-gray-500 mt-0.5">
+                  চালান নং: <span className="font-mono font-bold text-[#1E5128]">{paymentModal.invoiceNumber}</span> ({paymentModal.partyName})
+                </p>
+              </div>
+              <button
+                type="button"
+                id="btn-close-payment-modal"
+                onClick={() => setPaymentModal(null)}
+                className="text-gray-400 hover:text-gray-600 text-lg font-bold p-1 cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Financial Summary */}
+            <div className="grid grid-cols-3 gap-2 p-3 rounded-xl bg-gray-50 border border-gray-200 text-center font-mono">
+              <div>
+                <div className="text-[11px] font-sans text-gray-500 font-semibold">মোট মূল্য</div>
+                <div className="font-bold text-gray-800 text-[13px]">{fmt(paymentModal.totalAmount)}</div>
+              </div>
+              <div>
+                <div className="text-[11px] font-sans text-gray-500 font-semibold">পূর্বে পরিশোধ</div>
+                <div className="font-bold text-emerald-700 text-[13px]">{fmt(paymentModal.paidAmount)}</div>
+              </div>
+              <div>
+                <div className="text-[11px] font-sans text-gray-500 font-semibold">বর্তমান বকেয়া</div>
+                <div className="font-bold text-amber-800 text-[13px]">{fmt(paymentModal.dueAmount)}</div>
+              </div>
+            </div>
+
+            <form onSubmit={handleSavePayment} className="space-y-3.5">
+              <div>
+                <label className="block text-xs font-semibold text-gray-700 mb-1">
+                  কিস্তির পরিমাণ (৳) <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="number"
+                  step="any"
+                  min="1"
+                  max={paymentModal.dueAmount}
+                  required
+                  id="input-installment-amount"
+                  placeholder="যেমন: 5000"
+                  value={paymentAmount}
+                  onChange={(e) => setPaymentAmount(e.target.value)}
+                  className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-base text-gray-900 focus:outline-hidden focus:ring-1 focus:ring-[#1E5128]"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-gray-700 mb-1">
+                  পরিশোধের তারিখ <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="date"
+                  required
+                  id="input-installment-date"
+                  value={paymentDate}
+                  onChange={(e) => setPaymentDate(e.target.value)}
+                  className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-base text-gray-900 focus:outline-hidden focus:ring-1 focus:ring-[#1E5128]"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-gray-700 mb-1">
+                  নোট / বিবরণ (ঐচ্ছিক)
+                </label>
+                <input
+                  type="text"
+                  id="input-installment-note"
+                  placeholder="যেমন: বিকাশ / ব্যাংক চেক / নগদ কিস্তি ১"
+                  value={paymentNote}
+                  onChange={(e) => setPaymentNote(e.target.value)}
+                  className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-base text-gray-900 focus:outline-hidden focus:ring-1 focus:ring-[#1E5128]"
+                />
+              </div>
+
+              <div className="flex justify-end gap-2.5 pt-2 border-t border-gray-100">
+                <button
+                  type="button"
+                  id="btn-cancel-installment"
+                  onClick={() => setPaymentModal(null)}
+                  className="px-4 py-2 rounded-lg bg-gray-200 hover:bg-gray-300 text-gray-800 text-xs font-bold cursor-pointer min-h-[40px]"
+                >
+                  বাতিল
+                </button>
+                <button
+                  type="submit"
+                  id="btn-save-installment"
+                  className="px-4 py-2 rounded-lg bg-[#1E5128] hover:bg-[#173F1F] text-white text-xs font-bold cursor-pointer min-h-[40px] shadow-xs"
+                >
+                  কিস্তি সংরক্ষণ করুন
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

@@ -23,7 +23,8 @@ import {
   AuditLogEntry,
   SystemConfig,
   AppAccessLog,
-  Reminder
+  Reminder,
+  PaymentRecord
 } from '../types';
 
 export class AgroDatabase extends Dexie {
@@ -44,6 +45,7 @@ export class AgroDatabase extends Dexie {
   parties!: Table<Party, string>;
   purchases!: Table<Purchase, string>;
   sales!: Table<Sale, string>;
+  payments!: Table<PaymentRecord, string>;
   cashBankAccounts!: Table<CashBankAccount, string>;
   bankTransfers!: Table<BankTransfer, string>;
   loans!: Table<Loan, string>;
@@ -98,6 +100,10 @@ export class AgroDatabase extends Dexie {
 
     this.version(4).stores({
       reminders: 'id, animalId, category, dueDate, status, synced'
+    });
+
+    this.version(5).stores({
+      payments: 'id, parentType, parentId, date, synced'
     });
   }
 }

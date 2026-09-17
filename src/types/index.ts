@@ -370,6 +370,16 @@ export interface Sale {
   synced?: boolean;
 }
 
+export interface PaymentRecord {
+  id: string;
+  parentType: 'SALE' | 'PURCHASE';
+  parentId: string;
+  amount: number;
+  date: string;
+  note?: string;
+  synced?: boolean;
+}
+
 export interface CashBankAccount {
   id: string;
   accountType: 'CASH' | 'BANK' | 'MOBILE_BANKING';
