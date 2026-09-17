@@ -147,7 +147,17 @@ export interface CashFlowReportData {
   };
 }
 
-type ReportType = 'pl' | 'balanceSheet' | 'trialBalance' | 'animalProfitability' | 'aging' | 'cashFlow' | 'backup';
+export interface VatSummaryReportData {
+  totalOutputVat: number;
+  totalInputVat: number;
+  netVatPayable: number;
+  totalSalesTaxable: number;
+  totalPurchasesTaxable: number;
+  salesWithVat: Sale[];
+  purchasesWithVat: Purchase[];
+}
+
+type ReportType = 'pl' | 'balanceSheet' | 'trialBalance' | 'animalProfitability' | 'aging' | 'cashFlow' | 'backup' | 'vatSummary';
 
 export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
   const [activeReport, setActiveReport] = useState<ReportType>('pl');
@@ -159,6 +169,36 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
 
   // Cash Flow Report State
   const [cashFlowData, setCashFlowData] = useState<CashFlowReportData | null>(null);
+
+  // VAT Summary State (hidden by default unless toggled ON in Settings)
+  const [isVatRegistered, setIsVatRegistered] = useState<boolean>(() => {
+    return localStorage.getItem('goted_vat_registered') === 'true';
+  });
+  const [tinNumber, setTinNumber] = useState<string>(() => {
+    return localStorage.getItem('goted_tin_number') || '';
+  });
+  const [binNumber, setBinNumber] = useState<string>(() => {
+    return localStorage.getItem('goted_bin_number') || '';
+  });
+  const [vatData, setVatData] = useState<VatSummaryReportData | null>(null);
+
+  useEffect(() => {
+    const handleSettingsChanged = () => {
+      const isReg = localStorage.getItem('goted_vat_registered') === 'true';
+      setIsVatRegistered(isReg);
+      setTinNumber(localStorage.getItem('goted_tin_number') || '');
+      setBinNumber(localStorage.getItem('goted_bin_number') || '');
+      if (!isReg && activeReport === 'vatSummary') {
+        setActiveReport('pl');
+      }
+    };
+    window.addEventListener('goted_settings_changed', handleSettingsChanged);
+    window.addEventListener('storage', handleSettingsChanged);
+    return () => {
+      window.removeEventListener('goted_settings_changed', handleSettingsChanged);
+      window.removeEventListener('storage', handleSettingsChanged);
+    };
+  }, [activeReport]);
 
   // Animal Profitability State
   const [animalRows, setAnimalRows] = useState<AnimalProfitabilityRow[]>([]);
@@ -573,6 +613,65 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
     });
   };
 
+  const loadVatSummary = async () => {
+    const [allSales, allPurchases] = await Promise.all([
+      db.sales.toArray(),
+      db.purchases.toArray()
+    ]);
+
+    const inRangeSales = allSales.filter((s) => {
+      if (startDate && s.date < startDate) return false;
+      if (endDate && s.date > endDate) return false;
+      return true;
+    });
+
+    const inRangePurchases = allPurchases.filter((p) => {
+      if (startDate && p.date < startDate) return false;
+      if (endDate && p.date > endDate) return false;
+      return true;
+    });
+
+    let totalOutputVat = 0;
+    let totalSalesTaxable = 0;
+    const salesWithVat: Sale[] = [];
+
+    for (const s of inRangeSales) {
+      const v = Number(s.taxVat || s.vat || s.vatTax || 0);
+      if (v > 0) {
+        totalOutputVat += v;
+        salesWithVat.push(s);
+      }
+      totalSalesTaxable += Number(s.grandTotal || s.totalAmount || s.subtotal || 0);
+    }
+
+    let totalInputVat = 0;
+    let totalPurchasesTaxable = 0;
+    const purchasesWithVat: Purchase[] = [];
+
+    for (const p of inRangePurchases) {
+      const v = Number(p.taxVat || p.vat || p.vatTax || 0);
+      if (v > 0) {
+        totalInputVat += v;
+        purchasesWithVat.push(p);
+      }
+      totalPurchasesTaxable += Number(p.grandTotal || p.totalAmount || p.subtotal || 0);
+    }
+
+    totalOutputVat = Math.round(totalOutputVat * 100) / 100;
+    totalInputVat = Math.round(totalInputVat * 100) / 100;
+    const netVatPayable = Math.round((totalOutputVat - totalInputVat) * 100) / 100;
+
+    setVatData({
+      totalOutputVat,
+      totalInputVat,
+      netVatPayable,
+      totalSalesTaxable: Math.round(totalSalesTaxable * 100) / 100,
+      totalPurchasesTaxable: Math.round(totalPurchasesTaxable * 100) / 100,
+      salesWithVat,
+      purchasesWithVat
+    });
+  };
+
   const loadReports = async () => {
     setLoading(true);
     try {
@@ -592,6 +691,8 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
         await loadAgingReport();
       } else if (activeReport === 'cashFlow') {
         await loadCashFlowReport();
+      } else if (activeReport === 'vatSummary') {
+        await loadVatSummary();
       }
     } catch (e) {
       console.error(e);
@@ -881,6 +982,21 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
           <Coins className="w-4 h-4" />
           <span>নগদ প্রবাহ (Cash Flow)</span>
         </button>
+
+        {isVatRegistered && (
+          <button
+            id="tab-vat-summary"
+            onClick={() => setActiveReport('vatSummary')}
+            className={`flex items-center gap-1.5 px-3.5 py-2 rounded-lg whitespace-nowrap transition-all cursor-pointer min-h-[40px] ${
+              activeReport === 'vatSummary'
+                ? 'bg-[#1E5128] text-white shadow-xs'
+                : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200/60'
+            }`}
+          >
+            <FileText className="w-4 h-4" />
+            <span>ভ্যাট সারাংশ (VAT Summary)</span>
+          </button>
+        )}
 
         <button
           id="tab-backup-restore"
@@ -2456,6 +2572,268 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
                   className="hidden"
                 />
               </label>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ===================== REPORT: VAT SUMMARY (ভ্যাট সারাংশ) ===================== */}
+      {isVatRegistered && activeReport === 'vatSummary' && (
+        <div className="bg-white border border-gray-200 rounded-2xl p-4 sm:p-6 space-y-6 shadow-xs">
+          {/* Header */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-gray-100 pb-4">
+            <div>
+              <div className="flex items-center gap-2">
+                <FileText className="w-5 h-5 text-[#1E5128]" />
+                <h3 className="text-base sm:text-lg font-bold text-gray-900">
+                  ভ্যাট ও মূসক সারাংশ প্রতিবেদন (VAT Summary Report)
+                </h3>
+              </div>
+              <p className="text-[13px] text-gray-500 mt-1">
+                সরকারি মূসক ও ভ্যাট রিটার্ন প্রস্তুতির জন্য আউটপুট ও ইনপুট ভ্যাট হিসাব
+              </p>
+            </div>
+
+            {/* TIN & BIN Tags (Only shown if configured) */}
+            {(tinNumber || binNumber) && (
+              <div className="flex flex-wrap items-center gap-2">
+                {binNumber && (
+                  <span className="px-3 py-1 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-900 text-xs font-mono font-bold">
+                    বিআইএন (BIN): {binNumber}
+                  </span>
+                )}
+                {tinNumber && (
+                  <span className="px-3 py-1 rounded-lg bg-blue-50 border border-blue-200 text-blue-900 text-xs font-mono font-bold">
+                    ই-টিন (e-TIN): {tinNumber}
+                  </span>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Primary Metric Cards: Output VAT, Input VAT, Net VAT Payable/Receivable */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            {/* Card 1: Output VAT (Collected on Sales) */}
+            <div className="p-4 rounded-xl bg-emerald-50/60 border border-emerald-200 space-y-1">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-emerald-800 uppercase tracking-wide">
+                  আউটপুট ভ্যাট (Output VAT)
+                </span>
+                <span className="p-1 rounded-md bg-emerald-100 text-emerald-700">
+                  <ArrowUpRight className="w-4 h-4" />
+                </span>
+              </div>
+              <div className="text-2xl font-black text-emerald-950 font-mono">
+                {fmt(vatData?.totalOutputVat || 0)}
+              </div>
+              <p className="text-xs text-emerald-700">
+                বিক্রয় হতে সংগৃহীত মূসক ({vatData?.salesWithVat.length || 0}টি চালান)
+              </p>
+            </div>
+
+            {/* Card 2: Input VAT (Paid on Purchases) */}
+            <div className="p-4 rounded-xl bg-blue-50/60 border border-blue-200 space-y-1">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-blue-800 uppercase tracking-wide">
+                  ইনপুট ভ্যাট (Input VAT)
+                </span>
+                <span className="p-1 rounded-md bg-blue-100 text-blue-700">
+                  <ArrowDownRight className="w-4 h-4" />
+                </span>
+              </div>
+              <div className="text-2xl font-black text-blue-950 font-mono">
+                {fmt(vatData?.totalInputVat || 0)}
+              </div>
+              <p className="text-xs text-blue-700">
+                ক্রয়ে পরিশোধিত/রেয়াতযোগ্য মূসক ({vatData?.purchasesWithVat.length || 0}টি চালান)
+              </p>
+            </div>
+
+            {/* Card 3: Net VAT Payable / Receivable */}
+            <div
+              className={`p-4 rounded-xl border space-y-1 ${
+                (vatData?.netVatPayable || 0) >= 0
+                  ? 'bg-amber-50/60 border-amber-200'
+                  : 'bg-emerald-50/60 border-emerald-200'
+              }`}
+            >
+              <div className="flex items-center justify-between">
+                <span
+                  className={`text-xs font-bold uppercase tracking-wide ${
+                    (vatData?.netVatPayable || 0) >= 0 ? 'text-amber-800' : 'text-emerald-800'
+                  }`}
+                >
+                  {(vatData?.netVatPayable || 0) >= 0
+                    ? 'নিট প্রদেয় ভ্যাট (Net Payable)'
+                    : 'নিট প্রাপ্য ভ্যাট (Net Receivable / Credit)'}
+                </span>
+                <span
+                  className={`p-1 rounded-md ${
+                    (vatData?.netVatPayable || 0) >= 0
+                      ? 'bg-amber-100 text-amber-800'
+                      : 'bg-emerald-100 text-emerald-800'
+                  }`}
+                >
+                  <Coins className="w-4 h-4" />
+                </span>
+              </div>
+              <div
+                className={`text-2xl font-black font-mono ${
+                  (vatData?.netVatPayable || 0) >= 0 ? 'text-amber-950' : 'text-emerald-950'
+                }`}
+              >
+                {fmt(Math.abs(vatData?.netVatPayable || 0))}
+              </div>
+              <p
+                className={`text-xs font-medium ${
+                  (vatData?.netVatPayable || 0) >= 0 ? 'text-amber-700' : 'text-emerald-700'
+                }`}
+              >
+                {(vatData?.netVatPayable || 0) >= 0
+                  ? 'সরকারি কোষাগারে জমাযোগ্য নিট ভ্যাট'
+                  : 'পরবর্তী মাসের সাথে সমন্বয়যোগ্য ভ্যাট প্রত্যর্পণ'}
+              </p>
+            </div>
+          </div>
+
+          {/* Base Revenue & Expenditure Summary Row */}
+          <div className="p-4 rounded-xl bg-gray-50 border border-gray-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+            <div className="flex items-center gap-4">
+              <div>
+                <span className="text-gray-500 block">মোট বিক্রয়ের পরিমাণ (Sales Base):</span>
+                <span className="font-bold text-gray-900 font-mono text-sm">
+                  {fmt(vatData?.totalSalesTaxable || 0)}
+                </span>
+              </div>
+              <div className="h-6 w-px bg-gray-300 hidden sm:block" />
+              <div>
+                <span className="text-gray-500 block">মোট ক্রয়ের পরিমাণ (Purchase Base):</span>
+                <span className="font-bold text-gray-900 font-mono text-sm">
+                  {fmt(vatData?.totalPurchasesTaxable || 0)}
+                </span>
+              </div>
+            </div>
+            <div className="text-gray-600 bg-white px-3 py-1.5 rounded-lg border border-gray-200 font-mono">
+              হিসাব সূত্র: আউটপুট ভ্যাট ({fmt(vatData?.totalOutputVat || 0)}) - ইনপুট ভ্যাট ({fmt(vatData?.totalInputVat || 0)}) = {fmt(vatData?.netVatPayable || 0)}
+            </div>
+          </div>
+
+          {/* Detailed Lists: Output VAT on Sales & Input VAT on Purchases */}
+          <div className="space-y-6">
+            {/* 1. Sales / Output VAT Table */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <h4 className="font-bold text-gray-900 text-sm flex items-center gap-1.5">
+                  <ArrowUpRight className="w-4 h-4 text-emerald-700" />
+                  <span>বিক্রয় ভিত্তিক আউটপুট ভ্যাট (Sales Output VAT Invoices)</span>
+                </h4>
+                <span className="text-xs text-gray-500 font-semibold">
+                  মোট: {vatData?.salesWithVat.length || 0}টি চালান
+                </span>
+              </div>
+
+              {(!vatData || vatData.salesWithVat.length === 0) ? (
+                <div className="p-6 text-center bg-gray-50 rounded-xl border border-gray-200 text-gray-500 text-xs">
+                  নির্বাচিত সময়সীমার মধ্যে কোনো ভ্যাটযুক্ত বিক্রয় চালান নেই।
+                </div>
+              ) : (
+                <div className="overflow-x-auto border border-gray-200 rounded-xl">
+                  <table className="w-full text-left text-xs border-collapse">
+                    <thead className="bg-gray-100 text-gray-700 font-semibold border-b border-gray-200">
+                      <tr>
+                        <th className="py-2.5 px-3">তারিখ</th>
+                        <th className="py-2.5 px-3">চালান নং</th>
+                        <th className="py-2.5 px-3">ক্রেতার নাম</th>
+                        <th className="py-2.5 px-3 text-right">চালান মোট মূল্য</th>
+                        <th className="py-2.5 px-3 text-right font-bold text-emerald-800">সংগৃহীত ভ্যাট</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100">
+                      {vatData.salesWithVat.map((sale) => (
+                        <tr key={sale.id} className="hover:bg-gray-50 transition-colors">
+                          <td className="py-2 px-3 font-mono text-gray-600">{sale.date}</td>
+                          <td className="py-2 px-3 font-mono font-bold text-gray-900">{sale.invoiceNumber}</td>
+                          <td className="py-2 px-3 text-gray-800">{sale.customerName}</td>
+                          <td className="py-2 px-3 text-right font-mono text-gray-800">
+                            {fmt(sale.grandTotal || sale.totalAmount || 0)}
+                          </td>
+                          <td className="py-2 px-3 text-right font-mono font-bold text-emerald-800">
+                            {fmt(Number(sale.taxVat || sale.vat || sale.vatTax || 0))}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot className="bg-emerald-50/70 font-bold border-t border-emerald-200">
+                      <tr>
+                        <td colSpan={4} className="py-2.5 px-3 text-emerald-900 text-right">
+                          মোট আউটপুট ভ্যাট (Total Output VAT):
+                        </td>
+                        <td className="py-2.5 px-3 text-right font-mono text-emerald-950">
+                          {fmt(vatData.totalOutputVat)}
+                        </td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              )}
+            </div>
+
+            {/* 2. Purchases / Input VAT Table */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <h4 className="font-bold text-gray-900 text-sm flex items-center gap-1.5">
+                  <ArrowDownRight className="w-4 h-4 text-blue-700" />
+                  <span>ক্রয় ভিত্তিক ইনপুট ভ্যাট (Purchases Input VAT / Rebate)</span>
+                </h4>
+                <span className="text-xs text-gray-500 font-semibold">
+                  মোট: {vatData?.purchasesWithVat.length || 0}টি চালান
+                </span>
+              </div>
+
+              {(!vatData || vatData.purchasesWithVat.length === 0) ? (
+                <div className="p-6 text-center bg-gray-50 rounded-xl border border-gray-200 text-gray-500 text-xs">
+                  নির্বাচিত সময়সীমার মধ্যে কোনো ভ্যাটযুক্ত ক্রয় চালান নেই।
+                </div>
+              ) : (
+                <div className="overflow-x-auto border border-gray-200 rounded-xl">
+                  <table className="w-full text-left text-xs border-collapse">
+                    <thead className="bg-gray-100 text-gray-700 font-semibold border-b border-gray-200">
+                      <tr>
+                        <th className="py-2.5 px-3">তারিখ</th>
+                        <th className="py-2.5 px-3">রেফারেন্স / চালান নং</th>
+                        <th className="py-2.5 px-3">সরবরাহকারী</th>
+                        <th className="py-2.5 px-3 text-right">ক্রয় মোট মূল্য</th>
+                        <th className="py-2.5 px-3 text-right font-bold text-blue-800">পরিশোধিত ইনপুট ভ্যাট</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100">
+                      {vatData.purchasesWithVat.map((pur) => (
+                        <tr key={pur.id} className="hover:bg-gray-50 transition-colors">
+                          <td className="py-2 px-3 font-mono text-gray-600">{pur.date}</td>
+                          <td className="py-2 px-3 font-mono font-bold text-gray-900">{pur.id}</td>
+                          <td className="py-2 px-3 text-gray-800">{pur.supplierName}</td>
+                          <td className="py-2 px-3 text-right font-mono text-gray-800">
+                            {fmt(pur.grandTotal || pur.totalAmount || 0)}
+                          </td>
+                          <td className="py-2 px-3 text-right font-mono font-bold text-blue-800">
+                            {fmt(Number(pur.taxVat || pur.vat || pur.vatTax || 0))}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot className="bg-blue-50/70 font-bold border-t border-blue-200">
+                      <tr>
+                        <td colSpan={4} className="py-2.5 px-3 text-blue-900 text-right">
+                          মোট ইনপুট ভ্যাট (Total Input VAT):
+                        </td>
+                        <td className="py-2.5 px-3 text-right font-mono text-blue-950">
+                          {fmt(vatData.totalInputVat)}
+                        </td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              )}
             </div>
           </div>
         </div>

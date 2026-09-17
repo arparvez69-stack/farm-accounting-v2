@@ -16,7 +16,8 @@ import {
   Eye,
   EyeOff,
   AlertCircle,
-  Calculator
+  Calculator,
+  FileText
 } from 'lucide-react';
 import { db } from '../db/indexedDb';
 import { AuditLog, FixedAsset, SystemConfig, UserRole, AppAccessLog } from '../types';
@@ -42,6 +43,35 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
   const [assets, setAssets] = useState<FixedAsset[]>([]);
   const [loading, setLoading] = useState(false);
   const [lastBackupTime, setLastBackupTime] = useState<string | null>(() => getLastSyncTime());
+
+  // VAT/TIN Registered Business State (stored in local settings, off by default)
+  const [isVatRegistered, setIsVatRegistered] = useState<boolean>(() => {
+    return localStorage.getItem('goted_vat_registered') === 'true';
+  });
+  const [tinNumber, setTinNumber] = useState<string>(() => {
+    return localStorage.getItem('goted_tin_number') || '';
+  });
+  const [binNumber, setBinNumber] = useState<string>(() => {
+    return localStorage.getItem('goted_bin_number') || '';
+  });
+
+  const handleToggleVat = (checked: boolean) => {
+    setIsVatRegistered(checked);
+    localStorage.setItem('goted_vat_registered', checked ? 'true' : 'false');
+    window.dispatchEvent(new Event('goted_settings_changed'));
+  };
+
+  const handleTinChange = (val: string) => {
+    setTinNumber(val);
+    localStorage.setItem('goted_tin_number', val);
+    window.dispatchEvent(new Event('goted_settings_changed'));
+  };
+
+  const handleBinChange = (val: string) => {
+    setBinNumber(val);
+    localStorage.setItem('goted_bin_number', val);
+    window.dispatchEvent(new Event('goted_settings_changed'));
+  };
 
   useEffect(() => {
     const handleSyncTimeUpdated = () => {
@@ -921,6 +951,65 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
             <div className="flex justify-between py-2 border-b border-gray-100">
               <span className="text-gray-500">ইনিশিয়ালাইজেশন:</span>
               <span className="font-mono text-gray-600">The Goated Farm Enterprise</span>
+            </div>
+          </div>
+
+          {/* ভ্যাট/টিন নিবন্ধন সেটিংস (VAT/TIN Registered Business Toggle) */}
+          <div className="pt-2 border-t border-gray-100">
+            <div className="p-4 rounded-xl bg-gray-50 border border-gray-200 space-y-3">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <h4 className="font-bold text-gray-900 text-[14px] flex items-center gap-1.5">
+                    <FileText className="w-4 h-4 text-[#1E5128]" />
+                    <span>ভ্যাট/টিন নিবন্ধিত ব্যবসা (VAT/TIN Registered Business)</span>
+                  </h4>
+                  <p className="text-xs text-gray-500 mt-0.5">
+                    ব্যবসায়িক ভ্যাট বা কর নিবন্ধন থাকলে সক্রিয় করুন। এটি সক্রিয় থাকলে আর্থিক প্রতিবেদন মডিউলে "ভ্যাট সারাংশ" প্রদর্শিত হবে।
+                  </p>
+                </div>
+                <label className="relative inline-flex items-center cursor-pointer shrink-0">
+                  <input
+                    type="checkbox"
+                    id="toggle-vat-registered"
+                    checked={isVatRegistered}
+                    onChange={(e) => handleToggleVat(e.target.checked)}
+                    className="sr-only peer"
+                  />
+                  <div className="w-11 h-6 bg-gray-300 peer-focus:outline-hidden rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#1E5128]"></div>
+                </label>
+              </div>
+
+              {/* Only when toggle is ON, show TIN/BIN-related fields */}
+              {isVatRegistered && (
+                <div className="pt-3 border-t border-gray-200 grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-700 mb-1">
+                      ই-টিন নম্বর (e-TIN Number)
+                    </label>
+                    <input
+                      type="text"
+                      id="input-tin-number"
+                      placeholder="যেমন: ১২৩৪৫৬৭৮৯১০১"
+                      value={tinNumber}
+                      onChange={(e) => handleTinChange(e.target.value)}
+                      className="w-full bg-white border border-gray-300 rounded-lg p-2 text-[13px] text-gray-900 font-mono focus:ring-1 focus:ring-[#1E5128]"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-700 mb-1">
+                      বিআইএন / ভ্যাট নিবন্ধন নম্বর (BIN / VAT Reg No.)
+                    </label>
+                    <input
+                      type="text"
+                      id="input-bin-number"
+                      placeholder="যেমন: ০০১২৩৪৫৬৭-০১০১"
+                      value={binNumber}
+                      onChange={(e) => handleBinChange(e.target.value)}
+                      className="w-full bg-white border border-gray-300 rounded-lg p-2 text-[13px] text-gray-900 font-mono focus:ring-1 focus:ring-[#1E5128]"
+                    />
+                  </div>
+                </div>
+              )}
             </div>
           </div>
 
