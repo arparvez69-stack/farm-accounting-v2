@@ -79,6 +79,7 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
 
   // Daybook & Reversal Modal State
   const [searchQuery, setSearchQuery] = useState('');
+  const [daybookVisibleCount, setDaybookVisibleCount] = useState(25);
   const [reversingEntry, setReversingEntry] = useState<JournalEntry | null>(null);
 
   // General Ledger State
@@ -86,6 +87,8 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
   const [ledgerEntries, setLedgerEntries] = useState<LedgerEntry[]>([]);
   const [ledgerAccount, setLedgerAccount] = useState<Account | undefined>();
   const [ledgerNetBalance, setLedgerNetBalance] = useState(0);
+  const [ledgerSearchQuery, setLedgerSearchQuery] = useState('');
+  const [ledgerVisibleCount, setLedgerVisibleCount] = useState(25);
 
   // Trial Balance State
   const [tbRows, setTbRows] = useState<TrialBalanceRow[]>([]);
@@ -188,6 +191,7 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
 
   const loadLedger = async (code: string) => {
     setSelectedLedgerCode(code);
+    setLedgerVisibleCount(25);
     const res = await getGeneralLedger(code);
     setLedgerAccount(res.account);
     setLedgerEntries(res.entries);
@@ -814,41 +818,56 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
               <Search className="w-4 h-4 text-gray-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
               <input
                 type="text"
+                id="daybook-search-input"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="ভাউচার নম্বর, বিবরণ, বা হিসাবের নাম দিয়ে খুঁজুন..."
+                placeholder="বিবরণ, টাকার পরিমাণ, তারিখ (YYYY-MM-DD), বা ভাউচার দিয়ে খুঁজুন..."
                 className="w-full pl-10 pr-9 py-2 bg-[#F8FAFC] border border-gray-200 rounded-xl text-[14px] text-gray-900 focus:outline-none focus:border-[#1E5128] focus:bg-white transition-all min-h-[42px]"
               />
               {searchQuery && (
                 <button
                   type="button"
+                  id="btn-clear-daybook-search"
                   onClick={() => setSearchQuery('')}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 p-1"
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 p-1 cursor-pointer"
+                  title="অনুসন্ধান মুছুন"
                 >
                   <X className="w-3.5 h-3.5" />
                 </button>
               )}
             </div>
-            {searchQuery && (
-              <div className="text-xs text-gray-500 font-medium whitespace-nowrap">
-                ফলাফল:{' '}
-                {
-                  journals.filter((j) => {
-                    const q = searchQuery.toLowerCase().trim();
-                    return (
-                      j.voucherNumber.toLowerCase().includes(q) ||
-                      j.narration.toLowerCase().includes(q) ||
-                      j.id.toLowerCase().includes(q) ||
-                      (j.reversedBy && ('সংশোধিত'.includes(q) || 'corrected'.includes(q))) ||
-                      (j.reversalOf && ('রিভার্সাল'.includes(q) || 'reversal'.includes(q))) ||
-                      (j.correctionOf && ('নতুন সংশোধিত'.includes(q) || 'correction'.includes(q))) ||
-                      j.lines.some((l) => l.accountCode.includes(q) || l.accountName.toLowerCase().includes(q))
-                    );
-                  }).length
-                }{' '}
-                টি ভাউচার
-              </div>
-            )}
+            <div className="text-xs text-gray-500 font-medium whitespace-nowrap">
+              {(() => {
+                const q = searchQuery.toLowerCase().trim();
+                const totalFiltered = journals.filter((j) => {
+                  if (!q) return true;
+                  const descMatch = (j.narration && j.narration.toLowerCase().includes(q)) ||
+                    j.lines.some((l) => l.memo && l.memo.toLowerCase().includes(q));
+                  const amountMatch =
+                    j.totalDebit.toString().includes(q) ||
+                    j.totalCredit.toString().includes(q) ||
+                    j.totalDebit.toLocaleString().includes(q) ||
+                    j.lines.some((l) => (l.debit > 0 && l.debit.toString().includes(q)) || (l.credit > 0 && l.credit.toString().includes(q)));
+                  const dateMatch = j.date && j.date.includes(q);
+                  const voucherMatch = j.voucherNumber && j.voucherNumber.toLowerCase().includes(q);
+                  const idMatch = j.id && j.id.toLowerCase().includes(q);
+                  const accountMatch = j.lines.some((l) => l.accountCode.includes(q) || l.accountName.toLowerCase().includes(q));
+                  const badgeMatch =
+                    (j.reversedBy && ('সংশোধিত'.includes(q) || 'corrected'.includes(q))) ||
+                    (j.reversalOf && ('রিভার্সাল'.includes(q) || 'reversal'.includes(q))) ||
+                    (j.correctionOf && ('নতুন সংশোধিত'.includes(q) || 'correction'.includes(q)));
+
+                  return descMatch || amountMatch || dateMatch || voucherMatch || idMatch || accountMatch || badgeMatch;
+                }).length;
+
+                return (
+                  <span>
+                    মোট: <strong className="text-[#1E5128]">{totalFiltered}</strong> টি ভাউচার
+                    {totalFiltered > 25 && ` (প্রদর্শিত: ${Math.min(daybookVisibleCount, totalFiltered)})`}
+                  </span>
+                );
+              })()}
+            </div>
           </div>
 
           {latestClosed && (
@@ -881,114 +900,153 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
               কোনো জাবেদা রেকর্ড নেই। "+ নতুন ভাউচার" বাটনে ক্লিক করে হিসাব শুরু করুন।
             </div>
           ) : (
-            <div className="space-y-3">
-              {journals
-                .filter((j) => {
-                  if (!searchQuery.trim()) return true;
-                  const q = searchQuery.toLowerCase().trim();
-                  return (
-                    j.voucherNumber.toLowerCase().includes(q) ||
-                    j.narration.toLowerCase().includes(q) ||
-                    j.id.toLowerCase().includes(q) ||
-                    (j.reversedBy && ('সংশোধিত'.includes(q) || 'corrected'.includes(q))) ||
-                    (j.reversalOf && ('রিভার্সাল'.includes(q) || 'reversal'.includes(q))) ||
-                    (j.correctionOf && ('নতুন সংশোধিত'.includes(q) || 'correction'.includes(q))) ||
-                    j.lines.some((l) => l.accountCode.includes(q) || l.accountName.toLowerCase().includes(q))
-                  );
-                })
-                .map((j) => (
-                  <div
-                    key={j.id}
-                    className={`p-3.5 rounded-xl border space-y-2.5 text-[14px] transition-all ${
-                      j.reversedBy
-                        ? 'bg-amber-50/30 border-amber-200'
-                        : j.reversalOf
-                        ? 'bg-blue-50/30 border-blue-200'
-                        : 'bg-[#F8FAFC] border-gray-200'
-                    }`}
-                  >
-                    <div className="flex items-center justify-between flex-wrap gap-2 border-b border-gray-200 pb-2">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="font-mono font-bold text-[#1E5128] text-[15px]">{j.voucherNumber}</span>
-                        <span className="px-2 py-0.5 rounded bg-white border border-gray-200 text-xs text-gray-700 font-semibold">
-                          {j.voucherType}
-                        </span>
+            (() => {
+              const q = searchQuery.toLowerCase().trim();
+              const filtered = journals.filter((j) => {
+                if (!q) return true;
+                const descMatch = (j.narration && j.narration.toLowerCase().includes(q)) ||
+                  j.lines.some((l) => l.memo && l.memo.toLowerCase().includes(q));
+                const amountMatch =
+                  j.totalDebit.toString().includes(q) ||
+                  j.totalCredit.toString().includes(q) ||
+                  j.totalDebit.toLocaleString().includes(q) ||
+                  j.lines.some((l) => (l.debit > 0 && l.debit.toString().includes(q)) || (l.credit > 0 && l.credit.toString().includes(q)));
+                const dateMatch = j.date && j.date.includes(q);
+                const voucherMatch = j.voucherNumber && j.voucherNumber.toLowerCase().includes(q);
+                const idMatch = j.id && j.id.toLowerCase().includes(q);
+                const accountMatch = j.lines.some((l) => l.accountCode.includes(q) || l.accountName.toLowerCase().includes(q));
+                const badgeMatch =
+                  (j.reversedBy && ('সংশোধিত'.includes(q) || 'corrected'.includes(q))) ||
+                  (j.reversalOf && ('রিভার্সাল'.includes(q) || 'reversal'.includes(q))) ||
+                  (j.correctionOf && ('নতুন সংশোধিত'.includes(q) || 'correction'.includes(q)));
 
-                        {/* Badges */}
-                        {j.reversedBy && (
-                          <span
-                            className="px-2.5 py-0.5 rounded-full bg-amber-100 text-amber-900 border border-amber-300 text-xs font-bold flex items-center gap-1 shadow-2xs"
-                            title={`সংশোধিত এন্ট্রি (রিভার্সাল আইডি: ${j.reversedBy})`}
-                          >
-                            <span className="w-1.5 h-1.5 rounded-full bg-amber-600"></span>
-                            সংশোধিত
-                          </span>
-                        )}
+                return descMatch || amountMatch || dateMatch || voucherMatch || idMatch || accountMatch || badgeMatch;
+              });
 
-                        {j.reversalOf && (
-                          <span
-                            className="px-2.5 py-0.5 rounded-full bg-blue-100 text-blue-900 border border-blue-200 text-xs font-semibold flex items-center gap-1"
-                            title={`বিপরীত দাখিলা - মূল ভাউচার আইডি: ${j.reversalOf}`}
-                          >
-                            <ArrowRightLeft className="w-3 h-3 text-blue-700" />
-                            বিপরীত দাখিলা (Reversal)
-                          </span>
-                        )}
-
-                        {j.correctionOf && (
-                          <span
-                            className="px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-900 border border-emerald-300 text-xs font-semibold flex items-center gap-1"
-                            title={`সংশোধিত নতুন দাখিলা - রিভার্সাল আইডি: ${j.correctionOf}`}
-                          >
-                            <CheckCircle2 className="w-3 h-3 text-emerald-700" />
-                            নতুন সংশোধিত দাখিলা
-                          </span>
-                        )}
-
-                        <span className="text-gray-500 text-[13px]">{j.date}</span>
-                      </div>
-
-                      <div className="flex items-center gap-3">
-                        <div className="font-bold text-gray-900 font-mono text-[15px]">
-                          মোট: {fmt(j.totalDebit)}
-                        </div>
-                        {!j.reversedBy && role === 'OWNER' && (
-                          <button
-                            type="button"
-                            onClick={() => setReversingEntry(j)}
-                            className="px-2.5 py-1 rounded-lg bg-white hover:bg-amber-50 text-amber-900 border border-amber-300 hover:border-amber-400 text-[12px] font-bold flex items-center gap-1.5 transition-all cursor-pointer shadow-2xs active:scale-95"
-                            title="এই এন্ট্রিটি সংশোধন বা রিভার্স করুন"
-                          >
-                            <ArrowRightLeft className="w-3.5 h-3.5 text-amber-700" />
-                            <span>সংশোধন করুন</span>
-                          </button>
-                        )}
-                      </div>
-                    </div>
-
-                    <p className="text-gray-800 text-[14px]">{j.narration}</p>
-
-                    {/* Lines preview */}
-                    <div className="space-y-1.5 pt-1 text-[13px]">
-                      {j.lines.map((line, lIdx) => (
-                        <div key={lIdx} className="flex items-center justify-between text-gray-700">
-                          <span className="truncate pr-2 font-medium">
-                            {line.accountCode} - {line.accountName}
-                          </span>
-                          <div className="flex gap-3 shrink-0 font-bold">
-                            {line.debit > 0 && (
-                              <span className="text-[#15803D]">Dr: {fmt(line.debit)}</span>
-                            )}
-                            {line.credit > 0 && (
-                              <span className="text-sky-700">Cr: {fmt(line.credit)}</span>
-                            )}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
+              if (filtered.length === 0) {
+                return (
+                  <div className="p-8 text-center text-gray-500 text-[14px] bg-gray-50 rounded-xl border border-dashed border-gray-300">
+                    "{searchQuery}" এর সাথে মিলে এমন কোনো জাবেদা রেকর্ড পাওয়া যায়নি।
                   </div>
-                ))}
-            </div>
+                );
+              }
+
+              const visible = filtered.slice(0, daybookVisibleCount);
+
+              return (
+                <div className="space-y-3">
+                  {visible.map((j) => (
+                    <div
+                      key={j.id}
+                      className={`p-3.5 rounded-xl border space-y-2.5 text-[14px] transition-all ${
+                        j.reversedBy
+                          ? 'bg-amber-50/30 border-amber-200'
+                          : j.reversalOf
+                          ? 'bg-blue-50/30 border-blue-200'
+                          : 'bg-[#F8FAFC] border-gray-200'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between flex-wrap gap-2 border-b border-gray-200 pb-2">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="font-mono font-bold text-[#1E5128] text-[15px]">{j.voucherNumber}</span>
+                          <span className="px-2 py-0.5 rounded bg-white border border-gray-200 text-xs text-gray-700 font-semibold">
+                            {j.voucherType}
+                          </span>
+
+                          {/* Badges */}
+                          {j.reversedBy && (
+                            <span
+                              className="px-2.5 py-0.5 rounded-full bg-amber-100 text-amber-900 border border-amber-300 text-xs font-bold flex items-center gap-1 shadow-2xs"
+                              title={`সংশোধিত এন্ট্রি (রিভার্সাল আইডি: ${j.reversedBy})`}
+                            >
+                              <span className="w-1.5 h-1.5 rounded-full bg-amber-600"></span>
+                              সংশোধিত
+                            </span>
+                          )}
+
+                          {j.reversalOf && (
+                            <span
+                              className="px-2.5 py-0.5 rounded-full bg-blue-100 text-blue-900 border border-blue-200 text-xs font-semibold flex items-center gap-1"
+                              title={`বিপরীত দাখিলা - মূল ভাউচার আইডি: ${j.reversalOf}`}
+                            >
+                              <ArrowRightLeft className="w-3 h-3 text-blue-700" />
+                              বিপরীত দাখিলা (Reversal)
+                            </span>
+                          )}
+
+                          {j.correctionOf && (
+                            <span
+                              className="px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-900 border border-emerald-300 text-xs font-semibold flex items-center gap-1"
+                              title={`সংশোধিত নতুন দাখিলা - রিভার্সাল আইডি: ${j.correctionOf}`}
+                            >
+                              <CheckCircle2 className="w-3 h-3 text-emerald-700" />
+                              নতুন সংশোধিত দাখিলা
+                            </span>
+                          )}
+
+                          <span className="text-gray-500 text-[13px]">{j.date}</span>
+                        </div>
+
+                        <div className="flex items-center gap-3">
+                          <div className="font-bold text-gray-900 font-mono text-[15px]">
+                            মোট: {fmt(j.totalDebit)}
+                          </div>
+                          {!j.reversedBy && role === 'OWNER' && (
+                            <button
+                              type="button"
+                              onClick={() => setReversingEntry(j)}
+                              className="px-2.5 py-1 rounded-lg bg-white hover:bg-amber-50 text-amber-900 border border-amber-300 hover:border-amber-400 text-[12px] font-bold flex items-center gap-1.5 transition-all cursor-pointer shadow-2xs active:scale-95"
+                              title="এই এন্ট্রিটি সংশোধন বা রিভার্স করুন"
+                            >
+                              <ArrowRightLeft className="w-3.5 h-3.5 text-amber-700" />
+                              <span>সংশোধন করুন</span>
+                            </button>
+                          )}
+                        </div>
+                      </div>
+
+                      <p className="text-gray-800 text-[14px]">{j.narration}</p>
+
+                      {/* Lines preview */}
+                      <div className="space-y-1.5 pt-1 text-[13px]">
+                        {j.lines.map((line, lIdx) => (
+                          <div key={lIdx} className="flex items-center justify-between text-gray-700">
+                            <span className="truncate pr-2 font-medium">
+                              {line.accountCode} - {line.accountName}
+                            </span>
+                            <div className="flex gap-3 shrink-0 font-bold">
+                              {line.debit > 0 && (
+                                <span className="text-[#15803D]">Dr: {fmt(line.debit)}</span>
+                              )}
+                              {line.credit > 0 && (
+                                <span className="text-sky-700">Cr: {fmt(line.credit)}</span>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+
+                  {/* Load More Button for Daybook */}
+                  {filtered.length > daybookVisibleCount && (
+                    <div className="pt-3 pb-1 text-center">
+                      <button
+                        type="button"
+                        id="btn-load-more-daybook"
+                        onClick={() => setDaybookVisibleCount((prev) => prev + 25)}
+                        className="px-6 py-2.5 bg-white border-2 border-[#1E5128] text-[#1E5128] hover:bg-[#1E5128] hover:text-white rounded-xl text-xs font-bold transition-all shadow-xs cursor-pointer inline-flex items-center gap-2 min-h-[42px]"
+                      >
+                        <span>আরও দেখুন (Load More)</span>
+                        <span className="text-[11px] opacity-80 font-normal">
+                          ({Math.min(daybookVisibleCount, filtered.length)} / {filtered.length}টি প্রদর্শিত, +২৫টি যোগ করুন)
+                        </span>
+                      </button>
+                    </div>
+                  )}
+                </div>
+              );
+            })()
           )}
         </div>
       )}
@@ -1041,89 +1099,185 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
             </div>
           )}
 
-          {/* Ledger Table */}
-          <div className="overflow-x-auto rounded-xl border border-gray-200">
-            <table className="w-full text-left text-[13px] text-gray-800">
-              <thead className="bg-gray-100 text-gray-600 uppercase text-[11px] font-bold">
-                <tr>
-                  <th className="p-3">তারিখ</th>
-                  <th className="p-3">ভাউচার নং</th>
-                  <th className="p-3">বিবরণ</th>
-                  <th className="p-3 text-right">ডেবিট (৳)</th>
-                  <th className="p-3 text-right">ক্রেডিট (৳)</th>
-                  <th className="p-3 text-right">ব্যালেন্স (৳)</th>
-                  <th className="p-3 text-right">অবস্থা ও অ্যাকশন</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-200">
-                {ledgerEntries.length === 0 ? (
-                  <tr>
-                    <td colSpan={7} className="p-6 text-center text-gray-500 text-[14px]">
-                      এই হিসাবে এখনো কোনো লেনদেন সংঘটিত হয়নি।
-                    </td>
-                  </tr>
-                ) : (
-                  ledgerEntries.map((row, idx) => (
-                    <tr key={idx} className="hover:bg-gray-50 transition-colors">
-                      <td className="p-3 text-gray-600 whitespace-nowrap">{row.date}</td>
-                      <td className="p-3 font-bold text-[#1E5128] whitespace-nowrap font-mono">{row.voucherNumber}</td>
-                      <td className="p-3 text-gray-800 truncate max-w-xs">{row.narration}</td>
-                      <td className="p-3 text-right font-semibold text-[#15803D] whitespace-nowrap">{row.debit > 0 ? fmt(row.debit) : '-'}</td>
-                      <td className="p-3 text-right font-semibold text-sky-700 whitespace-nowrap">{row.credit > 0 ? fmt(row.credit) : '-'}</td>
-                      <td className="p-3 text-right font-bold text-gray-900 whitespace-nowrap">{fmt(row.runningBalance)}</td>
-                      <td className="p-3 text-right whitespace-nowrap">
-                        {row.reversedBy ? (
-                          <span
-                            className="px-2.5 py-0.5 rounded-full bg-amber-100 text-amber-900 border border-amber-300 font-bold text-[11px] inline-flex items-center gap-1 shadow-2xs"
-                            title={`সংশোধিত এন্ট্রি (রিভার্সাল আইডি: ${row.reversedBy})`}
-                          >
-                            <span className="w-1.5 h-1.5 rounded-full bg-amber-600"></span>
-                            সংশোধিত
-                          </span>
-                        ) : row.reversalOf ? (
-                          <span
-                            className="px-2.5 py-0.5 rounded-full bg-blue-100 text-blue-900 border border-blue-200 font-semibold text-[11px] inline-flex items-center gap-1"
-                            title={`বিপরীত দাখিলা - মূল এন্ট্রি আইডি: ${row.reversalOf}`}
-                          >
-                            রিভার্সাল
-                          </span>
-                        ) : row.correctionOf ? (
-                          <span
-                            className="px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-900 border border-emerald-300 font-semibold text-[11px] inline-flex items-center gap-1"
-                            title={`সংশোধিত নতুন দাখিলা - রিভার্সাল আইডি: ${row.correctionOf}`}
-                          >
-                            সংশোধিত দাখিলা
-                          </span>
-                        ) : (
-                          role === 'OWNER' && (
-                            <button
-                              type="button"
-                              onClick={async () => {
-                                let entryToReverse = journals.find((j) => j.id === row.journalEntryId);
-                                if (!entryToReverse && row.journalEntryId) {
-                                  entryToReverse = await db.journalEntries.get(row.journalEntryId);
-                                }
-                                if (!entryToReverse) {
-                                  entryToReverse = await db.journalEntries.where('voucherNumber').equals(row.voucherNumber).first();
-                                }
-                                if (entryToReverse) {
-                                  setReversingEntry(entryToReverse);
-                                }
-                              }}
-                              className="px-2.5 py-1 rounded-md bg-white hover:bg-amber-50 text-amber-900 border border-amber-300 hover:border-amber-400 text-[11px] font-bold transition-all cursor-pointer shadow-2xs"
-                              title="এই এন্ট্রিটি সংশোধন করুন"
-                            >
-                              সংশোধন করুন
-                            </button>
-                          )
-                        )}
-                      </td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
+          {/* Ledger Search Box */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="relative flex-1">
+              <Search className="w-4 h-4 text-gray-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+              <input
+                type="text"
+                id="ledger-search-input"
+                value={ledgerSearchQuery}
+                onChange={(e) => setLedgerSearchQuery(e.target.value)}
+                placeholder="খতিয়ান লেনদেন খুঁজুন (বিবরণ, টাকার পরিমাণ, তারিখ YYYY-MM-DD, বা ভাউচার)..."
+                className="w-full pl-10 pr-9 py-2 bg-[#F8FAFC] border border-gray-200 rounded-xl text-[14px] text-gray-900 focus:outline-none focus:border-[#1E5128] focus:bg-white transition-all min-h-[42px]"
+              />
+              {ledgerSearchQuery && (
+                <button
+                  type="button"
+                  id="btn-clear-ledger-search"
+                  onClick={() => setLedgerSearchQuery('')}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 p-1 cursor-pointer"
+                  title="অনুসন্ধান মুছুন"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
+            <div className="text-xs text-gray-500 font-medium whitespace-nowrap">
+              {(() => {
+                const q = ledgerSearchQuery.toLowerCase().trim();
+                const count = ledgerEntries.filter((row) => {
+                  if (!q) return true;
+                  const descMatch = row.narration && row.narration.toLowerCase().includes(q);
+                  const amountMatch =
+                    (row.debit > 0 && (row.debit.toString().includes(q) || row.debit.toLocaleString().includes(q))) ||
+                    (row.credit > 0 && (row.credit.toString().includes(q) || row.credit.toLocaleString().includes(q))) ||
+                    row.runningBalance.toString().includes(q) ||
+                    row.runningBalance.toLocaleString().includes(q);
+                  const dateMatch = row.date && row.date.includes(q);
+                  const voucherMatch = row.voucherNumber && row.voucherNumber.toLowerCase().includes(q);
+                  return descMatch || amountMatch || dateMatch || voucherMatch;
+                }).length;
+                return (
+                  <span>
+                    মোট: <strong className="text-[#1E5128]">{count}</strong> টি লেনদেন
+                    {count > 25 && ` (প্রদর্শিত: ${Math.min(ledgerVisibleCount, count)})`}
+                  </span>
+                );
+              })()}
+            </div>
           </div>
+
+          {/* Ledger Table */}
+          {(() => {
+            const q = ledgerSearchQuery.toLowerCase().trim();
+            // Show most recent 25 entries first (reverse chronological)
+            const reversed = [...ledgerEntries].reverse();
+            const filtered = reversed.filter((row) => {
+              if (!q) return true;
+              const descMatch = row.narration && row.narration.toLowerCase().includes(q);
+              const amountMatch =
+                (row.debit > 0 && (row.debit.toString().includes(q) || row.debit.toLocaleString().includes(q))) ||
+                (row.credit > 0 && (row.credit.toString().includes(q) || row.credit.toLocaleString().includes(q))) ||
+                row.runningBalance.toString().includes(q) ||
+                row.runningBalance.toLocaleString().includes(q);
+              const dateMatch = row.date && row.date.includes(q);
+              const voucherMatch = row.voucherNumber && row.voucherNumber.toLowerCase().includes(q);
+              return descMatch || amountMatch || dateMatch || voucherMatch;
+            });
+
+            const visibleRows = filtered.slice(0, ledgerVisibleCount);
+
+            return (
+              <div className="space-y-3">
+                <div className="overflow-x-auto rounded-xl border border-gray-200">
+                  <table className="w-full text-left text-[13px] text-gray-800">
+                    <thead className="bg-gray-100 text-gray-600 uppercase text-[11px] font-bold">
+                      <tr>
+                        <th className="p-3">তারিখ</th>
+                        <th className="p-3">ভাউচার নং</th>
+                        <th className="p-3">বিবরণ</th>
+                        <th className="p-3 text-right">ডেবিট (৳)</th>
+                        <th className="p-3 text-right">ক্রেডিট (৳)</th>
+                        <th className="p-3 text-right">ব্যালেন্স (৳)</th>
+                        <th className="p-3 text-right">অবস্থা ও অ্যাকশন</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-200">
+                      {ledgerEntries.length === 0 ? (
+                        <tr>
+                          <td colSpan={7} className="p-6 text-center text-gray-500 text-[14px]">
+                            এই হিসাবে এখনো কোনো লেনদেন সংঘটিত হয়নি।
+                          </td>
+                        </tr>
+                      ) : filtered.length === 0 ? (
+                        <tr>
+                          <td colSpan={7} className="p-6 text-center text-gray-500 text-[14px]">
+                            "{ledgerSearchQuery}" এর সাথে মিলে এমন কোনো খতিয়ান লেনদেন পাওয়া যায়নি।
+                          </td>
+                        </tr>
+                      ) : (
+                        visibleRows.map((row, idx) => (
+                          <tr key={idx} className="hover:bg-gray-50 transition-colors">
+                            <td className="p-3 text-gray-600 whitespace-nowrap">{row.date}</td>
+                            <td className="p-3 font-bold text-[#1E5128] whitespace-nowrap font-mono">{row.voucherNumber}</td>
+                            <td className="p-3 text-gray-800 truncate max-w-xs">{row.narration}</td>
+                            <td className="p-3 text-right font-semibold text-[#15803D] whitespace-nowrap">{row.debit > 0 ? fmt(row.debit) : '-'}</td>
+                            <td className="p-3 text-right font-semibold text-sky-700 whitespace-nowrap">{row.credit > 0 ? fmt(row.credit) : '-'}</td>
+                            <td className="p-3 text-right font-bold text-gray-900 whitespace-nowrap">{fmt(row.runningBalance)}</td>
+                            <td className="p-3 text-right whitespace-nowrap">
+                              {row.reversedBy ? (
+                                <span
+                                  className="px-2.5 py-0.5 rounded-full bg-amber-100 text-amber-900 border border-amber-300 font-bold text-[11px] inline-flex items-center gap-1 shadow-2xs"
+                                  title={`সংশোধিত এন্ট্রি (রিভার্সাল আইডি: ${row.reversedBy})`}
+                                >
+                                  <span className="w-1.5 h-1.5 rounded-full bg-amber-600"></span>
+                                  সংশোধিত
+                                </span>
+                              ) : row.reversalOf ? (
+                                <span
+                                  className="px-2.5 py-0.5 rounded-full bg-blue-100 text-blue-900 border border-blue-200 font-semibold text-[11px] inline-flex items-center gap-1"
+                                  title={`বিপরীত দাখিলা - মূল এন্ট্রি আইডি: ${row.reversalOf}`}
+                                >
+                                  রিভার্সাল
+                                </span>
+                              ) : row.correctionOf ? (
+                                <span
+                                  className="px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-900 border border-emerald-300 font-semibold text-[11px] inline-flex items-center gap-1"
+                                  title={`সংশোধিত নতুন দাখিলা - রিভার্সাল আইডি: ${row.correctionOf}`}
+                                >
+                                  সংশোধিত দাখিলা
+                                </span>
+                              ) : (
+                                role === 'OWNER' && (
+                                  <button
+                                    type="button"
+                                    onClick={async () => {
+                                      let entryToReverse = journals.find((j) => j.id === row.journalEntryId);
+                                      if (!entryToReverse && row.journalEntryId) {
+                                        entryToReverse = await db.journalEntries.get(row.journalEntryId);
+                                      }
+                                      if (!entryToReverse) {
+                                        entryToReverse = await db.journalEntries.where('voucherNumber').equals(row.voucherNumber).first();
+                                      }
+                                      if (entryToReverse) {
+                                        setReversingEntry(entryToReverse);
+                                      }
+                                    }}
+                                    className="px-2.5 py-1 rounded-md bg-white hover:bg-amber-50 text-amber-900 border border-amber-300 hover:border-amber-400 text-[11px] font-bold transition-all cursor-pointer shadow-2xs"
+                                    title="এই এন্ট্রিটি সংশোধন করুন"
+                                  >
+                                    সংশোধন করুন
+                                  </button>
+                                )
+                              )}
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* Load More Button for General Ledger */}
+                {filtered.length > ledgerVisibleCount && (
+                  <div className="pt-2 pb-1 text-center">
+                    <button
+                      type="button"
+                      id="btn-load-more-ledger"
+                      onClick={() => setLedgerVisibleCount((prev) => prev + 25)}
+                      className="px-6 py-2.5 bg-white border-2 border-[#1E5128] text-[#1E5128] hover:bg-[#1E5128] hover:text-white rounded-xl text-xs font-bold transition-all shadow-xs cursor-pointer inline-flex items-center gap-2 min-h-[42px]"
+                    >
+                      <span>আরও দেখুন (Load More)</span>
+                      <span className="text-[11px] opacity-80 font-normal">
+                        ({Math.min(ledgerVisibleCount, filtered.length)} / {filtered.length}টি প্রদর্শিত, +২৫টি যোগ করুন)
+                      </span>
+                    </button>
+                  </div>
+                )}
+              </div>
+            );
+          })()}
         </div>
       )}
 

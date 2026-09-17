@@ -21,7 +21,8 @@ import {
   FileText,
   Users,
   CheckSquare,
-  AlertTriangle
+  AlertTriangle,
+  Search
 } from 'lucide-react';
 import { db } from '../db/indexedDb';
 import {
@@ -92,6 +93,7 @@ export const FarmOperationsModule: React.FC<Props> = ({
     tag: string;
     animalData: Animal;
   } | null>(null);
+  const [animalSearch, setAnimalSearch] = useState<string>('');
 
   // Add Activity / Event Modal state
   const [isEventModalOpen, setIsEventModalOpen] = useState(false);
@@ -1012,17 +1014,71 @@ export const FarmOperationsModule: React.FC<Props> = ({
             </form>
           )}
 
+          {/* Animal Live Search Bar */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="relative flex-1">
+              <Search className="w-4 h-4 text-gray-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+              <input
+                type="text"
+                id="animal-search-input"
+                value={animalSearch}
+                onChange={(e) => setAnimalSearch(e.target.value)}
+                placeholder="পশুর ট্যাগ (যেমন: COW-105) বা নাম/জাত দিয়ে খুঁজুন..."
+                className="w-full pl-10 pr-9 py-2 bg-[#F8FAFC] border border-gray-300 rounded-xl text-[14px] text-gray-900 focus:outline-none focus:border-[#1E5128] focus:bg-white transition-all min-h-[42px]"
+              />
+              {animalSearch && (
+                <button
+                  type="button"
+                  id="btn-clear-animal-search"
+                  onClick={() => setAnimalSearch('')}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 p-1 cursor-pointer"
+                  title="অনুসন্ধান মুছুন"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
+            {animalSearch.trim() && (
+              <div className="text-xs text-gray-500 font-medium whitespace-nowrap">
+                ফলাফল:{' '}
+                <span className="font-bold text-[#1E5128]">
+                  {
+                    animals.filter((a) => {
+                      const matchesStatus = animalFilter === 'ACTIVE' ? a.status === 'ACTIVE' : a.status !== 'ACTIVE';
+                      if (!matchesStatus) return false;
+                      const q = animalSearch.toLowerCase().trim();
+                      const tagMatch = (a.tag && a.tag.toLowerCase().includes(q)) || (a.id && a.id.toLowerCase().includes(q));
+                      const nameMatch = (a as any).name && (a as any).name.toLowerCase().includes(q);
+                      const breedMatch = a.breed && a.breed.toLowerCase().includes(q);
+                      return tagMatch || nameMatch || breedMatch;
+                    }).length
+                  }
+                }{' '}
+                টি পশু
+              </div>
+            )}
+          </div>
+
           {/* Animals Grid */}
           {(() => {
-            const displayedAnimals = animals.filter((a) =>
-              animalFilter === 'ACTIVE' ? a.status === 'ACTIVE' : a.status !== 'ACTIVE'
-            );
+            const displayedAnimals = animals.filter((a) => {
+              const matchesStatus = animalFilter === 'ACTIVE' ? a.status === 'ACTIVE' : a.status !== 'ACTIVE';
+              if (!matchesStatus) return false;
+              if (!animalSearch.trim()) return true;
+              const q = animalSearch.toLowerCase().trim();
+              const tagMatch = (a.tag && a.tag.toLowerCase().includes(q)) || (a.id && a.id.toLowerCase().includes(q));
+              const nameMatch = (a as any).name && (a as any).name.toLowerCase().includes(q);
+              const breedMatch = a.breed && a.breed.toLowerCase().includes(q);
+              return tagMatch || nameMatch || breedMatch;
+            });
 
             if (displayedAnimals.length === 0) {
               return (
                 <div className="p-8 text-center bg-gray-50 border border-dashed border-gray-300 rounded-xl text-gray-500">
                   <p className="text-[15px] font-medium">
-                    {animalFilter === 'ACTIVE'
+                    {animalSearch.trim()
+                      ? `"${animalSearch}" দিয়ে কোনো পশু খুঁজে পাওয়া যায়নি।`
+                      : animalFilter === 'ACTIVE'
                       ? 'কোনো সক্রিয় গবাদিপশু নেই। নতুন পশু নিবন্ধন করতে উপরের বাটনে ক্লিক করুন।'
                       : 'কোনো নিষ্ক্রিয় বা বিক্রিত পশুর রেকর্ড নেই।'}
                   </p>
