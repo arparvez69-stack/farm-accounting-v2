@@ -188,6 +188,7 @@ export async function exportAllToExcel(companyName = 'Agro-ERP'): Promise<void> 
   // Download File
   const dateStr = new Date().toISOString().split('T')[0];
   XLSX.writeFile(wb, `${companyName}_Accounting_Report_${dateStr}.xlsx`);
+  recordExportTime();
 }
 
 /**
@@ -229,6 +230,7 @@ export async function createFullJsonBackup(): Promise<string> {
   a.download = `Agro_ERP_Full_Backup_${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
   a.click();
   URL.revokeObjectURL(url);
+  recordExportTime();
 
   return jsonStr;
 }
@@ -394,3 +396,68 @@ export async function restoreFromJsonBackup(
 export const exportMultiSheetExcel = exportAllToExcel;
 export const exportSystemBackupJson = createFullJsonBackup;
 export const restoreSystemBackupJson = (jsonString: string, uid = 'owner') => restoreFromJsonBackup(jsonString, uid);
+
+/**
+ * Track last successful cloud sync timestamp
+ */
+export function getLastSyncTime(): string | null {
+  try {
+    return localStorage.getItem('goted_last_sync_time') || localStorage.getItem('goted_last_backup_time');
+  } catch {
+    return null;
+  }
+}
+
+export function recordSyncTime(): void {
+  try {
+    const now = new Date().toISOString();
+    localStorage.setItem('goted_last_sync_time', now);
+    localStorage.setItem('goted_last_backup_time', now);
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('goted-sync-time-updated', { detail: now }));
+    }
+  } catch {}
+}
+
+/**
+ * Track last manual export timestamp
+ */
+export function getLastExportTime(): string | null {
+  try {
+    return localStorage.getItem('goted_last_export_time');
+  } catch {
+    return null;
+  }
+}
+
+export function recordExportTime(): void {
+  try {
+    const now = new Date().toISOString();
+    localStorage.setItem('goted_last_export_time', now);
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('goted-export-time-updated', { detail: now }));
+    }
+  } catch {}
+}
+
+/**
+ * Format timestamp in human-readable Bengali/English for farm owners
+ */
+export function formatBackupTimestamp(isoString: string | null): string {
+  if (!isoString) return 'কখনও ব্যাকআপ হয়নি (No backup yet)';
+  try {
+    const d = new Date(isoString);
+    if (isNaN(d.getTime())) return 'কখনও ব্যাকআপ হয়নি';
+    return d.toLocaleString('bn-BD', {
+      day: 'numeric',
+      month: 'short',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: true
+    });
+  } catch {
+    return isoString;
+  }
+}
+

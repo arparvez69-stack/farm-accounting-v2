@@ -7,8 +7,10 @@ import {
   listenToOnlineSync,
   resolveUserRole,
   seedSystemConfigIfNecessary,
-  synchronizePendingData
+  synchronizePendingData,
+  restoreRemoteDataIfLocalEmpty
 } from './firebase/firebaseClient';
+import { AlertTriangle } from 'lucide-react';
 import { logoutOwner } from './services/authService';
 import { ActiveTab, MobileBottomNav } from './components/MobileBottomNav';
 import { Header } from './components/Header';
@@ -37,6 +39,7 @@ export default function App() {
   // Active Tab & Cross-Tab Navigation Params
   const [activeTab, setActiveTab] = useState<ActiveTab>('dashboard');
   const [selectedAnimalIdForOps, setSelectedAnimalIdForOps] = useState<string | null>(null);
+  const [offlineEmptyWarning, setOfflineEmptyWarning] = useState<boolean>(false);
 
   const handleNavigate = (tab: ActiveTab, animalId?: string) => {
     setActiveTab(tab);
@@ -47,6 +50,19 @@ export default function App() {
 
   useEffect(() => {
     initApp();
+
+    const handleOnlineEvent = async () => {
+      // When connection returns, re-check restore if local DB was empty
+      try {
+        const restoreRes = await restoreRemoteDataIfLocalEmpty();
+        if (restoreRes.restored || !restoreRes.offlineEmptyWarning) {
+          setOfflineEmptyWarning(false);
+        }
+      } catch {}
+    };
+
+    window.addEventListener('online', handleOnlineEvent);
+    return () => window.removeEventListener('online', handleOnlineEvent);
   }, []);
 
   const initApp = async () => {
@@ -72,6 +88,13 @@ export default function App() {
       // 4. Check for active session in Firebase Auth or local verified session
       const initialProfile = await resolveUserRole(auth.currentUser);
       if (initialProfile.isApproved && initialProfile.role === 'OWNER') {
+        // Silently pull down and restore cloud data if local DB has 0 records
+        const restoreRes = await restoreRemoteDataIfLocalEmpty(initialProfile.email);
+        if (restoreRes.offlineEmptyWarning) {
+          setOfflineEmptyWarning(true);
+        } else {
+          setOfflineEmptyWarning(false);
+        }
         setUserProfile(initialProfile);
         setCurrentUser(auth.currentUser);
         await seedSystemConfigIfNecessary();
@@ -83,6 +106,14 @@ export default function App() {
         if (user) {
           setCurrentUser(user);
           const prof = await resolveUserRole(user);
+          if (prof.isApproved && prof.role === 'OWNER') {
+            const restoreRes = await restoreRemoteDataIfLocalEmpty(prof.email);
+            if (restoreRes.offlineEmptyWarning) {
+              setOfflineEmptyWarning(true);
+            } else {
+              setOfflineEmptyWarning(false);
+            }
+          }
           setUserProfile(prof);
           if (prof.isApproved) {
             await seedSystemConfigIfNecessary();
@@ -91,6 +122,12 @@ export default function App() {
           // If no Firebase Auth user, check if we have a verified local session
           const fallbackProf = await resolveUserRole(null);
           if (fallbackProf.isApproved && fallbackProf.role === 'OWNER') {
+            const restoreRes = await restoreRemoteDataIfLocalEmpty(fallbackProf.email);
+            if (restoreRes.offlineEmptyWarning) {
+              setOfflineEmptyWarning(true);
+            } else {
+              setOfflineEmptyWarning(false);
+            }
             setUserProfile(fallbackProf);
           } else {
             setCurrentUser(null);
@@ -138,6 +175,12 @@ export default function App() {
     return (
       <LoginScreen
         onLoginSuccess={async (profile) => {
+          const restoreRes = await restoreRemoteDataIfLocalEmpty(profile.email);
+          if (restoreRes.offlineEmptyWarning) {
+            setOfflineEmptyWarning(true);
+          } else {
+            setOfflineEmptyWarning(false);
+          }
           setUserProfile(profile);
           const boot = await checkSystemBootstrap();
           if (boot.config) setSystemConfig(boot.config);
@@ -162,6 +205,26 @@ export default function App() {
 
       {/* Main App Content Viewport */}
       <main className="flex-1 px-3.5 py-4 sm:px-6 sm:py-6 max-w-5xl w-full mx-auto pb-28 md:pb-12">
+        {/* TASK 4: Clear warning when opened by known owner with empty local DB and no internet */}
+        {offlineEmptyWarning && (
+          <div
+            id="empty-offline-restore-warning"
+            role="alert"
+            className="mb-5 p-4 sm:p-5 rounded-2xl bg-amber-50 border-2 border-amber-400 text-amber-950 flex items-start gap-3.5 shadow-sm"
+          >
+            <div className="w-10 h-10 rounded-xl bg-amber-200 text-amber-900 flex items-center justify-center shrink-0">
+              <AlertTriangle className="w-5 h-5 text-amber-800" />
+            </div>
+            <div className="flex-1">
+              <h4 className="font-bold text-base text-amber-950">
+                ইন্টারনেট সংযোগ ছাড়া পুরোনো ডেটা পুনরুদ্ধার করা যাচ্ছে না, সংযুক্ত হলে আবার চেষ্টা করুন
+              </h4>
+              <p className="text-xs sm:text-sm text-amber-800 mt-1 font-medium">
+                (Cannot restore your old data without internet — try again once connected). আপনার ডিভাইসের স্টোরেজ খালি দেখাচ্ছে এবং ইন্টারনেট সংযোগ না থাকায় ক্লাউড ব্যাকআপ থেকে পূর্বের খামারের তথ্য নামিয়ে আনা সম্ভব হয়নি। ইন্টারনেট পেলে অ্যাপ স্বয়ংক্রিয়ভাবে ক্লাউড ডাটা পুনরুদ্ধার করবে।
+              </p>
+            </div>
+          </div>
+        )}
         {activeTab === 'dashboard' && (
           <Dashboard
             role={userProfile.role}

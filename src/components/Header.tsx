@@ -1,7 +1,8 @@
-import React from 'react';
-import { Shield, LogOut, Sprout } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Shield, LogOut, Sprout, CloudCheck } from 'lucide-react';
 import { SyncState, SystemConfig, UserProfile } from '../types';
 import { SyncStatusBadge } from './SyncStatusBadge';
+import { getLastSyncTime, formatBackupTimestamp } from '../services/exportService';
 
 interface Props {
   userProfile: UserProfile;
@@ -21,6 +22,16 @@ export const Header: React.FC<Props> = ({
   onSyncNow,
   onLogout
 }) => {
+  const [lastBackupTime, setLastBackupTime] = useState<string | null>(() => getLastSyncTime());
+
+  useEffect(() => {
+    const handleSyncTimeUpdated = () => {
+      setLastBackupTime(getLastSyncTime());
+    };
+    window.addEventListener('goted-sync-time-updated', handleSyncTimeUpdated);
+    return () => window.removeEventListener('goted-sync-time-updated', handleSyncTimeUpdated);
+  }, []);
+
   return (
     <header className="sticky top-0 z-30 bg-white/95 backdrop-blur-md border-b border-gray-200 text-gray-900 pt-safe px-3.5 sm:px-6 py-2.5 shadow-xs">
       <div className="max-w-5xl mx-auto flex items-center justify-between gap-2">
@@ -33,8 +44,12 @@ export const Header: React.FC<Props> = ({
             <h1 className="text-[15px] sm:text-base font-bold text-gray-900 tracking-tight leading-tight truncate">
               {systemConfig?.companyName || 'The Goated Farm'}
             </h1>
-            <p className="text-[13px] text-[#1E5128] font-semibold truncate">
-              সমন্বিত খামার ও হিসাবরক্ষণ
+            <p className="text-[13px] text-[#1E5128] font-semibold truncate flex items-center gap-1.5">
+              <span>সমন্বিত খামার ও হিসাবরক্ষণ</span>
+              <span className="hidden lg:inline text-xs text-gray-400">•</span>
+              <span className="hidden lg:inline text-xs text-gray-500 font-normal">
+                সর্বশেষ ব্যাকআপ: {formatBackupTimestamp(lastBackupTime)}
+              </span>
             </p>
           </div>
         </div>

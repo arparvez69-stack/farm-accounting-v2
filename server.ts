@@ -913,6 +913,69 @@ app.post('/api/sync/:collection', (req, res) => {
   return handleSyncWrite(col, req, res);
 });
 
+// API Route: GET /api/sync/restore
+// Allows an authenticated owner to pull down all existing cloud Firestore records
+// when logging into a new browser, device, or cleared storage.
+app.get('/api/sync/restore', async (req, res) => {
+  const owner = await authenticateOwnerRequest(req);
+  if (!owner) {
+    return res.status(401).json({ error: 'অননুমোদিত অ্যাক্সেস। অনুগ্রহ করে প্রথমে লগইন করুন।' });
+  }
+
+  if (!adminDb) {
+    return res.json({ success: true, count: 0, collections: {} });
+  }
+
+  try {
+    const collectionsToRestore = [
+      'animals',
+      'animalEvents',
+      'journalEntries',
+      'sales',
+      'purchases',
+      'cropCycles',
+      'fishBatches',
+      'ponds',
+      'plots',
+      'inventoryItems',
+      'parties',
+      'fixedAssets',
+      'loans',
+      'investors',
+      'cashBankAccounts',
+      'reminders'
+    ];
+
+    const result: Record<string, any[]> = {};
+    let totalCount = 0;
+
+    for (const colName of collectionsToRestore) {
+      try {
+        const snap = await adminDb.collection(colName).get();
+        const docs: any[] = [];
+        snap.forEach((doc) => {
+          docs.push({ id: doc.id, ...doc.data() });
+        });
+        result[colName] = docs;
+        totalCount += docs.length;
+      } catch (err: any) {
+        console.warn(`[The Goated Farm] Restore read note for ${colName}:`, err.message);
+        result[colName] = [];
+      }
+    }
+
+    console.log(`[The Goated Farm] Restore served for ${owner.email}: ${totalCount} records retrieved.`);
+    return res.json({
+      success: true,
+      count: totalCount,
+      collections: result
+    });
+  } catch (err: any) {
+    console.error('[The Goated Farm] Restore error:', err);
+    return res.status(500).json({ error: `ডাটা রিস্টোর ব্যর্থ হয়েছে: ${err.message}` });
+  }
+});
+
 // API Route 3: GET /api/access-logs (to see who is using/accessing the app)
 app.get('/api/access-logs', (req, res) => {
   res.json({

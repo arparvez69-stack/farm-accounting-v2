@@ -18,12 +18,18 @@ import {
   Syringe,
   Stethoscope,
   ShoppingBag,
-  Bell
+  Bell,
+  Download,
+  RefreshCw,
+  X,
+  HardDriveDownload
 } from 'lucide-react';
 import { db } from '../db/indexedDb';
 import { generateProfitLoss, generateTrialBalance } from '../accounting/accountingEngine';
 import { ActiveTab } from './MobileBottomNav';
 import { Reminder, UserRole } from '../types';
+import { createFullJsonBackup, getLastSyncTime, getLastExportTime } from '../services/exportService';
+import { synchronizePendingData } from '../firebase/firebaseClient';
 
 interface Props {
   role: UserRole;
@@ -50,6 +56,71 @@ export const Dashboard: React.FC<Props> = ({ role, onNavigate }) => {
   const [recentTransactions, setRecentTransactions] = useState<any[]>([]);
   const [alerts, setAlerts] = useState<string[]>([]);
   const [isAccountingBalanced, setIsAccountingBalanced] = useState(true);
+
+  // Backup & sync reminder banner state
+  const [bannerDismissed, setBannerDismissed] = useState<boolean>(() => {
+    try {
+      return sessionStorage.getItem('goted_backup_reminder_dismissed') === 'true';
+    } catch {
+      return false;
+    }
+  });
+  const [syncingNow, setSyncingNow] = useState(false);
+  const [exportingNow, setExportingNow] = useState(false);
+  const [lastSyncTimeVal, setLastSyncTimeVal] = useState<string | null>(() => getLastSyncTime());
+  const [lastExportTimeVal, setLastExportTimeVal] = useState<string | null>(() => getLastExportTime());
+
+  useEffect(() => {
+    const handleUpdate = () => {
+      setLastSyncTimeVal(getLastSyncTime());
+      setLastExportTimeVal(getLastExportTime());
+    };
+    window.addEventListener('goted-sync-time-updated', handleUpdate);
+    window.addEventListener('goted-export-time-updated', handleUpdate);
+    return () => {
+      window.removeEventListener('goted-sync-time-updated', handleUpdate);
+      window.removeEventListener('goted-export-time-updated', handleUpdate);
+    };
+  }, []);
+
+  const nowMs = Date.now();
+  const FIVE_DAYS_MS = 5 * 24 * 60 * 60 * 1000;
+  const FOURTEEN_DAYS_MS = 14 * 24 * 60 * 60 * 1000;
+
+  const isSyncOverdue = !lastSyncTimeVal || (nowMs - new Date(lastSyncTimeVal).getTime() > FIVE_DAYS_MS);
+  const isExportOverdue = !lastExportTimeVal || (nowMs - new Date(lastExportTimeVal).getTime() > FOURTEEN_DAYS_MS);
+  const showBackupReminder = !bannerDismissed && (isSyncOverdue || isExportOverdue);
+
+  const handleDismissBanner = () => {
+    try {
+      sessionStorage.setItem('goted_backup_reminder_dismissed', 'true');
+    } catch {}
+    setBannerDismissed(true);
+  };
+
+  const handleTriggerCloudSync = async () => {
+    try {
+      setSyncingNow(true);
+      await synchronizePendingData();
+      setLastSyncTimeVal(getLastSyncTime());
+    } catch (err) {
+      console.warn('Sync error from dashboard reminder:', err);
+    } finally {
+      setSyncingNow(false);
+    }
+  };
+
+  const handleTriggerManualDownload = async () => {
+    try {
+      setExportingNow(true);
+      await createFullJsonBackup();
+      setLastExportTimeVal(getLastExportTime());
+    } catch (err) {
+      console.error('Manual download error:', err);
+    } finally {
+      setExportingNow(false);
+    }
+  };
 
   useEffect(() => {
     loadDashboardData();
@@ -233,6 +304,62 @@ export const Dashboard: React.FC<Props> = ({ role, onNavigate }) => {
 
   return (
     <div className="space-y-5 pb-6 max-w-5xl mx-auto">
+      {/* TASK 3: Dismissible Reminder Banner if > 5 days since sync or > 14 days since manual export */}
+      {showBackupReminder && (
+        <div
+          id="backup-reminder-banner"
+          role="alert"
+          className="relative p-4 sm:p-5 rounded-2xl bg-amber-50/95 border-2 border-amber-300 text-amber-950 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4"
+        >
+          <div className="flex items-start gap-3.5 pr-6 sm:pr-0">
+            <div className="w-10 h-10 rounded-xl bg-amber-200/80 text-amber-900 flex items-center justify-center shrink-0 shadow-2xs">
+              <HardDriveDownload className="w-5 h-5 text-amber-800" />
+            </div>
+            <div>
+              <h4 className="font-bold text-[15px] sm:text-base text-amber-950 leading-snug">
+                আপনার খামারের হিসাব সুরক্ষিত রাখতে নিয়মিত ক্লাউড সিঙ্ক অথবা ব্যাকআপ ডাউনলোড করুন
+              </h4>
+              <p className="text-xs sm:text-[13px] text-amber-800 mt-1 font-medium">
+                (Sync to cloud or download backup to keep your farm data safe) • 
+                {isSyncOverdue && ' ক্লাউড সিঙ্ক ৫ দিনের বেশি পুরোনো'}
+                {isSyncOverdue && isExportOverdue && ' ও '}
+                {isExportOverdue && ' ফাইল ব্যাকআপ ১৪ দিনের বেশি পুরোনো'}
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 self-end sm:self-center shrink-0">
+            <button
+              id="btn-reminder-sync"
+              onClick={handleTriggerCloudSync}
+              disabled={syncingNow}
+              className="px-3.5 py-2 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white text-xs sm:text-[13px] font-bold flex items-center gap-1.5 transition-all shadow-xs cursor-pointer min-h-[40px] active:scale-95 disabled:opacity-60"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${syncingNow ? 'animate-spin' : ''}`} />
+              <span>{syncingNow ? 'সিঙ্ক হচ্ছে...' : 'ক্লাউড সিঙ্ক'}</span>
+            </button>
+            <button
+              id="btn-reminder-download-backup"
+              onClick={handleTriggerManualDownload}
+              disabled={exportingNow}
+              className="px-3.5 py-2 rounded-xl bg-amber-200 hover:bg-amber-300 text-amber-950 border border-amber-400 text-xs sm:text-[13px] font-bold flex items-center gap-1.5 transition-all shadow-2xs cursor-pointer min-h-[40px] active:scale-95 disabled:opacity-60"
+            >
+              <Download className="w-3.5 h-3.5 text-amber-800" />
+              <span>{exportingNow ? 'ডাউনলোড হচ্ছে...' : 'ব্যাকআপ ডাউনলোড'}</span>
+            </button>
+            <button
+              id="btn-reminder-dismiss"
+              onClick={handleDismissBanner}
+              aria-label="Dismiss banner"
+              title="বন্ধ করুন (Dismiss)"
+              className="p-2 rounded-xl text-amber-800 hover:bg-amber-200 transition-colors cursor-pointer min-h-[40px] min-w-[40px] flex items-center justify-center active:scale-95"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* 0. PROMINENT DUE THIS WEEK (এই সপ্তাহে করণীয়) CARD AT THE TOP */}
       <div className="bg-white rounded-2xl border-2 border-emerald-600/30 p-4 sm:p-5 shadow-sm space-y-3.5">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 pb-2.5 border-b border-gray-100">

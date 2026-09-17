@@ -21,6 +21,7 @@ import { db } from '../db/indexedDb';
 import { AuditLog, FixedAsset, SystemConfig, UserRole, AppAccessLog } from '../types';
 import { getStoredAuthorizedEmails, getAppAccessLogs, logoutOwner } from '../services/authService';
 import { generateTransactionNumber, safeInsert } from '../utils/idGenerator';
+import { getLastSyncTime, formatBackupTimestamp } from '../services/exportService';
 
 interface Props {
   role: UserRole;
@@ -38,6 +39,15 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
   const [accessLogs, setAccessLogs] = useState<AppAccessLog[]>([]);
   const [assets, setAssets] = useState<FixedAsset[]>([]);
   const [loading, setLoading] = useState(false);
+  const [lastBackupTime, setLastBackupTime] = useState<string | null>(() => getLastSyncTime());
+
+  useEffect(() => {
+    const handleSyncTimeUpdated = () => {
+      setLastBackupTime(getLastSyncTime());
+    };
+    window.addEventListener('goted-sync-time-updated', handleSyncTimeUpdated);
+    return () => window.removeEventListener('goted-sync-time-updated', handleSyncTimeUpdated);
+  }, []);
 
   const ownerList = useMemo(() => {
     const fromStorage = getStoredAuthorizedEmails();
@@ -193,6 +203,15 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
             <p className="text-[14px] text-gray-600 mt-0.5">
               অডিট ট্রেইল, খামার মালিক তালিকা, গোপন পিন পরিবর্তন ও ফার্ম সেটিংস
             </p>
+            {/* TASK 2: Small সর্বশেষ ব্যাকআপ timestamp showing last cloud sync */}
+            <div
+              id="more-last-backup-timestamp"
+              className="mt-2 inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-900 text-xs font-semibold shadow-2xs"
+              title="ক্লাউড ফায়ারস্টোরে সর্বশেষ ডেটা সিঙ্ক ও ব্যাকআপের সময়"
+            >
+              <RefreshCw className="w-3 h-3 text-emerald-700 shrink-0" />
+              <span>সর্বশেষ ব্যাকআপ: {formatBackupTimestamp(lastBackupTime)}</span>
+            </div>
           </div>
 
           {/* TASK 6: Clearly labeled Log out this device button */}

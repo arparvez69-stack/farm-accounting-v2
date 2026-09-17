@@ -21,6 +21,7 @@ import { db } from '../db/indexedDb';
 import { DEFAULT_CHART_OF_ACCOUNTS } from '../accounting/defaultAccounts';
 import { migrateLegacyAccounts } from '../accounting/accountingEngine';
 import { SyncState, SystemConfig, UserProfile } from '../types';
+import { recordSyncTime } from '../services/exportService';
 
 // Helper to retrieve authorized owner emails received via authenticated API response
 export function getStoredOwnerEmails(): string[] {
@@ -392,6 +393,10 @@ export async function synchronizePendingData(): Promise<{ syncedCount: number; e
     errors.push(`Sync failed: ${globalErr.message}`);
   }
 
+    if (count > 0) {
+      recordSyncTime();
+    }
+
     return { syncedCount: count, errors };
   })().finally(() => {
     activeSyncPromise = null;
@@ -492,7 +497,7 @@ export function listenToOnlineSync(
 }
 
 // Autonomous listener for the browser's 'online' event that automatically
-// triggers synchronizePendingData the moment connectivity returns, with no user action needed.
+// triggers synchronizePendingData and restores cloud data if local DB was empty.
 if (typeof window !== 'undefined') {
   window.addEventListener('online', () => {
     console.log('[The Goated Farm] Browser reconnected online. Auto-triggering pending data sync...');
@@ -505,6 +510,185 @@ if (typeof window !== 'undefined') {
       .catch((err) => {
         console.warn('[The Goated Farm] Auto-sync error on reconnection:', err);
       });
+
+    // If local database was genuinely empty, automatically try restoring from cloud
+    restoreRemoteDataIfLocalEmpty().catch((err) => {
+      console.warn('[The Goated Farm] Online auto-restore note:', err);
+    });
   });
+}
+
+/**
+ * On login (or initial app load with verified session):
+ * Checks if local IndexedDB has zero (or very few) records for animals/journalEntries.
+ * If so, and the logged-in owner has synced data in Firestore, automatically pull that data
+ * down and restore it into IndexedDB before showing the dashboard — silently and immediately.
+ *
+ * If the app detects it's opened by a known owner with a genuinely empty local database
+ * and NO internet connection available to check Firestore, returns offlineEmptyWarning: true
+ * so a clear warning can be displayed instead of silently acting like a brand-new account.
+ */
+export async function restoreRemoteDataIfLocalEmpty(userEmail?: string): Promise<{
+  restored: boolean;
+  count: number;
+  offlineEmptyWarning: boolean;
+}> {
+  try {
+    const animalCount = await db.animals.count();
+    const journalCount = await db.journalEntries.count();
+
+    // If local IndexedDB already has records, no cloud restore is needed
+    if (animalCount > 0 || journalCount > 0) {
+      return { restored: false, count: animalCount + journalCount, offlineEmptyWarning: false };
+    }
+
+    // Known owner email check
+    const allowed = getStoredOwnerEmails();
+    const cleanEmail = (userEmail || auth.currentUser?.email || '').toLowerCase().trim();
+    const isKnownOwner = allowed.length === 0 || (cleanEmail && allowed.includes(cleanEmail));
+
+    // If genuinely empty and no internet connection available
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      if (isKnownOwner) {
+        console.warn('[The Goated Farm] Known owner opened app with empty local database while offline.');
+        return { restored: false, count: 0, offlineEmptyWarning: true };
+      }
+      return { restored: false, count: 0, offlineEmptyWarning: false };
+    }
+
+    let restoredCount = 0;
+
+    // Get auth token if available
+    let token: string | null = null;
+    if (auth.currentUser) {
+      try {
+        token = await auth.currentUser.getIdToken();
+      } catch {}
+    }
+    if (!token && typeof window !== 'undefined') {
+      try {
+        const raw = localStorage.getItem('goted_owner_session');
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          token = parsed.sessionToken || null;
+        }
+      } catch {}
+    }
+
+    // 1. Try server restore endpoint (fastest, Admin-privileged, complete)
+    try {
+      const res = await fetch('/api/sync/restore', {
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {})
+        }
+      });
+      if (res.ok) {
+        const payload = await res.json();
+        if (payload.success && payload.collections) {
+          const c = payload.collections;
+          if (Array.isArray(c.animals) && c.animals.length > 0) {
+            await db.animals.bulkPut(c.animals.map((item: any) => ({ ...item, synced: true })));
+            restoredCount += c.animals.length;
+          }
+          if (Array.isArray(c.animalEvents) && c.animalEvents.length > 0) {
+            await db.animalEvents.bulkPut(c.animalEvents.map((item: any) => ({ ...item, synced: true })));
+            restoredCount += c.animalEvents.length;
+          }
+          if (Array.isArray(c.journalEntries) && c.journalEntries.length > 0) {
+            await db.journalEntries.bulkPut(c.journalEntries.map((item: any) => ({ ...item, synced: true })));
+            restoredCount += c.journalEntries.length;
+          }
+          if (Array.isArray(c.sales) && c.sales.length > 0) {
+            await db.sales.bulkPut(c.sales.map((item: any) => ({ ...item, synced: true })));
+            restoredCount += c.sales.length;
+          }
+          if (Array.isArray(c.purchases) && c.purchases.length > 0) {
+            await db.purchases.bulkPut(c.purchases.map((item: any) => ({ ...item, synced: true })));
+            restoredCount += c.purchases.length;
+          }
+          if (Array.isArray(c.cropCycles) && c.cropCycles.length > 0) {
+            await db.cropCycles.bulkPut(c.cropCycles.map((item: any) => ({ ...item, synced: true })));
+            restoredCount += c.cropCycles.length;
+          }
+          if (Array.isArray(c.fishBatches) && c.fishBatches.length > 0) {
+            await db.fishBatches.bulkPut(c.fishBatches.map((item: any) => ({ ...item, synced: true })));
+            restoredCount += c.fishBatches.length;
+          }
+          if (Array.isArray(c.ponds) && c.ponds.length > 0) {
+            await db.ponds.bulkPut(c.ponds.map((item: any) => ({ ...item, synced: true })));
+            restoredCount += c.ponds.length;
+          }
+          if (Array.isArray(c.plots) && c.plots.length > 0) {
+            await db.plots.bulkPut(c.plots.map((item: any) => ({ ...item, synced: true })));
+            restoredCount += c.plots.length;
+          }
+          if (Array.isArray(c.inventoryItems) && c.inventoryItems.length > 0) {
+            await db.inventoryItems.bulkPut(c.inventoryItems.map((item: any) => ({ ...item, synced: true })));
+            restoredCount += c.inventoryItems.length;
+          }
+          if (Array.isArray(c.parties) && c.parties.length > 0) {
+            await db.parties.bulkPut(c.parties.map((item: any) => ({ ...item, synced: true })));
+            restoredCount += c.parties.length;
+          }
+          if (Array.isArray(c.fixedAssets) && c.fixedAssets.length > 0) {
+            await db.fixedAssets.bulkPut(c.fixedAssets.map((item: any) => ({ ...item, synced: true })));
+            restoredCount += c.fixedAssets.length;
+          }
+          if (Array.isArray(c.loans) && c.loans.length > 0) {
+            await db.loans.bulkPut(c.loans.map((item: any) => ({ ...item, synced: true })));
+            restoredCount += c.loans.length;
+          }
+          if (Array.isArray(c.investors) && c.investors.length > 0) {
+            await db.investors.bulkPut(c.investors.map((item: any) => ({ ...item, synced: true })));
+            restoredCount += c.investors.length;
+          }
+          if (Array.isArray(c.cashBankAccounts) && c.cashBankAccounts.length > 0) {
+            await db.cashBankAccounts.bulkPut(c.cashBankAccounts.map((item: any) => ({ ...item, synced: true })));
+            restoredCount += c.cashBankAccounts.length;
+          }
+          if (Array.isArray(c.reminders) && c.reminders.length > 0) {
+            await db.reminders.bulkPut(c.reminders.map((item: any) => ({ ...item, synced: true })));
+            restoredCount += c.reminders.length;
+          }
+        }
+      }
+    } catch (serverErr) {
+      console.warn('[The Goated Farm] Server restore endpoint read note:', serverErr);
+    }
+
+    // 2. Direct Firestore fallback if server restore was not possible
+    if (restoredCount === 0 && auth.currentUser) {
+      try {
+        const animalSnap = await getDocs(collection(firestore, 'animals'));
+        if (!animalSnap.empty) {
+          const list: any[] = [];
+          animalSnap.forEach((d) => list.push({ id: d.id, ...d.data(), synced: true }));
+          await db.animals.bulkPut(list);
+          restoredCount += list.length;
+        }
+        const journalSnap = await getDocs(collection(firestore, 'journalEntries'));
+        if (!journalSnap.empty) {
+          const list: any[] = [];
+          journalSnap.forEach((d) => list.push({ id: d.id, ...d.data(), synced: true }));
+          await db.journalEntries.bulkPut(list);
+          restoredCount += list.length;
+        }
+      } catch (fsErr) {
+        console.warn('[The Goated Farm] Direct Firestore restore fallback note:', fsErr);
+      }
+    }
+
+    if (restoredCount > 0) {
+      console.log(`[The Goated Farm] Auto-restored ${restoredCount} records from cloud Firestore into local IndexedDB.`);
+      recordSyncTime();
+      return { restored: true, count: restoredCount, offlineEmptyWarning: false };
+    }
+
+    return { restored: false, count: 0, offlineEmptyWarning: false };
+  } catch (err) {
+    console.warn('[The Goated Farm] restoreRemoteDataIfLocalEmpty error:', err);
+    return { restored: false, count: 0, offlineEmptyWarning: false };
+  }
 }
 
