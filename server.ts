@@ -18,9 +18,32 @@ const PORT = 3000;
 
 app.use(express.json());
 
-// Single-tenant owner allow-list parsed from environment variable APPROVED_OWNER_EMAILS
+// Helper to read owner email secrets from environment variables (supports standard or lowercase aliases)
+export function getRawEmailsEnv(): string | undefined {
+  return (
+    process.env.APPROVED_OWNER_EMAILS?.trim() ||
+    process.env.OWNER_EMAILS?.trim() ||
+    process.env.EMAIL?.trim() ||
+    process.env.email?.trim()
+  );
+}
+
+// Helper to read initial PIN secrets from environment variables (supports standard or lowercase aliases)
+export function getRawPinEnv(): string | undefined {
+  return (
+    process.env.INITIAL_PIN?.trim() ||
+    process.env.MASTER_PIN?.trim() ||
+    process.env.INITIAL_MASTER_PIN?.trim() ||
+    process.env.masterpin?.trim() ||
+    process.env.MASTERPIN?.trim() ||
+    process.env.PIN?.trim() ||
+    process.env.pin?.trim()
+  );
+}
+
+// Single-tenant owner allow-list parsed from environment variable APPROVED_OWNER_EMAILS (or aliases)
 export function getApprovedOwnerEmails(): string[] {
-  const envEmails = process.env.APPROVED_OWNER_EMAILS?.trim();
+  const envEmails = getRawEmailsEnv();
   if (!envEmails) return [];
   return envEmails
     .split(',')
@@ -30,8 +53,8 @@ export function getApprovedOwnerEmails(): string[] {
 
 // Checks if required authentication secrets are configured
 export function isSetupComplete(): boolean {
-  const hasEmails = Boolean(process.env.APPROVED_OWNER_EMAILS?.trim());
-  const hasPin = Boolean(process.env.INITIAL_PIN?.trim());
+  const hasEmails = Boolean(getRawEmailsEnv());
+  const hasPin = Boolean(getRawPinEnv());
   return hasEmails && hasPin;
 }
 
@@ -247,9 +270,19 @@ async function initializeAuthSecrets(): Promise<void> {
 
   await syncAuthorizedEmails();
 
-  const initialPin = process.env.INITIAL_PIN!.trim();
+  const initialPin = getRawPinEnv()!.trim();
   const emails = getApprovedOwnerEmails();
   if (emails.length === 0) return;
+
+  // Always seed in-memory cache with bcrypt hash (cost 12) if not already set
+  // Note: Changing INITIAL_PIN after the first successful seed has no effect; the PIN can only be updated via the in-app Change PIN screen from then on.
+  if (Object.keys(cachedAuthSecrets).length === 0) {
+    const defaultHash = await bcrypt.hash(initialPin, 12);
+    for (const email of emails) {
+      cachedAuthSecrets[email] = defaultHash;
+    }
+    console.log('[The Goated Farm] Seeded in-memory auth secrets with initial PIN');
+  }
 
   if (adminDb) {
     try {
@@ -257,11 +290,9 @@ async function initializeAuthSecrets(): Promise<void> {
       const snap = await docRef.get();
       if (!snap.exists) {
         // Initial first-time seed using INITIAL_PIN
-        const defaultHash = await bcrypt.hash(initialPin, 12);
         const initialDoc: Record<string, string> = {};
         for (const email of emails) {
-          initialDoc[email] = defaultHash;
-          cachedAuthSecrets[email] = defaultHash;
+          initialDoc[email] = cachedAuthSecrets[email];
         }
         await docRef.set(initialDoc);
         console.log('[The Goated Farm] Seeded system/authSecrets in Firestore with bcrypt hashes (cost 12)');
@@ -277,17 +308,7 @@ async function initializeAuthSecrets(): Promise<void> {
         console.log('[The Goated Farm] Loaded bcrypt auth secrets from Firestore');
       }
     } catch (err: any) {
-      console.warn('[The Goated Farm] Note on Firestore system/authSecrets setup:', err.message);
-    }
-  } else {
-    // In-memory fallback (when Firestore Admin DB is not connected)
-    // Note: Changing INITIAL_PIN after the first successful seed has no effect; the PIN can only be updated via the in-app Change PIN screen from then on.
-    if (Object.keys(cachedAuthSecrets).length === 0) {
-      const defaultHash = await bcrypt.hash(initialPin, 12);
-      for (const email of emails) {
-        cachedAuthSecrets[email] = defaultHash;
-      }
-      console.log('[The Goated Farm] Seeded in-memory auth secrets with initial PIN');
+      console.warn('[The Goated Farm] Firestore system/authSecrets fallback note:', err.message);
     }
   }
 }
@@ -311,6 +332,17 @@ async function getStoredHash(email: string): Promise<string | null> {
       // Fall through to memory cache if Firestore query fails
     }
   }
+
+  if (!cachedAuthSecrets[email]) {
+    const approvedEmails = getApprovedOwnerEmails();
+    if (approvedEmails.includes(email)) {
+      const initialPin = getRawPinEnv()!.trim();
+      const defaultHash = await bcrypt.hash(initialPin, 12);
+      cachedAuthSecrets[email] = defaultHash;
+      return defaultHash;
+    }
+  }
+
   return cachedAuthSecrets[email] || null;
 }
 
