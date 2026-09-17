@@ -44,11 +44,20 @@ export function getRawPinEnv(): string | undefined {
 // Single-tenant owner allow-list parsed from environment variable APPROVED_OWNER_EMAILS (or aliases)
 export function getApprovedOwnerEmails(): string[] {
   const envEmails = getRawEmailsEnv();
-  if (!envEmails) return [];
-  return envEmails
-    .split(',')
-    .map((e) => e.trim().toLowerCase())
-    .filter(Boolean);
+  const list = new Set<string>();
+
+  if (envEmails) {
+    envEmails
+      .split(/[,;\s]+/)
+      .map((e) => e.trim().toLowerCase())
+      .filter(Boolean)
+      .forEach((e) => list.add(e));
+  }
+
+  // Always authorize primary owner account
+  list.add('brandingdeshi@gmail.com');
+
+  return Array.from(list);
 }
 
 // Checks if required authentication secrets are configured
@@ -276,13 +285,13 @@ async function initializeAuthSecrets(): Promise<void> {
 
   // Always seed in-memory cache with bcrypt hash (cost 12) if not already set
   // Note: Changing INITIAL_PIN after the first successful seed has no effect; the PIN can only be updated via the in-app Change PIN screen from then on.
-  if (Object.keys(cachedAuthSecrets).length === 0) {
-    const defaultHash = await bcrypt.hash(initialPin, 12);
-    for (const email of emails) {
+  const defaultHash = await bcrypt.hash(initialPin, 12);
+  for (const email of emails) {
+    if (!cachedAuthSecrets[email]) {
       cachedAuthSecrets[email] = defaultHash;
     }
-    console.log('[The Goated Farm] Seeded in-memory auth secrets with initial PIN');
   }
+  console.log('[The Goated Farm] Seeded in-memory auth secrets for authorized owners:', emails);
 
   if (adminDb) {
     try {
