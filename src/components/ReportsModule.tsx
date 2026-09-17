@@ -17,7 +17,8 @@ import {
   Search,
   Droplets,
   CalendarDays,
-  Filter
+  Filter,
+  Clock
 } from 'lucide-react';
 import {
   BalanceSheetReport,
@@ -30,7 +31,7 @@ import {
 } from '../accounting/accountingEngine';
 import { exportAllToExcel, createFullJsonBackup, restoreFromJsonBackup } from '../services/exportService';
 import { db } from '../db/indexedDb';
-import { UserRole } from '../types';
+import { UserRole, Sale, Purchase, PaymentRecord } from '../types';
 
 type DatePreset = 'this_month' | 'last_month' | 'this_year' | 'custom';
 
@@ -90,7 +91,20 @@ export interface AnimalProfitabilityRow {
   costPerDay: number;
 }
 
-type ReportType = 'pl' | 'balanceSheet' | 'trialBalance' | 'animalProfitability' | 'backup';
+export interface AgingItem {
+  id: string;
+  invoiceNumber: string;
+  partyName: string;
+  date: string;
+  totalAmount: number;
+  paidAmount: number;
+  dueAmount: number;
+  daysOverdue: number;
+}
+
+export type AgingBucketKey = '0-7' | '8-14' | '15-30' | '30+';
+
+type ReportType = 'pl' | 'balanceSheet' | 'trialBalance' | 'animalProfitability' | 'aging' | 'backup';
 
 export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
   const [activeReport, setActiveReport] = useState<ReportType>('pl');
@@ -106,6 +120,13 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
   const [animalSortDirection, setAnimalSortDirection] = useState<'desc' | 'asc'>('desc');
   const [animalStatusFilter, setAnimalStatusFilter] = useState<'ALL' | 'ACTIVE' | 'SOLD'>('ALL');
   const [animalSearchQuery, setAnimalSearchQuery] = useState<string>('');
+
+  // Aging Report State (Receivables & Payables)
+  const [agingSubTab, setAgingSubTab] = useState<'receivables' | 'payables'>('receivables');
+  const [receivablesList, setReceivablesList] = useState<AgingItem[]>([]);
+  const [payablesList, setPayablesList] = useState<AgingItem[]>([]);
+  const [agingSearchQuery, setAgingSearchQuery] = useState<string>('');
+  const [agingBucketFilter, setAgingBucketFilter] = useState<'ALL' | AgingBucketKey>('ALL');
 
   const [restoreStatus, setRestoreStatus] = useState<{ success: boolean; message: string } | null>(null);
   const [isExporting, setIsExporting] = useState(false);
@@ -225,6 +246,82 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
     setAnimalRows(rows);
   };
 
+  const loadAgingReport = async () => {
+    const [sales, purchases, payments] = await Promise.all([
+      db.sales.toArray(),
+      db.purchases.toArray(),
+      db.payments.toArray()
+    ]);
+
+    // Aggregate payments by parentId from Tier 2 payment log
+    const paymentsByParent = new Map<string, number>();
+    for (const pmt of payments) {
+      const prev = paymentsByParent.get(pmt.parentId) || 0;
+      paymentsByParent.set(pmt.parentId, prev + (Number(pmt.amount) || 0));
+    }
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const calcDaysOverdue = (dateStr: string): number => {
+      if (!dateStr) return 0;
+      const invDate = new Date(dateStr);
+      invDate.setHours(0, 0, 0, 0);
+      const diffMs = today.getTime() - invDate.getTime();
+      const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+      return Math.max(0, diffDays);
+    };
+
+    const rec: AgingItem[] = [];
+    for (const s of sales) {
+      const total = Number(s.grandTotal || s.totalAmount || 0);
+      const pmtSum = paymentsByParent.get(s.id);
+      const paid = pmtSum !== undefined ? pmtSum : Number(s.paidAmount || 0);
+      const due = Math.max(0, total - paid);
+
+      if (due > 0) {
+        rec.push({
+          id: s.id,
+          invoiceNumber: s.invoiceNumber || s.id,
+          partyName: s.customerName || 'গ্রাহক',
+          date: s.date || '',
+          totalAmount: total,
+          paidAmount: paid,
+          dueAmount: due,
+          daysOverdue: calcDaysOverdue(s.date)
+        });
+      }
+    }
+
+    const pay: AgingItem[] = [];
+    for (const p of purchases) {
+      const total = Number(p.grandTotal || p.totalAmount || 0);
+      const pmtSum = paymentsByParent.get(p.id);
+      const paid = pmtSum !== undefined ? pmtSum : Number(p.paidAmount || 0);
+      const due = Math.max(0, total - paid);
+
+      if (due > 0) {
+        pay.push({
+          id: p.id,
+          invoiceNumber: p.invoiceNumber || p.id,
+          partyName: p.supplierName || 'সরবরাহকারী',
+          date: p.date || '',
+          totalAmount: total,
+          paidAmount: paid,
+          dueAmount: due,
+          daysOverdue: calcDaysOverdue(p.date)
+        });
+      }
+    }
+
+    // Sort with oldest/most overdue at top of each list
+    rec.sort((a, b) => b.daysOverdue - a.daysOverdue);
+    pay.sort((a, b) => b.daysOverdue - a.daysOverdue);
+
+    setReceivablesList(rec);
+    setPayablesList(pay);
+  };
+
   const loadReports = async () => {
     setLoading(true);
     try {
@@ -240,6 +337,8 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
         setTb(res);
       } else if (activeReport === 'animalProfitability') {
         await loadAnimalProfitability();
+      } else if (activeReport === 'aging') {
+        await loadAgingReport();
       }
     } catch (e) {
       console.error(e);
@@ -303,6 +402,93 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
       avgDailyCost
     };
   }, [animalRows]);
+
+  const currentAgingItems = useMemo(() => {
+    const source = agingSubTab === 'receivables' ? receivablesList : payablesList;
+    if (!agingSearchQuery.trim()) return source;
+    const q = agingSearchQuery.toLowerCase();
+    return source.filter(
+      (item) =>
+        item.partyName.toLowerCase().includes(q) ||
+        item.invoiceNumber.toLowerCase().includes(q)
+    );
+  }, [agingSubTab, receivablesList, payablesList, agingSearchQuery]);
+
+  const agingBuckets = useMemo(() => {
+    const b0_7: AgingItem[] = [];
+    const b8_14: AgingItem[] = [];
+    const b15_30: AgingItem[] = [];
+    const b30_plus: AgingItem[] = [];
+
+    for (const item of currentAgingItems) {
+      if (item.daysOverdue <= 7) {
+        b0_7.push(item);
+      } else if (item.daysOverdue <= 14) {
+        b8_14.push(item);
+      } else if (item.daysOverdue <= 30) {
+        b15_30.push(item);
+      } else {
+        b30_plus.push(item);
+      }
+    }
+
+    // Sort with oldest/most overdue at top of each list
+    b0_7.sort((a, b) => b.daysOverdue - a.daysOverdue);
+    b8_14.sort((a, b) => b.daysOverdue - a.daysOverdue);
+    b15_30.sort((a, b) => b.daysOverdue - a.daysOverdue);
+    b30_plus.sort((a, b) => b.daysOverdue - a.daysOverdue);
+
+    return [
+      {
+        key: '30+' as AgingBucketKey,
+        labelBn: '৩০+ দিন (30+ days)',
+        title: '৩০+ দিন অতিবাহিত',
+        priorityTag: 'সর্বাধিক জরুরি তাগাদা (Critical)',
+        items: b30_plus,
+        totalDue: b30_plus.reduce((sum, i) => sum + i.dueAmount, 0),
+        badgeClass: 'bg-red-100 text-red-800 border-red-200',
+        headerBg: 'bg-red-50/70 border-red-200 text-red-950',
+        cardBorder: 'border-red-200',
+        urgencyBadge: 'bg-red-600 text-white'
+      },
+      {
+        key: '15-30' as AgingBucketKey,
+        labelBn: '১৫-৩০ দিন (15-30 days)',
+        title: '১৫-৩০ দিন অতিবাহিত',
+        priorityTag: 'মাঝারি তাগাদা (Attention Required)',
+        items: b15_30,
+        totalDue: b15_30.reduce((sum, i) => sum + i.dueAmount, 0),
+        badgeClass: 'bg-amber-100 text-amber-800 border-amber-200',
+        headerBg: 'bg-amber-50/70 border-amber-200 text-amber-950',
+        cardBorder: 'border-amber-200',
+        urgencyBadge: 'bg-amber-600 text-white'
+      },
+      {
+        key: '8-14' as AgingBucketKey,
+        labelBn: '৮-১৪ দিন (8-14 days)',
+        title: '৮-১৪ দিন অতিবাহিত',
+        priorityTag: 'সাধারণ বকেয়া (Moderate)',
+        items: b8_14,
+        totalDue: b8_14.reduce((sum, i) => sum + i.dueAmount, 0),
+        badgeClass: 'bg-yellow-100 text-yellow-800 border-yellow-200',
+        headerBg: 'bg-yellow-50/60 border-yellow-200 text-yellow-950',
+        cardBorder: 'border-yellow-200',
+        urgencyBadge: 'bg-yellow-600 text-white'
+      },
+      {
+        key: '0-7' as AgingBucketKey,
+        labelBn: '০-৭ দিন (0-7 days)',
+        title: '০-৭ দিন অতিবাহিত',
+        priorityTag: 'নতুন চালান (Recent / Current)',
+        items: b0_7,
+        totalDue: b0_7.reduce((sum, i) => sum + i.dueAmount, 0),
+        badgeClass: 'bg-blue-100 text-blue-800 border-blue-200',
+        headerBg: 'bg-blue-50/60 border-blue-200 text-blue-950',
+        cardBorder: 'border-blue-200',
+        urgencyBadge: 'bg-blue-600 text-white'
+      }
+    ];
+  }, [currentAgingItems]);
 
   const handleExportExcel = async () => {
     setIsExporting(true);
@@ -418,6 +604,18 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
         </button>
 
         <button
+          onClick={() => setActiveReport('aging')}
+          className={`flex items-center gap-1.5 px-3.5 py-2 rounded-lg whitespace-nowrap transition-all cursor-pointer min-h-[40px] ${
+            activeReport === 'aging'
+              ? 'bg-[#1E5128] text-white shadow-xs'
+              : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200/60'
+          }`}
+        >
+          <Clock className="w-4 h-4" />
+          <span>পাওনা-দেনার হিসাব (Aging Report)</span>
+        </button>
+
+        <button
           onClick={() => setActiveReport('backup')}
           className={`flex items-center gap-1.5 px-3.5 py-2 rounded-lg whitespace-nowrap transition-all cursor-pointer min-h-[40px] ${
             activeReport === 'backup' ? 'bg-[#1E5128] text-white shadow-xs' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200/60'
@@ -429,7 +627,7 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
       </div>
 
       {/* Date Range Control (Visible for Financial Reports: pl, balanceSheet, trialBalance, animalProfitability) */}
-      {activeReport !== 'backup' && (
+      {activeReport !== 'backup' && activeReport !== 'aging' && (
         <div className="p-4 rounded-2xl bg-white border border-gray-200 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-3">
           <div className="flex items-center gap-2.5">
             <div className="w-9 h-9 rounded-xl bg-emerald-50 text-[#1E5128] border border-emerald-100 flex items-center justify-center shrink-0">
@@ -1164,6 +1362,300 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
             </p>
             <p>
               • <strong>দুধ উৎপাদনের হিসাব:</strong> গাভীর ক্ষেত্রে উৎপন্ন দুধের পরিমাণ মেমো লাইন হিসেবে প্রদর্শিত হয়েছে।
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* ===================== REPORT: AGING REPORT (পাওনা-দেনার হিসাব) ===================== */}
+      {activeReport === 'aging' && (
+        <div className="space-y-5">
+          {/* Sub-tabs: Receivables & Payables */}
+          <div className="bg-white border border-gray-200 rounded-2xl p-4 sm:p-5 shadow-xs space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-gray-100 pb-4">
+              <div>
+                <h3 className="text-base sm:text-lg font-bold text-gray-900 flex items-center gap-2">
+                  <Clock className="w-5 h-5 text-[#1E5128]" />
+                  <span>পাওনা-দেনার হিসাব (Receivables & Payables Aging Report)</span>
+                </h3>
+                <p className="text-[13px] text-gray-600 mt-0.5">
+                  আজকের তারিখ পর্যন্ত বকেয়া অর্থ আদায় ও পরিশোধের মেয়াদ ভিত্তিক অগ্রাধিকার তালিকা
+                </p>
+              </div>
+
+              {/* Sub-tab Switcher */}
+              <div className="inline-flex p-1 bg-gray-100 rounded-xl border border-gray-200 self-start sm:self-auto">
+                <button
+                  type="button"
+                  id="tab-aging-receivables"
+                  onClick={() => {
+                    setAgingSubTab('receivables');
+                    setAgingBucketFilter('ALL');
+                  }}
+                  className={`px-3.5 py-1.5 rounded-lg text-xs sm:text-[13px] font-bold transition-all cursor-pointer flex items-center gap-1.5 min-h-[38px] ${
+                    agingSubTab === 'receivables'
+                      ? 'bg-[#1E5128] text-white shadow-xs'
+                      : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200/50'
+                  }`}
+                >
+                  <TrendingUp className="w-3.5 h-3.5" />
+                  <span>Receivables (বিক্রয় বকেয়া / পাওনা)</span>
+                  <span className={`px-2 py-0.5 rounded-full text-[11px] font-mono font-bold ${
+                    agingSubTab === 'receivables' ? 'bg-white/20 text-white' : 'bg-gray-200 text-gray-700'
+                  }`}>
+                    {receivablesList.length}
+                  </span>
+                </button>
+
+                <button
+                  type="button"
+                  id="tab-aging-payables"
+                  onClick={() => {
+                    setAgingSubTab('payables');
+                    setAgingBucketFilter('ALL');
+                  }}
+                  className={`px-3.5 py-1.5 rounded-lg text-xs sm:text-[13px] font-bold transition-all cursor-pointer flex items-center gap-1.5 min-h-[38px] ${
+                    agingSubTab === 'payables'
+                      ? 'bg-[#1E5128] text-white shadow-xs'
+                      : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200/50'
+                  }`}
+                >
+                  <TrendingDown className="w-3.5 h-3.5" />
+                  <span>Payables (ক্রয় বকেয়া / দেনা)</span>
+                  <span className={`px-2 py-0.5 rounded-full text-[11px] font-mono font-bold ${
+                    agingSubTab === 'payables' ? 'bg-white/20 text-white' : 'bg-gray-200 text-gray-700'
+                  }`}>
+                    {payablesList.length}
+                  </span>
+                </button>
+              </div>
+            </div>
+
+            {/* Overview Metric Cards for Current Sub-tab */}
+            {(() => {
+              const totalItemsCount = currentAgingItems.length;
+              const totalDueSum = currentAgingItems.reduce((acc, it) => acc + it.dueAmount, 0);
+
+              return (
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+                  {/* Total Due */}
+                  <div className="p-3.5 rounded-xl bg-gray-50 border border-gray-200 space-y-1">
+                    <span className="text-[11px] font-bold text-gray-500 block">
+                      {agingSubTab === 'receivables' ? 'মোট বিক্রয় বকেয়া (Total)' : 'মোট ক্রয় বকেয়া (Total)'}
+                    </span>
+                    <div className="text-base sm:text-lg font-bold font-mono text-gray-900">
+                      {fmt(totalDueSum)}
+                    </div>
+                    <span className="text-[11px] text-gray-500 block">
+                      {totalItemsCount}টি চালানে বকেয়া
+                    </span>
+                  </div>
+
+                  {/* 4 Buckets Breakdown */}
+                  {agingBuckets.map((b) => (
+                    <button
+                      key={b.key}
+                      type="button"
+                      onClick={() => setAgingBucketFilter(agingBucketFilter === b.key ? 'ALL' : b.key)}
+                      className={`p-3.5 rounded-xl border text-left transition-all cursor-pointer ${
+                        agingBucketFilter === b.key
+                          ? 'ring-2 ring-[#1E5128] bg-white shadow-xs'
+                          : 'bg-white hover:bg-gray-50/80'
+                      } ${b.cardBorder}`}
+                    >
+                      <div className="flex items-center justify-between gap-1 mb-1">
+                        <span className="text-[11px] font-bold text-gray-700">{b.labelBn}</span>
+                        <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-mono font-bold ${b.badgeClass}`}>
+                          {b.items.length}
+                        </span>
+                      </div>
+                      <div className="text-sm sm:text-base font-bold font-mono text-gray-900">
+                        {fmt(b.totalDue)}
+                      </div>
+                      <span className="text-[10px] text-gray-500 block truncate">
+                        {b.title}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              );
+            })()}
+
+            {/* Filter & Search Bar */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 pt-1">
+              {/* Search */}
+              <div className="relative flex-1 max-w-md">
+                <Search className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  id="input-aging-search"
+                  placeholder={
+                    agingSubTab === 'receivables'
+                      ? 'গ্রাহকের নাম বা চালান নম্বর খুঁজুন...'
+                      : 'সরবরাহকারীর নাম বা চালান নম্বর খুঁজুন...'
+                  }
+                  value={agingSearchQuery}
+                  onChange={(e) => setAgingSearchQuery(e.target.value)}
+                  className="w-full pl-9 pr-3 py-2 text-sm bg-gray-50 border border-gray-200 rounded-xl focus:bg-white focus:outline-hidden focus:ring-1 focus:ring-[#1E5128]"
+                />
+              </div>
+
+              {/* Bucket Quick Filter Pills */}
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <span className="text-xs font-semibold text-gray-500 mr-1 flex items-center gap-1">
+                  <Filter className="w-3.5 h-3.5" /> বাকেট:
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setAgingBucketFilter('ALL')}
+                  className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer min-h-[32px] ${
+                    agingBucketFilter === 'ALL'
+                      ? 'bg-gray-800 text-white'
+                      : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                  }`}
+                >
+                  সব বাকেট
+                </button>
+                {agingBuckets.map((b) => (
+                  <button
+                    key={b.key}
+                    type="button"
+                    onClick={() => setAgingBucketFilter(b.key)}
+                    className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer min-h-[32px] ${
+                      agingBucketFilter === b.key
+                        ? 'bg-[#1E5128] text-white shadow-2xs'
+                        : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                    }`}
+                  >
+                    {b.labelBn} ({b.items.length})
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {/* Grouped Buckets Content */}
+          <div className="space-y-4">
+            {agingBuckets
+              .filter((b) => agingBucketFilter === 'ALL' || agingBucketFilter === b.key)
+              .map((bucket) => (
+                <div
+                  key={bucket.key}
+                  className="bg-white border border-gray-200 rounded-2xl overflow-hidden shadow-xs"
+                >
+                  {/* Bucket Header */}
+                  <div className={`p-4 border-b flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 ${bucket.headerBg}`}>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className={`px-2.5 py-1 rounded-full text-xs font-bold uppercase tracking-wider ${bucket.urgencyBadge}`}>
+                        {bucket.priorityTag}
+                      </span>
+                      <h4 className="text-base font-bold">
+                        {bucket.labelBn}
+                      </h4>
+                      <span className="text-xs text-gray-600 font-medium">
+                        ({bucket.title})
+                      </span>
+                    </div>
+
+                    <div className="flex items-center gap-3 text-xs sm:text-sm font-semibold">
+                      <span className="text-gray-700">
+                        চালান সংখ্যা: <strong className="font-mono text-gray-900">{bucket.items.length}</strong>টি
+                      </span>
+                      <span className="text-gray-300">|</span>
+                      <span className="text-gray-700">
+                        মোট বকেয়া:{' '}
+                        <strong className="font-mono text-red-600 font-bold text-sm sm:text-base">
+                          {fmt(bucket.totalDue)}
+                        </strong>
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Bucket Items Table (Oldest/Most Overdue at Top) */}
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left border-collapse text-[13px]">
+                      <thead>
+                        <tr className="bg-gray-50/80 text-gray-600 font-semibold border-b border-gray-200">
+                          <th className="p-3">চালান নং</th>
+                          <th className="p-3">{agingSubTab === 'receivables' ? 'গ্রাহকের নাম' : 'সরবরাহকারীর নাম'}</th>
+                          <th className="p-3">চালানের তারিখ</th>
+                          <th className="p-3">মোট মূল্য</th>
+                          <th className="p-3">পরিশোধিত</th>
+                          <th className="p-3">বকেয়া পরিমাণ (Due)</th>
+                          <th className="p-3">মেয়াদোত্তীর্ণ দিন (Overdue)</th>
+                          <th className="p-3 text-right">অগ্রাধিকার স্থিতি</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-100">
+                        {bucket.items.length === 0 ? (
+                          <tr>
+                            <td colSpan={8} className="p-6 text-center text-gray-400 text-xs italic">
+                              এই বাকেটে কোনো বকেয়া চালান নেই।
+                            </td>
+                          </tr>
+                        ) : (
+                          bucket.items.map((item) => (
+                            <tr key={item.id} className="hover:bg-gray-50/80">
+                              <td className="p-3 font-mono font-bold text-sky-800 whitespace-nowrap">
+                                {item.invoiceNumber}
+                              </td>
+                              <td className="p-3 font-semibold text-gray-900 whitespace-nowrap">
+                                {item.partyName}
+                              </td>
+                              <td className="p-3 text-gray-600 whitespace-nowrap font-mono text-xs">
+                                {item.date}
+                              </td>
+                              <td className="p-3 font-mono text-gray-700 whitespace-nowrap">
+                                {fmt(item.totalAmount)}
+                              </td>
+                              <td className="p-3 font-mono text-emerald-700 font-medium whitespace-nowrap">
+                                {fmt(item.paidAmount)}
+                              </td>
+                              <td className="p-3 font-mono font-bold text-red-600 whitespace-nowrap">
+                                {fmt(item.dueAmount)}
+                              </td>
+                              <td className="p-3 whitespace-nowrap">
+                                <span className={`inline-flex items-center gap-1 font-mono font-bold px-2.5 py-1 rounded-md text-xs ${
+                                  item.daysOverdue > 30
+                                    ? 'bg-red-100 text-red-800 border border-red-200'
+                                    : item.daysOverdue >= 15
+                                    ? 'bg-amber-100 text-amber-800 border border-amber-200'
+                                    : item.daysOverdue >= 8
+                                    ? 'bg-yellow-100 text-yellow-800 border border-yellow-200'
+                                    : 'bg-blue-100 text-blue-800 border border-blue-200'
+                                }`}>
+                                  <Clock className="w-3 h-3" />
+                                  <span>{item.daysOverdue} দিন</span>
+                                </span>
+                              </td>
+                              <td className="p-3 text-right whitespace-nowrap">
+                                <span className={`inline-block px-2.5 py-0.5 rounded-full text-xs font-semibold ${bucket.badgeClass}`}>
+                                  {item.daysOverdue > 30
+                                    ? 'জরুরি তাগাদা'
+                                    : item.daysOverdue >= 15
+                                    ? 'মনোযোগ প্রয়োজন'
+                                    : item.daysOverdue >= 8
+                                    ? 'বকেয়া'
+                                    : 'নতুন চালান'}
+                                </span>
+                              </td>
+                            </tr>
+                          ))
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              ))}
+          </div>
+
+          {/* Aging Explanatory Footnote */}
+          <div className="p-3.5 bg-gray-50 rounded-xl border border-gray-200 text-xs text-gray-600 space-y-1">
+            <p>
+              • <strong>হিসাবের সূত্র:</strong> বকেয়া পরিমাণ = মোট চালান মূল্য − কিস্তির মাধ্যমে পরিশোধিত মোট টাকা। অতিবাহিত দিন = আজকের তারিখ − চালানের তারিখ।
+            </p>
+            <p>
+              • <strong>অগ্রাধিকার ক্রম:</strong> প্রতিটি বাকেটের তালিকায় সর্বাধিক পুরনো ও ঝুঁকিপূর্ণ বকেয়া চালানগুলো সবার শীর্ষে রাখা হয়েছে যাতে সবার আগে যোগাযোগ ও তাগাদা প্রদান সহজ হয়।
             </p>
           </div>
         </div>
