@@ -1,6 +1,8 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   ArrowLeft,
+  Camera,
+  Edit3,
   Scale,
   Droplets,
   Wheat,
@@ -37,6 +39,7 @@ interface AnimalDetailViewProps {
   onBack: () => void;
   onAddEvent: (animal: Animal) => void;
   onUpdateStatus: (animal: Animal) => void;
+  onEditAnimal?: (animal: Animal) => void;
   role: UserRole;
 }
 
@@ -48,6 +51,7 @@ export const AnimalDetailView: React.FC<AnimalDetailViewProps> = ({
   onBack,
   onAddEvent,
   onUpdateStatus,
+  onEditAnimal,
   role
 }) => {
   // 1. Filter events for this animal and sort reverse-chronological
@@ -247,22 +251,72 @@ export const AnimalDetailView: React.FC<AnimalDetailViewProps> = ({
   return (
     <div className="space-y-5">
       {/* Top Navigation & Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white p-4 sm:p-5 rounded-2xl border border-gray-200 shadow-xs">
-        <div className="flex items-center gap-3">
+      <div className="bg-white p-4 sm:p-5 rounded-2xl border border-gray-200 shadow-xs space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <button
             type="button"
             onClick={onBack}
-            className="p-2.5 rounded-xl bg-gray-100 hover:bg-gray-200 text-gray-700 transition-all cursor-pointer flex items-center gap-1.5 font-semibold text-[13px]"
+            className="p-2.5 rounded-xl bg-gray-100 hover:bg-gray-200 text-gray-700 transition-all cursor-pointer flex items-center gap-1.5 font-semibold text-[13px] self-start"
             title="গবাদিপশুর তালিকায় ফিরে যান"
           >
             <ArrowLeft className="w-4 h-4" />
             <span>সকল গবাদিপশু</span>
           </button>
-          <div>
+
+          {/* Action Controls */}
+          <div className="flex items-center gap-2 flex-wrap">
+            {onEditAnimal && role === 'OWNER' && (
+              <button
+                type="button"
+                id="btn-edit-animal-detail"
+                onClick={() => onEditAnimal(animal)}
+                className="px-3.5 py-2 rounded-xl bg-white hover:bg-gray-50 border border-gray-300 text-gray-800 text-[13px] font-bold shadow-xs transition-all cursor-pointer flex items-center gap-1.5 min-h-[38px]"
+              >
+                <Edit3 className="w-4 h-4 text-[#1E5128]" />
+                <span>তথ্য ও ছবি সম্পাদনা</span>
+              </button>
+            )}
+
+            <button
+              type="button"
+              onClick={() => onAddEvent(animal)}
+              className="px-3.5 py-2 rounded-xl bg-[#1E5128] hover:bg-[#173F1F] text-white text-[13px] font-bold shadow-xs transition-all cursor-pointer flex items-center gap-1.5 min-h-[38px]"
+            >
+              <PlusCircle className="w-4 h-4" />
+              <span>+ কার্যক্রম যোগ করুন</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => onUpdateStatus(animal)}
+              className="px-3.5 py-2 rounded-xl bg-amber-50 hover:bg-amber-100 border border-amber-300 text-amber-900 text-[13px] font-bold shadow-xs transition-all cursor-pointer flex items-center gap-1.5 min-h-[38px]"
+            >
+              <Tag className="w-4 h-4 text-amber-700" />
+              <span>পশু বিক্রি/অপসারণ</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Animal Profile Header: Larger Photo & Details */}
+        <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4 pt-3 border-t border-gray-100">
+          {animal.photoUrl ? (
+            <img
+              src={animal.photoUrl}
+              alt={animal.id}
+              className="w-24 h-24 sm:w-32 sm:h-32 rounded-2xl object-cover border-2 border-emerald-100 shadow-sm shrink-0 bg-gray-50"
+            />
+          ) : (
+            <div className="w-24 h-24 sm:w-32 sm:h-32 rounded-2xl bg-gray-50 border-2 border-dashed border-gray-200 flex flex-col items-center justify-center text-gray-400 shrink-0 gap-1">
+              <Camera className="w-8 h-8 text-gray-400 stroke-[1.5]" />
+              <span className="text-[11px] font-medium text-gray-400">ছবি নেই</span>
+            </div>
+          )}
+
+          <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
-              <h2 className="text-xl font-bold font-mono text-[#1E5128]">{animal.id}</h2>
-              <span className="text-gray-400">|</span>
-              <span className="text-gray-900 font-semibold text-[15px]">{animal.breed}</span>
+              <h2 className="text-xl sm:text-2xl font-bold font-mono text-[#1E5128]">{animal.id}</h2>
+              <span className="text-gray-300">|</span>
+              <span className="text-gray-900 font-semibold text-[16px] sm:text-[18px]">{animal.breed}</span>
               <span
                 className={`px-2.5 py-0.5 rounded-full text-[12px] font-bold ${
                   animal.status === 'ACTIVE'
@@ -281,31 +335,10 @@ export const AnimalDetailView: React.FC<AnimalDetailViewProps> = ({
                   : animal.status}
               </span>
             </div>
-            <p className="text-[13px] text-gray-500 mt-0.5">
+            <p className="text-[13px] text-gray-500 mt-1">
               ট্যাগ: {animal.tag || animal.id} • শেড/অবস্থান: {animal.location || 'নির্ধারিত নয়'}
             </p>
           </div>
-        </div>
-
-        {/* Action Controls */}
-        <div className="flex items-center gap-2 flex-wrap">
-          <button
-            type="button"
-            onClick={() => onAddEvent(animal)}
-            className="px-3.5 py-2 rounded-xl bg-[#1E5128] hover:bg-[#173F1F] text-white text-[13px] font-bold shadow-xs transition-all cursor-pointer flex items-center gap-1.5 min-h-[38px]"
-          >
-            <PlusCircle className="w-4 h-4" />
-            <span>+ কার্যক্রম যোগ করুন</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => onUpdateStatus(animal)}
-            className="px-3.5 py-2 rounded-xl bg-amber-50 hover:bg-amber-100 border border-amber-300 text-amber-900 text-[13px] font-bold shadow-xs transition-all cursor-pointer flex items-center gap-1.5 min-h-[38px]"
-          >
-            <Tag className="w-4 h-4 text-amber-700" />
-            <span>পশু বিক্রি/অপসারণ</span>
-          </button>
         </div>
       </div>
 

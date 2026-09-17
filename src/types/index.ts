@@ -136,6 +136,7 @@ export interface Animal {
   totalCost: number;
   salePrice?: number;
   saleDate?: string | number;
+  photoUrl?: string;
   notes?: string;
   synced?: boolean;
 }

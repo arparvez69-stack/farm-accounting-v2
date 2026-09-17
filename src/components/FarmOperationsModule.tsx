@@ -22,7 +22,12 @@ import {
   Users,
   CheckSquare,
   AlertTriangle,
-  Search
+  Search,
+  Camera,
+  Upload,
+  Image as ImageIcon,
+  Edit3,
+  Trash2
 } from 'lucide-react';
 import { db } from '../db/indexedDb';
 import {
@@ -42,6 +47,50 @@ import {
   executeAnimalSaleOrRemovalTransaction
 } from '../services/transactionService';
 import { AnimalDetailView } from './AnimalDetailView';
+
+/**
+ * Compresses an image file client-side to a max width of 800px preserving aspect ratio,
+ * and exports as JPEG base64 string to keep IndexedDB and Firestore lightweight.
+ */
+function compressImageFile(file: File, maxWidth = 800, quality = 0.8): Promise<string> {
+  return new Promise((resolve, reject) => {
+    if (!file.type.startsWith('image/')) {
+      reject(new Error('অনুগ্রহ করে একটি বৈধ ছবি ফাইল (JPEG, PNG, WebP) নির্বাচন করুন।'));
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error('ছবি পড়তে ত্রুটি হয়েছে।'));
+    reader.onload = () => {
+      const img = new Image();
+      img.onerror = () => reject(new Error('ছবি লোড করা যায়নি।'));
+      img.onload = () => {
+        let width = img.width;
+        let height = img.height;
+
+        if (width > maxWidth) {
+          height = Math.round((height * maxWidth) / width);
+          width = maxWidth;
+        }
+
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+          reject(new Error('ক্যানভাস প্রক্রিয়া করা সম্ভব হয়নি।'));
+          return;
+        }
+
+        ctx.drawImage(img, 0, 0, width, height);
+        const compressedBase64 = canvas.toDataURL('image/jpeg', quality);
+        resolve(compressedBase64);
+      };
+      img.src = reader.result as string;
+    };
+    reader.readAsDataURL(file);
+  });
+}
 
 interface Props {
   role: UserRole;
@@ -89,11 +138,28 @@ export const FarmOperationsModule: React.FC<Props> = ({
   const [currentWeight, setCurrentWeight] = useState('180');
   const [animalBirthDate, setAnimalBirthDate] = useState<string>(() => new Date().toISOString().split('T')[0]);
   const [animalPurchaseDate, setAnimalPurchaseDate] = useState<string>(() => new Date().toISOString().split('T')[0]);
+  const [animalPhotoUrl, setAnimalPhotoUrl] = useState<string>('');
+  const [photoCompressing, setPhotoCompressing] = useState<boolean>(false);
   const [duplicateTagWarning, setDuplicateTagWarning] = useState<{
     tag: string;
     animalData: Animal;
   } | null>(null);
   const [animalSearch, setAnimalSearch] = useState<string>('');
+
+  // Edit Animal Modal state
+  const [editingAnimal, setEditingAnimal] = useState<Animal | null>(null);
+  const [editTag, setEditTag] = useState('');
+  const [editSpecies, setEditSpecies] = useState<'CATTLE' | 'GOAT' | 'SHEEP'>('CATTLE');
+  const [editBreed, setEditBreed] = useState('');
+  const [editGender, setEditGender] = useState<'MALE' | 'FEMALE'>('FEMALE');
+  const [editBirthDate, setEditBirthDate] = useState('');
+  const [editPurchaseDate, setEditPurchaseDate] = useState('');
+  const [editPurchaseCost, setEditPurchaseCost] = useState('');
+  const [editCurrentWeight, setEditCurrentWeight] = useState('');
+  const [editLocation, setEditLocation] = useState('');
+  const [editPhotoUrl, setEditPhotoUrl] = useState<string>('');
+  const [editPhotoCompressing, setEditPhotoCompressing] = useState(false);
+  const [submittingEdit, setSubmittingEdit] = useState(false);
 
   // Add Activity / Event Modal state
   const [isEventModalOpen, setIsEventModalOpen] = useState(false);
@@ -288,6 +354,7 @@ export const FarmOperationsModule: React.FC<Props> = ({
       setShowAddAnimal(false);
       setDuplicateTagWarning(null);
       setTagId('');
+      setAnimalPhotoUrl('');
       setAnimalBirthDate(new Date().toISOString().split('T')[0]);
       setAnimalPurchaseDate(new Date().toISOString().split('T')[0]);
       setMsg({ type: 'success', text: `পশু ট্যাগ ${animalToSave.id} সফলভাবে যুক্ত হয়েছে!` });
@@ -335,6 +402,7 @@ export const FarmOperationsModule: React.FC<Props> = ({
         totalCost: pCost,
         status: 'ACTIVE',
         location: 'প্রধান শেড',
+        photoUrl: animalPhotoUrl.trim() ? animalPhotoUrl : undefined,
         synced: false
       };
 
@@ -357,6 +425,51 @@ export const FarmOperationsModule: React.FC<Props> = ({
       await executeSaveAnimal(animal);
     } catch (err: any) {
       setMsg({ type: 'error', text: err.message });
+    }
+  };
+
+  const handleOpenEditAnimal = (a: Animal) => {
+    setEditingAnimal(a);
+    setEditTag(a.tag || a.id);
+    setEditSpecies((a.species as any) || 'CATTLE');
+    setEditBreed(a.breed || '');
+    setEditGender(a.gender || 'FEMALE');
+    setEditBirthDate(a.birthDate || '');
+    setEditPurchaseDate(a.purchaseDate || '');
+    setEditPurchaseCost(String(a.purchaseCost || 0));
+    setEditCurrentWeight(String(a.currentWeightKg || 0));
+    setEditLocation(a.location || 'প্রধান শেড');
+    setEditPhotoUrl(a.photoUrl || '');
+  };
+
+  const handleSaveEditAnimal = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingAnimal) return;
+
+    try {
+      setSubmittingEdit(true);
+      const updatedFields: Partial<Animal> = {
+        tag: editTag.trim() || editingAnimal.id,
+        species: editSpecies as any,
+        breed: editBreed.trim(),
+        gender: editGender,
+        birthDate: editBirthDate,
+        purchaseDate: editPurchaseDate,
+        purchaseCost: parseFloat(editPurchaseCost) || 0,
+        currentWeightKg: parseFloat(editCurrentWeight) || 0,
+        location: editLocation.trim() || 'প্রধান শেড',
+        photoUrl: editPhotoUrl.trim() ? editPhotoUrl : undefined,
+        synced: false
+      };
+
+      await db.animals.update(editingAnimal.id, updatedFields);
+      setMsg({ type: 'success', text: `পশু ${editingAnimal.id} এর তথ্য ও ছবি সফলভাবে হালনাগাদ করা হয়েছে!` });
+      setEditingAnimal(null);
+      await loadOpsData();
+    } catch (err: any) {
+      setMsg({ type: 'error', text: err.message || 'পশুর তথ্য হালনাগাদ করা যায়নি।' });
+    } finally {
+      setSubmittingEdit(false);
     }
   };
 
@@ -805,6 +918,7 @@ export const FarmOperationsModule: React.FC<Props> = ({
                 setStatusNotes('');
                 setStatusPaymentMethod('CASH');
               }}
+              onEditAnimal={(a) => handleOpenEditAnimal(a)}
               role={role}
             />
           ) : (
