@@ -19,8 +19,13 @@ import {
   FileText,
   TrendingUp,
   TrendingDown,
-  CalendarDays
+  CalendarDays,
+  QrCode,
+  Download,
+  FileDown
 } from 'lucide-react';
+import QRCode from 'qrcode';
+import { jsPDF } from 'jspdf';
 import {
   ResponsiveContainer,
   LineChart,
@@ -45,6 +50,83 @@ interface AnimalDetailViewProps {
 
 const fmt = (num: number): string => `৳${Math.round(num).toLocaleString('en-IN')}`;
 
+/**
+ * Loads an image URL into a base64 data URL for embedding into jsPDF
+ */
+async function loadImgDataUrl(url: string): Promise<string | null> {
+  if (!url) return null;
+  if (url.startsWith('data:image/')) return url;
+  try {
+    return await new Promise<string | null>((resolve) => {
+      const img = new Image();
+      img.crossOrigin = 'Anonymous';
+      const timer = setTimeout(() => resolve(null), 3500);
+      img.onload = () => {
+        clearTimeout(timer);
+        try {
+          const canvas = document.createElement('canvas');
+          canvas.width = img.naturalWidth || img.width || 300;
+          canvas.height = img.naturalHeight || img.height || 300;
+          const ctx = canvas.getContext('2d');
+          if (!ctx) return resolve(null);
+          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+          resolve(canvas.toDataURL('image/jpeg', 0.85));
+        } catch {
+          resolve(null);
+        }
+      };
+      img.onerror = () => {
+        clearTimeout(timer);
+        resolve(null);
+      };
+      img.src = url;
+    });
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Sanitizes and transliterates text to ensure 100% crisp, uncorrupted ASCII in jsPDF
+ */
+function cleanPdfText(text: any, fallback = '-'): string {
+  if (text === undefined || text === null) return fallback;
+  const str = String(text).trim();
+  if (!str) return fallback;
+
+  const translationMap: Record<string, string> = {
+    'ছাগল': 'Goat',
+    'গাভী': 'Cow',
+    'গরু': 'Cattle',
+    'ভেড়া': 'Sheep',
+    'মহিষ': 'Buffalo',
+    'স্ত্রী': 'Female',
+    'পুরুষ': 'Male',
+    'সক্রিয়': 'Active',
+    'অসুস্থ': 'Sick',
+    'বিক্রি': 'Sold',
+    'মৃত': 'Deceased',
+    'কোয়ারেন্টাইন': 'Quarantine',
+    'খাদ্য': 'Feed',
+    'টিকা': 'Vaccine',
+    'চিকিৎসা': 'Treatment',
+    'ওজন': 'Weight',
+    'দুধ': 'Milk',
+    'প্রজনন': 'Breeding',
+    'হ্যাঁ': 'Yes',
+    'না': 'No'
+  };
+
+  let cleaned = str;
+  for (const [bn, en] of Object.entries(translationMap)) {
+    cleaned = cleaned.split(bn).join(en);
+  }
+
+  // Strip characters outside printable ASCII (\x20 to \x7E) to avoid font encoding errors
+  const safeStr = cleaned.replace(/[^\x20-\x7E]/g, ' ').replace(/\s+/g, ' ').trim();
+  return safeStr || fallback;
+}
+
 export const AnimalDetailView: React.FC<AnimalDetailViewProps> = ({
   animal,
   events,
@@ -54,6 +136,32 @@ export const AnimalDetailView: React.FC<AnimalDetailViewProps> = ({
   onEditAnimal,
   role
 }) => {
+  const [qrCodeDataUrl, setQrCodeDataUrl] = useState<string>('');
+
+  useEffect(() => {
+    if (animal.id) {
+      QRCode.toDataURL(animal.id, {
+        width: 256,
+        margin: 1,
+        color: {
+          dark: '#1E5128',
+          light: '#FFFFFF'
+        }
+      })
+        .then((url) => setQrCodeDataUrl(url))
+        .catch((err) => console.error('Error generating QR code:', err));
+    }
+  }, [animal.id]);
+
+  const handleDownloadQr = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!qrCodeDataUrl) return;
+    const link = document.createElement('a');
+    link.href = qrCodeDataUrl;
+    link.download = `QR-${animal.id}.png`;
+    link.click();
+  };
+
   // 1. Filter events for this animal and sort reverse-chronological
   const animalEvents = useMemo(() => {
     return [...events]
@@ -246,6 +354,453 @@ export const AnimalDetailView: React.FC<AnimalDetailViewProps> = ({
     }
   };
 
+  // State for generating and downloading 1-page PDF
+  const [isExportingPdf, setIsExportingPdf] = useState<boolean>(false);
+
+  const handleExportPdf = async () => {
+    try {
+      setIsExportingPdf(true);
+      const doc = new jsPDF({
+        orientation: 'portrait',
+        unit: 'mm',
+        format: 'a4'
+      });
+
+      // 1. Top Header Banner
+      doc.setFillColor(30, 81, 40);
+      doc.rect(0, 0, 210, 20, 'F');
+
+      doc.setTextColor(255, 255, 255);
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(13);
+      doc.text('THE GOATED FARM - ANIMAL HEALTH & SALES PASSPORT', 12, 9.5);
+
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(7.5);
+      doc.setTextColor(220, 235, 220);
+      doc.text('Complete Animal Dossier, Medical Timeline & Investment Summary', 12, 15);
+
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(9.5);
+      doc.setTextColor(255, 255, 255);
+      doc.text(`TAG: ${cleanPdfText(animal.tag || animal.id)}`, 198, 9.5, { align: 'right' });
+
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(7.5);
+      doc.setTextColor(220, 235, 220);
+      const dateStr = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+      doc.text(`Date: ${dateStr}`, 198, 15, { align: 'right' });
+
+      // 2. Identity Card Box (x=12, y=23, w=186, h=44)
+      doc.setDrawColor(210, 225, 210);
+      doc.setFillColor(252, 254, 252);
+      doc.roundedRect(12, 23, 186, 44, 2, 2, 'FD');
+
+      // Animal Photo
+      let photoBase64: string | null = null;
+      if (animal.photoUrl) {
+        photoBase64 = await loadImgDataUrl(animal.photoUrl);
+      }
+      if (photoBase64) {
+        try {
+          doc.addImage(photoBase64, 'JPEG', 15, 25, 34, 40);
+          doc.setDrawColor(180, 205, 180);
+          doc.rect(15, 25, 34, 40, 'S');
+        } catch (err) {
+          console.warn('Could not add photo to PDF:', err);
+        }
+      } else {
+        doc.setFillColor(240, 244, 240);
+        doc.rect(15, 25, 34, 40, 'F');
+        doc.setDrawColor(210, 220, 210);
+        doc.rect(15, 25, 34, 40, 'S');
+        doc.setTextColor(140, 150, 140);
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(8);
+        doc.text('NO PHOTO', 32, 43, { align: 'center' });
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(6.5);
+        doc.text('RECORDED', 32, 47, { align: 'center' });
+      }
+
+      // QR Code
+      let qrBase64 = qrCodeDataUrl;
+      if (!qrBase64 && animal.id) {
+        qrBase64 = await QRCode.toDataURL(animal.id, { margin: 1 });
+      }
+      if (qrBase64) {
+        try {
+          doc.addImage(qrBase64, 'PNG', 53, 25, 30, 30);
+          doc.setDrawColor(200, 215, 200);
+          doc.rect(53, 25, 30, 30, 'S');
+          doc.setFont('helvetica', 'normal');
+          doc.setFontSize(6);
+          doc.setTextColor(100, 120, 100);
+          doc.text('SCAN FOR RECORD', 68, 58, { align: 'center' });
+          doc.setFont('helvetica', 'bold');
+          doc.setFontSize(7);
+          doc.setTextColor(30, 81, 40);
+          doc.text(cleanPdfText(animal.id), 68, 62, { align: 'center' });
+        } catch (err) {
+          console.warn('Could not add QR to PDF:', err);
+        }
+      }
+
+      // Basic Info Columns
+      doc.setTextColor(30, 40, 30);
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(11);
+      doc.text(
+        `${cleanPdfText(animal.id)} ${animal.tag ? `(Tag: ${cleanPdfText(animal.tag)})` : ''}`,
+        88,
+        29
+      );
+
+      doc.setFontSize(7.5);
+      const col1X = 88;
+      const col2X = 142;
+      let curY = 35;
+
+      const printInfoRow = (l1: string, v1: string, l2: string, v2: string) => {
+        doc.setFont('helvetica', 'bold');
+        doc.setTextColor(100, 110, 100);
+        doc.text(l1, col1X, curY);
+        doc.text(l2, col2X, curY);
+
+        doc.setFont('helvetica', 'normal');
+        doc.setTextColor(30, 35, 30);
+        doc.text(v1, col1X + 22, curY);
+        doc.text(v2, col2X + 22, curY);
+        curY += 5;
+      };
+
+      printInfoRow('Species:', cleanPdfText(animal.species, 'GOAT'), 'Breed:', cleanPdfText(animal.breed, 'N/A'));
+      printInfoRow('Gender:', cleanPdfText(animal.gender, 'FEMALE'), 'Status:', cleanPdfText(animal.status, 'ACTIVE'));
+      printInfoRow('Weight:', `${animal.currentWeightKg || 0} kg`, 'Birth Date:', cleanPdfText(animal.birthDate, 'Unknown'));
+      printInfoRow('Purchase Date:', cleanPdfText(animal.purchaseDate, 'N/A'), 'Days on Farm:', `${daysSincePurchase} days`);
+      printInfoRow('Purchase Price:', `BDT ${(animal.purchaseCost || 0).toLocaleString()}`, 'Sale Status:', animal.status === 'SOLD' ? `Sold for BDT ${(animal.salePrice || 0).toLocaleString()}` : 'In Farm');
+
+      // 3. Profitability & Financial Summary (x=12, y=69, w=186, h=43)
+      doc.setDrawColor(200, 215, 200);
+      doc.setFillColor(255, 255, 255);
+      doc.roundedRect(12, 69, 186, 43, 2, 2, 'FD');
+
+      doc.setFillColor(235, 243, 235);
+      doc.rect(12, 69, 186, 6.5, 'F');
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(8);
+      doc.setTextColor(30, 81, 40);
+      doc.text('CURRENT PROFITABILITY & INVESTMENT SUMMARY', 15, 73.5);
+
+      let finY = 80;
+      const finCol1 = 15;
+      const finCol2 = 64;
+      const finCol3 = 110;
+      const finCol4 = 194;
+
+      doc.setFont('helvetica', 'normal');
+      doc.setTextColor(80, 85, 80);
+      doc.setFontSize(7.5);
+
+      // Row 1
+      doc.text('Initial Purchase Cost:', finCol1, finY);
+      doc.setFont('helvetica', 'bold');
+      doc.text(`BDT ${(animal.purchaseCost || 0).toLocaleString()}`, finCol2, finY, { align: 'right' });
+
+      doc.setFont('helvetica', 'normal');
+      doc.text('Holding Cost / Day:', finCol3, finY);
+      doc.setFont('helvetica', 'bold');
+      doc.text(`BDT ${Math.round(costPerDayHeld).toLocaleString()} / day`, finCol4, finY, { align: 'right' });
+      finY += 4.5;
+
+      // Row 2
+      doc.setFont('helvetica', 'normal');
+      doc.text('Accumulated Feed Cost:', finCol1, finY);
+      doc.setFont('helvetica', 'bold');
+      doc.text(`BDT ${(animal.accumulatedFeedCost || 0).toLocaleString()}`, finCol2, finY, { align: 'right' });
+
+      doc.setFont('helvetica', 'normal');
+      doc.text('Milk Sales Revenue:', finCol3, finY);
+      doc.setFont('helvetica', 'bold');
+      doc.setTextColor(30, 100, 50);
+      doc.text(`BDT ${Math.round(milkSalesRevenue).toLocaleString()}`, finCol4, finY, { align: 'right' });
+      finY += 4.5;
+
+      // Row 3
+      doc.setFont('helvetica', 'normal');
+      doc.setTextColor(80, 85, 80);
+      doc.text('Medical & Vaccine Cost:', finCol1, finY);
+      doc.setFont('helvetica', 'bold');
+      doc.text(`BDT ${(animal.accumulatedMedCost || 0).toLocaleString()}`, finCol2, finY, { align: 'right' });
+
+      doc.setFont('helvetica', 'normal');
+      doc.text('Sale Revenue (if sold):', finCol3, finY);
+      doc.setFont('helvetica', 'bold');
+      doc.setTextColor(30, 100, 50);
+      doc.text(`BDT ${(animal.salePrice || 0).toLocaleString()}`, finCol4, finY, { align: 'right' });
+      finY += 4.5;
+
+      // Row 4
+      doc.setFont('helvetica', 'normal');
+      doc.setTextColor(80, 85, 80);
+      doc.text('Labour & Other Operational Costs:', finCol1, finY);
+      doc.setFont('helvetica', 'bold');
+      doc.text(`BDT ${((animal.accumulatedLabourCost || 0) + (animal.otherCosts || 0)).toLocaleString()}`, finCol2, finY, { align: 'right' });
+
+      doc.setFont('helvetica', 'normal');
+      doc.text('Total Revenue Generated:', finCol3, finY);
+      doc.setFont('helvetica', 'bold');
+      doc.setTextColor(30, 100, 50);
+      doc.text(`BDT ${Math.round(totalRevenue).toLocaleString()}`, finCol4, finY, { align: 'right' });
+      finY += 5.5;
+
+      doc.setDrawColor(220, 230, 220);
+      doc.line(15, finY - 2, 195, finY - 2);
+
+      // Row 5 (Totals)
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(8);
+      doc.setTextColor(30, 40, 30);
+      doc.text('TOTAL INVESTED COST:', finCol1, finY + 1.5);
+      doc.setTextColor(140, 30, 30);
+      doc.text(`BDT ${Math.round(totalCost).toLocaleString()}`, finCol2, finY + 1.5, { align: 'right' });
+
+      doc.setTextColor(30, 40, 30);
+      doc.text('NET PROFIT / DEFICIT:', finCol3, finY + 1.5);
+      const isProfitable = netProfitLoss >= 0;
+      doc.setTextColor(isProfitable ? 30 : 180, isProfitable ? 110 : 30, 30);
+      doc.text(
+        `${isProfitable ? '+' : ''}BDT ${Math.round(netProfitLoss).toLocaleString()} (${isProfitable ? 'PROFIT' : 'NET DEFICIT'})`,
+        finCol4,
+        finY + 1.5,
+        { align: 'right' }
+      );
+
+      // 4. Middle Section: Vaccines Timeline + Weight History (y=114, height=78)
+      const midY = 114;
+      const colW = 91;
+      const leftColX = 12;
+      const rightColX = 107;
+      const midHeight = 78;
+
+      // Left Column: VACCINATIONS & HEALTHCARE LOG
+      doc.setDrawColor(200, 215, 200);
+      doc.setFillColor(255, 255, 255);
+      doc.roundedRect(leftColX, midY, colW, midHeight, 2, 2, 'FD');
+      doc.setFillColor(235, 243, 235);
+      doc.rect(leftColX, midY, colW, 6.5, 'F');
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(8);
+      doc.setTextColor(30, 81, 40);
+      doc.text('VACCINES & MEDICAL HEALTH TIMELINE', leftColX + 3, midY + 4.5);
+
+      let vY = midY + 10;
+      doc.setFontSize(6.8);
+      doc.setTextColor(100, 110, 100);
+      doc.text('DATE', leftColX + 3, vY);
+      doc.text('EVENT / VACCINE', leftColX + 22, vY);
+      doc.text('DETAILS / BATCH', leftColX + 54, vY);
+      doc.setDrawColor(220, 230, 220);
+      doc.line(leftColX + 2, vY + 1.5, leftColX + colW - 2, vY + 1.5);
+
+      const vaccineAndHealthEvents = animalEvents
+        .filter((e) => e.eventType === 'VACCINE' || e.eventType === 'TREATMENT')
+        .slice(0, 10);
+
+      vY += 4.5;
+      if (vaccineAndHealthEvents.length === 0) {
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(7);
+        doc.setTextColor(130, 140, 130);
+        doc.text('No vaccination or medical treatment logs recorded yet.', leftColX + 3, vY + 3);
+      } else {
+        vaccineAndHealthEvents.forEach((ev) => {
+          doc.setFont('helvetica', 'bold');
+          doc.setFontSize(6.8);
+          doc.setTextColor(40, 50, 40);
+          doc.text(cleanPdfText(ev.date, 'N/A'), leftColX + 3, vY);
+
+          doc.setFont('helvetica', 'normal');
+          const title = cleanPdfText(ev.vaccineName || (ev.eventType === 'VACCINE' ? 'Vaccination' : 'Treatment'));
+          doc.text(title.slice(0, 20), leftColX + 22, vY);
+
+          const details = cleanPdfText(ev.details || '-');
+          doc.setTextColor(80, 90, 80);
+          doc.text(details.slice(0, 25), leftColX + 54, vY);
+          vY += 5.5;
+        });
+      }
+
+      // Right Column: WEIGHT PROGRESSION HISTORY
+      doc.setDrawColor(200, 215, 200);
+      doc.setFillColor(255, 255, 255);
+      doc.roundedRect(rightColX, midY, colW, midHeight, 2, 2, 'FD');
+      doc.setFillColor(235, 243, 235);
+      doc.rect(rightColX, midY, colW, 6.5, 'F');
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(8);
+      doc.setTextColor(30, 81, 40);
+      doc.text('WEIGHT PROGRESSION HISTORY', rightColX + 3, midY + 4.5);
+
+      let wY = midY + 10;
+      doc.setFontSize(6.8);
+      doc.setTextColor(100, 110, 100);
+      doc.text('DATE', rightColX + 3, wY);
+      doc.text('WEIGHT (KG)', rightColX + 28, wY);
+      doc.text('NOTES / GAIN', rightColX + 54, wY);
+      doc.setDrawColor(220, 230, 220);
+      doc.line(rightColX + 2, wY + 1.5, rightColX + colW - 2, wY + 1.5);
+
+      const weightLogs = animalEvents
+        .filter((e) => e.eventType === 'WEIGHT' && e.weightKg !== undefined && e.weightKg > 0)
+        .slice(0, 10);
+
+      wY += 4.5;
+      if (weightLogs.length === 0) {
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(7);
+        doc.setTextColor(130, 140, 130);
+        doc.text(`Initial recorded weight: ${animal.currentWeightKg || 0} kg`, rightColX + 3, wY + 3);
+      } else {
+        weightLogs.forEach((ev) => {
+          doc.setFont('helvetica', 'bold');
+          doc.setFontSize(6.8);
+          doc.setTextColor(40, 50, 40);
+          doc.text(cleanPdfText(ev.date, 'N/A'), rightColX + 3, wY);
+
+          doc.setTextColor(30, 81, 40);
+          doc.text(`${ev.weightKg} kg`, rightColX + 28, wY);
+
+          doc.setFont('helvetica', 'normal');
+          doc.setTextColor(80, 90, 80);
+          const notes = cleanPdfText(ev.details || '-');
+          doc.text(notes.slice(0, 25), rightColX + 54, wY);
+          wY += 5.5;
+        });
+      }
+
+      // 5. Bottom Section: Milk Totals & Event Timeline (y=194, height=84)
+      const botY = 194;
+      const botHeight = 84;
+
+      // Left Column: MILK PRODUCTION PERFORMANCE & TOTALS
+      doc.setDrawColor(200, 215, 200);
+      doc.setFillColor(255, 255, 255);
+      doc.roundedRect(leftColX, botY, colW, botHeight, 2, 2, 'FD');
+      doc.setFillColor(235, 243, 235);
+      doc.rect(leftColX, botY, colW, 6.5, 'F');
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(8);
+      doc.setTextColor(30, 81, 40);
+      doc.text('MILK PRODUCTION TOTALS & LOGS', leftColX + 3, botY + 4.5);
+
+      // Summary badges inside Milk
+      doc.setFillColor(245, 250, 245);
+      doc.roundedRect(leftColX + 3, botY + 8, colW - 6, 8, 1, 1, 'F');
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(7.5);
+      doc.setTextColor(30, 81, 40);
+      doc.text(`All-Time Total: ${totalMilkAllTime} L`, leftColX + 5, botY + 13.5);
+      doc.text(`This Month: ${totalMilkThisMonth} L`, leftColX + 48, botY + 13.5);
+
+      let mY = botY + 20;
+      doc.setFontSize(6.8);
+      doc.setTextColor(100, 110, 100);
+      doc.text('DATE', leftColX + 3, mY);
+      doc.text('YIELD (L)', leftColX + 26, mY);
+      doc.text('DETAILS / NOTES', leftColX + 48, mY);
+      doc.setDrawColor(220, 230, 220);
+      doc.line(leftColX + 2, mY + 1.5, leftColX + colW - 2, mY + 1.5);
+
+      const recentMilk = milkEvents.slice(0, 9);
+      mY += 4.5;
+      if (recentMilk.length === 0) {
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(7);
+        doc.setTextColor(130, 140, 130);
+        doc.text('No milk production logs recorded (male, calf or dry animal).', leftColX + 3, mY + 3);
+      } else {
+        recentMilk.forEach((ev) => {
+          doc.setFont('helvetica', 'bold');
+          doc.setFontSize(6.8);
+          doc.setTextColor(40, 50, 40);
+          doc.text(cleanPdfText(ev.date, 'N/A'), leftColX + 3, mY);
+
+          doc.setTextColor(30, 81, 40);
+          doc.text(`${ev.milkLiters} L`, leftColX + 26, mY);
+
+          doc.setFont('helvetica', 'normal');
+          doc.setTextColor(80, 90, 80);
+          const shiftNotes = cleanPdfText(ev.details || '-');
+          doc.text(shiftNotes.slice(0, 25), leftColX + 48, mY);
+          mY += 5.5;
+        });
+      }
+
+      // Right Column: FULL EVENT & ACTIVITY TIMELINE
+      doc.setDrawColor(200, 215, 200);
+      doc.setFillColor(255, 255, 255);
+      doc.roundedRect(rightColX, botY, colW, botHeight, 2, 2, 'FD');
+      doc.setFillColor(235, 243, 235);
+      doc.rect(rightColX, botY, colW, 6.5, 'F');
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(8);
+      doc.setTextColor(30, 81, 40);
+      doc.text('FULL ACTIVITY & OPERATIONS TIMELINE', rightColX + 3, botY + 4.5);
+
+      let aY = botY + 10;
+      doc.setFontSize(6.8);
+      doc.setTextColor(100, 110, 100);
+      doc.text('DATE', rightColX + 3, aY);
+      doc.text('TYPE', rightColX + 24, aY);
+      doc.text('DETAILS / LOG', rightColX + 48, aY);
+      doc.setDrawColor(220, 230, 220);
+      doc.line(rightColX + 2, aY + 1.5, rightColX + colW - 2, aY + 1.5);
+
+      const generalEvents = animalEvents.slice(0, 11);
+      aY += 4.5;
+      if (generalEvents.length === 0) {
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(7);
+        doc.setTextColor(130, 140, 130);
+        doc.text('No farm operational activity logs recorded yet.', rightColX + 3, aY + 3);
+      } else {
+        generalEvents.forEach((ev) => {
+          doc.setFont('helvetica', 'bold');
+          doc.setFontSize(6.8);
+          doc.setTextColor(40, 50, 40);
+          doc.text(cleanPdfText(ev.date, 'N/A'), rightColX + 3, aY);
+
+          doc.setFont('helvetica', 'normal');
+          doc.setTextColor(30, 81, 40);
+          doc.text(cleanPdfText(ev.eventType).slice(0, 12), rightColX + 24, aY);
+
+          doc.setTextColor(80, 90, 80);
+          const det = cleanPdfText(ev.details || ev.vaccineName || '-');
+          doc.text(det.slice(0, 26), rightColX + 48, aY);
+          aY += 5.5;
+        });
+      }
+
+      // 6. Footer
+      doc.setDrawColor(210, 225, 210);
+      doc.line(12, 281, 198, 281);
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(6.5);
+      doc.setTextColor(120, 130, 120);
+      doc.text('The Goated Farm Management System - Generated for buyer/vet verification & official farm record', 12, 285);
+      doc.text(`Animal ID: ${cleanPdfText(animal.id)} | 1-Page Summary`, 198, 285, { align: 'right' });
+
+      // Save PDF
+      const filename = `Animal-Report-${animal.id}${animal.tag ? `-${animal.tag}` : ''}.pdf`;
+      doc.save(filename);
+    } catch (error) {
+      console.error('Error generating animal PDF:', error);
+    } finally {
+      setIsExportingPdf(false);
+    }
+  };
+
   const isInactive = animal.status !== 'ACTIVE';
 
   return (
@@ -265,6 +820,18 @@ export const AnimalDetailView: React.FC<AnimalDetailViewProps> = ({
 
           {/* Action Controls */}
           <div className="flex items-center gap-2 flex-wrap">
+            <button
+              type="button"
+              id="btn-export-animal-pdf"
+              onClick={handleExportPdf}
+              disabled={isExportingPdf}
+              className="px-3.5 py-2 rounded-xl bg-white hover:bg-gray-50 border border-gray-300 text-gray-800 text-[13px] font-bold shadow-xs transition-all cursor-pointer flex items-center gap-1.5 min-h-[38px] disabled:opacity-50"
+              title="পশুর সম্পূর্ণ জীবনবৃত্তান্ত ও রিপোর্ট পিডিএফ ডাউনলোড করুন"
+            >
+              <FileDown className="w-4 h-4 text-[#1E5128]" />
+              <span>{isExportingPdf ? 'তৈরি হচ্ছে...' : 'PDF হিসেবে সংরক্ষণ করুন'}</span>
+            </button>
+
             {onEditAnimal && role === 'OWNER' && (
               <button
                 type="button"
@@ -297,20 +864,53 @@ export const AnimalDetailView: React.FC<AnimalDetailViewProps> = ({
           </div>
         </div>
 
-        {/* Animal Profile Header: Larger Photo & Details */}
+        {/* Animal Profile Header: Photo, QR Code & Details */}
         <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4 pt-3 border-t border-gray-100">
-          {animal.photoUrl ? (
-            <img
-              src={animal.photoUrl}
-              alt={animal.id}
-              className="w-24 h-24 sm:w-32 sm:h-32 rounded-2xl object-cover border-2 border-emerald-100 shadow-sm shrink-0 bg-gray-50"
-            />
-          ) : (
-            <div className="w-24 h-24 sm:w-32 sm:h-32 rounded-2xl bg-gray-50 border-2 border-dashed border-gray-200 flex flex-col items-center justify-center text-gray-400 shrink-0 gap-1">
-              <Camera className="w-8 h-8 text-gray-400 stroke-[1.5]" />
-              <span className="text-[11px] font-medium text-gray-400">ছবি নেই</span>
+          <div className="flex items-center gap-3 shrink-0">
+            {animal.photoUrl ? (
+              <img
+                src={animal.photoUrl}
+                alt={animal.id}
+                className="w-24 h-24 sm:w-28 sm:h-28 rounded-2xl object-cover border-2 border-emerald-100 shadow-sm shrink-0 bg-gray-50"
+              />
+            ) : (
+              <div className="w-24 h-24 sm:w-28 sm:h-28 rounded-2xl bg-gray-50 border-2 border-dashed border-gray-200 flex flex-col items-center justify-center text-gray-400 shrink-0 gap-1">
+                <Camera className="w-8 h-8 text-gray-400 stroke-[1.5]" />
+                <span className="text-[11px] font-medium text-gray-400">ছবি নেই</span>
+              </div>
+            )}
+
+            {/* Scannable QR Code */}
+            <div className="w-24 h-24 sm:w-28 sm:h-28 rounded-2xl bg-white border border-gray-200 shadow-xs p-1.5 flex flex-col items-center justify-between shrink-0 relative group">
+              {qrCodeDataUrl ? (
+                <>
+                  <img
+                    src={qrCodeDataUrl}
+                    alt={`QR কোড (${animal.id})`}
+                    className="w-16 h-16 sm:w-20 sm:h-20 object-contain"
+                  />
+                  <div className="w-full flex items-center justify-between px-1">
+                    <span className="text-[10px] font-mono font-bold text-[#1E5128] truncate">
+                      {animal.id}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={handleDownloadQr}
+                      className="p-0.5 rounded text-gray-400 hover:text-[#1E5128] transition-colors cursor-pointer"
+                      title="কিউআর কোড ডাউনলোড করুন"
+                    >
+                      <Download className="w-3 h-3" />
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <div className="flex flex-col items-center justify-center h-full text-gray-400 gap-1 text-center">
+                  <QrCode className="w-6 h-6 animate-pulse text-[#1E5128]" />
+                  <span className="text-[9px]">তৈরি হচ্ছে...</span>
+                </div>
+              )}
             </div>
-          )}
+          </div>
 
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 flex-wrap">

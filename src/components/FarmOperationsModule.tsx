@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Tractor,
   Fish,
@@ -27,8 +27,10 @@ import {
   Upload,
   Image as ImageIcon,
   Edit3,
-  Trash2
+  Trash2,
+  QrCode
 } from 'lucide-react';
+import jsQR from 'jsqr';
 import { db } from '../db/indexedDb';
 import {
   Animal,
@@ -96,6 +98,75 @@ function compressImageFile(file: File, maxWidth = 800, quality = 0.8): Promise<s
   });
 }
 
+/**
+ * Decodes a QR code from a user-captured camera photo or image file using jsQR.
+ * Handles high-resolution camera images by performing multi-scale detection passes.
+ */
+function decodeQrFromImageFile(file: File): Promise<string | null> {
+  return new Promise((resolve, reject) => {
+    if (!file.type.startsWith('image/')) {
+      reject(new Error('অনুগ্রহ করে একটি ছবি ফাইল নির্বাচন করুন বা ক্যামেরা দিয়ে ছবি তুলুন।'));
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error('ছবি পড়তে ব্যর্থ হয়েছে।'));
+    reader.onload = () => {
+      const img = new Image();
+      img.onerror = () => reject(new Error('ছবি লোড করা যায়নি।'));
+      img.onload = () => {
+        const tryDecode = (width: number, height: number): string | null => {
+          const canvas = document.createElement('canvas');
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d', { willReadFrequently: true });
+          if (!ctx) return null;
+          ctx.drawImage(img, 0, 0, width, height);
+          const imageData = ctx.getImageData(0, 0, width, height);
+          const res = jsQR(imageData.data, imageData.width, imageData.height, {
+            inversionAttempts: 'attemptBoth'
+          });
+          return res ? res.data : null;
+        };
+
+        // 1. First pass: capped at 1200px max dimension for responsive performance
+        let w = img.width;
+        let h = img.height;
+        if (w > 1200 || h > 1200) {
+          if (w > h) {
+            h = Math.round((h * 1200) / w);
+            w = 1200;
+          } else {
+            w = Math.round((w * 1200) / h);
+            h = 1200;
+          }
+        }
+        let code = tryDecode(w, h);
+        if (code) return resolve(code);
+
+        // 2. Second pass: downscaled 800px if high camera resolution had pixel noise
+        if (w > 800 || h > 800) {
+          const maxDim = Math.max(img.width, img.height);
+          const smallW = Math.round((img.width * 800) / maxDim);
+          const smallH = Math.round((img.height * 800) / maxDim);
+          code = tryDecode(smallW, smallH);
+          if (code) return resolve(code);
+        }
+
+        // 3. Third pass: full original dimensions if downscaled attempts missed it
+        if (img.width !== w) {
+          code = tryDecode(img.width, img.height);
+          if (code) return resolve(code);
+        }
+
+        resolve(null);
+      };
+      img.src = reader.result as string;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
 interface Props {
   role: UserRole;
   currentUserId: string;
@@ -156,6 +227,59 @@ export const FarmOperationsModule: React.FC<Props> = ({
     animalData: Animal;
   } | null>(null);
   const [animalSearch, setAnimalSearch] = useState<string>('');
+
+  // QR Code Camera Scanner state and handler
+  const qrCameraInputRef = useRef<HTMLInputElement | null>(null);
+  const [isScanningQr, setIsScanningQr] = useState<boolean>(false);
+
+  const handleScanAnimalQr = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    // Reset input value so re-scanning the same or new photo always fires onChange
+    e.target.value = '';
+
+    try {
+      setIsScanningQr(true);
+      const scannedCode = await decodeQrFromImageFile(file);
+      if (!scannedCode) {
+        setMsg({
+          type: 'error',
+          text: 'ছবিতে কোনো কিউআর কোড (QR Code) পাওয়া যায়নি। অনুগ্রহ করে কাছে থেকে স্পষ্ট ছবি তুলুন।'
+        });
+        return;
+      }
+
+      const cleanCode = scannedCode.trim();
+      // Lookup animal by ID or Tag (case-insensitive)
+      const matched = animals.find(
+        (a) =>
+          a.id.toLowerCase() === cleanCode.toLowerCase() ||
+          (a.tag && a.tag.toLowerCase() === cleanCode.toLowerCase())
+      );
+
+      if (matched) {
+        setTab('livestock');
+        setSelectedAnimalId(matched.id);
+        setMsg({
+          type: 'success',
+          text: `পশু ${matched.id} (${matched.breed}) সফলভাবে শনাক্ত হয়েছে!`
+        });
+      } else {
+        setMsg({
+          type: 'error',
+          text: `কিউআর কোডে পাওয়া আইডি "${cleanCode}" ফার্ম ডেটাবেজে খুঁজে পাওয়া যায়নি।`
+        });
+      }
+    } catch (err: any) {
+      setMsg({
+        type: 'error',
+        text: err.message || 'কিউআর কোড স্ক্যান করতে সমস্যা হয়েছে।'
+      });
+    } finally {
+      setIsScanningQr(false);
+    }
+  };
 
   // Edit Animal Modal state
   const [editingAnimal, setEditingAnimal] = useState<Animal | null>(null);
@@ -1108,6 +1232,30 @@ export const FarmOperationsModule: React.FC<Props> = ({
                 <span>+ কার্যক্রম এন্ট্রি</span>
               </button>
 
+              {/* Hidden browser camera/file input for QR scanning */}
+              <input
+                ref={qrCameraInputRef}
+                type="file"
+                accept="image/*"
+                capture="environment"
+                className="hidden"
+                id="animal-qr-camera-input"
+                onChange={handleScanAnimalQr}
+              />
+
+              {/* Scan Button in Action Bar */}
+              <button
+                type="button"
+                id="btn-scan-animal-qr"
+                onClick={() => qrCameraInputRef.current?.click()}
+                disabled={isScanningQr}
+                className="px-3.5 py-2 rounded-xl bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 text-[#1E5128] text-[13px] font-bold shadow-xs transition-all cursor-pointer min-h-[40px] flex items-center gap-1.5 disabled:opacity-50"
+                title="ক্যামেরা দিয়ে কিউআর কোড স্ক্যান করে পশুর প্রোফাইলে যান"
+              >
+                <QrCode className="w-4 h-4 text-[#1E5128]" />
+                <span>{isScanningQr ? 'স্ক্যান হচ্ছে...' : 'স্ক্যান করুন'}</span>
+              </button>
+
               {role === 'OWNER' && (
                 <button
                   onClick={() => setShowAddAnimal(!showAddAnimal)}
@@ -1120,8 +1268,8 @@ export const FarmOperationsModule: React.FC<Props> = ({
             </div>
           </div>
 
-          {/* Animal Live Search Bar - Placed at Top of Animal List */}
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          {/* Animal Live Search Bar & Scan Button - Placed at Top of Animal List */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
             <div className="relative flex-1">
               <Search className="w-4 h-4 text-gray-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
               <input
@@ -1144,6 +1292,18 @@ export const FarmOperationsModule: React.FC<Props> = ({
                 </button>
               )}
             </div>
+
+            <button
+              type="button"
+              id="btn-scan-animal-qr-search"
+              onClick={() => qrCameraInputRef.current?.click()}
+              disabled={isScanningQr}
+              className="px-4 py-2 rounded-xl bg-[#1E5128] hover:bg-[#173F1F] text-white text-[13px] font-bold shadow-xs transition-all cursor-pointer min-h-[42px] flex items-center justify-center gap-2 shrink-0 disabled:opacity-50"
+              title="ডিভাইস ক্যামেরা দিয়ে পশুর কিউআর কোড স্ক্যান করুন"
+            >
+              <QrCode className="w-4 h-4" />
+              <span>{isScanningQr ? 'স্ক্যান হচ্ছে...' : 'স্ক্যান করুন'}</span>
+            </button>
             {animalSearch.trim() && (
               <div className="text-xs text-gray-500 font-medium whitespace-nowrap">
                 ফলাফল:{' '}

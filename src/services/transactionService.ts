@@ -893,7 +893,15 @@ export async function executeLoanRepaymentTransaction(params: {
       const newTotalPaidP = (loan.totalPaidPrincipal || 0) + pAmt;
       const newTotalPaidI = (loan.totalPaidInterest || 0) + iAmt;
 
-      let updatedSchedule = loan.schedule ? [...loan.schedule] : [];
+      let updatedSchedule =
+        loan.schedule && loan.schedule.length > 0
+          ? [...loan.schedule]
+          : generateAmortizationSchedule(
+              loan.principalAmount,
+              loan.annualInterestRatePercent ?? loan.interestRate ?? 0,
+              loan.termMonths ?? loan.tenureMonths ?? 12,
+              loan.disbursedDate || loan.startDate
+            );
 
       if (updatedSchedule.length > 0) {
         if (installmentNumber && installmentNumber > 0) {
