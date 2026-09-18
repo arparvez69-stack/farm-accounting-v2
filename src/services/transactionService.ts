@@ -24,6 +24,7 @@ import {
   AnimalEvent,
   AnimalStatus
 } from '../types';
+import { generateAmortizationSchedule } from '../accounting/amortizationService';
 
 /**
  * Atomic Execution of Sales Invoice Transaction
@@ -451,6 +452,9 @@ export async function executeLoanTransaction(params: {
   tenureMonths: number;
   targetAccountId: string;
   currentUserId: string;
+  annualInterestRatePercent?: number;
+  termMonths?: number;
+  startDate?: string;
 }): Promise<{ loan: Loan; journalEntryId: string }> {
   return await db.transaction(
     'rw',
@@ -463,26 +467,45 @@ export async function executeLoanTransaction(params: {
       db.closedPeriods
     ],
     async () => {
-      const { lenderName, principal, interestRate, tenureMonths, targetAccountId, currentUserId } = params;
+      const {
+        lenderName,
+        principal,
+        interestRate,
+        tenureMonths,
+        targetAccountId,
+        currentUserId,
+        annualInterestRatePercent,
+        termMonths,
+        startDate
+      } = params;
 
       if (principal <= 0) {
         throw new Error('Loan principal must be strictly greater than 0.');
       }
 
-      const targetAcc = await db.cashBankAccounts.get(targetAccountId);
+      let targetAcc = await db.cashBankAccounts.get(targetAccountId);
+      if (!targetAcc) {
+        targetAcc = await db.cashBankAccounts.where('accountType').equals(targetAccountId).first();
+      }
+      if (!targetAcc) {
+        targetAcc = await db.cashBankAccounts.toCollection().first();
+      }
       if (!targetAcc) {
         throw new Error(`Target cash/bank account ${targetAccountId} not found.`);
       }
 
       const loanId = generateUniqueId('ln');
       const loanRef = generateTransactionNumber('LN');
-      const dateStr = new Date().toISOString().split('T')[0];
+      const todayStr = new Date().toISOString().split('T')[0];
+      const dateStr = startDate || todayStr;
+      const effectiveRate = annualInterestRatePercent !== undefined ? annualInterestRatePercent : interestRate;
+      const effectiveMonths = termMonths !== undefined ? termMonths : (tenureMonths || 12);
 
       // Canonical GL Mapping:
       // Dr Cash (1010) or Bank (1030)
       // Cr 2110 (Short-Term Loan) or 2120 (Long-Term Loan) - NEVER 2020 Accrued Wages!
       const assetGlCode = getCashBankAccountGLCode(targetAcc.accountType);
-      const liabilityGlCode = getLoanLiabilityAccount(tenureMonths);
+      const liabilityGlCode = getLoanLiabilityAccount(effectiveMonths);
 
       const accounts = await db.accounts.toArray();
       const journalLines: JournalLine[] = [
@@ -526,17 +549,29 @@ export async function executeLoanTransaction(params: {
       // 1. Safe insert journal entry
       await safeInsert(db.journalEntries, journalEntry, { idPrefix: 'j' });
 
+      // Generate Amortization Schedule (Reducing-Balance / Straight-Line)
+      const schedule = generateAmortizationSchedule(principal, effectiveRate, effectiveMonths, dateStr);
+      const monthlyEmi = schedule.length > 0 ? schedule[0].totalPayment : Math.round((principal / effectiveMonths) * 100) / 100;
+
       // 2. Safe insert loan record
       const loanRecord: Loan = {
         id: loanId,
+        loanNumber: loanRef,
         lenderName: lenderName.trim(),
         loanType: 'BANK',
         principalAmount: principal,
         disbursedDate: dateStr,
-        interestRateAnnual: interestRate,
-        monthlyInstallment: Math.round((principal / (tenureMonths || 24)) * 100) / 100,
-        tenureMonths,
+        startDate: dateStr,
+        interestRateAnnual: effectiveRate,
+        annualInterestRatePercent: effectiveRate,
+        interestRate: effectiveRate,
+        monthlyInstallment: monthlyEmi,
+        tenureMonths: effectiveMonths,
+        termMonths: effectiveMonths,
+        term: effectiveMonths <= 12 ? 'SHORT_TERM' : 'LONG_TERM',
         remainingPrincipal: principal,
+        remainingBalance: principal,
+        schedule,
         status: 'ACTIVE',
         synced: false
       };
@@ -574,6 +609,9 @@ export async function executeInvestorTransaction(params: {
   profitShare: number;
   targetAccountId: string;
   currentUserId: string;
+  phone?: string;
+  annualInterestRatePercent?: number;
+  termMonths?: number;
 }): Promise<{ investor: Investor; journalEntryId: string }> {
   return await db.transaction(
     'rw',
@@ -586,13 +624,28 @@ export async function executeInvestorTransaction(params: {
       db.closedPeriods
     ],
     async () => {
-      const { investorName, contribution, profitShare, targetAccountId, currentUserId } = params;
+      const {
+        investorName,
+        contribution,
+        profitShare,
+        targetAccountId,
+        currentUserId,
+        phone,
+        annualInterestRatePercent,
+        termMonths
+      } = params;
 
       if (contribution <= 0) {
         throw new Error('Contribution amount must be strictly greater than 0.');
       }
 
-      const targetAcc = await db.cashBankAccounts.get(targetAccountId);
+      let targetAcc = await db.cashBankAccounts.get(targetAccountId);
+      if (!targetAcc) {
+        targetAcc = await db.cashBankAccounts.where('accountType').equals(targetAccountId).first();
+      }
+      if (!targetAcc) {
+        targetAcc = await db.cashBankAccounts.toCollection().first();
+      }
       if (!targetAcc) {
         throw new Error(`Target cash/bank account ${targetAccountId} not found.`);
       }
@@ -646,16 +699,32 @@ export async function executeInvestorTransaction(params: {
       // 1. Safe insert journal entry
       await safeInsert(db.journalEntries, journalEntry, { idPrefix: 'j' });
 
+      // Generate optional investor return/amortization schedule if terms provided
+      let schedule: any[] | undefined = undefined;
+      if (annualInterestRatePercent !== undefined && annualInterestRatePercent >= 0 && termMonths && termMonths > 0) {
+        schedule = generateAmortizationSchedule(contribution, annualInterestRatePercent, termMonths, dateStr);
+      }
+
       // 2. Safe insert investor record
       const investorRecord: Investor = {
         id: invId,
         name: investorName.trim(),
+        phone: phone?.trim() || undefined,
+        capitalAmount: contribution,
+        initialCapital: contribution,
         totalContribution: contribution,
         totalWithdrawals: 0,
+        drawings: 0,
+        currentBalance: contribution,
         currentEquityBalance: contribution,
+        sharePercentage: profitShare,
         profitSharePercentage: profitShare,
         ownershipPercentage: profitShare,
+        annualInterestRatePercent: annualInterestRatePercent || 0,
+        termMonths: termMonths || undefined,
+        schedule,
         joinedDate: dateStr,
+        entryDate: dateStr,
         status: 'ACTIVE',
         synced: false
       };
@@ -680,6 +749,210 @@ export async function executeInvestorTransaction(params: {
       });
 
       return { investor: investorRecord, journalEntryId: journalEntry.id };
+    }
+  );
+}
+
+/**
+ * Atomic Execution of Loan Repayment
+ * Debits Loan Liability (2110 or 2120) for principal, Debits Interest Expense (8010) for interest,
+ * Credits Cash (1010) or Bank (1030).
+ * Updates Loan schedule and remaining balance.
+ */
+export async function executeLoanRepaymentTransaction(params: {
+  loanId: string;
+  sourceAccountId: string; // Cash or Bank account ID
+  principalAmount: number;
+  interestAmount: number;
+  installmentNumber?: number;
+  repaymentDate?: string;
+  note?: string;
+  currentUserId: string;
+}): Promise<{ journalEntryId: string; updatedLoan: Loan }> {
+  return await db.transaction(
+    'rw',
+    [
+      db.journalEntries,
+      db.loans,
+      db.cashBankAccounts,
+      db.accounts,
+      db.auditLogs,
+      db.closedPeriods
+    ],
+    async () => {
+      const {
+        loanId,
+        sourceAccountId,
+        principalAmount,
+        interestAmount,
+        installmentNumber,
+        repaymentDate,
+        note,
+        currentUserId
+      } = params;
+
+      const pAmt = Math.max(0, Number(principalAmount) || 0);
+      const iAmt = Math.max(0, Number(interestAmount) || 0);
+      const totalRepayment = Math.round((pAmt + iAmt) * 100) / 100;
+
+      if (totalRepayment <= 0) {
+        throw new Error('পরিশোধের পরিমাণ (আসল বা সুদ) ০ থেকে বেশি হতে হবে।');
+      }
+
+      const loan = await db.loans.get(loanId);
+      if (!loan) {
+        throw new Error(`ঋণ চুক্তি ${loanId} পাওয়া যায়নি।`);
+      }
+
+      const sourceAcc = await db.cashBankAccounts.get(sourceAccountId);
+      if (!sourceAcc) {
+        throw new Error(`উৎস পরিশোধ হিসাব ${sourceAccountId} পাওয়া যায়নি।`);
+      }
+
+      if (sourceAcc.currentBalance < totalRepayment) {
+        throw new Error(
+          `পর্যাপ্ত ব্যালেন্স নেই! ${sourceAcc.name} এ বর্তমান স্থিতি: ৳${sourceAcc.currentBalance}`
+        );
+      }
+
+      const dateStr = repaymentDate || new Date().toISOString().split('T')[0];
+      const voucherNumber = generateTransactionNumber('PAY-LN');
+      const repRef = generateTransactionNumber('REP');
+
+      // Asset GL Code for cash/bank account
+      const assetGlCode = getCashBankAccountGLCode(sourceAcc.accountType);
+      // Liability GL Code (2110 or 2120)
+      const liabilityGlCode = getLoanLiabilityAccount(loan.termMonths || loan.tenureMonths || 12);
+      // Interest Expense Code (8010 Loan Interest Expense)
+      const interestExpenseCode = '8010';
+
+      const accounts = await db.accounts.toArray();
+      const journalLines: JournalLine[] = [];
+
+      // 1. Debit Principal to Liability (2110 / 2120)
+      if (pAmt > 0) {
+        journalLines.push({
+          accountId: liabilityGlCode,
+          accountCode: liabilityGlCode,
+          accountName:
+            liabilityGlCode === '2110'
+              ? 'স্বল্পমেয়াদী ঋণ (Short-Term Loans)'
+              : 'দীর্ঘমেয়াদী ঋণ (Long-Term Loans)',
+          debit: pAmt,
+          credit: 0,
+          memo: `ঋণ কিস্তি আসল পরিশোধ: ${loan.lenderName}`
+        });
+      }
+
+      // 2. Debit Interest to Interest Expense (8010)
+      if (iAmt > 0) {
+        journalLines.push({
+          accountId: interestExpenseCode,
+          accountCode: interestExpenseCode,
+          accountName: 'ঋণের সুদ খরচ (Loan Interest Expense)',
+          debit: iAmt,
+          credit: 0,
+          memo: `ঋণ কিস্তি সুদ পরিশোধ: ${loan.lenderName}`
+        });
+      }
+
+      // 3. Credit Source Account (1010 Cash or 1030 Bank)
+      journalLines.push({
+        accountId: assetGlCode,
+        accountCode: assetGlCode,
+        accountName: sourceAcc.accountName || sourceAcc.name,
+        debit: 0,
+        credit: totalRepayment,
+        memo: `ঋণ পরিশোধ: ${loan.lenderName} (${voucherNumber})`
+      });
+
+      const journalEntry = await postJournalEntry(
+        {
+          id: generateUniqueId('j_rep'),
+          voucherNumber,
+          voucherType: 'PAYMENT',
+          date: dateStr,
+          narration: `ঋণ পরিশোধ: ${loan.lenderName} (আসল: ৳${pAmt}, সুদ: ৳${iAmt})${note ? ` - ${note}` : ''}`,
+          reference: repRef,
+          lines: journalLines,
+          createdBy: currentUserId,
+          createdAt: new Date().toISOString()
+        },
+        { accounts, skipDbPut: true }
+      );
+
+      await safeInsert(db.journalEntries, journalEntry, { idPrefix: 'j' });
+
+      // Update source bank/cash balance
+      await db.cashBankAccounts.update(sourceAcc.id, {
+        currentBalance: Math.round((sourceAcc.currentBalance - totalRepayment) * 100) / 100
+      });
+
+      // Update Loan record, schedule & balances
+      const currentRemaining = Math.max(0, (loan.remainingPrincipal ?? loan.remainingBalance ?? loan.principalAmount) - pAmt);
+      const newTotalPaidP = (loan.totalPaidPrincipal || 0) + pAmt;
+      const newTotalPaidI = (loan.totalPaidInterest || 0) + iAmt;
+
+      let updatedSchedule = loan.schedule ? [...loan.schedule] : [];
+
+      if (updatedSchedule.length > 0) {
+        if (installmentNumber && installmentNumber > 0) {
+          // Specific installment matched
+          const idx = updatedSchedule.findIndex((s) => s.installmentNumber === installmentNumber);
+          if (idx !== -1) {
+            updatedSchedule[idx] = {
+              ...updatedSchedule[idx],
+              isPaid: true,
+              paidDate: dateStr,
+              repaymentJournalId: journalEntry.id
+            };
+          }
+        } else {
+          // Mark the first unpaid installment as paid
+          const firstUnpaidIdx = updatedSchedule.findIndex((s) => !s.isPaid);
+          if (firstUnpaidIdx !== -1) {
+            updatedSchedule[firstUnpaidIdx] = {
+              ...updatedSchedule[firstUnpaidIdx],
+              isPaid: true,
+              paidDate: dateStr,
+              repaymentJournalId: journalEntry.id
+            };
+          }
+        }
+      }
+
+      const allPaid = updatedSchedule.length > 0
+        ? updatedSchedule.every((s) => s.isPaid)
+        : currentRemaining <= 0;
+
+      const newStatus = allPaid || currentRemaining <= 0 ? 'PAID_OFF' : 'ACTIVE';
+
+      const updatedLoan: Loan = {
+        ...loan,
+        remainingPrincipal: currentRemaining,
+        remainingBalance: currentRemaining,
+        totalPaidPrincipal: newTotalPaidP,
+        totalPaidInterest: newTotalPaidI,
+        schedule: updatedSchedule,
+        status: newStatus
+      };
+
+      await db.loans.put(updatedLoan);
+
+      // Audit Log
+      await safeInsert(db.auditLogs, {
+        id: generateUniqueId('audit'),
+        timestamp: new Date().toISOString(),
+        userId: currentUserId,
+        role: 'OWNER',
+        action: 'LOAN_REPAYMENT',
+        module: 'FINANCE',
+        recordId: repRef,
+        status: 'SUCCESS',
+        details: `ঋণ ${loan.loanNumber || loan.id} পরিশোধ ৳${totalRepayment} (আসল: ৳${pAmt}, সুদ: ৳${iAmt})`
+      });
+
+      return { journalEntryId: journalEntry.id, updatedLoan };
     }
   );
 }

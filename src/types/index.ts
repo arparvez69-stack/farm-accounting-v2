@@ -432,12 +432,25 @@ export interface BankTransfer {
   synced?: boolean;
 }
 
+export interface AmortizationScheduleItem {
+  installmentNumber: number;
+  date: string;
+  principalPortion: number;
+  interestPortion: number;
+  totalPayment: number;
+  remainingBalance: number;
+  isPaid?: boolean;
+  paidDate?: string;
+  repaymentJournalId?: string;
+}
+
 export interface Loan {
   id: string;
   lenderName: string;
   loanType: 'BANK' | 'NGO' | 'INDIVIDUAL';
   principalAmount: number;
   interestRateAnnual: number;
+  annualInterestRatePercent?: number;
   loanNumber?: string;
   term?: string;
   interestRate?: number;
@@ -451,6 +464,7 @@ export interface Loan {
   totalPaidInterest?: number;
   outstandingPrincipal?: number;
   remainingPrincipal?: number;
+  schedule?: AmortizationScheduleItem[];
   status: 'ACTIVE' | 'PAID_OFF';
   synced?: boolean;
 }
@@ -476,6 +490,9 @@ export interface Investor {
   ownershipPercentage?: number;
   profitSharingPct?: number;
   profitSharePercentage?: number;
+  annualInterestRatePercent?: number;
+  termMonths?: number;
+  schedule?: AmortizationScheduleItem[];
   allocationMethod?:
     | 'OWNERSHIP_BASED'
     | 'CAPITAL_BASED'

@@ -10,7 +10,7 @@ import {
   synchronizePendingData,
   restoreRemoteDataIfLocalEmpty
 } from './firebase/firebaseClient';
-import { AlertTriangle, CheckCircle2, RotateCcw } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, RotateCcw, X } from 'lucide-react';
 import { logoutOwner } from './services/authService';
 import { ActiveTab, MobileBottomNav } from './components/MobileBottomNav';
 import { Header } from './components/Header';
@@ -59,6 +59,129 @@ export default function App() {
 
   // Auto-posted Recurring Expense Toast State
   const [recurringToastMessage, setRecurringToastMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (recurringToastMessage) {
+      const timer = setTimeout(() => {
+        setRecurringToastMessage(null);
+      }, 7000);
+      return () => clearTimeout(timer);
+    }
+  }, [recurringToastMessage]);
+
+  const checkAndPostRecurringExpenses = async () => {
+    try {
+      const now = new Date();
+      const currentDay = now.getDate();
+      const yyyy = now.getFullYear();
+      const mm = String(now.getMonth() + 1).padStart(2, '0');
+      const dd = String(currentDay).padStart(2, '0');
+      const todayStr = `${yyyy}-${mm}-${dd}`;
+      const currentYearMonth = `${yyyy}-${mm}`;
+
+      // 1. Fetch active templates
+      const activeTemplates = await db.recurringExpenseTemplates
+        .filter((t) => t.active === true)
+        .toArray();
+
+      if (!activeTemplates || activeTemplates.length === 0) {
+        return;
+      }
+
+      // 2. Filter templates where dayOfMonth matches today's date
+      const templatesDueToday = activeTemplates.filter((t) => Number(t.dayOfMonth) === currentDay);
+      if (templatesDueToday.length === 0) {
+        return;
+      }
+
+      // 3. Check existing journal entries for current month to avoid duplicate posting
+      const allAccounts = await db.accounts.toArray();
+      const cashAccountCode = getPaymentAccount('CASH', 'PURCHASE');
+      const cashAccount = allAccounts.find((a) => a.code === cashAccountCode);
+
+      const postedItems: { description: string; amount: number }[] = [];
+
+      for (const template of templatesDueToday) {
+        const amount = Number(template.amount);
+        if (isNaN(amount) || amount <= 0) continue;
+
+        // Check if matching entry has already been posted this month
+        const alreadyPosted = await db.journalEntries
+          .filter((j) => {
+            if (!j.date || !j.date.startsWith(currentYearMonth)) return false;
+            if (
+              j.reference === `REC_${template.id}_${currentYearMonth}` ||
+              j.reference === `REC_${template.id}` ||
+              j.reference === template.id
+            ) {
+              return true;
+            }
+            const hasMatchingAccount = j.lines?.some(
+              (l) => l.accountCode === template.accountCode && Math.abs(Number(l.debit || 0) - amount) < 0.01
+            );
+            return Boolean(hasMatchingAccount && j.narration?.includes(template.description));
+          })
+          .count();
+
+        if (alreadyPosted > 0) {
+          continue;
+        }
+
+        const expAccount = allAccounts.find((a) => a.code === template.accountCode);
+        const expName = expAccount ? expAccount.nameBn : template.description;
+        const cashName = cashAccount ? cashAccount.nameBn : 'নগদ তহবিল (Cash in Hand)';
+
+        const journalId = generateUniqueId('jrn');
+        const voucherNum = generateTransactionNumber('PAY');
+
+        const lines: JournalLine[] = [
+          {
+            accountId: expAccount?.id || template.accountCode,
+            accountCode: template.accountCode,
+            accountName: expName,
+            debit: amount,
+            credit: 0,
+            memo: template.description
+          },
+          {
+            accountId: cashAccount?.id || cashAccountCode,
+            accountCode: cashAccountCode,
+            accountName: cashName,
+            debit: 0,
+            credit: amount,
+            memo: `পুনরাবৃত্ত খরচ: ${template.description}`
+          }
+        ];
+
+        await postJournalEntry({
+          id: journalId,
+          voucherNumber: voucherNum,
+          voucherType: 'PAYMENT',
+          date: todayStr,
+          narration: `স্বয়ংক্রিয় পুনরাবৃত্ত খরচ: ${template.description}`,
+          reference: `REC_${template.id}_${currentYearMonth}`,
+          lines,
+          createdBy: 'SYSTEM',
+          createdAt: new Date().toISOString(),
+          synced: false
+        });
+
+        postedItems.push({
+          description: template.description,
+          amount
+        });
+      }
+
+      if (postedItems.length > 0) {
+        window.dispatchEvent(new Event('goted_data_changed'));
+        const totalPostedAmount = postedItems.reduce((sum, item) => sum + item.amount, 0);
+        const detailStr = postedItems.map((p) => `${p.description} (৳${p.amount.toLocaleString('en-IN')})`).join(', ');
+        setRecurringToastMessage(`স্বয়ংক্রিয় পুনরাবৃত্ত খরচ দাখিলা সম্পন্ন: ${detailStr} [মোট: ৳${totalPostedAmount.toLocaleString('en-IN')}]`);
+      }
+    } catch (err) {
+      console.error('[The Goated Farm] Error processing recurring expense templates:', err);
+    }
+  };
 
   const handleNavigate = (
     tab: ActiveTab,
@@ -171,6 +294,13 @@ export default function App() {
         await runDepreciationOnAppLoad();
       } catch (err) {
         console.error('[The Goated Farm] Automated depreciation on app load error:', err);
+      }
+
+      // Automated recurring expense check on app load
+      try {
+        await checkAndPostRecurringExpenses();
+      } catch (err) {
+        console.error('[The Goated Farm] Recurring expense check on app load error:', err);
       }
 
       // 2. Run accounting integrity regression tests in background
@@ -288,6 +418,7 @@ export default function App() {
           if (boot.config) setSystemConfig(boot.config);
           await seedSystemConfigIfNecessary();
           triggerForegroundDueTodayNotification().catch(() => {});
+          checkAndPostRecurringExpenses().catch(() => {});
         }}
       />
     );
@@ -431,6 +562,32 @@ export default function App() {
           <div className="flex items-center gap-2 px-4 py-2.5 bg-emerald-800 text-white text-xs sm:text-sm font-medium rounded-full shadow-xl border border-emerald-600">
             <CheckCircle2 className="w-4 h-4 text-emerald-300 shrink-0" />
             <span>{undoToastMessage}</span>
+          </div>
+        </div>
+      )}
+
+      {/* Auto-posted Recurring Expenses Toast Confirmation */}
+      {recurringToastMessage && (
+        <div
+          id="toast-recurring-expense"
+          role="status"
+          aria-live="polite"
+          className="fixed top-16 md:top-6 left-1/2 -translate-x-1/2 z-50 animate-in fade-in slide-in-from-top-3 duration-200 max-w-lg w-[92%]"
+        >
+          <div className="flex items-center gap-3 px-4 sm:px-5 py-3.5 bg-[#1E5128] text-white rounded-2xl shadow-2xl border border-emerald-600">
+            <CheckCircle2 className="w-5 h-5 text-emerald-300 shrink-0" />
+            <div className="flex-1 text-xs sm:text-sm font-medium leading-snug">
+              {recurringToastMessage}
+            </div>
+            <button
+              id="btn-close-recurring-toast"
+              type="button"
+              onClick={() => setRecurringToastMessage(null)}
+              className="text-emerald-200 hover:text-white p-1 rounded-lg transition-colors cursor-pointer shrink-0"
+              aria-label="বন্ধ করুন"
+            >
+              <X className="w-4 h-4" />
+            </button>
           </div>
         </div>
       )}
