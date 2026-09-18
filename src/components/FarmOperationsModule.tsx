@@ -1058,64 +1058,80 @@ export const FarmOperationsModule: React.FC<Props> = ({
           </p>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-col sm:flex-row sm:items-center gap-2 w-full lg:w-auto">
           <button
             type="button"
             onClick={() => setShowAddReminderModal(true)}
-            className="px-3.5 py-2 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-[#1E5128] border border-emerald-200 text-[13px] font-bold shadow-xs transition-all cursor-pointer flex items-center gap-1.5 min-h-[40px]"
+            className="px-3.5 py-2 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-[#1E5128] border border-emerald-200 text-[13px] font-bold shadow-xs transition-all cursor-pointer flex items-center justify-center gap-1.5 min-h-[40px] shrink-0"
           >
             <Clock className="w-4 h-4 text-[#1E5128]" />
             <span>+ নতুন রিমাইন্ডার</span>
           </button>
 
-          <div className="flex items-center gap-1.5 bg-gray-100 p-1.5 rounded-xl overflow-x-auto text-[13px] font-semibold">
+          <div className="w-full sm:w-auto grid grid-cols-2 sm:grid-cols-4 gap-2 bg-gray-100 p-1.5 rounded-xl text-[13px] font-semibold">
             <button
+              type="button"
               onClick={() => {
                 setTab('livestock');
                 setSelectedAnimalId(null);
                 if (onClearInitialAnimalId) onClearInitialAnimalId();
               }}
-              className={`px-3.5 py-2 rounded-lg whitespace-nowrap transition-all cursor-pointer min-h-[40px] ${
-                tab === 'livestock' ? 'bg-[#1E5128] text-white shadow-xs' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200/60'
+              className={`flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg transition-all cursor-pointer min-h-[42px] text-center text-xs sm:text-[13px] font-bold ${
+                tab === 'livestock'
+                  ? 'bg-emerald-700 text-white shadow-xs border border-emerald-700'
+                  : 'bg-emerald-50 text-emerald-900 border border-emerald-200/80 hover:bg-emerald-100/90'
               }`}
             >
-              গবাদিপশু (Livestock)
+              <Tractor className="w-4 h-4 shrink-0" />
+              <span>গবাদিপশু</span>
             </button>
             <button
+              type="button"
               onClick={() => {
                 setTab('fisheries');
                 setSelectedAnimalId(null);
                 if (onClearInitialAnimalId) onClearInitialAnimalId();
               }}
-              className={`px-3.5 py-2 rounded-lg whitespace-nowrap transition-all cursor-pointer min-h-[40px] ${
-                tab === 'fisheries' ? 'bg-[#1E5128] text-white shadow-xs' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200/60'
+              className={`flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg transition-all cursor-pointer min-h-[42px] text-center text-xs sm:text-[13px] font-bold ${
+                tab === 'fisheries'
+                  ? 'bg-cyan-700 text-white shadow-xs border border-cyan-700'
+                  : 'bg-cyan-50 text-cyan-900 border border-cyan-200/80 hover:bg-cyan-100/90'
               }`}
             >
-              মৎস্য চাষ (Fisheries)
+              <Fish className="w-4 h-4 shrink-0" />
+              <span>মৎস্য চাষ</span>
             </button>
             <button
+              type="button"
               onClick={() => {
                 setTab('crops');
                 setSelectedAnimalId(null);
                 if (onClearInitialAnimalId) onClearInitialAnimalId();
               }}
-              className={`px-3.5 py-2 rounded-lg whitespace-nowrap transition-all cursor-pointer min-h-[40px] ${
-                tab === 'crops' ? 'bg-[#1E5128] text-white shadow-xs' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200/60'
+              className={`flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg transition-all cursor-pointer min-h-[42px] text-center text-xs sm:text-[13px] font-bold ${
+                tab === 'crops'
+                  ? 'bg-amber-700 text-white shadow-xs border border-amber-700'
+                  : 'bg-amber-50 text-amber-900 border border-amber-200/80 hover:bg-amber-100/90'
               }`}
             >
-              শস্য ও ঘাস (Crops)
+              <Wheat className="w-4 h-4 shrink-0" />
+              <span>শস্য ও ঘাস</span>
             </button>
             <button
+              type="button"
               onClick={() => {
                 setTab('flows');
                 setSelectedAnimalId(null);
                 if (onClearInitialAnimalId) onClearInitialAnimalId();
               }}
-              className={`px-3.5 py-2 rounded-lg whitespace-nowrap transition-all cursor-pointer min-h-[40px] ${
-                tab === 'flows' ? 'bg-[#1E5128] text-white shadow-xs' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200/60'
+              className={`flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg transition-all cursor-pointer min-h-[42px] text-center text-xs sm:text-[13px] font-bold ${
+                tab === 'flows'
+                  ? 'bg-indigo-700 text-white shadow-xs border border-indigo-700'
+                  : 'bg-indigo-50 text-indigo-900 border border-indigo-200/80 hover:bg-indigo-100/90'
               }`}
             >
-              অভ্যন্তরীণ প্রবাহ (Flows)
+              <ArrowRightLeft className="w-4 h-4 shrink-0" />
+              <span>অভ্যন্তরীণ প্রবাহ</span>
             </button>
           </div>
         </div>

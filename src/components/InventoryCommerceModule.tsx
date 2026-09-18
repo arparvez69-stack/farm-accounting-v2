@@ -482,7 +482,7 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
   return (
     <div className="space-y-4 pb-6 max-w-5xl mx-auto">
       {/* Header & Tabs */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 sm:p-5 rounded-2xl bg-white border border-gray-200 shadow-xs">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-3.5 p-4 sm:p-5 rounded-2xl bg-white border border-gray-200 shadow-xs">
         <div>
           <h2 className="text-lg sm:text-xl font-bold text-gray-900 flex items-center gap-2">
             <Package className="w-5 h-5 text-[#1E5128]" />
@@ -493,38 +493,54 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
           </p>
         </div>
 
-        <div className="flex items-center gap-1.5 bg-gray-100 p-1.5 rounded-xl overflow-x-auto text-[13px] font-semibold">
+        <div className="w-full md:w-auto grid grid-cols-2 sm:grid-cols-4 gap-2 bg-gray-100 p-1.5 rounded-xl text-[13px] font-semibold">
           <button
+            type="button"
             onClick={() => setTab('inventory')}
-            className={`px-3.5 py-2 rounded-lg whitespace-nowrap transition-all cursor-pointer min-h-[40px] ${
-              tab === 'inventory' ? 'bg-[#1E5128] text-white shadow-xs' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200/60'
+            className={`flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg transition-all cursor-pointer min-h-[42px] text-center text-xs sm:text-[13px] font-bold ${
+              tab === 'inventory'
+                ? 'bg-purple-700 text-white shadow-xs border border-purple-700'
+                : 'bg-purple-50 text-purple-900 border border-purple-200/80 hover:bg-purple-100/90'
             }`}
           >
-            স্টক/মজুদ (Inventory)
+            <Package className="w-4 h-4 shrink-0" />
+            <span>স্টক/মজুদ</span>
           </button>
           <button
+            type="button"
             onClick={() => setTab('sales')}
-            className={`px-3.5 py-2 rounded-lg whitespace-nowrap transition-all cursor-pointer min-h-[40px] ${
-              tab === 'sales' ? 'bg-[#1E5128] text-white shadow-xs' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200/60'
+            className={`flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg transition-all cursor-pointer min-h-[42px] text-center text-xs sm:text-[13px] font-bold ${
+              tab === 'sales'
+                ? 'bg-emerald-700 text-white shadow-xs border border-emerald-700'
+                : 'bg-emerald-50 text-emerald-900 border border-emerald-200/80 hover:bg-emerald-100/90'
             }`}
           >
-            বিক্রয় চালান (Sales)
+            <TrendingUp className="w-4 h-4 shrink-0" />
+            <span>বিক্রয় চালান</span>
           </button>
           <button
+            type="button"
             onClick={() => setTab('purchases')}
-            className={`px-3.5 py-2 rounded-lg whitespace-nowrap transition-all cursor-pointer min-h-[40px] ${
-              tab === 'purchases' ? 'bg-[#1E5128] text-white shadow-xs' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200/60'
+            className={`flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg transition-all cursor-pointer min-h-[42px] text-center text-xs sm:text-[13px] font-bold ${
+              tab === 'purchases'
+                ? 'bg-blue-700 text-white shadow-xs border border-blue-700'
+                : 'bg-blue-50 text-blue-900 border border-blue-200/80 hover:bg-blue-100/90'
             }`}
           >
-            ক্রয় চালান (Purchases)
+            <ShoppingCart className="w-4 h-4 shrink-0" />
+            <span>ক্রয় চালান</span>
           </button>
           <button
+            type="button"
             onClick={() => setTab('parties')}
-            className={`px-3.5 py-2 rounded-lg whitespace-nowrap transition-all cursor-pointer min-h-[40px] ${
-              tab === 'parties' ? 'bg-[#1E5128] text-white shadow-xs' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200/60'
+            className={`flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg transition-all cursor-pointer min-h-[42px] text-center text-xs sm:text-[13px] font-bold ${
+              tab === 'parties'
+                ? 'bg-amber-700 text-white shadow-xs border border-amber-700'
+                : 'bg-amber-50 text-amber-900 border border-amber-200/80 hover:bg-amber-100/90'
             }`}
           >
-            গ্রাহক ও সাপ্লায়ার (Parties)
+            <Users className="w-4 h-4 shrink-0" />
+            <span>গ্রাহক ও সাপ্লায়ার</span>
           </button>
         </div>
       </div>

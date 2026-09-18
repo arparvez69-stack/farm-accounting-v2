@@ -584,72 +584,93 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
           </button>
         </div>
 
-        <div className="flex items-center gap-1.5 bg-gray-100 dark:bg-slate-800/80 p-1.5 rounded-xl overflow-x-auto text-[13px] font-semibold">
+        <div className="w-full grid grid-cols-3 sm:grid-cols-4 lg:grid-cols-7 gap-2 bg-gray-100 dark:bg-slate-800/80 p-2 rounded-xl text-xs sm:text-[13px] font-semibold">
           <button
             id="tab-access-logs-btn"
+            type="button"
             onClick={() => setTab('accessLogs')}
-            className={`px-3.5 py-2 rounded-lg whitespace-nowrap transition-all cursor-pointer min-h-[40px] flex items-center gap-1.5 ${
-              tab === 'accessLogs' ? 'bg-slate-900 dark:bg-slate-700 text-white shadow-xs' : 'text-gray-600 dark:text-slate-400 hover:text-gray-900 dark:hover:text-slate-100 hover:bg-gray-200/60 dark:hover:bg-slate-700/60'
+            className={`flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-1.5 px-2 py-2 rounded-lg text-center transition-all cursor-pointer min-h-[44px] font-bold ${
+              tab === 'accessLogs'
+                ? 'bg-blue-700 text-white shadow-xs border border-blue-700'
+                : 'bg-blue-50 text-blue-950 border border-blue-200/80 hover:bg-blue-100/90 dark:bg-blue-950/40 dark:text-blue-300 dark:border-blue-800'
             }`}
           >
-            <UserCheck className="w-4 h-4" />
-            <span>কে কে অ্যাপ ব্যবহার করছে (Access Log)</span>
+            <UserCheck className="w-4 h-4 shrink-0" />
+            <span>অ্যাক্সেস লগ</span>
           </button>
           <button
             id="tab-change-pin-btn"
+            type="button"
             onClick={() => setTab('changePin')}
-            className={`px-3.5 py-2 rounded-lg whitespace-nowrap transition-all cursor-pointer min-h-[40px] flex items-center gap-1.5 ${
-              tab === 'changePin' ? 'bg-slate-900 dark:bg-slate-700 text-white shadow-xs' : 'text-gray-600 dark:text-slate-400 hover:text-gray-900 dark:hover:text-slate-100 hover:bg-gray-200/60 dark:hover:bg-slate-700/60'
+            className={`flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-1.5 px-2 py-2 rounded-lg text-center transition-all cursor-pointer min-h-[44px] font-bold ${
+              tab === 'changePin'
+                ? 'bg-purple-700 text-white shadow-xs border border-purple-700'
+                : 'bg-purple-50 text-purple-950 border border-purple-200/80 hover:bg-purple-100/90 dark:bg-purple-950/40 dark:text-purple-300 dark:border-purple-800'
             }`}
           >
-            <KeyRound className="w-4 h-4" />
-            <span>পিন পরিবর্তন (Change PIN)</span>
+            <KeyRound className="w-4 h-4 shrink-0" />
+            <span>পিন পরিবর্তন</span>
           </button>
           <button
+            type="button"
             onClick={() => setTab('audit')}
-            className={`px-3.5 py-2 rounded-lg whitespace-nowrap transition-all cursor-pointer min-h-[40px] flex items-center gap-1.5 ${
-              tab === 'audit' ? 'bg-slate-900 dark:bg-slate-700 text-white shadow-xs' : 'text-gray-600 dark:text-slate-400 hover:text-gray-900 dark:hover:text-slate-100 hover:bg-gray-200/60 dark:hover:bg-slate-700/60'
+            className={`flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-1.5 px-2 py-2 rounded-lg text-center transition-all cursor-pointer min-h-[44px] font-bold ${
+              tab === 'audit'
+                ? 'bg-amber-700 text-white shadow-xs border border-amber-700'
+                : 'bg-amber-50 text-amber-950 border border-amber-200/80 hover:bg-amber-100/90 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-800'
             }`}
           >
-            <History className="w-4 h-4" />
-            <span>অডিট ট্রেইল (Audit Trail)</span>
+            <History className="w-4 h-4 shrink-0" />
+            <span>অডিট ট্রেইল</span>
           </button>
           <button
+            type="button"
             onClick={() => setTab('assets')}
-            className={`px-3.5 py-2 rounded-lg whitespace-nowrap transition-all cursor-pointer min-h-[40px] flex items-center gap-1.5 ${
-              tab === 'assets' ? 'bg-slate-900 dark:bg-slate-700 text-white shadow-xs' : 'text-gray-600 dark:text-slate-400 hover:text-gray-900 dark:hover:text-slate-100 hover:bg-gray-200/60 dark:hover:bg-slate-700/60'
+            className={`flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-1.5 px-2 py-2 rounded-lg text-center transition-all cursor-pointer min-h-[44px] font-bold ${
+              tab === 'assets'
+                ? 'bg-emerald-700 text-white shadow-xs border border-emerald-700'
+                : 'bg-emerald-50 text-emerald-950 border border-emerald-200/80 hover:bg-emerald-100/90 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800'
             }`}
           >
-            <HardDrive className="w-4 h-4" />
-            <span>স্থায়ী সম্পদ (Assets)</span>
+            <HardDrive className="w-4 h-4 shrink-0" />
+            <span>স্থায়ী সম্পদ</span>
           </button>
           <button
+            type="button"
             onClick={() => setTab('owners')}
-            className={`px-3.5 py-2 rounded-lg whitespace-nowrap transition-all cursor-pointer min-h-[40px] flex items-center gap-1.5 ${
-              tab === 'owners' ? 'bg-slate-900 dark:bg-slate-700 text-white shadow-xs' : 'text-gray-600 dark:text-slate-400 hover:text-gray-900 dark:hover:text-slate-100 hover:bg-gray-200/60 dark:hover:bg-slate-700/60'
+            className={`flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-1.5 px-2 py-2 rounded-lg text-center transition-all cursor-pointer min-h-[44px] font-bold ${
+              tab === 'owners'
+                ? 'bg-indigo-700 text-white shadow-xs border border-indigo-700'
+                : 'bg-indigo-50 text-indigo-950 border border-indigo-200/80 hover:bg-indigo-100/90 dark:bg-indigo-950/40 dark:text-indigo-300 dark:border-indigo-800'
             }`}
           >
-            <Users className="w-4 h-4" />
-            <span>অনুমোদিত মালিকবৃন্দ (Owners)</span>
+            <Users className="w-4 h-4 shrink-0" />
+            <span>মালিকবৃন্দ</span>
           </button>
           <button
+            type="button"
             onClick={() => setTab('settings')}
-            className={`px-3.5 py-2 rounded-lg whitespace-nowrap transition-all cursor-pointer min-h-[40px] flex items-center gap-1.5 ${
-              tab === 'settings' ? 'bg-slate-900 dark:bg-slate-700 text-white shadow-xs' : 'text-gray-600 dark:text-slate-400 hover:text-gray-900 dark:hover:text-slate-100 hover:bg-gray-200/60 dark:hover:bg-slate-700/60'
+            className={`flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-1.5 px-2 py-2 rounded-lg text-center transition-all cursor-pointer min-h-[44px] font-bold ${
+              tab === 'settings'
+                ? 'bg-slate-700 text-white shadow-xs border border-slate-700'
+                : 'bg-slate-100 text-slate-800 border border-slate-300/80 hover:bg-slate-200/90 dark:bg-slate-800 dark:text-slate-300 dark:border-slate-700'
             }`}
           >
-            <Building className="w-4 h-4" />
-            <span>ফার্ম সেটিংস (Settings)</span>
+            <Building className="w-4 h-4 shrink-0" />
+            <span>ফার্ম সেটিংস</span>
           </button>
           <button
             id="tab-vaccines-btn"
+            type="button"
             onClick={() => setTab('vaccines')}
-            className={`px-3.5 py-2 rounded-lg whitespace-nowrap transition-all cursor-pointer min-h-[40px] flex items-center gap-1.5 ${
-              tab === 'vaccines' ? 'bg-slate-900 dark:bg-slate-700 text-white shadow-xs' : 'text-gray-600 dark:text-slate-400 hover:text-gray-900 dark:hover:text-slate-100 hover:bg-gray-200/60 dark:hover:bg-slate-700/60'
+            className={`col-span-3 sm:col-span-2 lg:col-span-1 flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-1.5 px-2 py-2 rounded-lg text-center transition-all cursor-pointer min-h-[44px] font-bold ${
+              tab === 'vaccines'
+                ? 'bg-rose-700 text-white shadow-xs border border-rose-700'
+                : 'bg-rose-50 text-rose-950 border border-rose-200/80 hover:bg-rose-100/90 dark:bg-rose-950/40 dark:text-rose-300 dark:border-rose-800'
             }`}
           >
-            <Syringe className="w-4 h-4" />
-            <span>টিকা সময়সূচি (Vaccines)</span>
+            <Syringe className="w-4 h-4 shrink-0" />
+            <span>টিকা শিডিউল</span>
           </button>
         </div>
       </div>
