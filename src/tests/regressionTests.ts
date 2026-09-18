@@ -2,7 +2,7 @@ import { validateBalancedLines } from '../accounting/accountingEngine';
 import { DEFAULT_CHART_OF_ACCOUNTS } from '../accounting/defaultAccounts';
 import { getInventoryAssetAccount, getPaymentAccount } from '../accounting/accountMapping';
 import { generateTransactionNumber, generateUniqueId } from '../utils/idGenerator';
-import { JournalLine } from '../types';
+import { JournalLine, Animal, AnimalEvent, InventoryItem, Party, Sale, Purchase } from '../types';
 
 export interface TestResult {
   success: boolean;
@@ -10,6 +10,104 @@ export interface TestResult {
   passed: number;
   failed: number;
   failures: string[];
+}
+
+/**
+ * In-memory Mock Table that mimics Dexie Table interface.
+ * Operates purely in RAM via JavaScript Map to guarantee 0% chance
+ * of leaking test/dummy records into real IndexedDB or Firestore.
+ */
+export class MockTable<T extends { id: string }> {
+  private store: Map<string, T> = new Map();
+
+  async get(id: string): Promise<T | undefined> {
+    const item = this.store.get(id);
+    return item ? JSON.parse(JSON.stringify(item)) : undefined;
+  }
+
+  async put(item: T): Promise<string> {
+    this.store.set(item.id, JSON.parse(JSON.stringify(item)));
+    return item.id;
+  }
+
+  async bulkPut(items: T[]): Promise<void> {
+    for (const item of items) {
+      this.store.set(item.id, JSON.parse(JSON.stringify(item)));
+    }
+  }
+
+  async update(id: string, changes: Partial<T>): Promise<number> {
+    const existing = this.store.get(id);
+    if (!existing) return 0;
+    const updated = { ...existing, ...changes };
+    this.store.set(id, updated);
+    return 1;
+  }
+
+  async delete(id: string): Promise<void> {
+    this.store.delete(id);
+  }
+
+  async clear(): Promise<void> {
+    this.store.clear();
+  }
+
+  async toArray(): Promise<T[]> {
+    return Array.from(this.store.values()).map((v) => JSON.parse(JSON.stringify(v)));
+  }
+
+  async count(): Promise<number> {
+    return this.store.size;
+  }
+
+  where(field: keyof T) {
+    return {
+      equals: (val: any) => ({
+        toArray: async (): Promise<T[]> => {
+          return Array.from(this.store.values()).filter((item) => (item as any)[field] === val);
+        },
+        count: async (): Promise<number> => {
+          return Array.from(this.store.values()).filter((item) => (item as any)[field] === val).length;
+        }
+      })
+    };
+  }
+
+  filter(predicate: (item: T) => boolean) {
+    return {
+      toArray: async (): Promise<T[]> => {
+        return Array.from(this.store.values()).filter(predicate);
+      },
+      count: async (): Promise<number> => {
+        return Array.from(this.store.values()).filter(predicate).length;
+      }
+    };
+  }
+}
+
+/**
+ * Creates an isolated in-memory Mock Database for regression testing.
+ * NEVER connects to IndexedDB or Firestore.
+ */
+export function createMockAgroDatabase() {
+  return {
+    accounts: new MockTable<any>(),
+    animals: new MockTable<Animal>(),
+    animalEvents: new MockTable<AnimalEvent>(),
+    inventoryItems: new MockTable<InventoryItem>(),
+    stockMovements: new MockTable<any>(),
+    parties: new MockTable<Party>(),
+    purchases: new MockTable<Purchase>(),
+    sales: new MockTable<Sale>(),
+    journalEntries: new MockTable<any>(),
+    cashBankAccounts: new MockTable<any>(),
+    bankTransfers: new MockTable<any>(),
+    loans: new MockTable<any>(),
+    investors: new MockTable<any>(),
+    fixedAssets: new MockTable<any>(),
+    reminders: new MockTable<any>(),
+    recurringExpenseTemplates: new MockTable<any>()
+  };
 }
 
 let activeRegressionTestPromise: Promise<TestResult> | null = null;
@@ -46,6 +144,8 @@ async function runRegressionTestsInternal(): Promise<TestResult> {
 
   try {
     const accounts = DEFAULT_CHART_OF_ACCOUNTS;
+    // Instantiate fresh, isolated in-memory database
+    const mockDb = createMockAgroDatabase();
 
     // ----------------------------------------------------
     // TEST 1: Account 1050 Hard Rejection
@@ -141,21 +241,77 @@ async function runRegressionTestsInternal(): Promise<TestResult> {
     assert(expectedMonthlyDepr === 2000, 'Monthly straight-line depreciation formula must equal (cost * rate / 100) / 12.');
 
     // ----------------------------------------------------
-    // TEST 9: Animal Cost Accumulation Formula
+    // TEST 9: In-Memory Mock Database Animal Lifecycle Test
     // ----------------------------------------------------
-    const purchaseCost = 50000;
+    const mockCow: Animal = {
+      id: 'mock_cow_1',
+      tag: 'MOCK-001',
+      species: 'CATTLE',
+      breed: 'HOLSTEIN',
+      gender: 'FEMALE',
+      birthDate: '2025-01-01',
+      purchaseDate: '2026-01-01',
+      purchaseCost: 50000,
+      currentWeightKg: 280,
+      status: 'ACTIVE',
+      location: 'Barn 1',
+      accumulatedFeedCost: 0,
+      accumulatedMedCost: 0,
+      accumulatedLabourCost: 0,
+      otherCosts: 0,
+      totalCost: 50000,
+      notes: 'In-memory test cow',
+      synced: false
+    };
+
+    await mockDb.animals.put(mockCow);
+    const retrievedCow = await mockDb.animals.get('mock_cow_1');
+    assert(!!retrievedCow && retrievedCow.tag === 'MOCK-001', 'Mock animal stored and retrieved safely in RAM.');
+
+    // Simulate Feed Event in Mock Database
     const feedCost = 1650;
+    await mockDb.animals.update('mock_cow_1', {
+      accumulatedFeedCost: (retrievedCow?.accumulatedFeedCost || 0) + feedCost,
+      totalCost: (retrievedCow?.totalCost || 0) + feedCost
+    });
+
+    // Simulate Medicine Event in Mock Database
     const medCost = 850;
-    const labourCost = 200;
-    const totalCost = purchaseCost + feedCost + medCost + labourCost;
-    assert(totalCost === 52700, 'Animal total cost must correctly sum purchase and operational accumulated costs.');
+    const cowAfterFeed = await mockDb.animals.get('mock_cow_1');
+    await mockDb.animals.update('mock_cow_1', {
+      accumulatedMedCost: (cowAfterFeed?.accumulatedMedCost || 0) + medCost,
+      totalCost: (cowAfterFeed?.totalCost || 0) + medCost
+    });
+
+    const cowAfterMed = await mockDb.animals.get('mock_cow_1');
+    assert(cowAfterMed?.totalCost === 52500, 'Animal total cost calculation matches accumulated feed and medicine costs.');
+
+    // Simulate Sale in Mock Database
+    const salePrice = 75000;
+    const netMargin = salePrice - (cowAfterMed?.totalCost || 0);
+    assert(netMargin === 22500, 'Animal sale net margin formula accurately computed.');
 
     // ----------------------------------------------------
-    // TEST 10: Animal Sale Net Margin Formula
+    // TEST 10: In-Memory Mock Database Journal Integrity
     // ----------------------------------------------------
-    const salePrice = 75000;
-    const netProfit = salePrice - totalCost;
-    assert(netProfit === 22300, 'Animal sale margin calculation must equal salePrice - totalCost.');
+    const mockJournalEntry = {
+      id: 'mock_jrn_1',
+      voucherNumber: 'PAY-MOCK-001',
+      voucherType: 'PAYMENT',
+      date: '2026-01-15',
+      narration: 'Mock feed expense test',
+      lines: [
+        { accountId: '1051', accountCode: '1051', accountName: 'Feed Inventory', debit: 1650, credit: 0 },
+        { accountId: '1010', accountCode: '1010', accountName: 'Cash', debit: 0, credit: 1650 }
+      ],
+      synced: false
+    };
+    await mockDb.journalEntries.put(mockJournalEntry);
+    const retrievedJournal = await mockDb.journalEntries.get('mock_jrn_1');
+    assert(
+      !!retrievedJournal && retrievedJournal.lines.length === 2,
+      'Mock journal entry stored and queried in RAM without writing to IndexedDB.'
+    );
 
     // ----------------------------------------------------
     // TEST 11: Contra-Equity Classification

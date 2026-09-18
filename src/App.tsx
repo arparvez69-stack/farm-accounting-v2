@@ -25,6 +25,7 @@ import { MoreModule } from './components/MoreModule';
 import { AnimalEvent, SyncState, SystemConfig, UserProfile } from './types';
 import { getLatestRegressionTestResult, TestResult } from './utils/regressionTests';
 import { triggerForegroundDueTodayNotification } from './db/indexedDb';
+import { cleanupLeakedRegressionTestData } from './utils/cleanupTestData';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { subscribeToUndo, executeUndo, UndoableAction } from './services/undoService';
 import { PatternBackground } from './components/ui/PatternBackground';
@@ -160,6 +161,9 @@ export default function App() {
 
       // 1. Initialize IndexedDB default accounts and configuration
       await initializeLocalDatabase();
+
+      // One-time startup scan to remove any leaked regression test records from IndexedDB
+      await cleanupLeakedRegressionTestData();
 
       // 2. Ensure system config for The Goated Farm
       const boot = await checkSystemBootstrap();
