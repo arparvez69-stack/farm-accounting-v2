@@ -938,6 +938,7 @@ export async function executeAnimalEventTransaction(params: {
         ...event,
         id: eventId,
         cost,
+        journalEntryId,
         synced: false
       };
       await safeInsert(db.animalEvents, eventRecord, { idPrefix: 'evt' });

@@ -22,7 +22,8 @@ import {
   Download,
   RefreshCw,
   X,
-  HardDriveDownload
+  HardDriveDownload,
+  Droplets
 } from 'lucide-react';
 import { db } from '../db/indexedDb';
 import { generateProfitLoss, generateTrialBalance } from '../accounting/accountingEngine';
@@ -35,7 +36,11 @@ import { runRegressionTests, getLatestRegressionTestResult, TestResult } from '.
 
 interface Props {
   role: UserRole;
-  onNavigate: (tab: ActiveTab, animalId?: string) => void;
+  onNavigate: (
+    tab: ActiveTab,
+    animalId?: string,
+    action?: { openActivityModal?: boolean; eventType?: 'FEED' | 'MILK' | 'VACCINE' | 'TREATMENT' | 'WEIGHT' }
+  ) => void;
   onOpenQuickVoucher?: () => void;
   regressionTestResult?: TestResult | null;
 }
@@ -395,6 +400,45 @@ export const Dashboard: React.FC<Props> = ({ role, onNavigate, regressionTestRes
           </div>
         </div>
       )}
+
+      {/* 0. QUICK ACTIVITY ACTION BUTTONS */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <button
+          id="btn-quick-feed-cost"
+          type="button"
+          onClick={() => onNavigate('operations', undefined, { openActivityModal: true, eventType: 'FEED' })}
+          className="flex items-center justify-center gap-3 p-4 sm:p-4.5 rounded-2xl bg-amber-50 dark:bg-amber-950/40 hover:bg-amber-100 dark:hover:bg-amber-950/60 text-amber-900 dark:text-amber-200 border-2 border-amber-300 dark:border-amber-700/60 font-bold text-base sm:text-lg shadow-sm hover:shadow active:scale-[0.98] transition-all cursor-pointer min-h-[56px]"
+        >
+          <div className="w-9 h-9 rounded-xl bg-amber-600 text-white flex items-center justify-center shadow-xs shrink-0">
+            <PlusCircle className="w-5 h-5" />
+          </div>
+          <span>+ ফিড খরচ</span>
+        </button>
+
+        <button
+          id="btn-quick-milk-today"
+          type="button"
+          onClick={() => onNavigate('operations', undefined, { openActivityModal: true, eventType: 'MILK' })}
+          className="flex items-center justify-center gap-3 p-4 sm:p-4.5 rounded-2xl bg-blue-50 dark:bg-blue-950/40 hover:bg-blue-100 dark:hover:bg-blue-950/60 text-blue-900 dark:text-blue-200 border-2 border-blue-300 dark:border-blue-700/60 font-bold text-base sm:text-lg shadow-sm hover:shadow active:scale-[0.98] transition-all cursor-pointer min-h-[56px]"
+        >
+          <div className="w-9 h-9 rounded-xl bg-blue-600 text-white flex items-center justify-center shadow-xs shrink-0">
+            <Droplets className="w-5 h-5" />
+          </div>
+          <span>+ আজকের দুধ</span>
+        </button>
+
+        <button
+          id="btn-quick-vaccine"
+          type="button"
+          onClick={() => onNavigate('operations', undefined, { openActivityModal: true, eventType: 'VACCINE' })}
+          className="flex items-center justify-center gap-3 p-4 sm:p-4.5 rounded-2xl bg-emerald-50 dark:bg-emerald-950/40 hover:bg-emerald-100 dark:hover:bg-emerald-950/60 text-emerald-900 dark:text-emerald-200 border-2 border-emerald-300 dark:border-emerald-700/60 font-bold text-base sm:text-lg shadow-sm hover:shadow active:scale-[0.98] transition-all cursor-pointer min-h-[56px]"
+        >
+          <div className="w-9 h-9 rounded-xl bg-[#1E5128] dark:bg-emerald-700 text-white flex items-center justify-center shadow-xs shrink-0">
+            <Syringe className="w-5 h-5" />
+          </div>
+          <span>+ ভ্যাকসিন</span>
+        </button>
+      </div>
 
       {/* 0. PROMINENT DUE THIS WEEK (এই সপ্তাহে করণীয়) CARD AT THE TOP */}
       <div className="bg-white dark:bg-slate-900 rounded-2xl border-2 border-emerald-600/30 dark:border-emerald-500/40 p-4 sm:p-5 shadow-sm space-y-3.5 transition-colors">

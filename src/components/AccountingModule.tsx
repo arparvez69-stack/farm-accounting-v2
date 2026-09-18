@@ -35,6 +35,7 @@ import { runAutomatedDepreciation } from '../accounting/depreciationService';
 import { Account, ClosedPeriod, JournalEntry, JournalLine, UserRole, VoucherType } from '../types';
 import { generateTransactionNumber, generateUniqueId, safeInsert } from '../utils/idGenerator';
 import { HIGH_AMOUNT_CONFIRMATION_THRESHOLD } from '../constants/validation';
+import { notifyUndoableAction } from '../services/undoService';
 
 interface Props {
   role: UserRole;
@@ -109,6 +110,14 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
   useEffect(() => {
     loadBaseData();
   }, [subTab]);
+
+  useEffect(() => {
+    const handleDataChanged = () => {
+      loadBaseData();
+    };
+    window.addEventListener('goted_data_changed', handleDataChanged);
+    return () => window.removeEventListener('goted_data_changed', handleDataChanged);
+  }, []);
 
   const loadBaseData = async () => {
     setLoading(true);
@@ -290,6 +299,12 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
         text: correctionOf
           ? `সংশোধিত নতুন ভাউচার ${voucherNum} সফলভাবে সংরক্ষিত ও লিঙ্ক করা হয়েছে!`
           : `ভাউচার ${voucherNum} সফলভাবে সংরক্ষিত হয়েছে!`
+      });
+
+      notifyUndoableAction({
+        type: 'JOURNAL_ENTRY',
+        journalEntryId: entryId,
+        currentUserId
       });
       // Reset form
       setNarration('');

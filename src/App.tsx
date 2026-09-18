@@ -10,7 +10,7 @@ import {
   synchronizePendingData,
   restoreRemoteDataIfLocalEmpty
 } from './firebase/firebaseClient';
-import { AlertTriangle } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, RotateCcw } from 'lucide-react';
 import { logoutOwner } from './services/authService';
 import { ActiveTab, MobileBottomNav } from './components/MobileBottomNav';
 import { Header } from './components/Header';
@@ -22,11 +22,12 @@ import { InventoryCommerceModule } from './components/InventoryCommerceModule';
 import { BankingInvestorsModule } from './components/BankingInvestorsModule';
 import { ReportsModule } from './components/ReportsModule';
 import { MoreModule } from './components/MoreModule';
-import { SyncState, SystemConfig, UserProfile } from './types';
+import { AnimalEvent, SyncState, SystemConfig, UserProfile } from './types';
 import { runRegressionTests, getLatestRegressionTestResult, TestResult } from './utils/regressionTests';
 import { triggerForegroundDueTodayNotification } from './db/indexedDb';
 import { runDepreciationOnAppLoad } from './accounting/depreciationService';
 import { ErrorBoundary } from './components/ErrorBoundary';
+import { subscribeToUndo, executeUndo, UndoableAction } from './services/undoService';
 
 export default function App() {
   const [systemConfig, setSystemConfig] = useState<SystemConfig | null>(null);
@@ -42,14 +43,73 @@ export default function App() {
   // Active Tab & Cross-Tab Navigation Params
   const [activeTab, setActiveTab] = useState<ActiveTab>('dashboard');
   const [selectedAnimalIdForOps, setSelectedAnimalIdForOps] = useState<string | null>(null);
+  const [opsActionParams, setOpsActionParams] = useState<{
+    openActivityModal?: boolean;
+    eventType?: AnimalEvent['eventType'];
+  } | null>(null);
   const [offlineEmptyWarning, setOfflineEmptyWarning] = useState<boolean>(false);
 
-  const handleNavigate = (tab: ActiveTab, animalId?: string) => {
+  // Toast Undo State (5 seconds duration)
+  const [undoAction, setUndoAction] = useState<UndoableAction | null>(null);
+  const [undoToastMessage, setUndoToastMessage] = useState<string | null>(null);
+  const undoTimerRef = useRef<any>(null);
+
+  const handleNavigate = (
+    tab: ActiveTab,
+    animalId?: string,
+    action?: { openActivityModal?: boolean; eventType?: AnimalEvent['eventType'] }
+  ) => {
     setActiveTab(tab);
-    if (tab === 'operations' && animalId) {
-      setSelectedAnimalIdForOps(animalId);
+    if (tab === 'operations') {
+      if (animalId) {
+        setSelectedAnimalIdForOps(animalId);
+      }
+      if (action) {
+        setOpsActionParams(action);
+      }
     }
   };
+
+  const handlePerformUndo = async () => {
+    if (!undoAction) return;
+    const actionToUndo = undoAction;
+    if (undoTimerRef.current) {
+      clearTimeout(undoTimerRef.current);
+    }
+    setUndoAction(null);
+    try {
+      const res = await executeUndo(actionToUndo);
+      setUndoToastMessage(res.message);
+      setTimeout(() => {
+        setUndoToastMessage(null);
+      }, 3000);
+    } catch (err: any) {
+      setUndoToastMessage(`আনডু ব্যর্থ: ${err.message || 'ত্রুটি'}`);
+      setTimeout(() => {
+        setUndoToastMessage(null);
+      }, 3000);
+    }
+  };
+
+  useEffect(() => {
+    const unsubscribe = subscribeToUndo((action) => {
+      if (undoTimerRef.current) {
+        clearTimeout(undoTimerRef.current);
+      }
+      setUndoAction(action);
+      setUndoToastMessage(null);
+      undoTimerRef.current = setTimeout(() => {
+        setUndoAction(null);
+      }, 5000);
+    });
+
+    return () => {
+      unsubscribe();
+      if (undoTimerRef.current) {
+        clearTimeout(undoTimerRef.current);
+      }
+    };
+  }, []);
 
   const hasRunInitRef = useRef(false);
 
@@ -284,6 +344,8 @@ export default function App() {
               currentUserId={userProfile.uid}
               initialAnimalId={selectedAnimalIdForOps}
               onClearInitialAnimalId={() => setSelectedAnimalIdForOps(null)}
+              initialAction={opsActionParams}
+              onClearInitialAction={() => setOpsActionParams(null)}
             />
           )}
 
@@ -322,6 +384,50 @@ export default function App() {
 
       {/* Persistent Bottom Mobile Navigation Bar */}
       <MobileBottomNav activeTab={activeTab} onChangeTab={setActiveTab} />
+
+      {/* Global 5-second Undo Toast Notification */}
+      {undoAction && (
+        <div
+          id="toast-undo-container"
+          role="status"
+          aria-live="polite"
+          className="fixed bottom-20 md:bottom-6 left-1/2 -translate-x-1/2 z-50 animate-in fade-in slide-in-from-bottom-3 duration-200"
+        >
+          <div
+            onClick={handlePerformUndo}
+            className="flex items-center gap-3 px-4 sm:px-5 py-3 bg-gray-900/95 dark:bg-slate-900/95 text-white rounded-full shadow-2xl border border-gray-700/80 dark:border-slate-700 cursor-pointer hover:bg-black transition-all active:scale-95 select-none"
+          >
+            <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+            <span className="text-xs sm:text-sm font-medium">যোগ করা হয়েছে —</span>
+            <button
+              id="btn-undo-toast"
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                handlePerformUndo();
+              }}
+              className="text-amber-300 hover:text-amber-200 font-bold text-xs sm:text-sm underline underline-offset-4 cursor-pointer flex items-center gap-1.5 transition-colors"
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+              <span>আনডু (Added — Undo)</span>
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Post-Undo Feedback Confirmation */}
+      {undoToastMessage && (
+        <div
+          id="toast-undo-feedback"
+          role="status"
+          className="fixed bottom-20 md:bottom-6 left-1/2 -translate-x-1/2 z-50 animate-in fade-in slide-in-from-bottom-2 duration-150"
+        >
+          <div className="flex items-center gap-2 px-4 py-2.5 bg-emerald-800 text-white text-xs sm:text-sm font-medium rounded-full shadow-xl border border-emerald-600">
+            <CheckCircle2 className="w-4 h-4 text-emerald-300 shrink-0" />
+            <span>{undoToastMessage}</span>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -152,6 +152,7 @@ export interface AnimalEvent {
   vaccineName?: string;
   nextDueDate?: string;
   details: string;
+  journalEntryId?: string;
   synced?: boolean;
 }
 

@@ -47,6 +47,7 @@ import {
   executeAnimalSaleOrRemovalTransaction
 } from '../services/transactionService';
 import { AnimalDetailView } from './AnimalDetailView';
+import { notifyUndoableAction } from '../services/undoService';
 
 /**
  * Compresses an image file client-side to a max width of 800px preserving aspect ratio,
@@ -97,6 +98,11 @@ interface Props {
   currentUserId: string;
   initialAnimalId?: string | null;
   onClearInitialAnimalId?: () => void;
+  initialAction?: {
+    openActivityModal?: boolean;
+    eventType?: AnimalEvent['eventType'];
+  } | null;
+  onClearInitialAction?: () => void;
 }
 
 type OpsTab = 'livestock' | 'fisheries' | 'crops' | 'flows' | 'processing';
@@ -105,7 +111,9 @@ export const FarmOperationsModule: React.FC<Props> = ({
   role,
   currentUserId,
   initialAnimalId,
-  onClearInitialAnimalId
+  onClearInitialAnimalId,
+  initialAction,
+  onClearInitialAction
 }) => {
   const [tab, setTab] = useState<OpsTab>('livestock');
   const [loading, setLoading] = useState(false);
@@ -223,6 +231,42 @@ export const FarmOperationsModule: React.FC<Props> = ({
       setSelectedAnimalId(initialAnimalId);
     }
   }, [initialAnimalId]);
+
+  useEffect(() => {
+    if (initialAction?.openActivityModal) {
+      setTab('livestock');
+      if (initialAction.eventType) {
+        setEventType(initialAction.eventType);
+      }
+      setIsBulkMode(false);
+      setEventDate(new Date().toISOString().split('T')[0]);
+      setEventCost('0');
+      setEventMilkLiters('');
+      setEventWeightKg('');
+      setEventVaccineName('');
+      setEventNextDueDate('');
+      setEventDetails('');
+
+      const targetId = initialAnimalId || selectedAnimalId;
+      if (targetId) {
+        const found = animals.find((a) => a.id === targetId);
+        setEventModalAnimal(found || null);
+      } else {
+        setEventModalAnimal(null);
+      }
+
+      setIsEventModalOpen(true);
+      onClearInitialAction?.();
+    }
+  }, [initialAction, animals, initialAnimalId, selectedAnimalId]);
+
+  useEffect(() => {
+    const handleDataChanged = () => {
+      loadOpsData();
+    };
+    window.addEventListener('goted_data_changed', handleDataChanged);
+    return () => window.removeEventListener('goted_data_changed', handleDataChanged);
+  }, []);
 
   const loadOpsData = async () => {
     setLoading(true);
@@ -554,7 +598,7 @@ export const FarmOperationsModule: React.FC<Props> = ({
               : costPerAnimal)
           : rawCost;
 
-        await executeAnimalEventTransaction({
+        const res = await executeAnimalEventTransaction({
           animal,
           event: {
             animalId: animal.id,
@@ -571,14 +615,16 @@ export const FarmOperationsModule: React.FC<Props> = ({
           currentUserId
         });
 
+        let autoReminderId: string | undefined;
         // Automatically create matching PENDING Reminder when nextDueDate is set
         if ((eventType === 'VACCINE' || eventType === 'TREATMENT') && eventNextDueDate) {
           const vaccineOrTreatment = eventType === 'VACCINE'
             ? (eventVaccineName.trim() || 'টিকা')
             : (eventDetails.trim() || 'চিকিৎসা');
           const animalTag = animal.tag || animal.id;
+          autoReminderId = generateUniqueId('rem');
           const autoReminder: Reminder = {
-            id: generateUniqueId('rem'),
+            id: autoReminderId,
             animalId: animal.id,
             title: `${animalTag}: ${vaccineOrTreatment} পরবর্তী ডোজ/ফলোআপ`,
             category: eventType === 'VACCINE' ? 'VACCINE' : 'TREATMENT',
@@ -589,6 +635,17 @@ export const FarmOperationsModule: React.FC<Props> = ({
           };
           await safeInsert(db.reminders, autoReminder, { idPrefix: 'rem' });
         }
+
+        notifyUndoableAction({
+          type: 'ANIMAL_EVENT',
+          eventId: res.event.id,
+          journalEntryId: res.journalEntryId,
+          animalId: animal.id,
+          cost: animalCost,
+          eventType,
+          createdReminderId: autoReminderId,
+          currentUserId
+        });
       }
 
       const totalRecordedCost = (isBulkMode && costAllocation === 'SPLIT_EVENLY')
@@ -1361,7 +1418,7 @@ export const FarmOperationsModule: React.FC<Props> = ({
           )}
 
           {/* ================= MODAL 1: ADD ACTIVITY / EVENT (SINGLE & BULK MODE) ================= */}
-          {isEventModalOpen && (eventModalAnimal || isBulkMode) && (
+          {isEventModalOpen && (
             <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
               <div className="bg-white rounded-2xl max-w-lg w-full p-5 sm:p-6 shadow-2xl border border-gray-200 my-8 space-y-4">
                 <div className="flex items-start justify-between border-b border-gray-100 pb-3">
@@ -1371,13 +1428,17 @@ export const FarmOperationsModule: React.FC<Props> = ({
                       <span>
                         {isBulkMode
                           ? `একাধিক পশুর কার্যক্রম যোগ করুন (${bulkSelectedAnimalIds.length}টি নির্বাচিত)`
-                          : `কার্যক্রম যোগ করুন: ${eventModalAnimal?.id || ''}`}
+                          : eventModalAnimal
+                          ? `কার্যক্রম যোগ করুন: ${eventModalAnimal.id}`
+                          : 'কার্যক্রম যোগ করুন'}
                       </span>
                     </h4>
                     <p className="text-[13px] text-gray-600 mt-0.5">
                       {isBulkMode
                         ? 'নির্বাচিত প্রতিটি পশুর জন্য আলাদা কার্যক্রম ও জাবেদা ভাউচার তৈরি হবে'
-                        : `জাত: ${eventModalAnimal?.breed || ''} | বর্তমান ওজন: ${eventModalAnimal?.currentWeightKg || ''} কেজি`}
+                        : eventModalAnimal
+                        ? `জাত: ${eventModalAnimal.breed || ''} | বর্তমান ওজন: ${eventModalAnimal.currentWeightKg || ''} কেজি`
+                        : 'নিচে পশুটি নির্বাচন করে কার্যক্রমের বিবরণ দিন'}
                     </p>
                   </div>
                   <button
@@ -1521,7 +1582,36 @@ export const FarmOperationsModule: React.FC<Props> = ({
                       )}
                     </div>
                   ) : (
-                    eventModalAnimal && (
+                    !eventModalAnimal ? (
+                      <div className="space-y-1.5 p-3.5 bg-emerald-50/70 border-2 border-emerald-300 rounded-xl">
+                        <label className="block text-[13px] font-bold text-gray-900 flex items-center justify-between">
+                          <span>১. পশু নির্বাচন করুন (Select Animal) *</span>
+                          <span className="text-[11px] text-emerald-700 font-normal">
+                            {activeAnimals.length}টি সক্রিয় পশু উপলব্ধ
+                          </span>
+                        </label>
+                        <select
+                          id="select-event-target-animal"
+                          value=""
+                          onChange={(e) => {
+                            const found = activeAnimals.find((a) => a.id === e.target.value);
+                            if (found) setEventModalAnimal(found);
+                          }}
+                          className="w-full px-3 py-2.5 bg-white border border-gray-300 rounded-xl text-sm font-medium text-gray-900 focus:ring-2 focus:ring-[#1E5128]"
+                          required
+                        >
+                          <option value="">-- যে পশুর জন্য কার্যক্রম তা নির্বাচন করুন --</option>
+                          {activeAnimals.map((a) => (
+                            <option key={a.id} value={a.id}>
+                              {a.id} {a.tag ? `(ট্যাগ: ${a.tag})` : ''} - {a.species === 'CATTLE' ? 'গরু' : a.species === 'GOAT' ? 'ছাগল' : a.species} {a.breed ? `[${a.breed}]` : ''}
+                            </option>
+                          ))}
+                        </select>
+                        <p className="text-[11px] text-gray-500">
+                          কার্যক্রম যুক্ত করতে অনুগ্রহ করে প্রথমে পশুটি বাছাই করুন।
+                        </p>
+                      </div>
+                    ) : (
                       <div className="p-3 bg-gray-50 border border-gray-200 rounded-xl flex items-center justify-between">
                         <div>
                           <div className="flex items-center gap-2">
@@ -1538,9 +1628,13 @@ export const FarmOperationsModule: React.FC<Props> = ({
                             জাত: {eventModalAnimal.breed} | বর্তমান ওজন: {eventModalAnimal.currentWeightKg} কেজি
                           </p>
                         </div>
-                        <span className="text-[11px] font-semibold text-emerald-800 bg-emerald-100 px-2.5 py-1 rounded-md">
-                          একক পশু
-                        </span>
+                        <button
+                          type="button"
+                          onClick={() => setEventModalAnimal(null)}
+                          className="text-[11px] font-semibold text-emerald-800 bg-emerald-100 hover:bg-emerald-200 px-2.5 py-1 rounded-md cursor-pointer transition-colors"
+                        >
+                          পশু পরিবর্তন
+                        </button>
                       </div>
                     )
                   )}

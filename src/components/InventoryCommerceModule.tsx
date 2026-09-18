@@ -15,6 +15,7 @@ import { executePurchaseTransaction, executeSaleTransaction } from '../services/
 import { generateTransactionNumber, generateUniqueId, safeInsert } from '../utils/idGenerator';
 import { InventoryItem, Party, PaymentRecord, Purchase, Sale, UserRole } from '../types';
 import { HIGH_AMOUNT_CONFIRMATION_THRESHOLD } from '../constants/validation';
+import { notifyUndoableAction } from '../services/undoService';
 
 interface Props {
   role: UserRole;
@@ -93,6 +94,14 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
   useEffect(() => {
     loadCommerceData();
   }, [tab]);
+
+  useEffect(() => {
+    const handleDataChanged = () => {
+      loadCommerceData();
+    };
+    window.addEventListener('goted_data_changed', handleDataChanged);
+    return () => window.removeEventListener('goted_data_changed', handleDataChanged);
+  }, []);
 
   const loadCommerceData = async () => {
     setLoading(true);
@@ -222,6 +231,17 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
         type: 'success',
         text: `বিক্রয় চালান ${res.sale.invoiceNumber} (৳${res.sale.totalAmount}) সফলভাবে সম্পন্ন এবং দ্বৈত-দাখিলায় পোস্ট হয়েছে!`
       });
+      notifyUndoableAction({
+        type: 'SALE',
+        saleId: res.sale.id,
+        journalEntryId: res.journalEntryId,
+        itemId: item.id,
+        quantity: qty,
+        customerId: customer.id,
+        totalAmount: res.sale.totalAmount,
+        paymentMethod: salePaymentMethod,
+        currentUserId
+      });
       loadCommerceData();
     } catch (err: any) {
       setMsg({ type: 'error', text: err.message || 'বিক্রয় লেনদেন ব্যর্থ হয়েছে।' });
@@ -295,6 +315,17 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
       setMsg({
         type: 'success',
         text: `ক্রয় চালান ${res.purchase.invoiceNumber} (৳${res.purchase.grandTotal}) সফলভাবে সংরক্ষিত এবং স্টকে যুক্ত হয়েছে!`
+      });
+      notifyUndoableAction({
+        type: 'PURCHASE',
+        purchaseId: res.purchase.id,
+        journalEntryId: res.journalEntryId,
+        itemId: item.id,
+        quantity: qty,
+        supplierId: supplier.id,
+        grandTotal: res.purchase.grandTotal,
+        paymentMethod: purchPaymentMethod,
+        currentUserId
       });
       loadCommerceData();
     } catch (err: any) {
