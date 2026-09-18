@@ -465,7 +465,7 @@ export const Dashboard: React.FC<Props> = ({ role, onNavigate, regressionTestRes
       {/* 1. GREETING HEADER & HERO ILLUSTRATION AT THE TOP */}
       <div id="dashboard-greeting-header" className="pt-1 pb-0.5 space-y-3">
         <div
-          className="w-full flex justify-center items-center overflow-hidden"
+          className="w-full h-48 sm:h-56 flex justify-center items-center overflow-hidden"
           style={{
             maskImage: 'linear-gradient(to bottom, black 60%, transparent 100%)',
             WebkitMaskImage: 'linear-gradient(to bottom, black 60%, transparent 100%)'
@@ -475,7 +475,7 @@ export const Dashboard: React.FC<Props> = ({ role, onNavigate, regressionTestRes
             src="/illustrations/Farmer-pana.svg"
             alt="Farmer illustration"
             loading="lazy"
-            className="w-[75%] max-w-sm sm:max-w-md h-auto object-contain pointer-events-none drop-shadow-xs"
+            className="w-auto max-w-full h-full object-contain pointer-events-none drop-shadow-xs"
           />
         </div>
         <div className="flex flex-col sm:flex-row sm:items-baseline justify-between gap-1">
