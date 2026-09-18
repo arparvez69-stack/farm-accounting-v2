@@ -498,7 +498,7 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-3.5 p-4 sm:p-5 rounded-2xl bg-white border border-gray-200 shadow-xs">
         <div>
           <h2 className="text-lg sm:text-xl font-bold text-gray-900 flex items-center gap-2">
-            <Package className="w-5 h-5 text-[#1E5128]" />
+            <Package className="w-5 h-5 text-amber-700" />
             <span>ক্রয়-বিক্রয়, মজুদ ও পক্ষসমূহ (Commerce & Inventory)</span>
           </h2>
           <p className="text-[14px] text-gray-600 mt-0.5">
@@ -506,14 +506,14 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
           </p>
         </div>
 
-        <div className="w-full md:w-auto grid grid-cols-2 sm:grid-cols-4 gap-2 bg-gray-100 p-1.5 rounded-xl text-[13px] font-semibold">
+        <div className="w-full md:w-auto grid grid-cols-2 sm:grid-cols-4 gap-2 bg-amber-50/50 border border-amber-100 p-1.5 rounded-xl text-[13px] font-semibold">
           <button
             type="button"
             onClick={() => setTab('inventory')}
             className={`flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg transition-all cursor-pointer min-h-[42px] text-center text-xs sm:text-[13px] font-bold ${
               tab === 'inventory'
-                ? 'bg-purple-700 text-white shadow-xs border border-purple-700'
-                : 'bg-purple-50 text-purple-900 border border-purple-200/80 hover:bg-purple-100/90'
+                ? 'bg-amber-700 text-white shadow-xs border border-amber-700'
+                : 'bg-white text-amber-950 border border-amber-200/80 hover:bg-amber-100/80'
             }`}
           >
             <Package className="w-4 h-4 shrink-0" />
@@ -524,8 +524,8 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
             onClick={() => setTab('sales')}
             className={`flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg transition-all cursor-pointer min-h-[42px] text-center text-xs sm:text-[13px] font-bold ${
               tab === 'sales'
-                ? 'bg-emerald-700 text-white shadow-xs border border-emerald-700'
-                : 'bg-emerald-50 text-emerald-900 border border-emerald-200/80 hover:bg-emerald-100/90'
+                ? 'bg-amber-700 text-white shadow-xs border border-amber-700'
+                : 'bg-white text-amber-950 border border-amber-200/80 hover:bg-amber-100/80'
             }`}
           >
             <TrendingUp className="w-4 h-4 shrink-0" />
@@ -536,8 +536,8 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
             onClick={() => setTab('purchases')}
             className={`flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg transition-all cursor-pointer min-h-[42px] text-center text-xs sm:text-[13px] font-bold ${
               tab === 'purchases'
-                ? 'bg-blue-700 text-white shadow-xs border border-blue-700'
-                : 'bg-blue-50 text-blue-900 border border-blue-200/80 hover:bg-blue-100/90'
+                ? 'bg-amber-700 text-white shadow-xs border border-amber-700'
+                : 'bg-white text-amber-950 border border-amber-200/80 hover:bg-amber-100/80'
             }`}
           >
             <ShoppingCart className="w-4 h-4 shrink-0" />
@@ -549,7 +549,7 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
             className={`flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg transition-all cursor-pointer min-h-[42px] text-center text-xs sm:text-[13px] font-bold ${
               tab === 'parties'
                 ? 'bg-amber-700 text-white shadow-xs border border-amber-700'
-                : 'bg-amber-50 text-amber-900 border border-amber-200/80 hover:bg-amber-100/90'
+                : 'bg-white text-amber-950 border border-amber-200/80 hover:bg-amber-100/80'
             }`}
           >
             <Users className="w-4 h-4 shrink-0" />
@@ -577,7 +577,7 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
           <div className="flex items-center justify-between border-b border-gray-100 pb-3 flex-wrap gap-2">
             <div>
               <h3 className="text-[16px] font-bold text-gray-900 flex items-center gap-2">
-                <Package className="w-5 h-5 text-[#1E5128]" />
+                <Package className="w-5 h-5 text-amber-700" />
                 <span>মজুদ পণ্যের তালিকা ও মূল্যায়ন ({items.length})</span>
               </h3>
               <p className="text-[13px] text-gray-600 mt-0.5">গড় ক্রয়মূল্য (Weighted Average Cost) ভিত্তিতে মূল্যায়ন</p>
@@ -590,7 +590,7 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                   onClick={() => setInventoryViewMode('cards')}
                   className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer ${
                     inventoryViewMode === 'cards'
-                      ? 'bg-white text-[#1E5128] shadow-xs'
+                      ? 'bg-white text-amber-700 shadow-xs font-bold'
                       : 'text-gray-600 hover:text-gray-900'
                   }`}
                   title="কার্ড ভিউ"
@@ -603,7 +603,7 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                   onClick={() => setInventoryViewMode('table')}
                   className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer ${
                     inventoryViewMode === 'table'
-                      ? 'bg-white text-[#1E5128] shadow-xs'
+                      ? 'bg-white text-amber-700 shadow-xs font-bold'
                       : 'text-gray-600 hover:text-gray-900'
                   }`}
                   title="তালিকা ভিউ"
@@ -616,7 +616,7 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
               {role === 'OWNER' && (
                 <button
                   onClick={() => setShowAddItem(!showAddItem)}
-                  className="px-3.5 py-2 rounded-xl bg-[#1E5128] hover:bg-[#173F1F] text-white text-[13px] font-bold shadow-xs transition-all cursor-pointer min-h-[40px] flex items-center gap-1.5"
+                  className="px-3.5 py-2 rounded-xl bg-amber-700 hover:bg-amber-800 text-white text-[13px] font-bold shadow-xs transition-all cursor-pointer min-h-[40px] flex items-center gap-1.5"
                 >
                   <PlusCircle className="w-4 h-4" />
                   <span>+ নতুন পণ্য</span>
@@ -626,8 +626,8 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
           </div>
 
           {showAddItem && (
-            <form onSubmit={handleAddItem} className="p-4 bg-[#F8FAFC] border border-gray-300 rounded-xl space-y-3">
-              <div className="font-bold text-[#1E5128] text-[15px]">নতুন আইটেম যোগ করুন</div>
+            <form onSubmit={handleAddItem} className="p-4 bg-amber-50/40 border border-amber-200 rounded-xl space-y-3">
+              <div className="font-bold text-amber-900 text-[15px]">নতুন আইটেম যোগ করুন</div>
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
                 <div>
                   <label className="block text-[13px] font-medium text-gray-700 mb-1">পণ্যের নাম</label>
@@ -671,7 +671,7 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                         type="button"
                         onClick={() => setItemUnit(u)}
                         className={`text-[11px] px-2 py-0.5 rounded border transition-colors ${
-                          itemUnit === u ? 'bg-[#1E5128] text-white border-[#1E5128]' : 'bg-gray-100 text-gray-700 border-gray-200 hover:bg-gray-200'
+                          itemUnit === u ? 'bg-amber-700 text-white border-amber-700' : 'bg-gray-100 text-gray-700 border-gray-200 hover:bg-gray-200'
                         }`}
                       >
                         {u}
@@ -741,7 +741,7 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-2 rounded-lg bg-[#1E5128] text-white text-[13px] font-bold cursor-pointer min-h-[40px]"
+                  className="px-4 py-2 rounded-lg bg-amber-700 hover:bg-amber-800 text-white text-[13px] font-bold cursor-pointer min-h-[40px]"
                 >
                   সংরক্ষণ করুন
                 </button>
@@ -819,7 +819,7 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                         <span className="font-sans text-gray-600">বিক্রয় মূল্য:</span>
                         <span className="text-[#15803D] font-semibold">{it.sellingPrice > 0 ? fmt(it.sellingPrice) : '-'}</span>
                       </div>
-                      <div className="flex justify-between font-bold text-[#1E5128] pt-1 border-t border-gray-100">
+                      <div className="flex justify-between font-bold text-amber-900 pt-1 border-t border-gray-100">
                         <span className="font-sans text-gray-900">মোট মজুদ মূল্য:</span>
                         <span>{fmt(val)}</span>
                       </div>
@@ -831,7 +831,7 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                             setEditingThresholdItem(it);
                             setNewThresholdValue(effectiveThreshold.toString());
                           }}
-                          className="text-gray-400 hover:text-[#1E5128] text-xs font-semibold p-1 hover:bg-gray-100 rounded transition-colors"
+                          className="text-gray-400 hover:text-amber-700 text-xs font-semibold p-1 hover:bg-gray-100 rounded transition-colors"
                           title="সতর্কতার সীমা পরিবর্তন করুন"
                         >
                           ✏️ সীমা পরিবর্তন
@@ -889,7 +889,7 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                         <td className="p-3 font-bold text-gray-900">{it.currentStock} {it.unit}</td>
                         <td className="p-3 text-gray-700">{fmt(it.avgCostPrice)}</td>
                         <td className="p-3 text-[#15803D] font-semibold">{it.sellingPrice > 0 ? fmt(it.sellingPrice) : '-'}</td>
-                        <td className="p-3 text-right font-bold text-[#1E5128]">{fmt(val)}</td>
+                        <td className="p-3 text-right font-bold text-amber-900">{fmt(val)}</td>
                         <td className="p-3 text-gray-700">
                           <div className="flex items-center gap-1.5">
                             <span className="font-semibold">{effectiveThreshold} {it.unit}</span>
@@ -899,7 +899,7 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                                 setEditingThresholdItem(it);
                                 setNewThresholdValue(effectiveThreshold.toString());
                               }}
-                              className="text-gray-400 hover:text-[#1E5128] text-xs font-semibold p-1 hover:bg-gray-100 rounded transition-colors"
+                              className="text-gray-400 hover:text-amber-700 text-xs font-semibold p-1 hover:bg-gray-100 rounded transition-colors"
                               title="সতর্কতার সীমা পরিবর্তন করুন"
                             >
                               ✏️
@@ -969,7 +969,7 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                         handleSaveThreshold(editingThresholdItem, val);
                       }
                     }}
-                    className="px-4 py-2 text-xs font-bold text-white bg-[#1E5128] hover:bg-[#173F1F] rounded-lg"
+                    className="px-4 py-2 text-xs font-bold text-white bg-amber-700 hover:bg-amber-800 rounded-lg"
                   >
                     সংরক্ষণ করুন
                   </button>
@@ -986,7 +986,7 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
           <div className="flex items-center justify-between border-b border-gray-100 pb-3 flex-wrap gap-2">
             <div>
               <h3 className="text-[16px] font-bold text-gray-900 flex items-center gap-2">
-                <TrendingUp className="w-5 h-5 text-[#1E5128]" />
+                <TrendingUp className="w-5 h-5 text-amber-700" />
                 <span>বিক্রয় চালান ও রাজস্ব (Sales Invoices)</span>
               </h3>
               <p className="text-[13px] text-gray-600 mt-0.5">স্বয়ংক্রিয় জাবেদা (নগদ: 1010, ব্যাংক: 1030, বাকি: 1040 AR)</p>
@@ -995,7 +995,7 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
             {role === 'OWNER' && (
               <button
                 onClick={() => setShowNewSale(!showNewSale)}
-                className="px-3.5 py-2 rounded-xl bg-[#1E5128] hover:bg-[#173F1F] text-white text-[13px] font-bold shadow-xs transition-all cursor-pointer min-h-[40px] flex items-center gap-1.5"
+                className="px-3.5 py-2 rounded-xl bg-amber-700 hover:bg-amber-800 text-white text-[13px] font-bold shadow-xs transition-all cursor-pointer min-h-[40px] flex items-center gap-1.5"
               >
                 <PlusCircle className="w-4 h-4" />
                 <span>+ নতুন বিক্রয় চালান</span>
@@ -1004,8 +1004,8 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
           </div>
 
           {showNewSale && (
-            <form onSubmit={handleCreateSale} className="p-4 bg-[#F8FAFC] border border-gray-300 rounded-xl space-y-3">
-              <div className="font-bold text-[#1E5128] text-[15px]">নতুন বিক্রয় চালান তৈরি করুন</div>
+            <form onSubmit={handleCreateSale} className="p-4 bg-amber-50/40 border border-amber-200 rounded-xl space-y-3">
+              <div className="font-bold text-amber-900 text-[15px]">নতুন বিক্রয় চালান তৈরি করুন</div>
               <div className="grid grid-cols-1 sm:grid-cols-4 gap-2.5">
                 <div>
                   <label className="block text-[13px] font-medium text-gray-700 mb-1">চালানের তারিখ</label>
@@ -1107,7 +1107,7 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-2 rounded-lg bg-[#1E5128] text-white text-[13px] font-bold cursor-pointer min-h-[40px]"
+                  className="px-4 py-2 rounded-lg bg-amber-700 hover:bg-amber-800 text-white text-[13px] font-bold cursor-pointer min-h-[40px]"
                 >
                   চালান পোস্ট করুন
                 </button>
@@ -1147,7 +1147,7 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                     return (
                       <React.Fragment key={s.id}>
                         <tr className="hover:bg-gray-50/80">
-                          <td className="p-3 font-bold text-[#1E5128] font-mono">{s.invoiceNumber}</td>
+                          <td className="p-3 font-bold text-amber-800 font-mono">{s.invoiceNumber}</td>
                           <td className="p-3 text-gray-600">{s.date}</td>
                           <td className="p-3 font-semibold text-gray-900">{s.customerName}</td>
                           <td className="p-3">
@@ -1158,7 +1158,7 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                             ))}
                           </td>
                           <td className="p-3 font-mono">
-                            <div className="text-[#15803D] font-bold">{fmt(total)}</div>
+                            <div className="text-amber-800 font-bold">{fmt(total)}</div>
                             {(s.paymentMethod === 'CREDIT' || paid > 0 || due > 0) && (
                               <div className="text-xs text-gray-500 font-sans">
                                 পরিশোধ: ৳{fmt(paid)} | বাকি: <span className={due > 0 ? "text-amber-700 font-bold" : "text-emerald-700"}>৳{fmt(due)}</span>
@@ -1181,7 +1181,7 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                                 type="button"
                                 id={`btn-add-installment-sale-${s.id}`}
                                 onClick={() => openPaymentModal('SALE', s)}
-                                className="px-2.5 py-1.5 rounded-lg bg-[#1E5128] hover:bg-[#173F1F] text-white text-xs font-bold shadow-2xs transition-all cursor-pointer inline-flex items-center gap-1 whitespace-nowrap min-h-[36px]"
+                                className="px-2.5 py-1.5 rounded-lg bg-amber-700 hover:bg-amber-800 text-white text-xs font-bold shadow-2xs transition-all cursor-pointer inline-flex items-center gap-1 whitespace-nowrap min-h-[36px]"
                               >
                                 <PlusCircle className="w-3.5 h-3.5" />
                                 <span>কিস্তি যোগ করুন</span>
@@ -1190,17 +1190,17 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                           </td>
                         </tr>
                         {sPayments.length > 0 && (
-                          <tr className="bg-emerald-50/40 border-b border-gray-100">
+                          <tr className="bg-amber-50/40 border-b border-gray-100">
                             <td colSpan={8} className="px-4 py-2">
                               <div className="flex items-center gap-2 flex-wrap text-xs text-gray-700">
-                                <span className="font-semibold text-[#1E5128]">পরিশোধের ইতিহাস:</span>
+                                <span className="font-semibold text-amber-800">পরিশোধের ইতিহাস:</span>
                                 {sPayments.map((pmt) => (
                                   <span
                                     key={pmt.id}
                                     className="inline-flex items-center gap-1 bg-white px-2.5 py-1 rounded-md border border-gray-200 text-gray-800 font-mono shadow-2xs"
                                   >
                                     <span className="text-gray-500">{pmt.date}:</span>
-                                    <span className="font-bold text-[#15803D]">৳{fmt(pmt.amount)}</span>
+                                    <span className="font-bold text-amber-800">৳{fmt(pmt.amount)}</span>
                                     {pmt.note && <span className="text-gray-400 font-sans text-[11px]">({pmt.note})</span>}
                                   </span>
                                 ))}
@@ -1233,7 +1233,7 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
             {role === 'OWNER' && (
               <button
                 onClick={() => setShowNewPurchase(!showNewPurchase)}
-                className="px-3.5 py-2 rounded-xl bg-[#1E5128] hover:bg-[#173F1F] text-white text-[13px] font-bold shadow-xs transition-all cursor-pointer min-h-[40px] flex items-center gap-1.5"
+                className="px-3.5 py-2 rounded-xl bg-amber-700 hover:bg-amber-800 text-white text-[13px] font-bold shadow-xs transition-all cursor-pointer min-h-[40px] flex items-center gap-1.5"
               >
                 <PlusCircle className="w-4 h-4" />
                 <span>+ নতুন ক্রয় চালান</span>
@@ -1242,8 +1242,8 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
           </div>
 
           {showNewPurchase && (
-            <form onSubmit={handleCreatePurchase} className="p-4 bg-[#F8FAFC] border border-gray-300 rounded-xl space-y-3">
-              <div className="font-bold text-[#1E5128] text-[15px]">নতুন ক্রয় চালান লিপিবদ্ধ করুন</div>
+            <form onSubmit={handleCreatePurchase} className="p-4 bg-amber-50/40 border border-amber-200 rounded-xl space-y-3">
+              <div className="font-bold text-amber-900 text-[15px]">নতুন ক্রয় চালান লিপিবদ্ধ করুন</div>
               <div className="grid grid-cols-1 sm:grid-cols-4 gap-2.5">
                 <div>
                   <label className="block text-[13px] font-medium text-gray-700 mb-1">চালানের তারিখ</label>
@@ -1355,7 +1355,7 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-2 rounded-lg bg-[#1E5128] text-white text-[13px] font-bold cursor-pointer min-h-[40px]"
+                  className="px-4 py-2 rounded-lg bg-amber-700 hover:bg-amber-800 text-white text-[13px] font-bold cursor-pointer min-h-[40px]"
                 >
                   চালান সংরক্ষণ করুন
                 </button>
@@ -1431,7 +1431,7 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                                 type="button"
                                 id={`btn-add-installment-purchase-${p.id}`}
                                 onClick={() => openPaymentModal('PURCHASE', p)}
-                                className="px-2.5 py-1.5 rounded-lg bg-[#1E5128] hover:bg-[#173F1F] text-white text-xs font-bold shadow-2xs transition-all cursor-pointer inline-flex items-center gap-1 whitespace-nowrap min-h-[36px]"
+                                className="px-2.5 py-1.5 rounded-lg bg-amber-700 hover:bg-amber-800 text-white text-xs font-bold shadow-2xs transition-all cursor-pointer inline-flex items-center gap-1 whitespace-nowrap min-h-[36px]"
                               >
                                 <PlusCircle className="w-3.5 h-3.5" />
                                 <span>কিস্তি যোগ করুন</span>
@@ -1474,7 +1474,7 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
           <div className="flex items-center justify-between border-b border-gray-100 pb-3 flex-wrap gap-2">
             <div>
               <h3 className="text-[16px] font-bold text-gray-900 flex items-center gap-2">
-                <Users className="w-5 h-5 text-[#1E5128]" />
+                <Users className="w-5 h-5 text-amber-700" />
                 <span>গ্রাহক ও সরবরাহকারী তালিকা (Parties Directory)</span>
               </h3>
               <p className="text-[13px] text-gray-600 mt-0.5">পাওনা ও দেনার হিসাব ট্র্যাকিং</p>
@@ -1483,7 +1483,7 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
             {role === 'OWNER' && (
               <button
                 onClick={() => setShowAddParty(!showAddParty)}
-                className="px-3.5 py-2 rounded-xl bg-[#1E5128] hover:bg-[#173F1F] text-white text-[13px] font-bold shadow-xs transition-all cursor-pointer min-h-[40px] flex items-center gap-1.5"
+                className="px-3.5 py-2 rounded-xl bg-amber-700 hover:bg-amber-800 text-white text-[13px] font-bold shadow-xs transition-all cursor-pointer min-h-[40px] flex items-center gap-1.5"
               >
                 <PlusCircle className="w-4 h-4" />
                 <span>+ নতুন ব্যক্তি/প্রতিষ্ঠান</span>
@@ -1492,8 +1492,8 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
           </div>
 
           {showAddParty && (
-            <form onSubmit={handleAddParty} className="p-4 bg-[#F8FAFC] border border-gray-300 rounded-xl space-y-3">
-              <div className="font-bold text-[#1E5128] text-[15px]">নতুন পক্ষ (Party) নিবন্ধন</div>
+            <form onSubmit={handleAddParty} className="p-4 bg-amber-50/40 border border-amber-200 rounded-xl space-y-3">
+              <div className="font-bold text-amber-900 text-[15px]">নতুন পক্ষ (Party) নিবন্ধন</div>
               <div className="grid grid-cols-1 sm:grid-cols-4 gap-2.5">
                 <input
                   type="text"
@@ -1537,7 +1537,7 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-2 rounded-lg bg-[#1E5128] text-white text-[13px] font-bold cursor-pointer min-h-[40px]"
+                  className="px-4 py-2 rounded-lg bg-amber-700 hover:bg-amber-800 text-white text-[13px] font-bold cursor-pointer min-h-[40px]"
                 >
                   সংরক্ষণ করুন
                 </button>
@@ -1589,7 +1589,7 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                   {paymentModal.parentType === 'SALE' ? 'বিক্রয় কিস্তি গ্রহণ' : 'ক্রয় কিস্তি পরিশোধ'}
                 </h3>
                 <p className="text-xs text-gray-500 mt-0.5">
-                  চালান নং: <span className="font-mono font-bold text-[#1E5128]">{paymentModal.invoiceNumber}</span> ({paymentModal.partyName})
+                  চালান নং: <span className="font-mono font-bold text-amber-800">{paymentModal.invoiceNumber}</span> ({paymentModal.partyName})
                 </p>
               </div>
               <button
@@ -1633,7 +1633,7 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                   placeholder="যেমন: 5000"
                   value={paymentAmount}
                   onChange={(e) => setPaymentAmount(e.target.value)}
-                  className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-base text-gray-900 focus:outline-hidden focus:ring-1 focus:ring-[#1E5128]"
+                  className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-base text-gray-900 focus:outline-hidden focus:ring-1 focus:ring-amber-500"
                 />
               </div>
 
@@ -1647,7 +1647,7 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                   id="input-installment-date"
                   value={paymentDate}
                   onChange={(e) => setPaymentDate(e.target.value)}
-                  className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-base text-gray-900 focus:outline-hidden focus:ring-1 focus:ring-[#1E5128]"
+                  className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-base text-gray-900 focus:outline-hidden focus:ring-1 focus:ring-amber-500"
                 />
               </div>
 
@@ -1661,7 +1661,7 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                   placeholder="যেমন: বিকাশ / ব্যাংক চেক / নগদ কিস্তি ১"
                   value={paymentNote}
                   onChange={(e) => setPaymentNote(e.target.value)}
-                  className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-base text-gray-900 focus:outline-hidden focus:ring-1 focus:ring-[#1E5128]"
+                  className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-base text-gray-900 focus:outline-hidden focus:ring-1 focus:ring-amber-500"
                 />
               </div>
 
@@ -1677,7 +1677,7 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                 <button
                   type="submit"
                   id="btn-save-installment"
-                  className="px-4 py-2 rounded-lg bg-[#1E5128] hover:bg-[#173F1F] text-white text-xs font-bold cursor-pointer min-h-[40px] shadow-xs"
+                  className="px-4 py-2 rounded-lg bg-amber-700 hover:bg-amber-800 text-white text-xs font-bold cursor-pointer min-h-[40px] shadow-xs"
                 >
                   কিস্তি সংরক্ষণ করুন
                 </button>
@@ -1731,7 +1731,7 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                     await executeSavePurchase();
                   }
                 }}
-                className="px-5 py-2.5 rounded-xl bg-[#1E5128] hover:bg-[#173F1F] text-white text-xs font-bold transition-all cursor-pointer shadow-xs min-h-[40px]"
+                className="px-5 py-2.5 rounded-xl bg-amber-700 hover:bg-amber-800 text-white text-xs font-bold transition-all cursor-pointer shadow-xs min-h-[40px]"
               >
                 নিশ্চিত করুন (Confirm)
               </button>

@@ -59,8 +59,8 @@ export const MobileBottomNav: React.FC<Props> = ({ activeTab, onChangeTab }) => 
       id: 'commerce',
       labelKey: 'nav.commerce',
       icon: Package,
-      activeTextColor: 'text-purple-700 dark:text-purple-400',
-      activeBgColor: 'bg-purple-50 dark:bg-purple-950/70 text-purple-700 dark:text-purple-400'
+      activeTextColor: 'text-amber-700 dark:text-amber-400',
+      activeBgColor: 'bg-amber-50 dark:bg-amber-950/70 text-amber-700 dark:text-amber-400'
     },
     {
       id: 'finance',
@@ -73,15 +73,15 @@ export const MobileBottomNav: React.FC<Props> = ({ activeTab, onChangeTab }) => 
       id: 'reports',
       labelKey: 'nav.reports',
       icon: FileSpreadsheet,
-      activeTextColor: 'text-amber-700 dark:text-amber-400',
-      activeBgColor: 'bg-amber-50 dark:bg-amber-950/70 text-amber-700 dark:text-amber-400'
+      activeTextColor: 'text-teal-700 dark:text-teal-400',
+      activeBgColor: 'bg-teal-50 dark:bg-teal-950/70 text-teal-700 dark:text-teal-400'
     },
     {
       id: 'more',
       labelKey: 'nav.more',
       icon: Menu,
-      activeTextColor: 'text-slate-700 dark:text-slate-300',
-      activeBgColor: 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300'
+      activeTextColor: 'text-slate-800 dark:text-slate-200',
+      activeBgColor: 'bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200'
     }
   ];
 

@@ -12,10 +12,65 @@ interface Props {
   syncState: SyncState;
   pendingCount: number;
   regressionTestResult?: TestResult | null;
+  activeTab?: string;
   onSyncNow: () => void;
   onLogout: () => void;
   onOpenProfile?: () => void;
 }
+
+const getModuleTheme = (tab?: string) => {
+  switch (tab) {
+    case 'operations':
+      return {
+        iconBg: 'bg-emerald-700 dark:bg-emerald-800',
+        textColor: 'text-emerald-700 dark:text-emerald-400',
+        barColor: 'bg-emerald-600',
+        roleBadge: 'bg-emerald-50 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-400 border-emerald-200 dark:border-emerald-800',
+        roleIcon: 'text-emerald-700 dark:text-emerald-400'
+      };
+    case 'commerce':
+      return {
+        iconBg: 'bg-amber-600 dark:bg-amber-700',
+        textColor: 'text-amber-700 dark:text-amber-400',
+        barColor: 'bg-amber-500',
+        roleBadge: 'bg-amber-50 dark:bg-amber-950/60 text-amber-800 dark:text-amber-400 border-amber-200 dark:border-amber-800',
+        roleIcon: 'text-amber-600 dark:text-amber-400'
+      };
+    case 'accounting':
+    case 'finance':
+      return {
+        iconBg: 'bg-blue-600 dark:bg-blue-700',
+        textColor: 'text-blue-700 dark:text-blue-400',
+        barColor: 'bg-blue-600',
+        roleBadge: 'bg-blue-50 dark:bg-blue-950/60 text-blue-800 dark:text-blue-400 border-blue-200 dark:border-blue-800',
+        roleIcon: 'text-blue-600 dark:text-blue-400'
+      };
+    case 'reports':
+      return {
+        iconBg: 'bg-teal-600 dark:bg-teal-700',
+        textColor: 'text-teal-700 dark:text-teal-400',
+        barColor: 'bg-teal-600',
+        roleBadge: 'bg-teal-50 dark:bg-teal-950/60 text-teal-800 dark:text-teal-400 border-teal-200 dark:border-teal-800',
+        roleIcon: 'text-teal-600 dark:text-teal-400'
+      };
+    case 'more':
+      return {
+        iconBg: 'bg-slate-700 dark:bg-slate-700',
+        textColor: 'text-slate-700 dark:text-slate-300',
+        barColor: 'bg-slate-600',
+        roleBadge: 'bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200 border-slate-300 dark:border-slate-700',
+        roleIcon: 'text-slate-700 dark:text-slate-300'
+      };
+    default:
+      return {
+        iconBg: 'bg-[#1E5128] dark:bg-emerald-800',
+        textColor: 'text-[#1E5128] dark:text-emerald-400',
+        barColor: 'bg-[#1E5128]',
+        roleBadge: 'bg-[#F0FDF4] dark:bg-emerald-950/60 text-[#1E5128] dark:text-emerald-400 border-[#BBF7D0] dark:border-emerald-800',
+        roleIcon: 'text-[#1E5128] dark:text-emerald-400'
+      };
+  }
+};
 
 export const Header: React.FC<Props> = ({
   userProfile,
@@ -23,6 +78,7 @@ export const Header: React.FC<Props> = ({
   syncState,
   pendingCount,
   regressionTestResult,
+  activeTab,
   onSyncNow,
   onLogout
 }) => {
@@ -31,6 +87,7 @@ export const Header: React.FC<Props> = ({
   const [testResult, setTestResult] = useState<TestResult | null>(() => regressionTestResult || getLatestRegressionTestResult());
   const [showFailuresModal, setShowFailuresModal] = useState(false);
   const [isRerunningTests, setIsRerunningTests] = useState(false);
+  const theme = getModuleTheme(activeTab);
 
   useEffect(() => {
     if (regressionTestResult) {
@@ -73,18 +130,21 @@ export const Header: React.FC<Props> = ({
 
   return (
     <>
-      <header className="sticky top-0 z-30 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-b border-gray-200 dark:border-slate-800 text-gray-900 dark:text-slate-100 pt-safe px-3.5 sm:px-6 py-2.5 shadow-xs transition-colors">
-        <div className="max-w-5xl mx-auto flex items-center justify-between gap-2">
+      <header className="sticky top-0 z-30 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-b border-gray-200 dark:border-slate-800 text-gray-900 dark:text-slate-100 pt-safe shadow-xs transition-colors">
+        {/* Module Color Accent Bar */}
+        <div className={`h-1 w-full transition-colors duration-200 ${theme.barColor}`} />
+
+        <div className="max-w-5xl mx-auto flex items-center justify-between gap-2 px-3.5 sm:px-6 py-2.5">
           {/* Left: Brand / Farm Info */}
           <div className="flex items-center gap-2.5 min-w-0">
-            <div className="w-10 h-10 rounded-xl bg-[#1E5128] dark:bg-emerald-800 flex items-center justify-center shadow-sm shrink-0">
+            <div className={`w-10 h-10 rounded-xl ${theme.iconBg} flex items-center justify-center shadow-sm shrink-0 transition-colors duration-200`}>
               <Sprout className="w-5 h-5 text-white" />
             </div>
             <div className="truncate">
               <h1 className="text-[15px] sm:text-base font-bold text-gray-900 dark:text-slate-100 tracking-tight leading-tight truncate">
                 {systemConfig?.companyName || 'The Goated Farm'}
               </h1>
-              <p className="text-[13px] text-[#1E5128] dark:text-emerald-400 font-semibold truncate flex items-center gap-1.5">
+              <p className={`text-[13px] ${theme.textColor} font-semibold truncate flex items-center gap-1.5 transition-colors duration-200`}>
                 <span>{t('app.tagline', language)}</span>
                 <span className="hidden lg:inline text-xs text-gray-400 dark:text-slate-600">•</span>
                 <span className="hidden lg:inline text-xs text-gray-500 dark:text-slate-400 font-normal">
@@ -103,8 +163,8 @@ export const Header: React.FC<Props> = ({
             />
 
             {/* Owner Role Badge */}
-            <span className="hidden sm:inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-[#F0FDF4] dark:bg-emerald-950/60 text-[#1E5128] dark:text-emerald-400 border border-[#BBF7D0] dark:border-emerald-800">
-              <Shield className="w-3.5 h-3.5 text-[#1E5128] dark:text-emerald-400" />
+            <span className={`hidden sm:inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold ${theme.roleBadge} transition-colors duration-200`}>
+              <Shield className={`w-3.5 h-3.5 ${theme.roleIcon}`} />
               <span>{language === 'en' ? 'Owner' : 'মালিক (OWNER)'}</span>
             </span>
 

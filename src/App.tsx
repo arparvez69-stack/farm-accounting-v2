@@ -441,6 +441,7 @@ export default function App() {
         syncState={syncState}
         pendingCount={pendingCount}
         regressionTestResult={regressionTestResult}
+        activeTab={activeTab}
         onSyncNow={handleSyncNow}
         onLogout={handleLogout}
       />

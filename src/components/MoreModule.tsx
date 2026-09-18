@@ -93,7 +93,7 @@ const MAIN_MODULES: {
     nameBn: 'ইনভেন্টরি ও বাণিজ্য',
     nameEn: 'Inventory & Commerce',
     icon: Package,
-    color: 'purple',
+    color: 'amber',
     subtitle: 'পণ্য স্টক, খাদ্য সরবরাহ ও চালান'
   },
   {
@@ -109,7 +109,7 @@ const MAIN_MODULES: {
     nameBn: 'রিপোর্টস ও বিবরণী',
     nameEn: 'Reports & Analytics',
     icon: FileSpreadsheet,
-    color: 'amber',
+    color: 'teal',
     subtitle: 'লাভ-ক্ষতি, ব্যালেন্স শিট ও আর্থিক বিশ্লেষণ'
   },
   {
@@ -596,8 +596,8 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
             onClick={() => setTab('accessLogs')}
             className={`flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-1.5 px-2 py-2 rounded-lg text-center transition-all cursor-pointer min-h-[44px] font-bold ${
               tab === 'accessLogs'
-                ? 'bg-blue-700 text-white shadow-xs border border-blue-700'
-                : 'bg-blue-50 text-blue-950 border border-blue-200/80 hover:bg-blue-100/90 dark:bg-blue-950/40 dark:text-blue-300 dark:border-blue-800'
+                ? 'bg-slate-800 dark:bg-slate-700 text-white shadow-xs border border-slate-800 dark:border-slate-700'
+                : 'bg-white dark:bg-slate-900/60 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800'
             }`}
           >
             <UserCheck className="w-4 h-4 shrink-0" />
@@ -609,8 +609,8 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
             onClick={() => setTab('changePin')}
             className={`flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-1.5 px-2 py-2 rounded-lg text-center transition-all cursor-pointer min-h-[44px] font-bold ${
               tab === 'changePin'
-                ? 'bg-purple-700 text-white shadow-xs border border-purple-700'
-                : 'bg-purple-50 text-purple-950 border border-purple-200/80 hover:bg-purple-100/90 dark:bg-purple-950/40 dark:text-purple-300 dark:border-purple-800'
+                ? 'bg-slate-800 dark:bg-slate-700 text-white shadow-xs border border-slate-800 dark:border-slate-700'
+                : 'bg-white dark:bg-slate-900/60 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800'
             }`}
           >
             <KeyRound className="w-4 h-4 shrink-0" />
@@ -621,8 +621,8 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
             onClick={() => setTab('audit')}
             className={`flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-1.5 px-2 py-2 rounded-lg text-center transition-all cursor-pointer min-h-[44px] font-bold ${
               tab === 'audit'
-                ? 'bg-amber-700 text-white shadow-xs border border-amber-700'
-                : 'bg-amber-50 text-amber-950 border border-amber-200/80 hover:bg-amber-100/90 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-800'
+                ? 'bg-slate-800 dark:bg-slate-700 text-white shadow-xs border border-slate-800 dark:border-slate-700'
+                : 'bg-white dark:bg-slate-900/60 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800'
             }`}
           >
             <History className="w-4 h-4 shrink-0" />
@@ -633,8 +633,8 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
             onClick={() => setTab('assets')}
             className={`flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-1.5 px-2 py-2 rounded-lg text-center transition-all cursor-pointer min-h-[44px] font-bold ${
               tab === 'assets'
-                ? 'bg-emerald-700 text-white shadow-xs border border-emerald-700'
-                : 'bg-emerald-50 text-emerald-950 border border-emerald-200/80 hover:bg-emerald-100/90 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800'
+                ? 'bg-slate-800 dark:bg-slate-700 text-white shadow-xs border border-slate-800 dark:border-slate-700'
+                : 'bg-white dark:bg-slate-900/60 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800'
             }`}
           >
             <HardDrive className="w-4 h-4 shrink-0" />
@@ -645,8 +645,8 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
             onClick={() => setTab('owners')}
             className={`flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-1.5 px-2 py-2 rounded-lg text-center transition-all cursor-pointer min-h-[44px] font-bold ${
               tab === 'owners'
-                ? 'bg-indigo-700 text-white shadow-xs border border-indigo-700'
-                : 'bg-indigo-50 text-indigo-950 border border-indigo-200/80 hover:bg-indigo-100/90 dark:bg-indigo-950/40 dark:text-indigo-300 dark:border-indigo-800'
+                ? 'bg-slate-800 dark:bg-slate-700 text-white shadow-xs border border-slate-800 dark:border-slate-700'
+                : 'bg-white dark:bg-slate-900/60 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800'
             }`}
           >
             <Users className="w-4 h-4 shrink-0" />
@@ -657,8 +657,8 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
             onClick={() => setTab('settings')}
             className={`flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-1.5 px-2 py-2 rounded-lg text-center transition-all cursor-pointer min-h-[44px] font-bold ${
               tab === 'settings'
-                ? 'bg-slate-700 text-white shadow-xs border border-slate-700'
-                : 'bg-slate-100 text-slate-800 border border-slate-300/80 hover:bg-slate-200/90 dark:bg-slate-800 dark:text-slate-300 dark:border-slate-700'
+                ? 'bg-slate-800 dark:bg-slate-700 text-white shadow-xs border border-slate-800 dark:border-slate-700'
+                : 'bg-white dark:bg-slate-900/60 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800'
             }`}
           >
             <Building className="w-4 h-4 shrink-0" />
@@ -670,8 +670,8 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
             onClick={() => setTab('vaccines')}
             className={`col-span-3 sm:col-span-2 lg:col-span-1 flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-1.5 px-2 py-2 rounded-lg text-center transition-all cursor-pointer min-h-[44px] font-bold ${
               tab === 'vaccines'
-                ? 'bg-rose-700 text-white shadow-xs border border-rose-700'
-                : 'bg-rose-50 text-rose-950 border border-rose-200/80 hover:bg-rose-100/90 dark:bg-rose-950/40 dark:text-rose-300 dark:border-rose-800'
+                ? 'bg-slate-800 dark:bg-slate-700 text-white shadow-xs border border-slate-800 dark:border-slate-700'
+                : 'bg-white dark:bg-slate-900/60 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800'
             }`}
           >
             <Syringe className="w-4 h-4 shrink-0" />
@@ -684,7 +684,7 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
       {tab === 'changePin' && (
         <div className="bg-white border border-gray-200 rounded-2xl p-5 sm:p-7 shadow-xs space-y-5 max-w-xl mx-auto">
           <div className="flex items-center gap-3 border-b border-gray-100 pb-4">
-            <div className="w-12 h-12 rounded-2xl bg-[#E8F5E9] text-[#1E5128] flex items-center justify-center shrink-0">
+            <div className="w-12 h-12 rounded-2xl bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 flex items-center justify-center shrink-0">
               <KeyRound className="w-6 h-6" />
             </div>
             <div>
@@ -727,7 +727,7 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
                 value={targetEmail}
                 onChange={(e) => setTargetEmail(e.target.value)}
                 disabled={pinLoading}
-                className="w-full px-3.5 py-2.5 rounded-xl bg-[#F8FAFC] border border-gray-300 focus:border-[#1E5128] focus:ring-2 focus:ring-[#1E5128]/20 text-gray-900 text-[14px] font-mono outline-none"
+                className="w-full px-3.5 py-2.5 rounded-xl bg-[#F8FAFC] border border-gray-300 focus:border-slate-600 focus:ring-2 focus:ring-slate-500/20 text-gray-900 text-[14px] font-mono outline-none"
               >
                 {ownerList.map((email) => (
                   <option key={email} value={email}>
@@ -754,7 +754,7 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
                     if (pinError) setPinError(null);
                   }}
                   disabled={pinLoading}
-                  className="w-full px-3.5 pr-11 py-2.5 rounded-xl bg-[#F8FAFC] border border-gray-300 focus:border-[#1E5128] focus:ring-2 focus:ring-[#1E5128]/20 text-gray-900 text-[15px] font-mono tracking-wider outline-none"
+                  className="w-full px-3.5 pr-11 py-2.5 rounded-xl bg-[#F8FAFC] border border-gray-300 focus:border-slate-600 focus:ring-2 focus:ring-slate-500/20 text-gray-900 text-[15px] font-mono tracking-wider outline-none"
                 />
                 <button
                   type="button"
@@ -784,7 +784,7 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
                     if (pinError) setPinError(null);
                   }}
                   disabled={pinLoading}
-                  className="w-full px-3.5 pr-11 py-2.5 rounded-xl bg-[#F8FAFC] border border-gray-300 focus:border-[#1E5128] focus:ring-2 focus:ring-[#1E5128]/20 text-gray-900 text-[15px] font-mono tracking-wider outline-none"
+                  className="w-full px-3.5 pr-11 py-2.5 rounded-xl bg-[#F8FAFC] border border-gray-300 focus:border-slate-600 focus:ring-2 focus:ring-slate-500/20 text-gray-900 text-[15px] font-mono tracking-wider outline-none"
                 />
                 <button
                   type="button"
@@ -816,7 +816,7 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
                   if (pinError) setPinError(null);
                 }}
                 disabled={pinLoading}
-                className="w-full px-3.5 py-2.5 rounded-xl bg-[#F8FAFC] border border-gray-300 focus:border-[#1E5128] focus:ring-2 focus:ring-[#1E5128]/20 text-gray-900 text-[15px] font-mono tracking-wider outline-none"
+                className="w-full px-3.5 py-2.5 rounded-xl bg-[#F8FAFC] border border-gray-300 focus:border-slate-600 focus:ring-2 focus:ring-slate-500/20 text-gray-900 text-[15px] font-mono tracking-wider outline-none"
               />
             </div>
 
@@ -825,7 +825,7 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
               <button
                 type="submit"
                 disabled={pinLoading || !currentPin || !newPin || !confirmPin}
-                className="w-full py-3 px-4 rounded-xl bg-[#1E5128] hover:bg-[#173F1F] active:scale-98 disabled:opacity-50 text-white font-bold text-[14px] transition-all flex items-center justify-center gap-2 shadow-xs cursor-pointer min-h-[44px]"
+                className="w-full py-3 px-4 rounded-xl bg-slate-800 hover:bg-slate-900 active:scale-98 disabled:opacity-50 text-white font-bold text-[14px] transition-all flex items-center justify-center gap-2 shadow-xs cursor-pointer min-h-[44px]"
               >
                 {pinLoading ? (
                   <>
@@ -850,7 +850,7 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-gray-100 pb-3">
             <div>
               <h3 className="text-[16px] font-bold text-gray-900 flex items-center gap-2">
-                <UserCheck className="w-5 h-5 text-[#1E5128]" />
+                <UserCheck className="w-5 h-5 text-slate-700 dark:text-slate-300" />
                 <span>অ্যাপে প্রবেশ ও ব্যবহারকারীর তালিকা (App Access & Login History)</span>
               </h3>
               <p className="text-[13px] text-gray-600 mt-0.5">
@@ -865,7 +865,7 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
                 <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
                 <span>রিফ্রেশ</span>
               </button>
-              <span className="text-[13px] text-[#15803D] bg-[#F0FDF4] border border-[#BBF7D0] px-3 py-1.5 rounded-full font-mono font-bold">
+              <span className="text-[13px] text-slate-700 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 px-3 py-1.5 rounded-full font-mono font-bold">
                 মোট প্রবেশ রেকর্ড: {accessLogs.length}
               </span>
             </div>
@@ -904,7 +904,7 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
                       </td>
                       <td className="p-3">
                         <div className="flex items-center gap-2">
-                          <div className="w-7 h-7 rounded-full bg-[#E8F5E9] border border-[#81C784] flex items-center justify-center text-[#1E5128] font-bold text-xs">
+                          <div className="w-7 h-7 rounded-full bg-slate-100 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 flex items-center justify-center text-slate-700 dark:text-slate-300 font-bold text-xs">
                             {log.email.charAt(0).toUpperCase()}
                           </div>
                           <span className="font-semibold text-gray-900 font-mono text-[14px]">{log.email}</span>
@@ -944,7 +944,7 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
           <div className="flex items-center justify-between border-b border-gray-100 pb-3 flex-wrap gap-2">
             <div>
               <h3 className="text-[16px] font-bold text-gray-900 flex items-center gap-2">
-                <History className="w-5 h-5 text-[#1E5128]" />
+                <History className="w-5 h-5 text-slate-700 dark:text-slate-300" />
                 <span>পরিবর্তনহীন নিরাপত্তা অডিট ট্রেইল (Immutable Audit Log)</span>
               </h3>
               <p className="text-[13px] text-gray-600 mt-0.5">
@@ -1011,7 +1011,7 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
           <div className="flex items-center justify-between border-b border-gray-100 pb-3 flex-wrap gap-2">
             <div>
               <h3 className="text-[16px] font-bold text-gray-900 flex items-center gap-2">
-                <HardDrive className="w-5 h-5 text-[#1E5128]" />
+                <HardDrive className="w-5 h-5 text-slate-700 dark:text-slate-300" />
                 <span>স্থায়ী সম্পদ রেজিস্টার ও অবচয় (Fixed Assets & Depreciation)</span>
               </h3>
               <p className="text-[13px] text-gray-600 mt-0.5">
@@ -1032,7 +1032,7 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
               </button>
               <button
                 onClick={() => setShowAddAsset(!showAddAsset)}
-                className="px-4 py-2 rounded-xl bg-[#1E5128] hover:bg-[#173F1F] text-white text-[13px] font-bold shadow-xs transition-all flex items-center gap-1.5 cursor-pointer min-h-[40px]"
+                className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-900 text-white text-[13px] font-bold shadow-xs transition-all flex items-center gap-1.5 cursor-pointer min-h-[40px]"
               >
                 + নতুন স্থায়ী সম্পদ
               </button>
@@ -1057,7 +1057,7 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
 
           {showAddAsset && (
             <form onSubmit={handleAddAsset} className="p-4 bg-[#F8FAFC] border border-gray-300 rounded-xl space-y-3">
-              <div className="font-bold text-[#1E5128] text-[15px]">নতুন সম্পদ যুক্ত করুন</div>
+              <div className="font-bold text-slate-800 dark:text-slate-200 text-[15px]">নতুন সম্পদ যুক্ত করুন</div>
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2.5">
                 <div>
                   <label className="block text-[13px] font-medium text-gray-700 mb-1">সম্পদের নাম</label>
@@ -1137,7 +1137,7 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-2 rounded-lg bg-[#1E5128] text-white text-[13px] font-bold cursor-pointer min-h-[40px]"
+                  className="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-900 text-white text-[13px] font-bold cursor-pointer min-h-[40px]"
                 >
                   সংরক্ষণ করুন
                 </button>
@@ -1221,7 +1221,7 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
           <div className="flex items-center justify-between border-b border-gray-100 pb-3 flex-wrap gap-2">
             <div>
               <h3 className="text-[16px] font-bold text-gray-900 flex items-center gap-2">
-                <Users className="w-5 h-5 text-[#1E5128]" />
+                <Users className="w-5 h-5 text-slate-700 dark:text-slate-300" />
                 <span>The Goated Farm — অনুমোদিত মালিক তালিকা (Authorized Owners)</span>
               </h3>
               <p className="text-[13px] text-gray-600 mt-0.5">
@@ -1242,7 +1242,7 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
                 className="p-4 rounded-xl bg-[#F8FAFC] border border-gray-200 flex items-center justify-between gap-3 shadow-xs"
               >
                 <div className="flex items-center gap-3">
-                  <div className="w-9 h-9 rounded-xl bg-[#E8F5E9] border border-[#81C784] flex items-center justify-center text-[#1E5128] font-bold text-sm">
+                  <div className="w-9 h-9 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 flex items-center justify-center text-slate-700 dark:text-slate-300 font-bold text-sm">
                     {idx + 1}
                   </div>
                   <div>
@@ -1277,7 +1277,7 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
       {tab === 'settings' && (
         <div className="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 rounded-2xl p-6 space-y-5 max-w-xl mx-auto shadow-xs transition-colors">
           <div className="flex items-center gap-3 border-b border-gray-100 dark:border-slate-800 pb-4">
-            <div className="p-3 rounded-2xl bg-[#E8F5E9] dark:bg-emerald-950/60 text-[#1E5128] dark:text-emerald-400">
+            <div className="p-3 rounded-2xl bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300">
               <Building className="w-8 h-8" />
             </div>
             <div>
@@ -1293,7 +1293,7 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
           <div className="space-y-3 text-[14px] text-gray-700 dark:text-slate-300">
             <div className="flex justify-between py-2 border-b border-gray-100 dark:border-slate-800">
               <span className="text-gray-500 dark:text-slate-400">খামার আর্কিটেকচার:</span>
-              <span className="font-bold text-[#15803D] dark:text-emerald-400">একক মালিকানা (Single Tenant)</span>
+              <span className="font-bold text-slate-800 dark:text-slate-200">একক মালিকানা (Single Tenant)</span>
             </div>
             <div className="flex justify-between py-2 border-b border-gray-100 dark:border-slate-800">
               <span className="text-gray-500 dark:text-slate-400">অনুমোদিত মালিক সংখ্যা:</span>
@@ -1305,15 +1305,15 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
             </div>
             <div className="flex justify-between py-2 border-b border-gray-100 dark:border-slate-800">
               <span className="text-gray-500 dark:text-slate-400">মুদ্রা (Currency):</span>
-              <span className="font-bold text-[#15803D] dark:text-emerald-400">{systemConfig?.currency || '৳'} (BDT)</span>
+              <span className="font-bold text-slate-800 dark:text-slate-200">{systemConfig?.currency || '৳'} (BDT)</span>
             </div>
             <div className="flex justify-between py-2 border-b border-gray-100 dark:border-slate-800">
               <span className="text-gray-500 dark:text-slate-400">প্রমাণীকরণ পদ্ধতি:</span>
-              <span className="font-semibold text-gray-900 dark:text-slate-100">সার্ভার-সাইড Bcrypt হ্যাশ যাচাইকরণ (Bcrypt Hashed PIN)</span>
+              <span className="semibold text-gray-900 dark:text-slate-100">সার্ভার-সাইড Bcrypt হ্যাশ যাচাইকরণ (Bcrypt Hashed PIN)</span>
             </div>
             <div className="flex justify-between py-2 border-b border-gray-100 dark:border-slate-800">
               <span className="text-gray-500 dark:text-slate-400">সিক্রেট পিন নিরাপত্তা:</span>
-              <span className="font-mono font-bold text-[#15803D] dark:text-emerald-400">•••••• (Bcrypt Cost 12 Secured)</span>
+              <span className="font-mono font-bold text-slate-800 dark:text-slate-200">•••••• (Bcrypt Cost 12 Secured)</span>
             </div>
             <div className="flex justify-between py-2 border-b border-gray-100 dark:border-slate-800">
               <span className="text-gray-500 dark:text-slate-400">ইনিশিয়ালাইজেশন:</span>
@@ -1327,7 +1327,7 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
               <div className="flex items-center justify-between gap-3">
                 <div>
                   <h4 className="font-bold text-gray-900 dark:text-slate-100 text-[14px] flex items-center gap-1.5">
-                    <Moon className="w-4 h-4 text-[#1E5128] dark:text-emerald-400" />
+                    <Moon className="w-4 h-4 text-slate-700 dark:text-slate-300" />
                     <span>ডার্ক মোড (Dark Mode)</span>
                   </h4>
                   <p className="text-xs text-gray-500 dark:text-slate-400 mt-0.5">
@@ -1342,7 +1342,7 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
                     onChange={(e) => handleToggleDarkMode(e.target.checked)}
                     className="sr-only peer"
                   />
-                  <div className="w-11 h-6 bg-gray-300 dark:bg-slate-600 peer-focus:outline-hidden rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#1E5128]"></div>
+                  <div className="w-11 h-6 bg-gray-300 dark:bg-slate-600 peer-focus:outline-hidden rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-slate-800 dark:peer-checked:bg-slate-600"></div>
                 </label>
               </div>
             </div>
@@ -1354,7 +1354,7 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div>
                   <h4 className="font-bold text-gray-900 dark:text-slate-100 text-[14px] flex items-center gap-1.5">
-                    <Globe className="w-4 h-4 text-[#1E5128] dark:text-emerald-400" />
+                    <Globe className="w-4 h-4 text-slate-700 dark:text-slate-300" />
                     <span>ভাষা / Language</span>
                   </h4>
                   <p className="text-xs text-gray-500 dark:text-slate-400 mt-0.5">
@@ -1369,7 +1369,7 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
                     onClick={() => setLanguage('bn')}
                     className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer min-h-[36px] ${
                       currentLanguage === 'bn'
-                        ? 'bg-[#1E5128] text-white shadow-xs'
+                        ? 'bg-slate-800 dark:bg-slate-700 text-white shadow-xs'
                         : 'text-gray-600 dark:text-slate-400 hover:text-gray-900 dark:hover:text-slate-100 hover:bg-gray-100 dark:hover:bg-slate-800'
                     }`}
                   >
@@ -1381,7 +1381,7 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
                     onClick={() => setLanguage('en')}
                     className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer min-h-[36px] ${
                       currentLanguage === 'en'
-                        ? 'bg-[#1E5128] text-white shadow-xs'
+                        ? 'bg-slate-800 dark:bg-slate-700 text-white shadow-xs'
                         : 'text-gray-600 dark:text-slate-400 hover:text-gray-900 dark:hover:text-slate-100 hover:bg-gray-100 dark:hover:bg-slate-800'
                     }`}
                   >
@@ -1398,7 +1398,7 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
               <div className="flex items-center justify-between gap-3">
                 <div>
                   <h4 className="font-bold text-gray-900 dark:text-slate-100 text-[14px] flex items-center gap-1.5">
-                    <FileText className="w-4 h-4 text-[#1E5128] dark:text-emerald-400" />
+                    <FileText className="w-4 h-4 text-slate-700 dark:text-slate-300" />
                     <span>ভ্যাট/টিন নিবন্ধিত ব্যবসা (VAT/TIN Registered Business)</span>
                   </h4>
                   <p className="text-xs text-gray-500 dark:text-slate-400 mt-0.5">
@@ -1413,7 +1413,7 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
                     onChange={(e) => handleToggleVat(e.target.checked)}
                     className="sr-only peer"
                   />
-                  <div className="w-11 h-6 bg-gray-300 dark:bg-slate-600 peer-focus:outline-hidden rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#1E5128]"></div>
+                  <div className="w-11 h-6 bg-gray-300 dark:bg-slate-600 peer-focus:outline-hidden rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-slate-800 dark:peer-checked:bg-slate-600"></div>
                 </label>
               </div>
 
@@ -1430,7 +1430,7 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
                       placeholder="যেমন: ১২৩৪৫৬৭৮৯১০১"
                       value={tinNumber}
                       onChange={(e) => handleTinChange(e.target.value)}
-                      className="w-full bg-white dark:bg-slate-900 border border-gray-300 dark:border-slate-700 rounded-lg p-2 text-[13px] text-gray-900 dark:text-slate-100 font-mono focus:ring-1 focus:ring-[#1E5128]"
+                      className="w-full bg-white dark:bg-slate-900 border border-gray-300 dark:border-slate-700 rounded-lg p-2 text-[13px] text-gray-900 dark:text-slate-100 font-mono focus:ring-1 focus:ring-slate-600"
                     />
                   </div>
                   <div>
@@ -1443,7 +1443,7 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
                       placeholder="যেমন: ০০১২৩৪৫৬৭-০১০১"
                       value={binNumber}
                       onChange={(e) => handleBinChange(e.target.value)}
-                      className="w-full bg-white dark:bg-slate-900 border border-gray-300 dark:border-slate-700 rounded-lg p-2 text-[13px] text-gray-900 dark:text-slate-100 font-mono focus:ring-1 focus:ring-[#1E5128]"
+                      className="w-full bg-white dark:bg-slate-900 border border-gray-300 dark:border-slate-700 rounded-lg p-2 text-[13px] text-gray-900 dark:text-slate-100 font-mono focus:ring-1 focus:ring-slate-600"
                     />
                   </div>
                 </div>
@@ -1456,7 +1456,7 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
             <div className="p-4 rounded-xl bg-gray-50 dark:bg-slate-800/80 border border-gray-200 dark:border-slate-700 space-y-2">
               <div className="flex items-center justify-between">
                 <h4 className="font-bold text-gray-900 dark:text-slate-100 text-[14px] flex items-center gap-1.5">
-                  <Phone className="w-4 h-4 text-[#1E5128] dark:text-emerald-400" />
+                  <Phone className="w-4 h-4 text-slate-700 dark:text-slate-300" />
                   <span>খামারের যোগাযোগ নম্বর (Owner / Farm Phone)</span>
                 </h4>
               </div>
@@ -1469,7 +1469,7 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
                 placeholder="যেমন: +৮৮০ ১৭XXXXXXXXX (খামারের ফোন নম্বর লিখুন)"
                 value={farmPhone}
                 onChange={(e) => handlePhoneChange(e.target.value)}
-                className="w-full bg-white dark:bg-slate-900 border border-gray-300 dark:border-slate-700 rounded-lg p-2 text-[13px] text-gray-900 dark:text-slate-100 font-mono focus:ring-1 focus:ring-[#1E5128]"
+                className="w-full bg-white dark:bg-slate-900 border border-gray-300 dark:border-slate-700 rounded-lg p-2 text-[13px] text-gray-900 dark:text-slate-100 font-mono focus:ring-1 focus:ring-slate-600"
               />
             </div>
           </div>
@@ -1479,10 +1479,10 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
             <div className="p-4 rounded-xl bg-gray-50 dark:bg-slate-800/80 border border-gray-200 dark:border-slate-700 space-y-2">
               <div className="flex items-center justify-between">
                 <h4 className="font-bold text-gray-900 dark:text-slate-100 text-[14px] flex items-center gap-1.5">
-                  <Wallet className="w-4 h-4 text-[#1E5128] dark:text-emerald-400" />
+                  <Wallet className="w-4 h-4 text-slate-700 dark:text-slate-300" />
                   <span>নগদ সতর্কতা সীমা (Low Cash Alert Threshold)</span>
                 </h4>
-                <span className="text-xs font-semibold px-2 py-0.5 rounded bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 font-mono">
+                <span className="text-xs font-semibold px-2 py-0.5 rounded bg-slate-200 dark:bg-slate-800 text-slate-800 dark:text-slate-200 font-mono">
                   ডিফল্ট: ৳৫,০০০
                 </span>
               </div>
@@ -1501,7 +1501,7 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
                   placeholder="5000"
                   value={lowCashAlertThreshold}
                   onChange={(e) => handleLowCashAlertThresholdChange(parseFloat(e.target.value) || 0)}
-                  className="w-full pl-8 pr-3 py-2 bg-white dark:bg-slate-900 border border-gray-300 dark:border-slate-700 rounded-lg text-[13px] text-gray-900 dark:text-slate-100 font-mono focus:ring-1 focus:ring-[#1E5128]"
+                  className="w-full pl-8 pr-3 py-2 bg-white dark:bg-slate-900 border border-gray-300 dark:border-slate-700 rounded-lg text-[13px] text-gray-900 dark:text-slate-100 font-mono focus:ring-1 focus:ring-slate-600"
                 />
               </div>
             </div>
@@ -1557,7 +1557,7 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
                 type="button"
                 id="btn-add-vaccine-template"
                 onClick={handleOpenAddVaccine}
-                className="px-4 py-2 rounded-xl bg-[#1E5128] hover:bg-[#163e1e] text-white text-[13px] font-bold flex items-center gap-1.5 cursor-pointer shadow-xs transition-all active:scale-95"
+                className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-900 text-white text-[13px] font-bold flex items-center gap-1.5 cursor-pointer shadow-xs transition-all active:scale-95"
               >
                 <Plus className="w-4 h-4" />
                 <span>নতুন টিকা যোগ করুন</span>
@@ -1640,7 +1640,7 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
               <div className="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 rounded-2xl max-w-md w-full p-5 sm:p-6 shadow-xl space-y-4 animate-in fade-in zoom-in-95 duration-150">
                 <div className="flex items-center justify-between border-b border-gray-100 dark:border-slate-800 pb-3">
                   <h3 className="text-base font-bold text-gray-900 dark:text-slate-100 flex items-center gap-2">
-                    <Syringe className="w-5 h-5 text-[#1E5128] dark:text-emerald-400" />
+                    <Syringe className="w-5 h-5 text-slate-700 dark:text-slate-300" />
                     <span>{editingTemplateId ? 'টিকা সম্পাদনা করুন' : 'নতুন টিকা যুক্ত করুন'}</span>
                   </h3>
                   <button
@@ -1663,7 +1663,7 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
                       placeholder="যেমন: ক্ষুরারোগ টিকা (FMD)"
                       value={vaccineFormName}
                       onChange={(e) => setVaccineFormName(e.target.value)}
-                      className="w-full bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-700 rounded-xl p-2.5 text-[14px] text-gray-900 dark:text-slate-100 focus:ring-2 focus:ring-[#1E5128]"
+                      className="w-full bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-700 rounded-xl p-2.5 text-[14px] text-gray-900 dark:text-slate-100 focus:ring-2 focus:ring-slate-600"
                     />
                   </div>
 
@@ -1680,7 +1680,7 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
                         placeholder="১৮০"
                         value={vaccineFormIntervalDays}
                         onChange={(e) => setVaccineFormIntervalDays(e.target.value)}
-                        className="w-full bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-700 rounded-xl p-2.5 text-[14px] font-mono text-gray-900 dark:text-slate-100 focus:ring-2 focus:ring-[#1E5128]"
+                        className="w-full bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-700 rounded-xl p-2.5 text-[14px] font-mono text-gray-900 dark:text-slate-100 focus:ring-2 focus:ring-slate-600"
                       />
                       <span className="absolute right-3 top-2.5 text-xs text-gray-500 dark:text-slate-400 font-semibold pointer-events-none">
                         দিন পর পর
@@ -1700,7 +1700,7 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
                       placeholder="যেমন: গরু / মহিষ / ছাগল / ভেড়া"
                       value={vaccineFormAppliesTo}
                       onChange={(e) => setVaccineFormAppliesTo(e.target.value)}
-                      className="w-full bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-700 rounded-xl p-2.5 text-[14px] text-gray-900 dark:text-slate-100 focus:ring-2 focus:ring-[#1E5128]"
+                      className="w-full bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-700 rounded-xl p-2.5 text-[14px] text-gray-900 dark:text-slate-100 focus:ring-2 focus:ring-slate-600"
                     />
                   </div>
 
@@ -1714,7 +1714,7 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
                     </button>
                     <button
                       type="submit"
-                      className="px-5 py-2.5 rounded-xl bg-[#1E5128] hover:bg-[#163e1e] text-white text-[13px] font-bold cursor-pointer shadow-xs transition-all active:scale-95"
+                      className="px-5 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-900 text-white text-[13px] font-bold cursor-pointer shadow-xs transition-all active:scale-95"
                     >
                       সংরক্ষণ করুন
                     </button>
