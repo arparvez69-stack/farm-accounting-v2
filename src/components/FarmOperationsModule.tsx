@@ -48,6 +48,8 @@ import {
 } from '../services/transactionService';
 import { AnimalDetailView } from './AnimalDetailView';
 import { notifyUndoableAction } from '../services/undoService';
+import { getVaccineTemplates } from '../data/vaccineTemplates';
+import { VaccineTemplate } from '../types';
 
 /**
  * Compresses an image file client-side to a max width of 800px preserving aspect ratio,
@@ -182,6 +184,8 @@ export const FarmOperationsModule: React.FC<Props> = ({
   const [eventWeightKg, setEventWeightKg] = useState<string>('');
   const [eventVaccineName, setEventVaccineName] = useState<string>('');
   const [eventNextDueDate, setEventNextDueDate] = useState<string>('');
+  const [vaccineTemplates, setVaccineTemplates] = useState<VaccineTemplate[]>(() => getVaccineTemplates());
+  const [selectedVaccineTemplateId, setSelectedVaccineTemplateId] = useState<string>('');
   const [eventDetails, setEventDetails] = useState<string>('');
   const [eventPaymentMethod, setEventPaymentMethod] = useState<'CASH' | 'BANK'>('CASH');
   const [submittingEvent, setSubmittingEvent] = useState(false);
@@ -245,6 +249,7 @@ export const FarmOperationsModule: React.FC<Props> = ({
       setEventWeightKg('');
       setEventVaccineName('');
       setEventNextDueDate('');
+      setSelectedVaccineTemplateId('');
       setEventDetails('');
 
       const targetId = initialAnimalId || selectedAnimalId;
@@ -264,8 +269,15 @@ export const FarmOperationsModule: React.FC<Props> = ({
     const handleDataChanged = () => {
       loadOpsData();
     };
+    const handleTemplatesChanged = () => {
+      setVaccineTemplates(getVaccineTemplates());
+    };
     window.addEventListener('goted_data_changed', handleDataChanged);
-    return () => window.removeEventListener('goted_data_changed', handleDataChanged);
+    window.addEventListener('goted_vaccine_templates_changed', handleTemplatesChanged);
+    return () => {
+      window.removeEventListener('goted_data_changed', handleDataChanged);
+      window.removeEventListener('goted_vaccine_templates_changed', handleTemplatesChanged);
+    };
   }, []);
 
   const loadOpsData = async () => {
@@ -532,7 +544,27 @@ export const FarmOperationsModule: React.FC<Props> = ({
     setEventWeightKg('');
     setEventVaccineName('');
     setEventNextDueDate('');
+    setSelectedVaccineTemplateId('');
     setEventDetails('');
+  };
+
+  const handleSelectVaccineTemplate = (templateId: string) => {
+    setSelectedVaccineTemplateId(templateId);
+    if (!templateId) return;
+    const tpl = vaccineTemplates.find((t) => t.id === templateId);
+    if (tpl) {
+      setEventVaccineName(tpl.name);
+      // Auto-fill nextDueDate as today (or eventDate) + intervalDays, still editable by hand
+      const base = eventDate ? new Date(eventDate) : new Date();
+      if (isNaN(base.getTime())) {
+        const today = new Date();
+        today.setDate(today.getDate() + tpl.intervalDays);
+        setEventNextDueDate(today.toISOString().split('T')[0]);
+      } else {
+        base.setDate(base.getDate() + tpl.intervalDays);
+        setEventNextDueDate(base.toISOString().split('T')[0]);
+      }
+    }
   };
 
   const handleSaveEvent = async (e: React.FormEvent) => {
@@ -1890,29 +1922,56 @@ export const FarmOperationsModule: React.FC<Props> = ({
 
                   {/* VACCINE OR TREATMENT FIELDS (Only if eventType === 'VACCINE' or 'TREATMENT') */}
                   {(eventType === 'VACCINE' || eventType === 'TREATMENT') && (
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-3 bg-blue-50/60 border border-blue-200 rounded-xl">
-                      <div>
-                        <label className="block text-[13px] font-semibold text-blue-900 mb-1">
-                          টিকা বা ওষুধের নাম (Vaccine Name)
-                        </label>
-                        <input
-                          type="text"
-                          placeholder="যেমন: ক্ষুরা রোগ (FMD) / কৃমিনাশক"
-                          value={eventVaccineName}
-                          onChange={(e) => setEventVaccineName(e.target.value)}
-                          className="w-full bg-white border border-blue-300 rounded-lg p-2.5 text-[14px] text-gray-900 focus:ring-2 focus:ring-blue-600"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-[13px] font-semibold text-blue-900 mb-1">
-                          পরবর্তী ডোজের তারিখ (Next Due Date)
-                        </label>
-                        <input
-                          type="date"
-                          value={eventNextDueDate}
-                          onChange={(e) => setEventNextDueDate(e.target.value)}
-                          className="w-full bg-white border border-blue-300 rounded-lg p-2.5 text-[14px] text-gray-900 focus:ring-2 focus:ring-blue-600"
-                        />
+                    <div className="space-y-3 p-3.5 bg-blue-50/70 border border-blue-200 rounded-xl">
+                      {eventType === 'VACCINE' && (
+                        <div>
+                          <label className="block text-[13px] font-bold text-blue-950 mb-1 flex items-center justify-between">
+                            <span>টিকার নাম বাছাই করুন (Choose Vaccine)</span>
+                            <span className="text-[11px] font-normal text-blue-700">স্বয়ংক্রিয় শিডিউল</span>
+                          </label>
+                          <select
+                            id="select-vaccine-template"
+                            value={selectedVaccineTemplateId}
+                            onChange={(e) => handleSelectVaccineTemplate(e.target.value)}
+                            className="w-full bg-white border border-blue-300 rounded-lg p-2.5 text-[14px] text-gray-900 font-medium focus:ring-2 focus:ring-blue-600"
+                          >
+                            <option value="">-- তালিকা থেকে টিকা নির্বাচন করুন (ঐচ্ছিক) --</option>
+                            {vaccineTemplates.map((tpl) => (
+                              <option key={tpl.id} value={tpl.id}>
+                                {tpl.name} (পরবর্তী ডোজ: {tpl.intervalDays} দিন পর)
+                              </option>
+                            ))}
+                          </select>
+                          <p className="text-[11px] text-blue-800 mt-1">
+                            * তালিকা থেকে বাছাই করলে পরবর্তী ডোজের তারিখ স্বয়ংক্রিয়ভাবে হিসাব হয়ে যাবে (প্রয়োজনে নিজে পরিবর্তন করতে পারেন)।
+                          </p>
+                        </div>
+                      )}
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div>
+                          <label className="block text-[13px] font-semibold text-blue-900 mb-1">
+                            {eventType === 'VACCINE' ? 'টিকার নাম (Vaccine Name) *' : 'ওষুধের নাম (Medicine Name) *'}
+                          </label>
+                          <input
+                            type="text"
+                            placeholder={eventType === 'VACCINE' ? 'যেমন: ক্ষুরারোগ (FMD) টিকা' : 'যেমন: কৃমিনাশক ওষুধ'}
+                            value={eventVaccineName}
+                            onChange={(e) => setEventVaccineName(e.target.value)}
+                            className="w-full bg-white border border-blue-300 rounded-lg p-2.5 text-[14px] text-gray-900 focus:ring-2 focus:ring-blue-600"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[13px] font-semibold text-blue-900 mb-1">
+                            পরবর্তী ডোজের তারিখ (Next Due Date)
+                          </label>
+                          <input
+                            type="date"
+                            value={eventNextDueDate}
+                            onChange={(e) => setEventNextDueDate(e.target.value)}
+                            className="w-full bg-white border border-blue-300 rounded-lg p-2.5 text-[14px] text-gray-900 focus:ring-2 focus:ring-blue-600"
+                          />
+                        </div>
                       </div>
                     </div>
                   )}

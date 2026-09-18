@@ -521,3 +521,11 @@ export interface AuditLogEntry {
 }
 
 export type SyncState = 'ONLINE' | 'OFFLINE' | 'SYNCING' | 'SYNCED' | 'PENDING' | 'SYNC_FAILED' | 'IDLE' | 'ERROR';
+
+export interface VaccineTemplate {
+  id: string;
+  name: string;
+  intervalDays: number;
+  appliesTo?: string;
+}
+

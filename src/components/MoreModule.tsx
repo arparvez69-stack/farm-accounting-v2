@@ -20,15 +20,21 @@ import {
   FileText,
   Globe,
   Phone,
-  Moon
+  Moon,
+  Syringe,
+  Plus,
+  Edit3,
+  Trash2,
+  RotateCcw
 } from 'lucide-react';
 import { useLanguage } from '../i18n/translations';
 import { db } from '../db/indexedDb';
-import { AuditLog, FixedAsset, SystemConfig, UserRole, AppAccessLog } from '../types';
+import { AuditLog, FixedAsset, SystemConfig, UserRole, AppAccessLog, VaccineTemplate } from '../types';
 import { getStoredAuthorizedEmails, getAppAccessLogs, logoutOwner } from '../services/authService';
 import { generateTransactionNumber, safeInsert } from '../utils/idGenerator';
 import { getLastSyncTime, formatBackupTimestamp } from '../services/exportService';
 import { runAutomatedDepreciation } from '../accounting/depreciationService';
+import { getVaccineTemplates, saveVaccineTemplates, DEFAULT_VACCINE_TEMPLATES } from '../data/vaccineTemplates';
 
 interface Props {
   role: UserRole;
@@ -38,7 +44,7 @@ interface Props {
   onLogout?: () => void;
 }
 
-type MoreTab = 'accessLogs' | 'changePin' | 'audit' | 'assets' | 'owners' | 'settings';
+type MoreTab = 'accessLogs' | 'changePin' | 'audit' | 'assets' | 'owners' | 'settings' | 'vaccines';
 
 export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig, userEmail, onLogout }) => {
   const [tab, setTab] = useState<MoreTab>('accessLogs');
@@ -286,6 +292,100 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
     }
   };
 
+  // Vaccine Templates Management State
+  const [vaccineTemplates, setVaccineTemplates] = useState<VaccineTemplate[]>(() => getVaccineTemplates());
+  const [showAddEditVaccineModal, setShowAddEditVaccineModal] = useState<boolean>(false);
+  const [editingTemplateId, setEditingTemplateId] = useState<string | null>(null);
+  const [vaccineFormName, setVaccineFormName] = useState<string>('');
+  const [vaccineFormIntervalDays, setVaccineFormIntervalDays] = useState<string>('180');
+  const [vaccineFormAppliesTo, setVaccineFormAppliesTo] = useState<string>('');
+  const [vaccineFeedbackMsg, setVaccineFeedbackMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
+  useEffect(() => {
+    const handleTemplatesChanged = () => {
+      setVaccineTemplates(getVaccineTemplates());
+    };
+    window.addEventListener('goted_vaccine_templates_changed', handleTemplatesChanged);
+    return () => window.removeEventListener('goted_vaccine_templates_changed', handleTemplatesChanged);
+  }, []);
+
+  const handleOpenAddVaccine = () => {
+    setEditingTemplateId(null);
+    setVaccineFormName('');
+    setVaccineFormIntervalDays('180');
+    setVaccineFormAppliesTo('');
+    setVaccineFeedbackMsg(null);
+    setShowAddEditVaccineModal(true);
+  };
+
+  const handleOpenEditVaccine = (tpl: VaccineTemplate) => {
+    setEditingTemplateId(tpl.id);
+    setVaccineFormName(tpl.name);
+    setVaccineFormIntervalDays(tpl.intervalDays.toString());
+    setVaccineFormAppliesTo(tpl.appliesTo || '');
+    setVaccineFeedbackMsg(null);
+    setShowAddEditVaccineModal(true);
+  };
+
+  const handleSaveVaccineTemplate = (e: React.FormEvent) => {
+    e.preventDefault();
+    const name = vaccineFormName.trim();
+    const intervalDays = parseInt(vaccineFormIntervalDays, 10);
+    if (!name) {
+      setVaccineFeedbackMsg({ type: 'error', text: 'টিকার নাম আবশ্যক।' });
+      return;
+    }
+    if (isNaN(intervalDays) || intervalDays <= 0) {
+      setVaccineFeedbackMsg({ type: 'error', text: 'সঠিক দিনের ব্যবধান (১ বা তার বেশি) প্রদান করুন।' });
+      return;
+    }
+
+    let updatedList: VaccineTemplate[];
+    if (editingTemplateId) {
+      updatedList = vaccineTemplates.map((t) =>
+        t.id === editingTemplateId
+          ? {
+              ...t,
+              name,
+              intervalDays,
+              appliesTo: vaccineFormAppliesTo.trim() || undefined
+            }
+          : t
+      );
+      setVaccineFeedbackMsg({ type: 'success', text: 'টিকা শিডিউল সফলভাবে আপডেট করা হয়েছে।' });
+    } else {
+      const newTpl: VaccineTemplate = {
+        id: 'vac_' + Date.now(),
+        name,
+        intervalDays,
+        appliesTo: vaccineFormAppliesTo.trim() || undefined
+      };
+      updatedList = [...vaccineTemplates, newTpl];
+      setVaccineFeedbackMsg({ type: 'success', text: 'নতুন টিকা সফলভাবে যুক্ত করা হয়েছে।' });
+    }
+
+    saveVaccineTemplates(updatedList);
+    setVaccineTemplates(updatedList);
+    setShowAddEditVaccineModal(false);
+  };
+
+  const handleDeleteVaccineTemplate = (id: string, name: string) => {
+    if (window.confirm(`আপনি কি নিশ্চিতভাবে "${name}" তালিকা থেকে মুছে ফেলতে চান?`)) {
+      const updatedList = vaccineTemplates.filter((t) => t.id !== id);
+      saveVaccineTemplates(updatedList);
+      setVaccineTemplates(updatedList);
+      setVaccineFeedbackMsg({ type: 'success', text: `"${name}" তালিকা থেকে মুছে ফেলা হয়েছে।` });
+    }
+  };
+
+  const handleResetVaccineDefaults = () => {
+    if (window.confirm('আপনি কি পূর্বনির্ধারিত (ডিফল্ট) টিকা তালিকায় ফিরে যেতে চান? আপনার নিজস্ব পরিবর্তনসমূহ মুছে যাবে।')) {
+      saveVaccineTemplates(DEFAULT_VACCINE_TEMPLATES);
+      setVaccineTemplates(DEFAULT_VACCINE_TEMPLATES);
+      setVaccineFeedbackMsg({ type: 'success', text: 'ডিফল্ট টিকা শিডিউল সফলভাবে পুনরুদ্ধার করা হয়েছে।' });
+    }
+  };
+
   const fmt = (n: number) => `৳${Number(n || 0).toLocaleString('en-IN', { minimumFractionDigits: 0 })}`;
 
   return (
@@ -376,6 +476,16 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
             }`}
           >
             ফার্ম সেটিংস (Settings)
+          </button>
+          <button
+            id="tab-vaccines-btn"
+            onClick={() => setTab('vaccines')}
+            className={`px-3.5 py-2 rounded-lg whitespace-nowrap transition-all cursor-pointer min-h-[40px] flex items-center gap-1.5 ${
+              tab === 'vaccines' ? 'bg-[#1E5128] text-white shadow-xs' : 'text-gray-600 dark:text-slate-400 hover:text-gray-900 dark:hover:text-slate-100 hover:bg-gray-200/60 dark:hover:bg-slate-700/60'
+            }`}
+          >
+            <Syringe className="w-4 h-4" />
+            <span>টিকা সময়সূচি (Vaccines)</span>
           </button>
         </div>
       </div>
@@ -1165,6 +1275,208 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
               লগ আউট করলে এই ডিভাইসে সংরক্ষিত সেশন মুছে যাবে এবং পুনরায় প্রবেশ করতে ইমেইল ও গোপন পিন প্রয়োজন হবে।
             </p>
           </div>
+        </div>
+      )}
+
+      {/* ===================== TAB: VACCINE SCHEDULE LIBRARY ===================== */}
+      {tab === 'vaccines' && (
+        <div className="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 rounded-2xl p-4 sm:p-6 shadow-xs space-y-5">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-gray-100 dark:border-slate-800 pb-4">
+            <div className="flex items-center gap-3">
+              <div className="w-11 h-11 rounded-xl bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-400 flex items-center justify-center shrink-0">
+                <Syringe className="w-6 h-6" />
+              </div>
+              <div>
+                <h3 className="text-lg font-bold text-gray-900 dark:text-slate-100 flex items-center gap-2">
+                  <span>টিকা শিডিউল লাইব্রেরি (Vaccine Schedule Library)</span>
+                </h3>
+                <p className="text-[13px] text-gray-600 dark:text-slate-400">
+                  ফার্ম অপারেশন্সে স্বয়ংক্রিয়ভাবে পরবর্তী ডোজের তারিখ হিসাবের জন্য টিকার সময়সীমা কনফিগার করুন
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                id="btn-reset-vaccines-default"
+                onClick={handleResetVaccineDefaults}
+                className="px-3 py-2 rounded-xl bg-gray-100 dark:bg-slate-800 hover:bg-gray-200 dark:hover:bg-slate-700 text-gray-700 dark:text-slate-300 text-[12px] font-semibold flex items-center gap-1.5 cursor-pointer transition-all shadow-2xs"
+                title="ডিফল্ট তালিকায় ফিরে যান"
+              >
+                <RotateCcw className="w-3.5 h-3.5" />
+                <span>ডিফল্ট রিকভারি</span>
+              </button>
+              <button
+                type="button"
+                id="btn-add-vaccine-template"
+                onClick={handleOpenAddVaccine}
+                className="px-4 py-2 rounded-xl bg-[#1E5128] hover:bg-[#163e1e] text-white text-[13px] font-bold flex items-center gap-1.5 cursor-pointer shadow-xs transition-all active:scale-95"
+              >
+                <Plus className="w-4 h-4" />
+                <span>নতুন টিকা যোগ করুন</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Operational Guidance Notice */}
+          <div className="p-3.5 rounded-xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800/60 text-amber-900 dark:text-amber-200 text-[12px] leading-relaxed">
+            <p className="font-semibold flex items-center gap-1.5 mb-0.5">
+              <AlertCircle className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" />
+              <span>ব্যবহার নির্দেশিকা ও পরামর্শ:</span>
+            </p>
+            <p>
+              এখানে নির্ধারিত ব্যবধানগুলো যুক্তিসঙ্গত ডিফল্ট সময়সূচি হিসেবে প্রস্তুত করা হয়েছে। প্রতিটি খামারের ভৌগোলিক অবস্থান, প্রাণীর প্রজাতি এবং আপনার স্থানীয় রেজিস্ট্রার্ড ভেটেরিনারি চিকিৎসকের পরামর্শ অনুযায়ী ব্যবধানের দিনগুলো পরিবর্তন করে আপনার ফার্মের উপযোগী করে নিতে পারেন (কোনো প্রকার ডাক্তারি পরামর্শ নয়)।
+            </p>
+          </div>
+
+          {vaccineFeedbackMsg && (
+            <div
+              className={`p-3 rounded-xl text-[13px] font-medium border ${
+                vaccineFeedbackMsg.type === 'success'
+                  ? 'bg-emerald-50 text-emerald-800 border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800'
+                  : 'bg-rose-50 text-rose-800 border-rose-200 dark:bg-rose-950/40 dark:text-rose-300 dark:border-rose-800'
+              }`}
+            >
+              {vaccineFeedbackMsg.text}
+            </div>
+          )}
+
+          {/* List of Vaccines */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
+            {vaccineTemplates.map((tpl) => (
+              <div
+                key={tpl.id}
+                className="p-4 rounded-xl border border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900/60 shadow-2xs hover:border-gray-300 dark:hover:border-slate-700 flex flex-col justify-between gap-3 transition-all"
+              >
+                <div>
+                  <div className="flex items-start justify-between gap-2">
+                    <h4 className="text-[15px] font-bold text-gray-900 dark:text-slate-100">
+                      {tpl.name}
+                    </h4>
+                    <span className="shrink-0 px-2.5 py-0.5 rounded-full bg-blue-50 dark:bg-blue-950/60 text-blue-800 dark:text-blue-300 font-mono text-xs font-bold border border-blue-200 dark:border-blue-800">
+                      প্রতি {tpl.intervalDays} দিন পর
+                    </span>
+                  </div>
+
+                  {tpl.appliesTo && (
+                    <p className="text-[12px] text-gray-600 dark:text-slate-400 mt-1.5">
+                      <span className="font-semibold text-gray-700 dark:text-slate-300">প্রযোজ্য:</span> {tpl.appliesTo}
+                    </p>
+                  )}
+                </div>
+
+                <div className="flex items-center justify-end gap-2 pt-2 border-t border-gray-100 dark:border-slate-800/80">
+                  <button
+                    type="button"
+                    onClick={() => handleOpenEditVaccine(tpl)}
+                    className="px-3 py-1.5 rounded-lg bg-gray-100 dark:bg-slate-800 hover:bg-gray-200 dark:hover:bg-slate-700 text-gray-700 dark:text-slate-300 text-[12px] font-semibold flex items-center gap-1 cursor-pointer transition-colors"
+                  >
+                    <Edit3 className="w-3.5 h-3.5" />
+                    <span>সম্পাদনা</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleDeleteVaccineTemplate(tpl.id, tpl.name)}
+                    className="px-3 py-1.5 rounded-lg bg-red-50 dark:bg-red-950/30 hover:bg-red-100 dark:hover:bg-red-900/50 text-red-600 dark:text-red-400 text-[12px] font-semibold flex items-center gap-1 cursor-pointer transition-colors"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>মুছুন</span>
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Add / Edit Vaccine Template Modal */}
+          {showAddEditVaccineModal && (
+            <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4">
+              <div className="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 rounded-2xl max-w-md w-full p-5 sm:p-6 shadow-xl space-y-4 animate-in fade-in zoom-in-95 duration-150">
+                <div className="flex items-center justify-between border-b border-gray-100 dark:border-slate-800 pb-3">
+                  <h3 className="text-base font-bold text-gray-900 dark:text-slate-100 flex items-center gap-2">
+                    <Syringe className="w-5 h-5 text-[#1E5128] dark:text-emerald-400" />
+                    <span>{editingTemplateId ? 'টিকা সম্পাদনা করুন' : 'নতুন টিকা যুক্ত করুন'}</span>
+                  </h3>
+                  <button
+                    type="button"
+                    onClick={() => setShowAddEditVaccineModal(false)}
+                    className="p-1.5 rounded-lg text-gray-400 hover:text-gray-600 dark:hover:text-slate-200 hover:bg-gray-100 dark:hover:bg-slate-800 cursor-pointer"
+                  >
+                    ✕
+                  </button>
+                </div>
+
+                <form onSubmit={handleSaveVaccineTemplate} className="space-y-4">
+                  <div>
+                    <label className="block text-[13px] font-semibold text-gray-700 dark:text-slate-300 mb-1">
+                      টিকার নাম (Vaccine Name) *
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      placeholder="যেমন: ক্ষুরারোগ টিকা (FMD)"
+                      value={vaccineFormName}
+                      onChange={(e) => setVaccineFormName(e.target.value)}
+                      className="w-full bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-700 rounded-xl p-2.5 text-[14px] text-gray-900 dark:text-slate-100 focus:ring-2 focus:ring-[#1E5128]"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[13px] font-semibold text-gray-700 dark:text-slate-300 mb-1">
+                      পরবর্তী ডোজের ব্যবধান (Interval in Days) *
+                    </label>
+                    <div className="relative">
+                      <input
+                        type="number"
+                        required
+                        min="1"
+                        step="1"
+                        placeholder="১৮০"
+                        value={vaccineFormIntervalDays}
+                        onChange={(e) => setVaccineFormIntervalDays(e.target.value)}
+                        className="w-full bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-700 rounded-xl p-2.5 text-[14px] font-mono text-gray-900 dark:text-slate-100 focus:ring-2 focus:ring-[#1E5128]"
+                      />
+                      <span className="absolute right-3 top-2.5 text-xs text-gray-500 dark:text-slate-400 font-semibold pointer-events-none">
+                        দিন পর পর
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-gray-500 dark:text-slate-400 mt-1">
+                      টিকা দেওয়ার পর এই সংখ্যক দিন যোগ করে পরবর্তী তারিখ স্বয়ংক্রিয়ভাবে প্রস্তাব করা হবে।
+                    </p>
+                  </div>
+
+                  <div>
+                    <label className="block text-[13px] font-semibold text-gray-700 dark:text-slate-300 mb-1">
+                      প্রযোজ্য প্রজাতি / পশু (Applies To)
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="যেমন: গরু / মহিষ / ছাগল / ভেড়া"
+                      value={vaccineFormAppliesTo}
+                      onChange={(e) => setVaccineFormAppliesTo(e.target.value)}
+                      className="w-full bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-700 rounded-xl p-2.5 text-[14px] text-gray-900 dark:text-slate-100 focus:ring-2 focus:ring-[#1E5128]"
+                    />
+                  </div>
+
+                  <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-gray-100 dark:border-slate-800">
+                    <button
+                      type="button"
+                      onClick={() => setShowAddEditVaccineModal(false)}
+                      className="px-4 py-2.5 rounded-xl bg-gray-100 dark:bg-slate-800 hover:bg-gray-200 dark:hover:bg-slate-700 text-gray-700 dark:text-slate-300 text-[13px] font-semibold cursor-pointer"
+                    >
+                      বাতিল
+                    </button>
+                    <button
+                      type="submit"
+                      className="px-5 py-2.5 rounded-xl bg-[#1E5128] hover:bg-[#163e1e] text-white text-[13px] font-bold cursor-pointer shadow-xs transition-all active:scale-95"
+                    >
+                      সংরক্ষণ করুন
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>
