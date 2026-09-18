@@ -24,18 +24,20 @@ import { ReportsModule } from './components/ReportsModule';
 import { MoreModule } from './components/MoreModule';
 import { AnimalEvent, SyncState, SystemConfig, UserProfile } from './types';
 import { getLatestRegressionTestResult, TestResult } from './utils/regressionTests';
-import { triggerForegroundDueTodayNotification } from './db/indexedDb';
+import { triggerForegroundDueTodayNotification, checkHasAnyFarmData } from './db/indexedDb';
 import { cleanupLeakedRegressionTestData } from './utils/cleanupTestData';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { subscribeToUndo, executeUndo, UndoableAction } from './services/undoService';
 import { PatternBackground } from './components/ui/PatternBackground';
 import { SuccessAnimationToast } from './components/ui/SuccessAnimation';
+import { WelcomeScreen } from './components/WelcomeScreen';
 
 export default function App() {
   const [systemConfig, setSystemConfig] = useState<SystemConfig | null>(null);
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
+  const [showWelcome, setShowWelcome] = useState<boolean>(false);
   const [regressionTestResult, setRegressionTestResult] = useState<TestResult | null>(() => getLatestRegressionTestResult());
 
   // Sync state
@@ -91,6 +93,31 @@ export default function App() {
         setUndoToastMessage(null);
       }, 3000);
     }
+  };
+
+  const evaluateWelcomeScreen = async () => {
+    try {
+      if (localStorage.getItem('goted_welcome_dismissed') === 'true') {
+        setShowWelcome(false);
+        return;
+      }
+      const hasData = await checkHasAnyFarmData();
+      if (hasData) {
+        setShowWelcome(false);
+        return;
+      }
+      setShowWelcome(true);
+    } catch {
+      setShowWelcome(false);
+    }
+  };
+
+  const handleDismissWelcome = () => {
+    try {
+      localStorage.setItem('goted_welcome_dismissed', 'true');
+    } catch {}
+    setShowWelcome(false);
+    setActiveTab('dashboard');
   };
 
   useEffect(() => {
@@ -182,6 +209,7 @@ export default function App() {
         setUserProfile(initialProfile);
         setCurrentUser(auth.currentUser);
         await seedSystemConfigIfNecessary();
+        await evaluateWelcomeScreen();
         triggerForegroundDueTodayNotification().catch(() => {});
       }
 
@@ -197,6 +225,7 @@ export default function App() {
             } else {
               setOfflineEmptyWarning(false);
             }
+            await evaluateWelcomeScreen();
           }
           setUserProfile(prof);
           if (prof.isApproved) {
@@ -212,6 +241,7 @@ export default function App() {
             } else {
               setOfflineEmptyWarning(false);
             }
+            await evaluateWelcomeScreen();
             setUserProfile(fallbackProf);
           } else {
             setCurrentUser(null);
@@ -236,6 +266,7 @@ export default function App() {
     await logoutOwner();
     setCurrentUser(null);
     setUserProfile(null);
+    setShowWelcome(false);
   };
 
   const handleSyncNow = async () => {
@@ -267,12 +298,26 @@ export default function App() {
             } else {
               setOfflineEmptyWarning(false);
             }
+            await evaluateWelcomeScreen();
             setUserProfile(profile);
             const boot = await checkSystemBootstrap();
             if (boot.config) setSystemConfig(boot.config);
             await seedSystemConfigIfNecessary();
             triggerForegroundDueTodayNotification().catch(() => {});
           }}
+        />
+      </div>
+    );
+  }
+
+  // One-time Welcome screen shown only when the app detects genuinely zero data exists
+  if (showWelcome) {
+    return (
+      <div className="min-h-screen relative bg-[#F8F9FA] dark:bg-slate-950 text-[#111827] dark:text-slate-100 flex flex-col antialiased selection:bg-[#1E5128] selection:text-white transition-colors">
+        <PatternBackground />
+        <WelcomeScreen
+          onDismiss={handleDismissWelcome}
+          onLogout={handleLogout}
         />
       </div>
     );

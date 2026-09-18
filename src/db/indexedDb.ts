@@ -177,3 +177,41 @@ export async function triggerForegroundDueTodayNotification(): Promise<void> {
     console.warn('[Reminders] Notification permission or trigger notice:', err);
   }
 }
+
+/**
+ * Detects whether any real operational farm data exists in the local database.
+ * Used to identify brand-new installs or freshly erased states.
+ * Excludes system-seeded configuration and chart of accounts.
+ */
+export async function checkHasAnyFarmData(): Promise<boolean> {
+  try {
+    const counts = await Promise.all([
+      db.animals.count(),
+      db.animalEvents.count(),
+      db.journalEntries.count(),
+      db.fishBatches.count(),
+      db.ponds.count(),
+      db.cropCycles.count(),
+      db.plots.count(),
+      db.inventoryItems.count(),
+      db.stockMovements.count(),
+      db.parties.count(),
+      db.purchases.count(),
+      db.sales.count(),
+      db.payments.count(),
+      db.cashBankAccounts.count(),
+      db.bankTransfers.count(),
+      db.loans.count(),
+      db.investors.count(),
+      db.fixedAssets.count(),
+      db.reminders.count(),
+      db.processingRuns.count(),
+      db.internalFlows.count()
+    ]);
+    return counts.some((cnt) => cnt > 0);
+  } catch (err) {
+    console.error('Error checking farm data existence:', err);
+    return true; // Fail-safe: assume data exists on error
+  }
+}
+

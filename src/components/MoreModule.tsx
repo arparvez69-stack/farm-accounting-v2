@@ -311,6 +311,7 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
       localStorage.removeItem('goted_tin_number');
       localStorage.removeItem('goted_bin_number');
       localStorage.removeItem('goted_low_cash_alert_threshold');
+      localStorage.removeItem('goted_welcome_dismissed');
 
       // 5. Log out cleanly and return to login screen
       await logoutOwner();

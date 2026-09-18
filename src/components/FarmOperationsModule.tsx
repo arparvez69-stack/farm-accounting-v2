@@ -1120,7 +1120,7 @@ export const FarmOperationsModule: React.FC<Props> = ({
               {/* Livestock Header Illustration */}
               <div className="w-full flex justify-center items-center pb-2">
                 <img
-                  src="/illustrations/Farm_house-pana.svg"
+                  src="/illustrations/free_range_chicken_farm-pana.svg"
                   alt="Livestock section illustration"
                   loading="lazy"
                   className="w-[40%] max-w-[240px] min-w-[140px] h-auto object-contain pointer-events-none drop-shadow-xs"
