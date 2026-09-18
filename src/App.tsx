@@ -31,6 +31,7 @@ import { getPaymentAccount } from './accounting/accountMapping';
 import { generateTransactionNumber, generateUniqueId, safeInsert } from './utils/idGenerator';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { subscribeToUndo, executeUndo, UndoableAction } from './services/undoService';
+import { PatternBackground } from './components/ui/PatternBackground';
 
 export default function App() {
   const [systemConfig, setSystemConfig] = useState<SystemConfig | null>(null);
@@ -405,27 +406,33 @@ export default function App() {
   // If not logged in as an approved Owner, show single-tenant OTP Login Screen
   if (!userProfile || !userProfile.isApproved || userProfile.role !== 'OWNER') {
     return (
-      <LoginScreen
-        onLoginSuccess={async (profile) => {
-          const restoreRes = await restoreRemoteDataIfLocalEmpty(profile.email);
-          if (restoreRes.offlineEmptyWarning) {
-            setOfflineEmptyWarning(true);
-          } else {
-            setOfflineEmptyWarning(false);
-          }
-          setUserProfile(profile);
-          const boot = await checkSystemBootstrap();
-          if (boot.config) setSystemConfig(boot.config);
-          await seedSystemConfigIfNecessary();
-          triggerForegroundDueTodayNotification().catch(() => {});
-          checkAndPostRecurringExpenses().catch(() => {});
-        }}
-      />
+      <div className="min-h-screen relative bg-[#F8F9FA] dark:bg-slate-950">
+        <PatternBackground />
+        <LoginScreen
+          onLoginSuccess={async (profile) => {
+            const restoreRes = await restoreRemoteDataIfLocalEmpty(profile.email);
+            if (restoreRes.offlineEmptyWarning) {
+              setOfflineEmptyWarning(true);
+            } else {
+              setOfflineEmptyWarning(false);
+            }
+            setUserProfile(profile);
+            const boot = await checkSystemBootstrap();
+            if (boot.config) setSystemConfig(boot.config);
+            await seedSystemConfigIfNecessary();
+            triggerForegroundDueTodayNotification().catch(() => {});
+            checkAndPostRecurringExpenses().catch(() => {});
+          }}
+        />
+      </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-[#F8F9FA] dark:bg-slate-950 text-[#111827] dark:text-slate-100 flex flex-col antialiased selection:bg-[#1E5128] selection:text-white transition-colors">
+    <div className="min-h-screen bg-[#F8F9FA] dark:bg-slate-950 text-[#111827] dark:text-slate-100 flex flex-col antialiased selection:bg-[#1E5128] selection:text-white transition-colors relative">
+      {/* Fixed subtle decorative background pattern sitting behind all screens */}
+      <PatternBackground />
+
       {/* Sticky Top Header */}
       <Header
         userProfile={userProfile}
@@ -438,7 +445,7 @@ export default function App() {
       />
 
       {/* Main App Content Viewport */}
-      <main className="flex-1 px-3.5 py-4 sm:px-6 sm:py-6 max-w-5xl w-full mx-auto pb-28 md:pb-12">
+      <main className="flex-1 px-3.5 py-4 sm:px-6 sm:py-6 max-w-5xl w-full mx-auto pb-28 md:pb-12 relative z-10">
         <ErrorBoundary resetKey={activeTab}>
           {/* TASK 4: Clear warning when opened by known owner with empty local DB and no internet */}
           {offlineEmptyWarning && (

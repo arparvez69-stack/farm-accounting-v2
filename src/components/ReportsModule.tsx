@@ -1607,7 +1607,7 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
   };
 
   return (
-    <div className="space-y-4 pb-6 max-w-5xl mx-auto">
+    <div className="space-y-4 pb-6 max-w-5xl mx-auto rounded-3xl p-2 sm:p-4 bg-gradient-to-b from-teal-500/[0.08] via-teal-500/[0.03] to-transparent dark:from-teal-950/30 dark:via-teal-950/10 dark:to-transparent">
       {/* Header & Report Selectors */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 sm:p-5 rounded-2xl bg-white border border-gray-200 shadow-xs">
         <div>

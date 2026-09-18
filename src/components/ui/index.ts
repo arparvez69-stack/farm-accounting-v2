@@ -9,3 +9,5 @@ export type { CardProps, CardVariant } from './Card';
 
 export { EmptyState } from './EmptyState';
 export type { EmptyStateProps, EmptyStateAction } from './EmptyState';
+
+export { PatternBackground } from './PatternBackground';

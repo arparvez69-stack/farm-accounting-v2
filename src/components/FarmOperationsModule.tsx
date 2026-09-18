@@ -1045,7 +1045,7 @@ export const FarmOperationsModule: React.FC<Props> = ({
   const fmt = (n: number) => `৳${Number(n || 0).toLocaleString('en-IN', { minimumFractionDigits: 0 })}`;
 
   return (
-    <div className="space-y-4 pb-6 max-w-5xl mx-auto">
+    <div className="space-y-4 pb-6 max-w-5xl mx-auto rounded-3xl p-2 sm:p-4 bg-gradient-to-b from-emerald-500/[0.08] via-emerald-500/[0.03] to-transparent dark:from-emerald-950/30 dark:via-emerald-950/10 dark:to-transparent">
       {/* Header & Subtabs */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 sm:p-5 rounded-2xl bg-white border border-gray-200 shadow-xs">
         <div>

@@ -503,7 +503,7 @@ export const Dashboard: React.FC<Props> = ({ role, onNavigate, regressionTestRes
   const totalDueOrOverdue = overdueRemindersCount + dueTodayRemindersCount;
 
   return (
-    <div className="space-y-5 pb-6 max-w-5xl mx-auto">
+    <div className="space-y-5 pb-6 max-w-5xl mx-auto rounded-3xl p-2 sm:p-4 bg-gradient-to-b from-emerald-500/[0.06] via-green-500/[0.02] to-transparent dark:from-emerald-950/20 dark:via-emerald-950/5 dark:to-transparent">
       {/* 1. GREETING HEADER AT THE TOP */}
       <div id="dashboard-greeting-header" className="pt-1 pb-0.5">
         <h1 className="text-2xl sm:text-3xl font-extrabold text-gray-900 dark:text-slate-100 tracking-tight leading-tight">
