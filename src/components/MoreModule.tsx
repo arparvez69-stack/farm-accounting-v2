@@ -576,71 +576,6 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
         />
       </div>
 
-      {/* ===================== MAIN MODULE SELECTION SCREEN / SECTION ===================== */}
-      <div className="relative z-10 bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 rounded-2xl p-4 sm:p-5 shadow-xs space-y-4 transition-colors">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-gray-100 dark:border-slate-800 pb-3">
-          <div>
-            <h3 className="text-base sm:text-lg font-bold text-gray-900 dark:text-slate-100 flex items-center gap-2">
-              <span>মূল মডিউলসমূহ (Main Modules)</span>
-            </h3>
-            <p className="text-[13px] text-gray-500 dark:text-slate-400 mt-0.5">
-              খামারের যেকোনো মডিউলে সরাসরি প্রবেশ করতে নিচের কার্ডে ট্যাপ করুন
-            </p>
-          </div>
-          <span className="self-start sm:self-auto text-xs font-semibold px-2.5 py-1 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300">
-            ৭টি প্রধান বিভাগ
-          </span>
-        </div>
-
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
-          {MAIN_MODULES.map((mod) => {
-            const isCurrent = mod.id === 'more';
-            return (
-              <button
-                key={mod.id}
-                id={`btn-module-select-${mod.id}`}
-                type="button"
-                onClick={() => onNavigate && onNavigate(mod.id)}
-                className={`flex items-start gap-3.5 p-3.5 rounded-xl border text-left transition-all cursor-pointer min-h-[64px] active:scale-[0.98] ${
-                  isCurrent
-                    ? 'bg-slate-50 dark:bg-slate-800/90 border-slate-300 dark:border-slate-600 ring-2 ring-slate-400/30 shadow-xs'
-                    : 'bg-white dark:bg-slate-900 border-gray-200 dark:border-slate-800 hover:border-gray-300 dark:hover:border-slate-700 hover:shadow-xs'
-                }`}
-              >
-                <IconTile
-                  icon={mod.icon}
-                  color={mod.color}
-                  size="md"
-                  rounded="xl"
-                />
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center justify-between gap-1.5">
-                    <span className="text-sm font-bold text-gray-900 dark:text-slate-100 truncate">
-                      {mod.nameBn}
-                    </span>
-                    {isCurrent ? (
-                      <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300 shrink-0">
-                        বর্তমান
-                      </span>
-                    ) : (
-                      <span className="text-[10px] font-medium text-gray-400 dark:text-slate-500 uppercase shrink-0">
-                        প্রবেশ
-                      </span>
-                    )}
-                  </div>
-                  <span className="text-xs font-medium text-gray-500 dark:text-slate-400 block truncate mt-0.5">
-                    {mod.nameEn}
-                  </span>
-                  <span className="text-[11px] text-gray-400 dark:text-slate-500 block truncate mt-0.5">
-                    {mod.subtitle}
-                  </span>
-                </div>
-              </button>
-            );
-          })}
-        </div>
-      </div>
-
       {/* Header & Subtabs */}
       <div className="flex flex-col gap-3 p-4 sm:p-5 rounded-2xl bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 shadow-xs transition-colors">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
@@ -2012,6 +1947,71 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
           )}
         </div>
       )}
+
+      {/* ===================== GENERAL NAVIGATION SHORTCUTS SECTION ===================== */}
+      <div className="relative z-10 bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 rounded-2xl p-4 sm:p-5 shadow-xs space-y-4 transition-colors">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-gray-100 dark:border-slate-800 pb-3">
+          <div>
+            <h3 className="text-base sm:text-lg font-bold text-gray-900 dark:text-slate-100 flex items-center gap-2">
+              <span>শর্টকাট (Shortcuts)</span>
+            </h3>
+            <p className="text-[13px] text-gray-500 dark:text-slate-400 mt-0.5">
+              খামারের যেকোনো মডিউলে সরাসরি প্রবেশ করতে নিচের কার্ডে ট্যাপ করুন
+            </p>
+          </div>
+          <span className="self-start sm:self-auto text-xs font-semibold px-2.5 py-1 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300">
+            ৭টি প্রধান বিভাগ
+          </span>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
+          {MAIN_MODULES.map((mod) => {
+            const isCurrent = mod.id === 'more';
+            return (
+              <button
+                key={mod.id}
+                id={`btn-module-select-${mod.id}`}
+                type="button"
+                onClick={() => onNavigate && onNavigate(mod.id)}
+                className={`flex items-start gap-3.5 p-3.5 rounded-xl border text-left transition-all cursor-pointer min-h-[64px] active:scale-[0.98] ${
+                  isCurrent
+                    ? 'bg-slate-50 dark:bg-slate-800/90 border-slate-300 dark:border-slate-600 ring-2 ring-slate-400/30 shadow-xs'
+                    : 'bg-white dark:bg-slate-900 border-gray-200 dark:border-slate-800 hover:border-gray-300 dark:hover:border-slate-700 hover:shadow-xs'
+                }`}
+              >
+                <IconTile
+                  icon={mod.icon}
+                  color={mod.color}
+                  size="md"
+                  rounded="xl"
+                />
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center justify-between gap-1.5">
+                    <span className="text-sm font-bold text-gray-900 dark:text-slate-100 truncate">
+                      {mod.nameBn}
+                    </span>
+                    {isCurrent ? (
+                      <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300 shrink-0">
+                        বর্তমান
+                      </span>
+                    ) : (
+                      <span className="text-[10px] font-medium text-gray-400 dark:text-slate-500 uppercase shrink-0">
+                        প্রবেশ
+                      </span>
+                    )}
+                  </div>
+                  <span className="text-xs font-medium text-gray-500 dark:text-slate-400 block truncate mt-0.5">
+                    {mod.nameEn}
+                  </span>
+                  <span className="text-[11px] text-gray-400 dark:text-slate-500 block truncate mt-0.5">
+                    {mod.subtitle}
+                  </span>
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      </div>
     </div>
   );
 };
