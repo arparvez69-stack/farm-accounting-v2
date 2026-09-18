@@ -994,6 +994,7 @@ app.post('/api/wipe-all-data', async (req, res) => {
     'journalEntries',
     'sales',
     'purchases',
+    'payments',
     'cropCycles',
     'fishBatches',
     'ponds',
@@ -1010,6 +1011,7 @@ app.post('/api/wipe-all-data', async (req, res) => {
     'internalFlows',
     'processingRuns',
     'closedPeriods',
+    'recurringExpenseTemplates',
     'auditLogs'
   ];
 
@@ -1022,12 +1024,17 @@ app.post('/api/wipe-all-data', async (req, res) => {
           const colRef = adminDb.collection(colName);
           const snap = await colRef.get();
           if (!snap.empty) {
-            const batch = adminDb.batch();
-            snap.docs.forEach((doc) => {
-              batch.delete(doc.ref);
-              deletedTotal++;
-            });
-            await batch.commit();
+            // Commit in chunks of 400 to strictly respect Firestore batch limits
+            const docs = snap.docs;
+            for (let i = 0; i < docs.length; i += 400) {
+              const chunk = docs.slice(i, i + 400);
+              const batch = adminDb.batch();
+              chunk.forEach((doc) => {
+                batch.delete(doc.ref);
+                deletedTotal++;
+              });
+              await batch.commit();
+            }
           }
         } catch (colErr: any) {
           console.warn(`[The Goated Farm] Wipe note for collection ${colName}:`, colErr.message);

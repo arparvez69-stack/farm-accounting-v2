@@ -41,7 +41,7 @@ import {
 } from 'lucide-react';
 import { useLanguage } from '../i18n/translations';
 import { db } from '../db/indexedDb';
-import { auth } from '../firebase/firebaseClient';
+import { auth, initializeLocalDatabase } from '../firebase/firebaseClient';
 import { AuditLog, FixedAsset, SystemConfig, UserRole, AppAccessLog, VaccineTemplate } from '../types';
 import { getStoredAuthorizedEmails, getAppAccessLogs, logoutOwner } from '../services/authService';
 import { generateTransactionNumber, safeInsert } from '../utils/idGenerator';
@@ -302,59 +302,8 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
       }
 
       // 3. Wipe all local IndexedDB tables cleanly
-      await db.transaction('rw', [
-        db.animals,
-        db.animalEvents,
-        db.journalEntries,
-        db.sales,
-        db.purchases,
-        db.cropCycles,
-        db.fishBatches,
-        db.ponds,
-        db.plots,
-        db.inventoryItems,
-        db.stockMovements,
-        db.parties,
-        db.fixedAssets,
-        db.loans,
-        db.investors,
-        db.cashBankAccounts,
-        db.bankTransfers,
-        db.reminders,
-        db.internalFlows,
-        db.processingRuns,
-        db.closedPeriods,
-        db.auditLogs,
-        db.accessLogs,
-        db.payments
-      ], async () => {
-        await Promise.all([
-          db.animals.clear(),
-          db.animalEvents.clear(),
-          db.journalEntries.clear(),
-          db.sales.clear(),
-          db.purchases.clear(),
-          db.cropCycles.clear(),
-          db.fishBatches.clear(),
-          db.ponds.clear(),
-          db.plots.clear(),
-          db.inventoryItems.clear(),
-          db.stockMovements.clear(),
-          db.parties.clear(),
-          db.fixedAssets.clear(),
-          db.loans.clear(),
-          db.investors.clear(),
-          db.cashBankAccounts.clear(),
-          db.bankTransfers.clear(),
-          db.reminders.clear(),
-          db.internalFlows.clear(),
-          db.processingRuns.clear(),
-          db.closedPeriods.clear(),
-          db.auditLogs.clear(),
-          db.accessLogs.clear(),
-          db.payments.clear()
-        ]);
-      });
+      await Promise.all(db.tables.map((table) => table.clear()));
+      await initializeLocalDatabase();
 
       // 4. Clear sync timestamps and farm preferences (except auth credentials needed for fresh login)
       localStorage.removeItem('goted_last_sync_time');
