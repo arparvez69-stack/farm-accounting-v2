@@ -1609,26 +1609,38 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
   return (
     <div className="space-y-4 pb-6 max-w-5xl mx-auto rounded-3xl p-2 sm:p-4 bg-gradient-to-b from-teal-500/[0.08] via-teal-500/[0.03] to-transparent dark:from-teal-950/30 dark:via-teal-950/10 dark:to-transparent">
       {/* Header & Report Selectors */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 sm:p-5 rounded-2xl bg-white border border-gray-200 shadow-xs">
-        <div>
-          <h2 className="text-lg sm:text-xl font-bold text-gray-900 flex items-center gap-2">
-            <FileSpreadsheet className="w-5 h-5 text-teal-700" />
-            <span>আর্থিক প্রতিবেদন ও ব্যালেন্স শীট (Financial Reports)</span>
-          </h2>
-          <p className="text-[14px] text-gray-600 mt-0.5">
-            আন্তর্জাতিক মানের লাভ-ক্ষতি বিবরণী, ব্যালেন্স শীট, রেওয়ামিল ও এক্সেল এক্সপোর্ট
-          </p>
+      <div className="flex flex-col gap-3.5 p-4 sm:p-5 rounded-2xl bg-white border border-gray-200 shadow-xs">
+        {/* Module Header Illustration */}
+        <div className="w-full flex justify-center items-center pb-1">
+          <img
+            src="/illustrations/Revenue-bro.svg"
+            alt="Reports & Revenue illustration"
+            loading="lazy"
+            className="w-[35%] max-w-[220px] min-w-[130px] h-auto object-contain pointer-events-none drop-shadow-xs"
+          />
         </div>
 
-        <div className="flex items-center gap-2">
-          <button
-            onClick={handleExportExcel}
-            disabled={isExporting}
-            className="px-4 py-2.5 rounded-xl bg-teal-700 hover:bg-teal-800 disabled:opacity-50 text-white text-[13px] font-bold shadow-xs transition-all flex items-center gap-2 cursor-pointer min-h-[42px]"
-          >
-            <Download className="w-4 h-4" />
-            <span>{isExporting ? 'এক্সপোর্ট হচ্ছে...' : 'Excel এক্সপোর্ট (.xlsx)'}</span>
-          </button>
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div>
+            <h2 className="text-lg sm:text-xl font-bold text-gray-900 flex items-center gap-2">
+              <FileSpreadsheet className="w-5 h-5 text-teal-700" />
+              <span>আর্থিক প্রতিবেদন ও ব্যালেন্স শীট (Financial Reports)</span>
+            </h2>
+            <p className="text-[14px] text-gray-600 mt-0.5">
+              আন্তর্জাতিক মানের লাভ-ক্ষতি বিবরণী, ব্যালেন্স শীট, রেওয়ামিল ও এক্সেল এক্সপোর্ট
+            </p>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleExportExcel}
+              disabled={isExporting}
+              className="px-4 py-2.5 rounded-xl bg-teal-700 hover:bg-teal-800 disabled:opacity-50 text-white text-[13px] font-bold shadow-xs transition-all flex items-center gap-2 cursor-pointer min-h-[42px]"
+            >
+              <Download className="w-4 h-4" />
+              <span>{isExporting ? 'এক্সপোর্ট হচ্ছে...' : 'Excel এক্সপোর্ট (.xlsx)'}</span>
+            </button>
+          </div>
         </div>
       </div>
 

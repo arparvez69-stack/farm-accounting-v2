@@ -493,6 +493,19 @@ export const Dashboard: React.FC<Props> = ({ role, onNavigate, regressionTestRes
     }
   };
 
+  // Scroll-linked opacity for hero illustration (fades from 100% to 0% over ~150px of scroll)
+  const [heroScrollOpacity, setHeroScrollOpacity] = useState(1);
+
+  useEffect(() => {
+    const handleScroll = () => {
+      const scrollY = window.scrollY || document.documentElement.scrollTop || 0;
+      const opacity = Math.max(0, Math.min(1, 1 - scrollY / 150));
+      setHeroScrollOpacity(opacity);
+    };
+    window.addEventListener('scroll', handleScroll, { passive: true });
+    return () => window.removeEventListener('scroll', handleScroll);
+  }, []);
+
   const overdueRemindersCount = reminders.filter((r) => {
     const diffDays = Math.round((new Date(r.dueDate).getTime() - todayTime) / 86400000);
     return diffDays < 0;
@@ -507,14 +520,35 @@ export const Dashboard: React.FC<Props> = ({ role, onNavigate, regressionTestRes
 
   return (
     <div className="space-y-5 pb-6 max-w-5xl mx-auto rounded-3xl p-2 sm:p-4 bg-gradient-to-b from-emerald-500/[0.06] via-green-500/[0.02] to-transparent dark:from-emerald-950/20 dark:via-emerald-950/5 dark:to-transparent">
-      {/* 1. GREETING HEADER AT THE TOP */}
-      <div id="dashboard-greeting-header" className="pt-1 pb-0.5">
-        <h1 className="text-2xl sm:text-3xl font-extrabold text-gray-900 dark:text-slate-100 tracking-tight leading-tight">
-          {getGreeting()}, {ownerName}!
-        </h1>
-        <p className="text-sm sm:text-base text-gray-600 dark:text-slate-400 font-medium mt-1">
-          {getFormattedDate()}
-        </p>
+      {/* 1. GREETING HEADER & HERO ILLUSTRATION AT THE TOP */}
+      <div id="dashboard-greeting-header" className="pt-1 pb-0.5 space-y-3">
+        {heroScrollOpacity > 0.01 && (
+          <div
+            className="w-full flex justify-center items-center overflow-hidden transition-opacity duration-75"
+            style={{
+              opacity: heroScrollOpacity,
+              maskImage: 'linear-gradient(to bottom, black 70%, transparent 100%)',
+              WebkitMaskImage: 'linear-gradient(to bottom, black 70%, transparent 100%)'
+            }}
+          >
+            <img
+              src="/illustrations/Farmer-pana.svg"
+              alt="Farmer illustration"
+              loading="lazy"
+              className="w-[75%] max-w-sm sm:max-w-md h-auto object-contain pointer-events-none drop-shadow-xs"
+            />
+          </div>
+        )}
+        <div className="flex flex-col sm:flex-row sm:items-baseline justify-between gap-1">
+          <div>
+            <h1 className="text-2xl sm:text-3xl font-extrabold text-gray-900 dark:text-slate-100 tracking-tight leading-tight">
+              {getGreeting()}, {ownerName}!
+            </h1>
+            <p className="text-sm sm:text-base text-gray-600 dark:text-slate-400 font-medium mt-1">
+              {getFormattedDate()}
+            </p>
+          </div>
+        </div>
       </div>
 
       {/* 2. SUMMARY CARD (STATIC VARIANT) */}

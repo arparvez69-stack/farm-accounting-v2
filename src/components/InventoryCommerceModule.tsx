@@ -574,6 +574,16 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
       {/* ===================== TAB 1: INVENTORY ===================== */}
       {tab === 'inventory' && (
         <div className="bg-white border border-gray-200 rounded-2xl p-4 sm:p-5 shadow-xs space-y-4">
+          {/* Stock Header Illustration */}
+          <div className="w-full flex justify-center items-center pb-2">
+            <img
+              src="/illustrations/Nature-pana.svg"
+              alt="Stock & Nature illustration"
+              loading="lazy"
+              className="w-[40%] max-w-[240px] min-w-[140px] h-auto object-contain pointer-events-none drop-shadow-xs"
+            />
+          </div>
+
           <div className="flex items-center justify-between border-b border-gray-100 pb-3 flex-wrap gap-2">
             <div>
               <h3 className="text-[16px] font-bold text-gray-900 flex items-center gap-2">

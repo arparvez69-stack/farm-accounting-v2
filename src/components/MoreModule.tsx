@@ -489,9 +489,22 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
   const fmt = (n: number) => `৳${Number(n || 0).toLocaleString('en-IN', { minimumFractionDigits: 0 })}`;
 
   return (
-    <div className="space-y-5 pb-6 max-w-5xl mx-auto rounded-3xl p-2 sm:p-4 bg-gradient-to-b from-slate-500/[0.07] via-gray-500/[0.02] to-transparent dark:from-slate-800/30 dark:via-slate-800/10 dark:to-transparent">
+    <div className="relative space-y-5 pb-6 max-w-5xl mx-auto rounded-3xl p-2 sm:p-4 bg-gradient-to-b from-slate-500/[0.07] via-gray-500/[0.02] to-transparent dark:from-slate-800/30 dark:via-slate-800/10 dark:to-transparent overflow-hidden">
+      {/* Background Forest Illustration */}
+      <div
+        className="pointer-events-none absolute inset-0 z-0 flex items-center justify-center opacity-5 dark:opacity-5 overflow-hidden"
+        aria-hidden="true"
+      >
+        <img
+          src="/illustrations/Forest-cuate.svg"
+          alt=""
+          loading="lazy"
+          className="w-full max-w-4xl h-auto object-cover select-none"
+        />
+      </div>
+
       {/* ===================== MAIN MODULE SELECTION SCREEN / SECTION ===================== */}
-      <div className="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 rounded-2xl p-4 sm:p-5 shadow-xs space-y-4 transition-colors">
+      <div className="relative z-10 bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 rounded-2xl p-4 sm:p-5 shadow-xs space-y-4 transition-colors">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-gray-100 dark:border-slate-800 pb-3">
           <div>
             <h3 className="text-base sm:text-lg font-bold text-gray-900 dark:text-slate-100 flex items-center gap-2">

@@ -328,18 +328,29 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
   return (
     <div className="space-y-4 pb-6 max-w-5xl mx-auto rounded-3xl p-2 sm:p-4 bg-gradient-to-b from-blue-500/[0.08] via-sky-500/[0.03] to-transparent dark:from-blue-950/30 dark:via-blue-950/10 dark:to-transparent">
       {/* Module Title */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 sm:p-5 rounded-2xl bg-white border border-gray-200 shadow-xs">
-        <div>
-          <h2 className="text-lg sm:text-xl font-bold text-gray-900 flex items-center gap-2">
-            <Landmark className="w-5 h-5 text-[#1E5128]" />
-            <span>ব্যাংকিং, তহবিল স্থানান্তর, ঋণ ও মূলধন (Banking & Capital)</span>
-          </h2>
-          <p className="text-[14px] text-gray-600 mt-0.5">
-            নগদ ও ব্যাংক তহবিল (1010/1030), কন্ট্রা জাবেদা, ব্যাংক ঋণ (2110/2120) ও বিনিয়োগকারী মূলধন (3020)
-          </p>
+      <div className="flex flex-col gap-3.5 p-4 sm:p-5 rounded-2xl bg-white border border-gray-200 shadow-xs">
+        {/* Module Header Illustration */}
+        <div className="w-full flex justify-center items-center pb-1">
+          <img
+            src="/illustrations/Payment_Information-bro.svg"
+            alt="Banking & Capital illustration"
+            loading="lazy"
+            className="w-[35%] max-w-[220px] min-w-[130px] h-auto object-contain pointer-events-none drop-shadow-xs"
+          />
         </div>
 
-        <div className="w-full sm:w-auto grid grid-cols-2 sm:grid-cols-4 gap-2 bg-gray-100 dark:bg-slate-800/80 border border-gray-200/80 dark:border-slate-700 p-1.5 rounded-xl text-[13px] font-semibold">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div>
+            <h2 className="text-lg sm:text-xl font-bold text-gray-900 flex items-center gap-2">
+              <Landmark className="w-5 h-5 text-[#1E5128]" />
+              <span>ব্যাংকিং, তহবিল স্থানান্তর, ঋণ ও মূলধন (Banking & Capital)</span>
+            </h2>
+            <p className="text-[14px] text-gray-600 mt-0.5">
+              নগদ ও ব্যাংক তহবিল (1010/1030), কন্ট্রা জাবেদা, ব্যাংক ঋণ (2110/2120) ও বিনিয়োগকারী মূলধন (3020)
+            </p>
+          </div>
+
+          <div className="w-full sm:w-auto grid grid-cols-2 sm:grid-cols-4 gap-2 bg-gray-100 dark:bg-slate-800/80 border border-gray-200/80 dark:border-slate-700 p-1.5 rounded-xl text-[13px] font-semibold">
           <button
             type="button"
             onClick={() => setTab('accounts')}
@@ -388,6 +399,7 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
             <Users className="w-4 h-4 shrink-0" />
             <span>বিনিয়োগকারী</span>
           </button>
+        </div>
         </div>
       </div>
 

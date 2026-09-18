@@ -201,9 +201,22 @@ export const LoginScreen: React.FC<Props> = ({ onLoginSuccess }) => {
   };
 
   return (
-    <div className="min-h-screen bg-[#F8F9FA] text-gray-900 flex flex-col justify-between p-4 sm:p-6 antialiased pt-safe pb-safe">
+    <div className="relative min-h-screen bg-[#F8F9FA] text-gray-900 flex flex-col justify-between p-4 sm:p-6 antialiased pt-safe pb-safe overflow-hidden">
+      {/* Background Countryside Illustration */}
+      <div
+        className="pointer-events-none absolute inset-0 z-0 flex items-center justify-center opacity-10 dark:opacity-5 overflow-hidden"
+        aria-hidden="true"
+      >
+        <img
+          src="/illustrations/Country_side-bro.svg"
+          alt=""
+          loading="lazy"
+          className="w-full max-w-4xl h-auto object-cover select-none"
+        />
+      </div>
+
       {/* Top Brand Bar */}
-      <header className="max-w-md w-full mx-auto flex items-center justify-between pt-2">
+      <header className="relative z-10 max-w-md w-full mx-auto flex items-center justify-between pt-2">
         <div className="flex items-center gap-2.5">
           <div className="w-9 h-9 rounded-xl bg-[#1E5128] flex items-center justify-center shadow-xs">
             <Sprout className="w-5 h-5 text-white" />

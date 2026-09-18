@@ -208,6 +208,16 @@ export const FarmOperationsModule: React.FC<Props> = ({
   const [internalFlows, setInternalFlows] = useState<InternalFlow[]>([]);
   const [processingRuns, setProcessingRuns] = useState<ProcessingRun[]>([]);
 
+  const [selectedEmptyCropSvg] = useState<string>(() => {
+    const emptySvgs = [
+      '/illustrations/rice_field-bro.svg',
+      '/illustrations/rice_field-amico.svg',
+      '/illustrations/coffee_farm-bro.svg',
+      '/illustrations/coffee_farm-amico.svg'
+    ];
+    return emptySvgs[Math.floor(Math.random() * emptySvgs.length)];
+  });
+
   // Standalone Reminder Form State
   const [showAddReminderModal, setShowAddReminderModal] = useState(false);
   const [reminderTitle, setReminderTitle] = useState('');
@@ -1199,6 +1209,16 @@ export const FarmOperationsModule: React.FC<Props> = ({
             />
           ) : (
             <div className="bg-white border border-gray-200 rounded-2xl p-4 sm:p-5 shadow-xs space-y-4">
+              {/* Livestock Header Illustration */}
+              <div className="w-full flex justify-center items-center pb-2">
+                <img
+                  src="/illustrations/Farm_house-pana.svg"
+                  alt="Livestock section illustration"
+                  loading="lazy"
+                  className="w-[40%] max-w-[240px] min-w-[140px] h-auto object-contain pointer-events-none drop-shadow-xs"
+                />
+              </div>
+
           <div className="flex flex-col sm:flex-row sm:items-center justify-between border-b border-gray-100 pb-4 gap-3">
             <div>
               <h3 className="text-[16px] font-bold text-gray-900 flex items-center gap-2">
@@ -2840,6 +2860,16 @@ export const FarmOperationsModule: React.FC<Props> = ({
       {/* ===================== TAB 3: CROPS & FODDER ===================== */}
       {tab === 'crops' && (
         <div className="bg-white border border-gray-200 rounded-2xl p-4 sm:p-5 shadow-xs space-y-4">
+          {/* Crops Section Header Illustration */}
+          <div className="w-full flex justify-center items-center pb-2">
+            <img
+              src="/illustrations/rice_field-cuate.svg"
+              alt="Crops section header illustration"
+              loading="lazy"
+              className="w-[45%] max-w-[260px] min-w-[150px] h-auto object-contain pointer-events-none drop-shadow-xs"
+            />
+          </div>
+
           <div className="flex items-center justify-between border-b border-gray-100 pb-3 flex-wrap gap-2">
             <div>
               <h3 className="text-[16px] font-bold text-gray-900 flex items-center gap-2">
@@ -2907,41 +2937,54 @@ export const FarmOperationsModule: React.FC<Props> = ({
             </form>
           )}
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-            {cropCycles.map((c, idx) => (
-              <div
-                key={c.id}
-                className="p-4 rounded-xl bg-[#F8FAFC] border border-gray-200 space-y-2.5 shadow-xs animate-fade-slide-up"
-                style={{ animationDelay: `${Math.min(idx * 35, 350)}ms` }}
-              >
-                <div className="flex items-center justify-between">
-                  <div>
-                    <span className="font-mono font-bold text-amber-700 text-[14px]">{c.id}</span>
-                    <h4 className="font-bold text-gray-900 text-[15px]">{c.cropName}</h4>
-                    <p className="text-[13px] text-gray-600">{c.plotName} ({c.areaDecimals} শতাংশ)</p>
+          {cropCycles.length === 0 ? (
+            <div className="flex flex-col items-center justify-center p-8 text-center bg-gray-50/70 dark:bg-slate-800/40 rounded-2xl border border-dashed border-gray-200 dark:border-slate-700">
+              <img
+                src={selectedEmptyCropSvg}
+                alt="No crops illustration"
+                loading="lazy"
+                className="w-[50%] max-w-[240px] h-auto object-contain pointer-events-none drop-shadow-xs mb-3"
+              />
+              <p className="text-sm font-bold text-gray-700 dark:text-slate-300">কোনো সক্রিয় শস্য চক্র পাওয়া যায়নি</p>
+              <p className="text-xs text-gray-500 dark:text-slate-400 mt-0.5">নতুন শস্য বা নেপিয়ার ঘাস চাষ যুক্ত করতে উপরের বোতামটি ব্যবহার করুন</p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+              {cropCycles.map((c, idx) => (
+                <div
+                  key={c.id}
+                  className="p-4 rounded-xl bg-[#F8FAFC] border border-gray-200 space-y-2.5 shadow-xs animate-fade-slide-up"
+                  style={{ animationDelay: `${Math.min(idx * 35, 350)}ms` }}
+                >
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <span className="font-mono font-bold text-amber-700 text-[14px]">{c.id}</span>
+                      <h4 className="font-bold text-gray-900 text-[15px]">{c.cropName}</h4>
+                      <p className="text-[13px] text-gray-600">{c.plotName} ({c.areaDecimals} শতাংশ)</p>
+                    </div>
+                    <span className="px-2.5 py-1 rounded-full bg-amber-50 text-amber-800 border border-amber-200 text-xs font-semibold">
+                      {c.status}
+                    </span>
                   </div>
-                  <span className="px-2.5 py-1 rounded-full bg-amber-50 text-amber-800 border border-amber-200 text-xs font-semibold">
-                    {c.status}
-                  </span>
-                </div>
 
-                <div className="space-y-1.5 text-[13px] pt-2 border-t border-gray-200">
-                  <div className="flex justify-between">
-                    <span className="text-gray-600">রোপণের তারিখ:</span>
-                    <span className="font-medium text-gray-900">{c.plantingDate}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-gray-600">মোট চাষ খরচ:</span>
-                    <span className="font-semibold text-red-600">{fmt(c.totalCost)}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-gray-600">কর্তনকৃত ফলন:</span>
-                    <span className="text-[#15803D] font-bold">{c.harvestYieldKg} কেজি</span>
+                  <div className="space-y-1.5 text-[13px] pt-2 border-t border-gray-200">
+                    <div className="flex justify-between">
+                      <span className="text-gray-600">রোপণের তারিখ:</span>
+                      <span className="font-medium text-gray-900">{c.plantingDate}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-600">মোট চাষ খরচ:</span>
+                      <span className="font-semibold text-red-600">{fmt(c.totalCost)}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-600">কর্তনকৃত ফলন:</span>
+                      <span className="text-[#15803D] font-bold">{c.harvestYieldKg} কেজি</span>
+                    </div>
                   </div>
                 </div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
