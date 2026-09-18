@@ -14,7 +14,10 @@ import {
   History,
   X,
   Check,
-  Search
+  Search,
+  Repeat,
+  Edit2,
+  Clock
 } from 'lucide-react';
 import { db } from '../db/indexedDb';
 import {
@@ -32,7 +35,7 @@ import {
   YearEndClosingPreview
 } from '../accounting/accountingEngine';
 import { runAutomatedDepreciation } from '../accounting/depreciationService';
-import { Account, ClosedPeriod, JournalEntry, JournalLine, UserRole, VoucherType } from '../types';
+import { Account, ClosedPeriod, JournalEntry, JournalLine, RecurringExpenseTemplate, UserRole, VoucherType } from '../types';
 import { generateTransactionNumber, generateUniqueId, safeInsert } from '../utils/idGenerator';
 import { HIGH_AMOUNT_CONFIRMATION_THRESHOLD } from '../constants/validation';
 import { notifyUndoableAction } from '../services/undoService';
@@ -42,7 +45,7 @@ interface Props {
   currentUserId: string;
 }
 
-type AccountingSubTab = 'vouchers' | 'daybook' | 'ledger' | 'trialBalance' | 'chart';
+type AccountingSubTab = 'vouchers' | 'daybook' | 'ledger' | 'trialBalance' | 'chart' | 'recurring';
 
 export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
   const [subTab, setSubTab] = useState<AccountingSubTab>('daybook');
@@ -52,6 +55,16 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
   const [msg, setMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [deprRunning, setDeprRunning] = useState(false);
   const [confirmHighAmountVoucher, setConfirmHighAmountVoucher] = useState<{ amount: number } | null>(null);
+
+  // Recurring Expense Templates State
+  const [recurringTemplates, setRecurringTemplates] = useState<RecurringExpenseTemplate[]>([]);
+  const [showRecurringModal, setShowRecurringModal] = useState(false);
+  const [editingTemplateId, setEditingTemplateId] = useState<string | null>(null);
+  const [recDescription, setRecDescription] = useState('');
+  const [recAmount, setRecAmount] = useState<string>('');
+  const [recAccountCode, setRecAccountCode] = useState<string>('6110');
+  const [recDayOfMonth, setRecDayOfMonth] = useState<number>(1);
+  const [recActive, setRecActive] = useState<boolean>(true);
 
   // Closed Periods State
   const [closedPeriods, setClosedPeriods] = useState<ClosedPeriod[]>([]);
@@ -145,11 +158,116 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
         setTbIsBalanced(tb.isBalanced);
         setTbDifference(tb.difference);
         setTbOrphanAccounts(tb.orphanAccounts);
+      } else if (subTab === 'recurring') {
+        const templates = await db.recurringExpenseTemplates.toArray();
+        setRecurringTemplates(templates);
       }
     } catch (e) {
       console.error(e);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const loadRecurringTemplates = async () => {
+    try {
+      const templates = await db.recurringExpenseTemplates.toArray();
+      setRecurringTemplates(templates);
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleOpenCreateRecurring = () => {
+    setEditingTemplateId(null);
+    setRecDescription('');
+    setRecAmount('');
+    const defaultExpense = accounts.find((a) => a.accountClass === 'EXPENSE');
+    setRecAccountCode(defaultExpense ? defaultExpense.code : '6110');
+    setRecDayOfMonth(1);
+    setRecActive(true);
+    setShowRecurringModal(true);
+  };
+
+  const handleOpenEditRecurring = (template: RecurringExpenseTemplate) => {
+    setEditingTemplateId(template.id);
+    setRecDescription(template.description);
+    setRecAmount(String(template.amount));
+    setRecAccountCode(template.accountCode);
+    setRecDayOfMonth(template.dayOfMonth);
+    setRecActive(template.active);
+    setShowRecurringModal(true);
+  };
+
+  const handleSaveRecurringTemplate = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const amountVal = parseFloat(recAmount);
+    if (isNaN(amountVal) || amountVal <= 0) {
+      setMsg({ type: 'error', text: 'অনুগ্রহ করে খরচের সঠিক পরিমাণ (৳) প্রদান করুন।' });
+      return;
+    }
+    if (!recDescription.trim()) {
+      setMsg({ type: 'error', text: 'অনুগ্রহ করে খরচের বিবরণ প্রদান করুন।' });
+      return;
+    }
+    const day = Math.min(31, Math.max(1, parseInt(String(recDayOfMonth), 10) || 1));
+
+    try {
+      if (editingTemplateId) {
+        await db.recurringExpenseTemplates.update(editingTemplateId, {
+          description: recDescription.trim(),
+          amount: amountVal,
+          accountCode: recAccountCode,
+          dayOfMonth: day,
+          active: recActive
+        });
+        setMsg({ type: 'success', text: `পুনরাবৃত্ত খরচ "${recDescription.trim()}" সফলভাবে আপডেট করা হয়েছে!` });
+      } else {
+        const newId = generateUniqueId('rec');
+        await safeInsert(db.recurringExpenseTemplates, {
+          id: newId,
+          description: recDescription.trim(),
+          amount: amountVal,
+          accountCode: recAccountCode,
+          dayOfMonth: day,
+          active: recActive
+        });
+        setMsg({ type: 'success', text: `নতুন পুনরাবৃত্ত খরচ "${recDescription.trim()}" তৈরি করা হয়েছে!` });
+      }
+
+      setShowRecurringModal(false);
+      await loadRecurringTemplates();
+      window.dispatchEvent(new Event('goted_data_changed'));
+    } catch (err: any) {
+      setMsg({ type: 'error', text: `সংরক্ষণ ব্যর্থ হয়েছে: ${err.message || 'অজানা ত্রুটি'}` });
+    }
+  };
+
+  const handleToggleRecurringActive = async (template: RecurringExpenseTemplate) => {
+    try {
+      await db.recurringExpenseTemplates.update(template.id, { active: !template.active });
+      await loadRecurringTemplates();
+      setMsg({
+        type: 'success',
+        text: `টেমপ্লেট "${template.description}" ${!template.active ? 'সক্রিয়' : 'নিষ্ক্রিয়'} করা হয়েছে।`
+      });
+      window.dispatchEvent(new Event('goted_data_changed'));
+    } catch (err: any) {
+      setMsg({ type: 'error', text: 'স্ট্যাটাস পরিবর্তনে ত্রুটি।' });
+    }
+  };
+
+  const handleDeleteRecurringTemplate = async (id: string, name: string) => {
+    if (!window.confirm(`আপনি কি নিশ্চিত যে পুনরাবৃত্ত খরচ টেমপ্লেট "${name}" মুছে ফেলতে চান?`)) {
+      return;
+    }
+    try {
+      await db.recurringExpenseTemplates.delete(id);
+      await loadRecurringTemplates();
+      setMsg({ type: 'success', text: `পুনরাবৃত্ত খরচ "${name}" মুছে ফেলা হয়েছে।` });
+      window.dispatchEvent(new Event('goted_data_changed'));
+    } catch (err: any) {
+      setMsg({ type: 'error', text: 'মুছে ফেলতে ব্যর্থ হয়েছে।' });
     }
   };
 
@@ -537,6 +655,15 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
               }`}
             >
               হিসাবের চার্ট (COA)
+            </button>
+            <button
+              id="tab-btn-recurring-costs"
+              onClick={() => setSubTab('recurring')}
+              className={`px-3.5 py-2 rounded-lg whitespace-nowrap transition-all cursor-pointer min-h-[40px] ${
+                subTab === 'recurring' ? 'bg-[#1E5128] text-white shadow-xs' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200/60'
+              }`}
+            >
+              পুনরাবৃত্ত খরচ (Recurring)
             </button>
           </div>
 
@@ -1462,6 +1589,297 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
                 </div>
               </div>
             ))}
+          </div>
+        </div>
+      )}
+
+      {/* RECURRING EXPENSES SUBTAB */}
+      {subTab === 'recurring' && (
+        <div className="bg-white border border-gray-200 rounded-2xl p-4 sm:p-5 shadow-xs space-y-5">
+          <div className="flex items-center justify-between flex-wrap gap-3 pb-4 border-b border-gray-100">
+            <div>
+              <h3 className="text-[16px] font-bold text-gray-900 flex items-center gap-2">
+                <Repeat className="w-5 h-5 text-[#1E5128]" />
+                <span>পুনরাবৃত্ত খরচ টেমপ্লেট (Recurring Expense Templates)</span>
+              </h3>
+              <p className="text-[13px] text-gray-600 mt-0.5">
+                মাসিক নিয়মিত খরচসমূহ (যেমন দোকান ভাড়া, খামার বিদ্যুৎ বিল, কর্মচারীর বেতন) যা প্রতি মাসের নির্দিষ্ট দিনে স্বয়ংক্রিয়ভাবে দাখিলা হয়
+              </p>
+            </div>
+
+            <button
+              id="btn-add-recurring-template"
+              type="button"
+              onClick={handleOpenCreateRecurring}
+              className="px-4 py-2 rounded-xl bg-[#1E5128] hover:bg-[#173F1F] text-white text-[13px] font-bold shadow-xs transition-all cursor-pointer min-h-[40px] flex items-center gap-2"
+            >
+              <PlusCircle className="w-4 h-4" />
+              <span>+ নতুন পুনরাবৃত্ত খরচ</span>
+            </button>
+          </div>
+
+          {/* Metric Summary Cards */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div className="p-4 rounded-xl bg-[#F8FAFC] border border-gray-200">
+              <span className="text-[12px] text-gray-500 font-medium">মোট টেমপ্লেট</span>
+              <div className="text-xl font-bold text-gray-900 mt-1">{recurringTemplates.length} টি</div>
+            </div>
+            <div className="p-4 rounded-xl bg-emerald-50/60 border border-emerald-200">
+              <span className="text-[12px] text-emerald-800 font-medium">সক্রিয় টেমপ্লেট</span>
+              <div className="text-xl font-bold text-emerald-700 mt-1">
+                {recurringTemplates.filter((t) => t.active).length} টি
+              </div>
+            </div>
+            <div className="p-4 rounded-xl bg-blue-50/60 border border-blue-200">
+              <span className="text-[12px] text-blue-800 font-medium">মাসিক সম্ভাব্য স্বয়ংক্রিয় ব্যয়</span>
+              <div className="text-xl font-bold text-blue-900 mt-1 font-mono">
+                ৳{recurringTemplates
+                  .filter((t) => t.active)
+                  .reduce((sum, t) => sum + (Number(t.amount) || 0), 0)
+                  .toLocaleString('en-IN')}
+              </div>
+            </div>
+          </div>
+
+          {/* Templates List */}
+          {recurringTemplates.length === 0 ? (
+            <div className="text-center py-12 px-4 border border-dashed border-gray-300 rounded-2xl bg-gray-50/50">
+              <Clock className="w-12 h-12 text-gray-400 mx-auto mb-3 opacity-60" />
+              <h4 className="text-base font-bold text-gray-800">কোন পুনরাবৃত্ত খরচ টেমপ্লেট তৈরি করা হয়নি</h4>
+              <p className="text-sm text-gray-500 max-w-md mx-auto mt-1 mb-4">
+                দোকান ভাড়া, গোডাউন ভাড়া, খামার বিদ্যুৎ বিল বা কর্মচারীর বেতনের মত নিয়মিত খরচের টেমপ্লেট সংরক্ষণ করুন। প্রতি মাসের নির্ধারিত তারিখে অ্যাপ লোড হলে তা স্বয়ংক্রিয়ভাবে হিসাবভুক্ত হবে।
+              </p>
+              <button
+                type="button"
+                onClick={handleOpenCreateRecurring}
+                className="px-4 py-2 rounded-xl bg-[#1E5128] text-white text-[13px] font-bold shadow-xs hover:bg-[#173F1F] cursor-pointer"
+              >
+                প্রথম পুনরাবৃত্ত খরচ যোগ করুন
+              </button>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {recurringTemplates.map((template) => {
+                const acc = accounts.find((a) => a.code === template.accountCode);
+                return (
+                  <div
+                    key={template.id}
+                    className={`p-4 rounded-2xl border transition-all ${
+                      template.active
+                        ? 'bg-white border-gray-200 hover:border-emerald-500 shadow-xs'
+                        : 'bg-gray-50/80 border-gray-200 opacity-70'
+                    }`}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <h4 className="text-[15px] font-bold text-gray-900">{template.description}</h4>
+                          <span
+                            className={`text-[11px] px-2 py-0.5 rounded-full font-bold ${
+                              template.active
+                                ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                                : 'bg-gray-200 text-gray-600 border border-gray-300'
+                            }`}
+                          >
+                            {template.active ? 'সক্রিয় (Active)' : 'নিষ্ক্রিয় (Paused)'}
+                          </span>
+                        </div>
+                        <p className="text-[12px] text-gray-500 mt-1 flex items-center gap-1.5">
+                          <span className="font-mono font-semibold text-[#1E5128]">{template.accountCode}</span>
+                          <span>•</span>
+                          <span>{acc ? acc.nameBn : 'হিসাব কোড'}</span>
+                        </p>
+                      </div>
+
+                      <div className="text-right">
+                        <div className="text-lg font-bold font-mono text-[#1E5128]">
+                          ৳{Number(template.amount).toLocaleString('en-IN')}
+                        </div>
+                        <span className="text-[11px] text-gray-500 font-medium">প্রতি মাসের {template.dayOfMonth} তারিখ</span>
+                      </div>
+                    </div>
+
+                    <div className="mt-4 pt-3 border-t border-gray-100 flex items-center justify-between text-[12px]">
+                      <div className="flex items-center gap-1 text-gray-500">
+                        <Calendar className="w-3.5 h-3.5" />
+                        <span>নির্ধারিত দিন: মাসের {template.dayOfMonth} তারিখ</span>
+                      </div>
+
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => handleToggleRecurringActive(template)}
+                          className={`px-2.5 py-1.5 rounded-lg border text-[11px] font-semibold transition-colors cursor-pointer ${
+                            template.active
+                              ? 'bg-amber-50 text-amber-800 border-amber-200 hover:bg-amber-100'
+                              : 'bg-emerald-50 text-emerald-800 border-emerald-200 hover:bg-emerald-100'
+                          }`}
+                        >
+                          {template.active ? 'স্থগিত করুন' : 'সক্রিয় করুন'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleOpenEditRecurring(template)}
+                          className="px-2.5 py-1.5 rounded-lg bg-gray-100 text-gray-700 hover:bg-gray-200 border border-gray-200 font-semibold cursor-pointer flex items-center gap-1"
+                        >
+                          <Edit2 className="w-3 h-3" />
+                          <span>এডিট</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteRecurringTemplate(template.id, template.description)}
+                          className="p-1.5 rounded-lg text-rose-600 hover:bg-rose-50 border border-transparent hover:border-rose-200 cursor-pointer"
+                          title="মুছে ফেলুন"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* RECURRING EXPENSE CREATE/EDIT MODAL */}
+      {showRecurringModal && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-white rounded-2xl max-w-lg w-full shadow-2xl border border-gray-100 animate-in fade-in zoom-in-95 duration-150">
+            {/* Modal Header */}
+            <div className="flex items-center justify-between p-5 border-b border-gray-100 bg-emerald-50/50 rounded-t-2xl">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 bg-[#1E5128]/10 rounded-xl">
+                  <Repeat className="w-5 h-5 text-[#1E5128]" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-gray-900">
+                    {editingTemplateId ? 'পুনরাবৃত্ত খরচ সম্পাদনা' : 'নতুন পুনরাবৃত্ত খরচ টেমপ্লেট'}
+                  </h3>
+                  <p className="text-[12px] text-gray-500">প্রতি মাসে স্বয়ংক্রিয়ভাবে দাখিলা হওয়ার জন্য খরচের বিবরণ নির্ধারণ করুন</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowRecurringModal(false)}
+                className="p-1.5 text-gray-400 hover:text-gray-600 rounded-lg cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Modal Form */}
+            <form onSubmit={handleSaveRecurringTemplate} className="p-5 space-y-4">
+              <div>
+                <label className="block text-[13px] font-bold text-gray-700 mb-1">
+                  খরচের বিবরণ (Description) <span className="text-rose-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  required
+                  placeholder="যেমন: দোকান ভাড়া (Shop Rent), খামার বিদ্যুৎ বিল"
+                  value={recDescription}
+                  onChange={(e) => setRecDescription(e.target.value)}
+                  className="w-full bg-white border border-gray-300 rounded-xl p-3 text-[14px] text-gray-900 focus:outline-none focus:ring-2 focus:ring-[#1E5128]"
+                />
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-[13px] font-bold text-gray-700 mb-1">
+                    খরচের পরিমাণ (৳ Amount) <span className="text-rose-500">*</span>
+                  </label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="1"
+                    required
+                    placeholder="যেমন: 5000"
+                    value={recAmount}
+                    onChange={(e) => setRecAmount(e.target.value)}
+                    className="w-full bg-white border border-gray-300 rounded-xl p-3 text-[14px] font-mono text-gray-900 focus:outline-none focus:ring-2 focus:ring-[#1E5128]"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[13px] font-bold text-gray-700 mb-1">
+                    মাসের কোন তারিখে (Day of Month) <span className="text-rose-500">*</span>
+                  </label>
+                  <select
+                    value={recDayOfMonth}
+                    onChange={(e) => setRecDayOfMonth(parseInt(e.target.value, 10) || 1)}
+                    className="w-full bg-white border border-gray-300 rounded-xl p-3 text-[14px] text-gray-900 focus:outline-none focus:ring-2 focus:ring-[#1E5128]"
+                  >
+                    {Array.from({ length: 31 }, (_, i) => i + 1).map((day) => (
+                      <option key={day} value={day}>
+                        প্রতি মাসের {day} তারিখ
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-[13px] font-bold text-gray-700 mb-1">
+                  খরচ হিসাব খাত (Expense Account) <span className="text-rose-500">*</span>
+                </label>
+                <select
+                  value={recAccountCode}
+                  onChange={(e) => setRecAccountCode(e.target.value)}
+                  className="w-full bg-white border border-gray-300 rounded-xl p-3 text-[14px] text-gray-900 focus:outline-none focus:ring-2 focus:ring-[#1E5128]"
+                >
+                  <optgroup label="ব্যয় হিসাবসমূহ (Expense Accounts)">
+                    {accounts
+                      .filter((a) => a.accountClass === 'EXPENSE' || a.accountClass === 'COGS')
+                      .map((acc) => (
+                        <option key={acc.code} value={acc.code}>
+                          {acc.code} - {acc.nameBn} ({acc.nameEn})
+                        </option>
+                      ))}
+                  </optgroup>
+                  <optgroup label="অন্যান্য সকল হিসাব (Other Accounts)">
+                    {accounts
+                      .filter((a) => a.accountClass !== 'EXPENSE' && a.accountClass !== 'COGS')
+                      .map((acc) => (
+                        <option key={acc.code} value={acc.code}>
+                          {acc.code} - {acc.nameBn}
+                        </option>
+                      ))}
+                  </optgroup>
+                </select>
+              </div>
+
+              <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-xl border border-gray-200">
+                <input
+                  type="checkbox"
+                  id="chk-rec-active"
+                  checked={recActive}
+                  onChange={(e) => setRecActive(e.target.checked)}
+                  className="w-4 h-4 text-[#1E5128] rounded border-gray-300 focus:ring-[#1E5128]"
+                />
+                <label htmlFor="chk-rec-active" className="text-[13px] font-medium text-gray-800 cursor-pointer">
+                  টেমপ্লেটটি সক্রিয় রাখুন (Active — প্রতি মাসের নির্ধারিত তারিখে স্বয়ংক্রিয় পোস্ট হবে)
+                </label>
+              </div>
+
+              {/* Modal Footer */}
+              <div className="flex gap-3 justify-end pt-3 border-t border-gray-100">
+                <button
+                  type="button"
+                  onClick={() => setShowRecurringModal(false)}
+                  className="px-4 py-2.5 rounded-xl bg-gray-100 text-gray-700 hover:bg-gray-200 font-semibold text-[13px] cursor-pointer"
+                >
+                  বাতিল
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2.5 rounded-xl bg-[#1E5128] hover:bg-[#173F1F] text-white font-bold text-[13px] cursor-pointer shadow-xs"
+                >
+                  {editingTemplateId ? 'হালনাগাদ করুন' : 'টেমপ্লেট সংরক্ষণ করুন'}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

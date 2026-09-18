@@ -25,7 +25,8 @@ import {
   AppAccessLog,
   Reminder,
   PaymentRecord,
-  ClosedPeriod
+  ClosedPeriod,
+  RecurringExpenseTemplate
 } from '../types';
 
 export class AgroDatabase extends Dexie {
@@ -33,6 +34,7 @@ export class AgroDatabase extends Dexie {
   accounts!: Table<Account, string>;
   journalEntries!: Table<JournalEntry, string>;
   closedPeriods!: Table<ClosedPeriod, string>;
+  recurringExpenseTemplates!: Table<RecurringExpenseTemplate, string>;
   animals!: Table<Animal, string>;
   animalEvents!: Table<AnimalEvent, string>;
   reminders!: Table<Reminder, string>;
@@ -91,7 +93,8 @@ export class AgroDatabase extends Dexie {
       auditLogs: 'id, timestamp, userId, action, module, synced',
       accessLogs: 'id, email, timestamp, status, synced',
       payments: 'id, parentType, parentId, date, synced',
-      closedPeriods: 'id, endDate, closedAt, synced'
+      closedPeriods: 'id, endDate, closedAt, synced',
+      recurringExpenseTemplates: 'id, accountCode, dayOfMonth, active'
     });
 
     this.version(2).stores({
@@ -121,6 +124,10 @@ export class AgroDatabase extends Dexie {
 
     this.version(8).stores({
       journalEntries: 'id, voucherNumber, voucherType, date, reversedBy, reversalOf, correctionOf, synced'
+    });
+
+    this.version(9).stores({
+      recurringExpenseTemplates: 'id, accountCode, dayOfMonth, active'
     });
   }
 }

@@ -535,3 +535,13 @@ export interface VaccineTemplate {
   appliesTo?: string;
 }
 
+export interface RecurringExpenseTemplate {
+  id: string;
+  description: string;
+  amount: number;
+  accountCode: string;
+  dayOfMonth: number;
+  active: boolean;
+  synced?: boolean;
+}
+

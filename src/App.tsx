@@ -22,10 +22,13 @@ import { InventoryCommerceModule } from './components/InventoryCommerceModule';
 import { BankingInvestorsModule } from './components/BankingInvestorsModule';
 import { ReportsModule } from './components/ReportsModule';
 import { MoreModule } from './components/MoreModule';
-import { AnimalEvent, SyncState, SystemConfig, UserProfile } from './types';
+import { AnimalEvent, JournalLine, SyncState, SystemConfig, UserProfile } from './types';
 import { runRegressionTests, getLatestRegressionTestResult, TestResult } from './utils/regressionTests';
-import { triggerForegroundDueTodayNotification } from './db/indexedDb';
+import { db, triggerForegroundDueTodayNotification } from './db/indexedDb';
 import { runDepreciationOnAppLoad } from './accounting/depreciationService';
+import { postJournalEntry } from './accounting/accountingEngine';
+import { getPaymentAccount } from './accounting/accountMapping';
+import { generateTransactionNumber, generateUniqueId, safeInsert } from './utils/idGenerator';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { subscribeToUndo, executeUndo, UndoableAction } from './services/undoService';
 
@@ -53,6 +56,9 @@ export default function App() {
   const [undoAction, setUndoAction] = useState<UndoableAction | null>(null);
   const [undoToastMessage, setUndoToastMessage] = useState<string | null>(null);
   const undoTimerRef = useRef<any>(null);
+
+  // Auto-posted Recurring Expense Toast State
+  const [recurringToastMessage, setRecurringToastMessage] = useState<string | null>(null);
 
   const handleNavigate = (
     tab: ActiveTab,
