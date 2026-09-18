@@ -13,6 +13,14 @@ export interface EmptyStateProps {
    */
   icon?: React.ComponentType<{ className?: string }> | React.ReactNode;
   /**
+   * Optional full illustration image URL to display instead of / above the small icon
+   */
+  illustration?: string;
+  /**
+   * Alt text for the illustration image
+   */
+  illustrationAlt?: string;
+  /**
    * Primary title/heading
    */
   heading: string;
@@ -48,6 +56,8 @@ export interface EmptyStateProps {
  */
 export const EmptyState: React.FC<EmptyStateProps> = ({
   icon,
+  illustration,
+  illustrationAlt = 'Empty state illustration',
   heading,
   message,
   action,
@@ -81,7 +91,16 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
         compact ? 'p-6' : 'p-8 sm:p-12'
       } ${className}`}
     >
-      {icon && (
+      {illustration ? (
+        <div className="w-full flex justify-center items-center mb-4">
+          <img
+            src={illustration}
+            alt={illustrationAlt}
+            loading="lazy"
+            className="w-[45%] max-w-[200px] min-w-[120px] h-auto object-contain pointer-events-none drop-shadow-xs"
+          />
+        </div>
+      ) : icon ? (
         <div
           className={`rounded-2xl bg-white dark:bg-slate-800 border border-gray-200/80 dark:border-slate-700 shadow-xs text-gray-400 dark:text-gray-500 flex items-center justify-center mb-3.5 ${
             compact ? 'w-12 h-12' : 'w-14 h-14'
@@ -89,7 +108,7 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
         >
           {renderIcon()}
         </div>
-      )}
+      ) : null}
 
       <h3
         className={`font-semibold text-gray-900 dark:text-gray-100 ${

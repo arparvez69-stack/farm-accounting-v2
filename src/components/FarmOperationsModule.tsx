@@ -1431,7 +1431,8 @@ export const FarmOperationsModule: React.FC<Props> = ({
                 return (
                   <EmptyState
                     id="empty-animals-state"
-                    icon={Tractor}
+                    illustration="/illustrations/Adopt_a_pet-bro.svg"
+                    illustrationAlt="No animals illustration"
                     heading="কোনো গবাদিপশু নিবন্ধিত নেই"
                     message="আপনার খামারের গবাদিপশুর পরিচিতি, ওজন, খাদ্য ও ভ্যাকসিনের ট্র্যাক রাখতে প্রথম পশুটি যোগ করুন।"
                     action={{
@@ -2646,6 +2647,16 @@ export const FarmOperationsModule: React.FC<Props> = ({
       {/* ===================== TAB 2: FISHERIES ===================== */}
       {tab === 'fisheries' && (
         <div className="bg-white border border-gray-200 rounded-2xl p-4 sm:p-5 shadow-xs space-y-4">
+          {/* Fishery Header Illustration */}
+          <div className="w-full flex justify-center items-center pb-2">
+            <img
+              src="/illustrations/fishing_with_net-rafiki.svg"
+              alt="Fishery section illustration"
+              loading="lazy"
+              className="w-[40%] max-w-[240px] min-w-[140px] h-auto object-contain pointer-events-none drop-shadow-xs"
+            />
+          </div>
+
           <div className="flex items-center justify-between border-b border-gray-100 pb-3 flex-wrap gap-2">
             <div>
               <h3 className="text-[16px] font-bold text-gray-900 flex items-center gap-2">

@@ -2829,6 +2829,16 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
         <div className="space-y-5">
           {/* Sub-tabs: Receivables & Payables */}
           <div className="bg-white border border-gray-200 rounded-2xl p-4 sm:p-5 shadow-xs space-y-4">
+            {/* Aging Report Header Illustration */}
+            <div className="w-full flex justify-center items-center pb-2">
+              <img
+                src="/illustrations/Pie_chart-pana.svg"
+                alt="Aging report illustration"
+                loading="lazy"
+                className="w-[35%] max-w-[220px] min-w-[130px] h-auto object-contain pointer-events-none drop-shadow-xs"
+              />
+            </div>
+
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-gray-100 pb-4">
               <div className="flex items-center gap-3">
                 <IconTile icon={Clock} color="indigo" size="md" rounded="xl" />
@@ -4295,6 +4305,16 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
       {/* ===================== REPORT 11: HERD SUMMARY & OPERATIONAL KPIS ===================== */}
       {activeReport === 'herdSummary' && herdKpiData && (
         <div className="bg-white border border-purple-200/80 rounded-2xl p-4 sm:p-6 space-y-6 shadow-xs">
+          {/* Herd Summary Header Illustration */}
+          <div className="w-full flex justify-center items-center pb-2">
+            <img
+              src="/illustrations/Analysis-amico.svg"
+              alt="Herd summary analysis illustration"
+              loading="lazy"
+              className="w-[35%] max-w-[220px] min-w-[130px] h-auto object-contain pointer-events-none drop-shadow-xs"
+            />
+          </div>
+
           {/* Header */}
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-purple-100 pb-4">
             <div className="flex items-center gap-3">
