@@ -113,31 +113,12 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
   const loadCommerceData = async () => {
     setLoading(true);
     try {
-      // Seed default items if empty
-      let itemList = await db.inventoryItems.toArray();
-      if (itemList.length === 0) {
-        const defaultItems: InventoryItem[] = [
-          { id: 'it_1', code: 'FEED-001', nameBn: 'শিং ও কৈ মাছের ফিড (Floating Feed)', nameEn: 'Fish Feed', category: 'FEED', unit: 'কেজি', currentStock: 1200, reorderLevel: 200, avgCostPrice: 72, sellingPrice: 0, synced: false },
-          { id: 'it_2', code: 'FEED-002', nameBn: 'দুগ্ধবতী গাভীর দানাদার খাদ্য (Cattle Feed)', nameEn: 'Cattle Feed', category: 'FEED', unit: 'কেজি', currentStock: 850, reorderLevel: 150, avgCostPrice: 48, sellingPrice: 0, synced: false },
-          { id: 'it_3', code: 'FERT-001', nameBn: 'ইউরিয়া ও টিএসপি সার', nameEn: 'Fertilizer Mix', category: 'FERTILIZER', unit: 'ব্যাগ', currentStock: 25, reorderLevel: 5, avgCostPrice: 1100, sellingPrice: 0, synced: false },
-          { id: 'it_4', code: 'PROD-001', nameBn: 'খামারের খাঁটি তরল দুধ', nameEn: 'Fresh Cow Milk', category: 'FARM_PRODUCT', unit: 'লিটার', currentStock: 80, reorderLevel: 10, avgCostPrice: 50, sellingPrice: 85, synced: false },
-          { id: 'it_5', code: 'PROD-002', nameBn: 'শিং ও শোল মাছ (লাইভ)', nameEn: 'Live Fish', category: 'FARM_PRODUCT', unit: 'কেজি', currentStock: 350, reorderLevel: 50, avgCostPrice: 280, sellingPrice: 450, synced: false }
-        ];
-        await db.inventoryItems.bulkPut(defaultItems);
-        itemList = defaultItems;
-      }
+      // Load inventory items from database without auto-seeding
+      const itemList = await db.inventoryItems.toArray();
       setItems(itemList);
 
-      // Seed default parties if empty
-      let partyList = await db.parties.toArray();
-      if (partyList.length === 0) {
-        const defaultParties: Party[] = [
-          { id: 'pty_1', name: 'মেসার্স ভাই ভাই ডেইরি ও মিল্ক সেন্টার', type: 'CUSTOMER', phone: '01711223344', address: 'কাওরান বাজার, ঢাকা', balance: 0, creditLimit: 50000, isActive: true },
-          { id: 'pty_2', name: 'আমান ফিড মিলস লিমিটেড (ডিলার)', type: 'SUPPLIER', phone: '01811556677', address: 'গাজীপুর', balance: 0, creditLimit: 100000, isActive: true }
-        ];
-        await db.parties.bulkPut(defaultParties);
-        partyList = defaultParties;
-      }
+      // Load parties from database without auto-seeding
+      const partyList = await db.parties.toArray();
       setParties(partyList);
 
       const pmtList = await db.payments.toArray();

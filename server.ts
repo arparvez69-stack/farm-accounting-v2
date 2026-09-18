@@ -972,6 +972,92 @@ app.get('/api/sync/restore', async (req, res) => {
   }
 });
 
+// ==========================================
+// API Route: POST /api/wipe-all-data
+// Owner-only "Danger Zone": completely wipes all cloud Firestore collections for the farm.
+// Requires confirmation string "মুছুন" and valid owner authentication.
+// ==========================================
+app.post('/api/wipe-all-data', async (req, res) => {
+  const owner = await authenticateOwnerRequest(req);
+  if (!owner) {
+    return res.status(401).json({ error: 'অননুমোদিত অ্যাক্সেস। অনুগ্রহ করে প্রথমে মালিক হিসেবে লগইন করুন।' });
+  }
+
+  const { confirmation } = req.body || {};
+  if (confirmation !== 'মুছুন') {
+    return res.status(400).json({ error: 'সঠিক নিশ্চিতকরণ কোড লিখুন ("মুছুন")।' });
+  }
+
+  const collectionsToWipe = [
+    'animals',
+    'animalEvents',
+    'journalEntries',
+    'sales',
+    'purchases',
+    'cropCycles',
+    'fishBatches',
+    'ponds',
+    'plots',
+    'inventoryItems',
+    'stockMovements',
+    'parties',
+    'fixedAssets',
+    'loans',
+    'investors',
+    'cashBankAccounts',
+    'bankTransfers',
+    'reminders',
+    'internalFlows',
+    'processingRuns',
+    'closedPeriods',
+    'auditLogs'
+  ];
+
+  let deletedTotal = 0;
+
+  if (adminDb) {
+    try {
+      for (const colName of collectionsToWipe) {
+        try {
+          const colRef = adminDb.collection(colName);
+          const snap = await colRef.get();
+          if (!snap.empty) {
+            const batch = adminDb.batch();
+            snap.docs.forEach((doc) => {
+              batch.delete(doc.ref);
+              deletedTotal++;
+            });
+            await batch.commit();
+          }
+        } catch (colErr: any) {
+          console.warn(`[The Goated Farm] Wipe note for collection ${colName}:`, colErr.message);
+        }
+      }
+    } catch (err: any) {
+      console.error('[The Goated Farm] Cloud wipe error:', err);
+      return res.status(500).json({ error: `ক্লাউড ডেটা মোছা সম্পূর্ণ হয়নি: ${err.message}` });
+    }
+  }
+
+  // Record audit log for the full wipe
+  serverAccessLogs.unshift({
+    id: 'wipe_' + Date.now(),
+    timestamp: new Date().toISOString(),
+    email: owner.email,
+    ip: (req.ip || req.socket.remoteAddress || 'unknown') as string,
+    userAgent: (req.headers['user-agent'] || 'unknown') as string,
+    status: 'SUCCESS'
+  });
+
+  console.log(`[The Goated Farm] DANGER ZONE: All farm records wiped by ${owner.email} (${deletedTotal} cloud documents removed).`);
+
+  return res.json({
+    success: true,
+    message: 'সব ডেটা সফলভাবে মুছে ফেলা হয়েছে এবং অ্যাপ্লিকেশন নতুন করে শুরু করার জন্য প্রস্তুত।',
+    deletedCount: deletedTotal
+  });
+});
+
 // API Route 3: GET /api/access-logs (to see who is using/accessing the app)
 app.get('/api/access-logs', (req, res) => {
   res.json({

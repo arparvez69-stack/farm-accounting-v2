@@ -427,52 +427,8 @@ export const FarmOperationsModule: React.FC<Props> = ({
   const loadOpsData = async () => {
     setLoading(true);
     try {
-      // Seed default animals if empty
-      let aList = await db.animals.toArray();
-      if (aList.length === 0) {
-        const seedA: Animal[] = [
-          {
-            id: 'COW-101',
-            tag: 'TAG-101',
-            species: 'CATTLE',
-            breed: 'হলস্টাইন ফ্রিজিয়ান সংকর (Holstein Cross)',
-            gender: 'FEMALE',
-            birthDate: '2022-03-15',
-            purchaseDate: '2023-01-10',
-            purchaseCost: 85000,
-            currentWeightKg: 380,
-            accumulatedFeedCost: 24000,
-            accumulatedMedCost: 3500,
-            accumulatedLabourCost: 6000,
-            otherCosts: 0,
-            totalCost: 118500,
-            status: 'ACTIVE',
-            location: 'শেড নং ১',
-            synced: false
-          },
-          {
-            id: 'BULL-102',
-            tag: 'TAG-102',
-            species: 'CATTLE',
-            breed: 'শাহীওয়াল ক্রস (Sahiwal)',
-            gender: 'MALE',
-            birthDate: '2023-01-20',
-            purchaseDate: '2023-06-15',
-            purchaseCost: 60000,
-            currentWeightKg: 310,
-            accumulatedFeedCost: 18000,
-            accumulatedMedCost: 2000,
-            accumulatedLabourCost: 4500,
-            otherCosts: 0,
-            totalCost: 84500,
-            status: 'ACTIVE',
-            location: 'শেড নং ২ (ফ্যাটেনিং)',
-            synced: false
-          }
-        ];
-        await db.animals.bulkPut(seedA);
-        aList = seedA;
-      }
+      // Load animals from database without auto-seeding
+      const aList = await db.animals.toArray();
       setAnimals(aList);
 
       // Load feed items for feed event logging
@@ -489,60 +445,12 @@ export const FarmOperationsModule: React.FC<Props> = ({
       const remList = await db.reminders.toArray();
       setReminders(remList);
 
-      // Seed default fish batches if empty
-      let fList = await db.fishBatches.toArray();
-      if (fList.length === 0) {
-        const seedF: FishBatch[] = [
-          {
-            id: 'FISH-P1-24',
-            pondId: 'p1',
-            pondName: '১ নং প্রধান পুকুর (কার্প মিশ্র চাষ)',
-            species: 'রুই, কাতলা ও মৃগেল',
-            stockingDate: '2024-02-01',
-            fingerlingQty: 3000,
-            fingerlingCost: 18000,
-            totalFeedKg: 1200,
-            totalFeedCost: 68000,
-            mortalityCount: 150,
-            currentEstimatedWeightKg: 750,
-            status: 'ACTIVE',
-            synced: false
-          }
-        ];
-        await db.fishBatches.bulkPut(seedF);
-        fList = seedF;
-      }
+      // Load fish batches without auto-seeding
+      const fList = await db.fishBatches.toArray();
       setFishBatches(fList);
 
-      // Seed default crop cycles if empty
-      let cList = await db.cropCycles.toArray();
-      if (cList.length === 0) {
-        const seedC: CropCycle[] = [
-          {
-            id: 'CROP-NAP-01',
-            plotId: 'plot1',
-            plotName: 'দক্ষিণ খণ্ড (প্লট-১)',
-            cropName: 'সুপার নেপিয়ার ঘাস (গবাদিপশুর খাদ্য)',
-            cropCategory: 'FODDER',
-            areaDecimals: 50,
-            plantingDate: '2024-01-15',
-            expectedHarvestDate: '2024-05-15',
-            seedCost: 5000,
-            fertilizerCost: 6500,
-            irrigationCost: 2000,
-            labourCost: 8000,
-            otherCost: 0,
-            totalCost: 21500,
-            harvestYieldKg: 12000,
-            harvestRevenue: 0,
-            internalConsumptionKg: 12000,
-            status: 'GROWING',
-            synced: false
-          }
-        ];
-        await db.cropCycles.bulkPut(seedC);
-        cList = seedC;
-      }
+      // Load crop cycles without auto-seeding
+      const cList = await db.cropCycles.toArray();
       setCropCycles(cList);
 
       if (tab === 'flows') {

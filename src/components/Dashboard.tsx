@@ -303,51 +303,6 @@ export const Dashboard: React.FC<Props> = ({ role, onNavigate, regressionTestRes
       const in7Days = new Date(today.getTime() + 7 * 86400000);
       const in7DaysStr = in7Days.toISOString().split('T')[0];
 
-      // If reminders table is empty, seed initial realistic reminders
-      const reminderCount = await db.reminders.count();
-      if (reminderCount === 0) {
-        const todayDate = new Date();
-        const tomorrow = new Date(todayDate.getTime() + 86400000).toISOString().split('T')[0];
-        const in3Days = new Date(todayDate.getTime() + 3 * 86400000).toISOString().split('T')[0];
-        const in5Days = new Date(todayDate.getTime() + 5 * 86400000).toISOString().split('T')[0];
-
-        try {
-          await db.reminders.bulkPut([
-            {
-              id: 'rem-seed-1',
-              animalId: 'COW-101',
-              title: 'TAG-101: ক্ষুরা রোগ (FMD) পরবর্তী বুস্টার ডোজ',
-              category: 'VACCINE',
-              dueDate: in3Days,
-              status: 'PENDING',
-              createdAt: new Date().toISOString(),
-              synced: false
-            },
-            {
-              id: 'rem-seed-2',
-              title: 'পশু খাদ্য ও সাইলেজ সংগ্রহের জন্য বাজার সফর',
-              category: 'MARKET',
-              dueDate: tomorrow,
-              status: 'PENDING',
-              createdAt: new Date().toISOString(),
-              synced: false
-            },
-            {
-              id: 'rem-seed-3',
-              animalId: 'BULL-102',
-              title: 'TAG-102: কৃমিনাশক ও ওজন পরিমাপ ফলোআপ',
-              category: 'TREATMENT',
-              dueDate: in5Days,
-              status: 'PENDING',
-              createdAt: new Date().toISOString(),
-              synced: false
-            }
-          ]);
-        } catch (seedErr) {
-          console.warn('Initial reminders seed note:', seedErr);
-        }
-      }
-
       const allPendingReminders = await db.reminders
         .where('status')
         .equals('PENDING')

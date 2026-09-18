@@ -1512,9 +1512,45 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
             </div>
           )}
 
-          <div className="overflow-x-auto rounded-xl border border-gray-200">
-            <table className="w-full text-left text-[13px] text-gray-800">
-              <thead className="bg-gray-100 text-gray-600 uppercase text-[11px] font-bold">
+          {/* Mobile / Tablet Cards View */}
+          <div className="md:hidden space-y-3">
+            {tbRows.map((r) => (
+              <div
+                key={r.code}
+                className={`p-3.5 rounded-xl border border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900/80 shadow-2xs space-y-2 ${
+                  r.isOrphan ? 'border-red-300 bg-red-50/50 dark:bg-red-950/20' : ''
+                }`}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-blue-700 dark:text-blue-400 font-bold font-mono text-sm">{r.code}</span>
+                  <span className="text-xs px-2 py-0.5 rounded bg-gray-100 dark:bg-slate-800 text-gray-600 dark:text-slate-300">
+                    {r.accountClass}
+                  </span>
+                </div>
+                <div className="text-sm font-semibold text-gray-900 dark:text-slate-100">{r.nameBn}</div>
+                <div className="grid grid-cols-2 gap-2 pt-1 text-xs border-t border-gray-100 dark:border-slate-800">
+                  <div className="text-[#15803D] dark:text-emerald-400 font-bold">
+                    ডেবিট: {r.debit > 0 ? fmt(r.debit) : '-'}
+                  </div>
+                  <div className="text-right text-sky-700 dark:text-sky-400 font-bold">
+                    ক্রেডিট: {r.credit > 0 ? fmt(r.credit) : '-'}
+                  </div>
+                </div>
+              </div>
+            ))}
+            <div className="p-3.5 rounded-xl bg-gray-100 dark:bg-slate-800 text-sm font-bold flex justify-between items-center">
+              <span>মোট (Total):</span>
+              <div className="flex items-center gap-3 text-xs sm:text-sm">
+                <span className="text-[#15803D] dark:text-emerald-400">{fmt(tbTotalDebit)}</span>
+                <span className="text-sky-700 dark:text-sky-400">{fmt(tbTotalCredit)}</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Desktop Table View */}
+          <div className="hidden md:block overflow-x-auto rounded-xl border border-gray-200 dark:border-slate-800">
+            <table className="w-full text-left text-[13px] text-gray-800 dark:text-slate-200">
+              <thead className="bg-gray-100 dark:bg-slate-800/80 text-gray-600 dark:text-slate-400 uppercase text-[11px] font-bold">
                 <tr>
                   <th className="p-3">কোড</th>
                   <th className="p-3">হিসাবের নাম</th>
@@ -1523,22 +1559,22 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
                   <th className="p-3 text-right">ক্রেডিট ব্যালেন্স (৳)</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-200">
+              <tbody className="divide-y divide-gray-200 dark:divide-slate-800">
                 {tbRows.map((r) => (
-                  <tr key={r.code} className={`hover:bg-gray-50 ${r.isOrphan ? 'bg-red-50' : ''}`}>
-                    <td className="p-3 text-blue-700 font-bold font-mono">{r.code}</td>
-                    <td className="p-3 text-gray-900 font-medium">{r.nameBn}</td>
-                    <td className="p-3 text-gray-600 text-xs">{r.accountClass}</td>
-                    <td className="p-3 text-right font-semibold text-[#15803D]">{r.debit > 0 ? fmt(r.debit) : '-'}</td>
-                    <td className="p-3 text-right font-semibold text-sky-700">{r.credit > 0 ? fmt(r.credit) : '-'}</td>
+                  <tr key={r.code} className={`hover:bg-gray-50 dark:hover:bg-slate-800/40 ${r.isOrphan ? 'bg-red-50 dark:bg-red-950/20' : ''}`}>
+                    <td className="p-3 text-blue-700 dark:text-blue-400 font-bold font-mono">{r.code}</td>
+                    <td className="p-3 text-gray-900 dark:text-slate-100 font-medium">{r.nameBn}</td>
+                    <td className="p-3 text-gray-600 dark:text-slate-400 text-xs">{r.accountClass}</td>
+                    <td className="p-3 text-right font-semibold text-[#15803D] dark:text-emerald-400">{r.debit > 0 ? fmt(r.debit) : '-'}</td>
+                    <td className="p-3 text-right font-semibold text-sky-700 dark:text-sky-400">{r.credit > 0 ? fmt(r.credit) : '-'}</td>
                   </tr>
                 ))}
               </tbody>
-              <tfoot className="bg-gray-100 font-bold text-[14px] border-t-2 border-gray-300">
+              <tfoot className="bg-gray-100 dark:bg-slate-800 font-bold text-[14px] border-t-2 border-gray-300 dark:border-slate-700">
                 <tr>
-                  <td colSpan={3} className="p-3.5 text-gray-900">মোট (Total):</td>
-                  <td className="p-3.5 text-right text-[#15803D]">{fmt(tbTotalDebit)}</td>
-                  <td className="p-3.5 text-right text-sky-700">{fmt(tbTotalCredit)}</td>
+                  <td colSpan={3} className="p-3.5 text-gray-900 dark:text-slate-100">মোট (Total):</td>
+                  <td className="p-3.5 text-right text-[#15803D] dark:text-emerald-400">{fmt(tbTotalDebit)}</td>
+                  <td className="p-3.5 text-right text-sky-700 dark:text-sky-400">{fmt(tbTotalCredit)}</td>
                 </tr>
               </tfoot>
             </table>

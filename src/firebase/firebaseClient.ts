@@ -98,34 +98,6 @@ export async function initializeLocalDatabase(): Promise<void> {
     console.warn('Notice: Legacy accounts migration error:', err);
   }
 
-  const cashCount = await db.cashBankAccounts.count();
-  if (cashCount === 0) {
-    await db.cashBankAccounts.put({
-      id: 'cash_main',
-      accountType: 'CASH',
-      name: 'প্রধান নগদ তহবিল (Main Cash Drawer)',
-      currentBalance: 50000,
-      synced: true
-    });
-    await db.cashBankAccounts.put({
-      id: 'bank_main',
-      accountType: 'BANK',
-      name: 'সোনালী ব্যাংক চলতি হিসাব (Sonali Bank Current)',
-      accountNumber: '01234567890',
-      bankName: 'Sonali Bank PLC',
-      branch: 'Main Branch',
-      currentBalance: 150000,
-      synced: true
-    });
-  } else {
-    const cashMain = await db.cashBankAccounts.get('cash_main');
-    if (cashMain && cashMain.currentBalance < 10000) {
-      await db.cashBankAccounts.update('cash_main', {
-        currentBalance: Math.max(cashMain.currentBalance, 0) + 50000
-      });
-    }
-  }
-
   // Ensure default system config in local IndexedDB
   const sysConfigs = await db.systemConfig.toArray();
   if (sysConfigs.length === 0) {

@@ -35,10 +35,13 @@ import {
   Package,
   Landmark,
   FileSpreadsheet,
-  Menu
+  Menu,
+  Flame,
+  AlertTriangle
 } from 'lucide-react';
 import { useLanguage } from '../i18n/translations';
 import { db } from '../db/indexedDb';
+import { auth } from '../firebase/firebaseClient';
 import { AuditLog, FixedAsset, SystemConfig, UserRole, AppAccessLog, VaccineTemplate } from '../types';
 import { getStoredAuthorizedEmails, getAppAccessLogs, logoutOwner } from '../services/authService';
 import { generateTransactionNumber, safeInsert } from '../utils/idGenerator';
@@ -252,6 +255,127 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
   const [assetDepreciationRate, setAssetDepreciationRate] = useState('10');
   const [deprLoading, setDeprLoading] = useState(false);
   const [deprFeedback, setDeprFeedback] = useState<string | null>(null);
+
+  // Erase All Data & Start Fresh (Danger Zone) State
+  const [showWipeModal, setShowWipeModal] = useState(false);
+  const [wipeConfirmInput, setWipeConfirmInput] = useState('');
+  const [wipeLoading, setWipeLoading] = useState(false);
+  const [wipeError, setWipeError] = useState<string | null>(null);
+
+  const handleExecuteWipeAllData = async () => {
+    if (wipeConfirmInput.trim() !== 'মুছুন') {
+      setWipeError('অনুগ্রহ করে নিশ্চিত করতে হুবহু "মুছুন" টাইপ করুন।');
+      return;
+    }
+
+    setWipeLoading(true);
+    setWipeError(null);
+
+    try {
+      // 1. Get authentication token for server call
+      let token: string | null = null;
+      if (auth.currentUser) {
+        try {
+          token = await auth.currentUser.getIdToken();
+        } catch {}
+      }
+      if (!token) {
+        try {
+          const session = JSON.parse(localStorage.getItem('goted_owner_session') || '{}');
+          token = session.sessionToken || null;
+        } catch {}
+      }
+
+      // 2. Call backend wipe endpoint to clear all Firestore collections with Admin SDK
+      const response = await fetch('/api/wipe-all-data', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {})
+        },
+        body: JSON.stringify({ confirmation: 'মুছুন' })
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || 'ক্লাউড ডেটা মোছা সম্পন্ন হয়নি।');
+      }
+
+      // 3. Wipe all local IndexedDB tables cleanly
+      await db.transaction('rw', [
+        db.animals,
+        db.animalEvents,
+        db.journalEntries,
+        db.sales,
+        db.purchases,
+        db.cropCycles,
+        db.fishBatches,
+        db.ponds,
+        db.plots,
+        db.inventoryItems,
+        db.stockMovements,
+        db.parties,
+        db.fixedAssets,
+        db.loans,
+        db.investors,
+        db.cashBankAccounts,
+        db.bankTransfers,
+        db.reminders,
+        db.internalFlows,
+        db.processingRuns,
+        db.closedPeriods,
+        db.auditLogs,
+        db.accessLogs,
+        db.payments
+      ], async () => {
+        await Promise.all([
+          db.animals.clear(),
+          db.animalEvents.clear(),
+          db.journalEntries.clear(),
+          db.sales.clear(),
+          db.purchases.clear(),
+          db.cropCycles.clear(),
+          db.fishBatches.clear(),
+          db.ponds.clear(),
+          db.plots.clear(),
+          db.inventoryItems.clear(),
+          db.stockMovements.clear(),
+          db.parties.clear(),
+          db.fixedAssets.clear(),
+          db.loans.clear(),
+          db.investors.clear(),
+          db.cashBankAccounts.clear(),
+          db.bankTransfers.clear(),
+          db.reminders.clear(),
+          db.internalFlows.clear(),
+          db.processingRuns.clear(),
+          db.closedPeriods.clear(),
+          db.auditLogs.clear(),
+          db.accessLogs.clear(),
+          db.payments.clear()
+        ]);
+      });
+
+      // 4. Clear sync timestamps and farm preferences (except auth credentials needed for fresh login)
+      localStorage.removeItem('goted_last_sync_time');
+      localStorage.removeItem('goted_farm_phone');
+      localStorage.removeItem('goted_tin_number');
+      localStorage.removeItem('goted_bin_number');
+      localStorage.removeItem('goted_low_cash_alert_threshold');
+
+      // 5. Log out cleanly and return to login screen
+      await logoutOwner();
+      if (onLogout) {
+        onLogout();
+      } else {
+        window.location.reload();
+      }
+    } catch (err: any) {
+      console.error('Wipe data error:', err);
+      setWipeError(err.message || 'ডেটা মোছা ব্যর্থ হয়েছে। অনুগ্রহ করে পুনরায় চেষ্টা করুন।');
+      setWipeLoading(false);
+    }
+  };
 
   useEffect(() => {
     loadData();
@@ -991,54 +1115,94 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
             <span className="text-[13px] text-gray-500 font-medium">সর্বশেষ {logs.length} রেকর্ড</span>
           </div>
 
-          <div className="overflow-x-auto rounded-xl border border-gray-200">
-            <table className="w-full text-left text-[14px] text-gray-800">
-              <thead className="bg-[#F8FAFC] text-gray-600 font-semibold border-b border-gray-200 text-[13px]">
-                <tr>
-                  <th className="p-3">সময় (Timestamp)</th>
-                  <th className="p-3">অ্যাকশন</th>
-                  <th className="p-3">মডিউল</th>
-                  <th className="p-3">ব্যবহারকারী UID</th>
-                  <th className="p-3">বিবরণ</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100">
-                {logs.length === 0 ? (
-                  <tr>
-                    <td colSpan={5} className="p-8 text-center text-gray-500 text-[14px]">
-                      কোনো অডিট লগ এন্ট্রি পাওয়া যায়নি
-                    </td>
-                  </tr>
-                ) : (
-                  logs.map((log) => (
-                    <tr key={log.id} className="hover:bg-gray-50/80">
-                      <td className="p-3 font-mono text-[13px] text-gray-600 whitespace-nowrap">
-                        {new Date(log.timestamp).toLocaleString()}
-                      </td>
-                      <td className="p-3">
-                        <span
-                          className={`px-2.5 py-1 rounded-full text-xs font-bold ${
-                            log.action === 'CREATE'
-                              ? 'bg-[#F0FDF4] text-[#15803D] border border-[#BBF7D0]'
-                              : log.action === 'UPDATE'
-                              ? 'bg-amber-50 text-amber-700 border border-amber-200'
-                              : 'bg-red-50 text-red-700 border border-red-200'
-                          }`}
-                        >
-                          {log.action}
-                        </span>
-                      </td>
-                      <td className="p-3 font-semibold text-gray-900">{log.entity}</td>
-                      <td className="p-3 font-mono text-[12px] text-gray-500">{log.userId}</td>
-                      <td className="p-3 max-w-xs truncate text-gray-600 font-mono text-[12px]">
-                        {JSON.stringify(log.details || {})}
-                      </td>
+          {/* Responsive Audit Logs Display */}
+          {logs.length === 0 ? (
+            <div className="p-8 text-center text-gray-500 text-[14px] bg-gray-50/50 dark:bg-slate-900/30 rounded-xl border border-dashed border-gray-300 dark:border-slate-700">
+              কোনো অডিট লগ এন্ট্রি পাওয়া যায়নি
+            </div>
+          ) : (
+            <>
+              {/* Mobile / Tablet Cards View */}
+              <div className="md:hidden space-y-3">
+                {logs.map((log) => (
+                  <div
+                    key={log.id}
+                    className="p-3.5 rounded-xl border border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900/80 shadow-2xs space-y-2"
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-semibold text-gray-900 dark:text-slate-100 text-sm">{log.entity}</span>
+                      <span
+                        className={`px-2 py-0.5 rounded-full text-xs font-bold ${
+                          log.action === 'CREATE'
+                            ? 'bg-[#F0FDF4] text-[#15803D] border border-[#BBF7D0]'
+                            : log.action === 'UPDATE'
+                            ? 'bg-amber-50 text-amber-700 border border-amber-200'
+                            : 'bg-red-50 text-red-700 border border-red-200'
+                        }`}
+                      >
+                        {log.action}
+                      </span>
+                    </div>
+                    <div className="text-xs text-gray-500 dark:text-slate-400 font-mono">
+                      {new Date(log.timestamp).toLocaleString('bn-BD')}
+                    </div>
+                    {log.userId && (
+                      <div className="text-xs text-gray-600 dark:text-slate-400 font-mono">
+                        UID: {log.userId}
+                      </div>
+                    )}
+                    {log.details && Object.keys(log.details).length > 0 && (
+                      <div className="p-2 rounded-lg bg-gray-50 dark:bg-slate-800/60 text-xs font-mono text-gray-600 dark:text-slate-300 break-all">
+                        {JSON.stringify(log.details)}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+
+              {/* Desktop Table View */}
+              <div className="hidden md:block overflow-x-auto rounded-xl border border-gray-200 dark:border-slate-800">
+                <table className="w-full text-left text-[14px] text-gray-800 dark:text-slate-200">
+                  <thead className="bg-[#F8FAFC] dark:bg-slate-800/80 text-gray-600 dark:text-slate-400 font-semibold border-b border-gray-200 dark:border-slate-700 text-[13px]">
+                    <tr>
+                      <th className="p-3">সময় (Timestamp)</th>
+                      <th className="p-3">অ্যাকশন</th>
+                      <th className="p-3">মডিউল</th>
+                      <th className="p-3">ব্যবহারকারী UID</th>
+                      <th className="p-3">বিবরণ</th>
                     </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100 dark:divide-slate-800">
+                    {logs.map((log) => (
+                      <tr key={log.id} className="hover:bg-gray-50/80 dark:hover:bg-slate-800/40">
+                        <td className="p-3 font-mono text-[13px] text-gray-600 dark:text-slate-400 whitespace-nowrap">
+                          {new Date(log.timestamp).toLocaleString()}
+                        </td>
+                        <td className="p-3">
+                          <span
+                            className={`px-2.5 py-1 rounded-full text-xs font-bold ${
+                              log.action === 'CREATE'
+                                ? 'bg-[#F0FDF4] text-[#15803D] border border-[#BBF7D0]'
+                                : log.action === 'UPDATE'
+                                ? 'bg-amber-50 text-amber-700 border border-amber-200'
+                                : 'bg-red-50 text-red-700 border border-red-200'
+                            }`}
+                          >
+                            {log.action}
+                          </span>
+                        </td>
+                        <td className="p-3 font-semibold text-gray-900 dark:text-slate-100">{log.entity}</td>
+                        <td className="p-3 font-mono text-[12px] text-gray-500 dark:text-slate-400">{log.userId}</td>
+                        <td className="p-3 max-w-xs truncate text-gray-600 dark:text-slate-400 font-mono text-[12px]">
+                          {JSON.stringify(log.details || {})}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
         </div>
       )}
 
@@ -1549,14 +1713,151 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
             <button
               id="btn-logout-device-settings"
               onClick={handleLogoutDevice}
-              className="w-full py-3 px-4 rounded-xl bg-red-50 dark:bg-red-950/40 hover:bg-red-100 dark:hover:bg-red-900/60 text-red-700 dark:text-red-300 border border-red-200 dark:border-red-800 text-[14px] font-bold flex items-center justify-center gap-2 transition-all cursor-pointer shadow-xs active:scale-98"
+              className="w-full py-3 px-4 rounded-xl bg-gray-100 dark:bg-slate-800 hover:bg-gray-200 dark:hover:bg-slate-700 text-gray-800 dark:text-slate-200 border border-gray-300 dark:border-slate-700 text-[14px] font-bold flex items-center justify-center gap-2 transition-all cursor-pointer shadow-xs active:scale-98"
             >
-              <LogOut className="w-5 h-5 text-red-600 dark:text-red-400" />
+              <LogOut className="w-5 h-5 text-gray-600 dark:text-gray-400" />
               <span>এই ডিভাইস থেকে লগ আউট করুন / Log out this device</span>
             </button>
             <p className="text-[12px] text-gray-500 dark:text-slate-400 text-center mt-2">
               লগ আউট করলে এই ডিভাইসে সংরক্ষিত সেশন মুছে যাবে এবং পুনরায় প্রবেশ করতে ইমেইল ও গোপন পিন প্রয়োজন হবে।
             </p>
+          </div>
+
+          {/* DANGER ZONE: Erase All Data & Start Fresh */}
+          <div className="pt-6 border-t-2 border-dashed border-red-200 dark:border-red-900/60">
+            <div className="p-5 rounded-2xl bg-red-50/80 dark:bg-red-950/30 border-2 border-red-200 dark:border-red-900/70 space-y-3">
+              <div className="flex items-start gap-3">
+                <div className="w-10 h-10 rounded-xl bg-red-100 dark:bg-red-900/60 text-red-600 dark:text-red-400 flex items-center justify-center shrink-0">
+                  <Flame className="w-5 h-5" />
+                </div>
+                <div>
+                  <h4 className="text-[15px] font-bold text-red-900 dark:text-red-200 flex items-center gap-2">
+                    <span>বিপদজনক অঞ্চল (Danger Zone)</span>
+                  </h4>
+                  <p className="text-[13px] text-red-800/90 dark:text-red-300/90 mt-0.5 leading-relaxed">
+                    এই অপশনটি শুধুমাত্র খামার পুনরায় শূন্য থেকে সেটআপ করার জন্য। এটি আপনার সমস্ত স্থানীয় ও ক্লাউড ডেটা স্থায়ীভাবে মুছে ফেলবে।
+                  </p>
+                </div>
+              </div>
+
+              <div className="pt-2">
+                <button
+                  type="button"
+                  id="btn-open-wipe-all-data-modal"
+                  onClick={() => {
+                    setWipeConfirmInput('');
+                    setWipeError(null);
+                    setShowWipeModal(true);
+                  }}
+                  className="w-full sm:w-auto px-5 py-3 rounded-xl bg-red-600 hover:bg-red-700 active:bg-red-800 text-white text-[14px] font-bold flex items-center justify-center gap-2 shadow-sm transition-all cursor-pointer active:scale-98"
+                >
+                  <Trash2 className="w-4 h-4" />
+                  <span>সব ডেটা মুছে নতুন করে শুরু করুন (Erase All Data & Start Fresh)</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Wipe All Data Confirmation Modal */}
+      {showWipeModal && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-slate-900 border-2 border-red-300 dark:border-red-800 rounded-2xl max-w-lg w-full p-6 shadow-2xl space-y-4 animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-start gap-3 border-b border-gray-100 dark:border-slate-800 pb-4">
+              <div className="w-12 h-12 rounded-2xl bg-red-100 dark:bg-red-950/80 text-red-600 dark:text-red-400 flex items-center justify-center shrink-0">
+                <AlertTriangle className="w-6 h-6" />
+              </div>
+              <div className="flex-1">
+                <h3 className="text-lg font-bold text-gray-900 dark:text-slate-100">
+                  সব ডেটা মুছে নতুন করে শুরু করতে চান?
+                </h3>
+                <p className="text-xs text-red-600 dark:text-red-400 font-semibold mt-0.5">
+                  সতর্কতা: এই ক্রিয়াটি স্থায়ী এবং অপরিবর্তনীয়!
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => !wipeLoading && setShowWipeModal(false)}
+                disabled={wipeLoading}
+                className="text-gray-400 hover:text-gray-600 dark:hover:text-slate-300 p-1.5 rounded-lg cursor-pointer disabled:opacity-50"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="space-y-3 text-[13px] text-gray-700 dark:text-slate-300 leading-relaxed">
+              <div className="p-3.5 rounded-xl bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-900/60 text-red-900 dark:text-red-200 space-y-1.5">
+                <p className="font-bold flex items-center gap-1.5">
+                  <Flame className="w-4 h-4 text-red-600 shrink-0" />
+                  <span>স্থায়ীভাবে মুছে ফেলা হবে:</span>
+                </p>
+                <ul className="list-disc list-inside text-xs space-y-1 pl-1 text-red-800 dark:text-red-300">
+                  <li>সকল গবাদিপশু, ঘটনা, চিকিৎসা ও ওজন রেকর্ড</li>
+                  <li>সকল মৎস্য ব্যাচ, পুকুর ও শস্য চক্রের তথ্য</li>
+                  <li>দ্বৈত-দাখিলার সকল জাবেদা, ভাউচার ও হিসাবকাল সমাপনী</li>
+                  <li>সকল বিক্রয়, ক্রয়, মজুদ পণ্য ও খতিয়ান পার্টি</li>
+                  <li>সকল স্থায়ী সম্পদ, ঋণ, বিনিয়োগকারী ও রিমাইন্ডার</li>
+                  <li>এই ডিভাইসের স্থানীয় ডেটাবেজ এবং ক্লাউড ফায়ারস্টোর উভয় স্থান থেকেই মুছে যাবে</li>
+                </ul>
+              </div>
+
+              <div className="space-y-2 pt-1">
+                <label className="block font-semibold text-gray-900 dark:text-slate-100">
+                  নিশ্চিত করতে নিচে হুবহু <span className="font-bold text-red-600 dark:text-red-400 font-mono text-[14px]">"মুছুন"</span> শব্দটি লিখুন:
+                </label>
+                <input
+                  type="text"
+                  id="input-wipe-confirm-text"
+                  autoFocus
+                  disabled={wipeLoading}
+                  value={wipeConfirmInput}
+                  onChange={(e) => {
+                    setWipeConfirmInput(e.target.value);
+                    if (wipeError) setWipeError(null);
+                  }}
+                  placeholder="মুছুন"
+                  className="w-full p-3 bg-white dark:bg-slate-800 border-2 border-red-300 dark:border-red-800 focus:border-red-600 rounded-xl text-base font-semibold text-gray-900 dark:text-slate-100 text-center tracking-wide"
+                />
+              </div>
+
+              {wipeError && (
+                <div className="p-3 rounded-xl bg-rose-50 dark:bg-rose-950/50 border border-rose-200 dark:border-rose-900 text-rose-700 dark:text-rose-300 text-xs font-semibold flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 shrink-0" />
+                  <span>{wipeError}</span>
+                </div>
+              )}
+            </div>
+
+            <div className="flex items-center justify-end gap-3 pt-3 border-t border-gray-100 dark:border-slate-800">
+              <button
+                type="button"
+                disabled={wipeLoading}
+                onClick={() => setShowWipeModal(false)}
+                className="px-4 py-2.5 rounded-xl bg-gray-100 dark:bg-slate-800 hover:bg-gray-200 dark:hover:bg-slate-700 text-gray-700 dark:text-slate-300 text-[13px] font-semibold transition-all cursor-pointer disabled:opacity-50"
+              >
+                বাতিল
+              </button>
+              <button
+                type="button"
+                id="btn-confirm-wipe-all-data-execute"
+                disabled={wipeConfirmInput.trim() !== 'মুছুন' || wipeLoading}
+                onClick={handleExecuteWipeAllData}
+                className="px-5 py-2.5 rounded-xl bg-red-600 hover:bg-red-700 text-white text-[13px] font-bold shadow-md transition-all cursor-pointer active:scale-95 disabled:opacity-50 disabled:pointer-events-none flex items-center gap-2"
+              >
+                {wipeLoading ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                    <span>সব ডেটা মোছা হচ্ছে...</span>
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="w-4 h-4" />
+                    <span>স্থায়ীভাবে সব ডেটা মুছুন</span>
+                  </>
+                )}
+              </button>
+            </div>
           </div>
         </div>
       )}
