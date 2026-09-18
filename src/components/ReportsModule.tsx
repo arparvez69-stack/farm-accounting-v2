@@ -56,6 +56,7 @@ import {
 import { exportAllToExcel, createFullJsonBackup, restoreFromJsonBackup } from '../services/exportService';
 import { db } from '../db/indexedDb';
 import { UserRole, Sale, Purchase, PaymentRecord, Loan, Investor, CashBankAccount, JournalEntry, ClosedPeriod, Account, Animal, AnimalEvent } from '../types';
+import { StatusBadge, Card, IconTile } from './ui';
 
 type DatePreset = 'this_month' | 'last_month' | 'this_year' | 'custom';
 
@@ -1353,6 +1354,7 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
     return [
       {
         key: '30+' as AgingBucketKey,
+        status: 'overdue' as const, // danger
         labelBn: '৩০+ দিন (30+ days)',
         title: '৩০+ দিন অতিবাহিত',
         priorityTag: 'সর্বাধিক জরুরি তাগাদা (Critical)',
@@ -1365,6 +1367,7 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
       },
       {
         key: '15-30' as AgingBucketKey,
+        status: 'due-soon' as const, // warning
         labelBn: '১৫-৩০ দিন (15-30 days)',
         title: '১৫-৩০ দিন অতিবাহিত',
         priorityTag: 'মাঝারি তাগাদা (Attention Required)',
@@ -1377,6 +1380,7 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
       },
       {
         key: '8-14' as AgingBucketKey,
+        status: 'due-soon' as const, // warning
         labelBn: '৮-১৪ দিন (8-14 days)',
         title: '৮-১৪ দিন অতিবাহিত',
         priorityTag: 'সাধারণ বকেয়া (Moderate)',
@@ -1389,6 +1393,7 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
       },
       {
         key: '0-7' as AgingBucketKey,
+        status: 'info' as const, // info
         labelBn: '০-৭ দিন (0-7 days)',
         title: '০-৭ দিন অতিবাহিত',
         priorityTag: 'নতুন চালান (Recent / Current)',
@@ -2749,14 +2754,16 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
           {/* Sub-tabs: Receivables & Payables */}
           <div className="bg-white border border-gray-200 rounded-2xl p-4 sm:p-5 shadow-xs space-y-4">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-gray-100 pb-4">
-              <div>
-                <h3 className="text-base sm:text-lg font-bold text-gray-900 flex items-center gap-2">
-                  <Clock className="w-5 h-5 text-[#1E5128]" />
-                  <span>পাওনা-দেনার হিসাব (Receivables & Payables Aging Report)</span>
-                </h3>
-                <p className="text-[13px] text-gray-600 mt-0.5">
-                  আজকের তারিখ পর্যন্ত বকেয়া অর্থ আদায় ও পরিশোধের মেয়াদ ভিত্তিক অগ্রাধিকার তালিকা
-                </p>
+              <div className="flex items-center gap-3">
+                <IconTile icon={Clock} color="indigo" size="md" rounded="xl" />
+                <div>
+                  <h3 className="text-base sm:text-lg font-bold text-gray-900 flex items-center gap-2">
+                    <span>পাওনা-দেনার হিসাব (Receivables & Payables Aging Report)</span>
+                  </h3>
+                  <p className="text-[13px] text-gray-600 mt-0.5">
+                    আজকের তারিখ পর্যন্ত বকেয়া অর্থ আদায় ও পরিশোধের মেয়াদ ভিত্তিক অগ্রাধিকার তালিকা
+                  </p>
+                </div>
               </div>
 
               {/* Sub-tab Switcher */}
@@ -2841,14 +2848,16 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
                     >
                       <div className="flex items-center justify-between gap-1 mb-1">
                         <span className="text-[11px] font-bold text-gray-700">{b.labelBn}</span>
-                        <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-mono font-bold ${b.badgeClass}`}>
-                          {b.items.length}
-                        </span>
+                        <StatusBadge
+                          status={b.status}
+                          size="sm"
+                          label={`${b.items.length}`}
+                        />
                       </div>
                       <div className="text-sm sm:text-base font-bold font-mono text-gray-900">
                         {fmt(b.totalDue)}
                       </div>
-                      <span className="text-[10px] text-gray-500 block truncate">
+                      <span className="text-[10px] text-gray-500 block truncate mt-0.5">
                         {b.title}
                       </span>
                     </button>
@@ -2897,13 +2906,18 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
                     key={b.key}
                     type="button"
                     onClick={() => setAgingBucketFilter(b.key)}
-                    className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer min-h-[32px] ${
+                    className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer min-h-[32px] inline-flex items-center gap-1.5 ${
                       agingBucketFilter === b.key
                         ? 'bg-[#1E5128] text-white shadow-2xs'
                         : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
                     }`}
                   >
-                    {b.labelBn} ({b.items.length})
+                    <span>{b.labelBn}</span>
+                    <StatusBadge
+                      status={b.status}
+                      size="sm"
+                      label={`${b.items.length}`}
+                    />
                   </button>
                 ))}
               </div>
@@ -2921,11 +2935,13 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
                 >
                   {/* Bucket Header */}
                   <div className={`p-4 border-b flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 ${bucket.headerBg}`}>
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className={`px-2.5 py-1 rounded-full text-xs font-bold uppercase tracking-wider ${bucket.urgencyBadge}`}>
-                        {bucket.priorityTag}
-                      </span>
-                      <h4 className="text-base font-bold">
+                    <div className="flex items-center gap-2.5 flex-wrap">
+                      <StatusBadge
+                        status={bucket.status}
+                        size="md"
+                        label={bucket.priorityTag}
+                      />
+                      <h4 className="text-base font-bold text-gray-900">
                         {bucket.labelBn}
                       </h4>
                       <span className="text-xs text-gray-600 font-medium">
@@ -2991,29 +3007,24 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
                                 {fmt(item.dueAmount)}
                               </td>
                               <td className="p-3 whitespace-nowrap">
-                                <span className={`inline-flex items-center gap-1 font-mono font-bold px-2.5 py-1 rounded-md text-xs ${
-                                  item.daysOverdue > 30
-                                    ? 'bg-red-100 text-red-800 border border-red-200'
-                                    : item.daysOverdue >= 15
-                                    ? 'bg-amber-100 text-amber-800 border border-amber-200'
-                                    : item.daysOverdue >= 8
-                                    ? 'bg-yellow-100 text-yellow-800 border border-yellow-200'
-                                    : 'bg-blue-100 text-blue-800 border border-blue-200'
-                                }`}>
-                                  <Clock className="w-3 h-3" />
+                                <span className="inline-flex items-center gap-1 font-mono font-bold text-xs text-gray-700">
+                                  <Clock className="w-3.5 h-3.5 text-gray-400" />
                                   <span>{item.daysOverdue} দিন</span>
                                 </span>
                               </td>
                               <td className="p-3 text-right whitespace-nowrap">
-                                <span className={`inline-block px-2.5 py-0.5 rounded-full text-xs font-semibold ${bucket.badgeClass}`}>
-                                  {item.daysOverdue > 30
-                                    ? 'জরুরি তাগাদা'
-                                    : item.daysOverdue >= 15
-                                    ? 'মনোযোগ প্রয়োজন'
-                                    : item.daysOverdue >= 8
-                                    ? 'বকেয়া'
-                                    : 'নতুন চালান'}
-                                </span>
+                                <StatusBadge
+                                  status={bucket.status}
+                                  label={
+                                    item.daysOverdue > 30
+                                      ? 'জরুরি তাগাদা'
+                                      : item.daysOverdue >= 15
+                                      ? 'মনোযোগ প্রয়োজন'
+                                      : item.daysOverdue >= 8
+                                      ? 'বকেয়া'
+                                      : 'নতুন চালান'
+                                  }
+                                />
                               </td>
                             </tr>
                           ))
@@ -3047,20 +3058,18 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
           ) : (
             <>
               {/* Cash Flow Header Card */}
-              <div className="bg-white border border-gray-200 rounded-2xl p-4 sm:p-5 shadow-xs space-y-4">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-gray-100">
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <span className="p-1.5 rounded-lg bg-emerald-50 text-[#1E5128] border border-emerald-100">
-                        <Coins className="w-4 h-4 text-[#1E5128]" />
-                      </span>
+              <div className="bg-white border border-blue-200/80 rounded-2xl p-4 sm:p-5 shadow-xs space-y-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-blue-100">
+                  <div className="flex items-center gap-3">
+                    <IconTile icon={Coins} color="blue" size="md" rounded="xl" />
+                    <div>
                       <h3 className="text-base sm:text-lg font-bold text-gray-900">
                         নগদ প্রবাহ বিবরণী (Cash Flow Statement)
                       </h3>
+                      <p className="text-[13px] text-gray-600 mt-0.5">
+                        প্রত্যক্ষ পদ্ধতিতে নগদ আগমন ও বহির্গমনের হিসাব এবং সমাপ্তি ব্যাংক ও নগদ স্থিতির সমন্বয়
+                      </p>
                     </div>
-                    <p className="text-[13px] text-gray-600 mt-1">
-                      প্রত্যক্ষ পদ্ধতিতে নগদ আগমন ও বহির্গমনের হিসাব এবং সমাপ্তি ব্যাংক ও নগদ স্থিতির সমন্বয়
-                    </p>
                   </div>
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-800 border border-emerald-200">
@@ -4209,23 +4218,25 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
 
       {/* ===================== REPORT 11: HERD SUMMARY & OPERATIONAL KPIS ===================== */}
       {activeReport === 'herdSummary' && herdKpiData && (
-        <div className="bg-white border border-gray-200 rounded-2xl p-4 sm:p-6 space-y-6 shadow-xs">
+        <div className="bg-white border border-purple-200/80 rounded-2xl p-4 sm:p-6 space-y-6 shadow-xs">
           {/* Header */}
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-gray-100 pb-4">
-            <div>
-              <h3 className="text-base sm:text-lg font-bold text-gray-900 tracking-tight flex items-center gap-2">
-                <Activity className="w-5 h-5 text-[#1E5128]" />
-                <span>পালের সারসংক্ষেপ ও অপারেশনাল কেপিআই (Herd Summary & KPIs)</span>
-              </h3>
-              <p className="text-[13px] text-gray-500 mt-0.5">
-                নির্ধারিত সময়সীমার গড় দৈনিক দুধ উৎপাদন, খাদ্য ব্যয় কার্যক্ষমতা ও পালের মৃত্যুহার বিশ্লেষণ
-              </p>
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-purple-100 pb-4">
+            <div className="flex items-center gap-3">
+              <IconTile icon={Activity} color="purple" size="md" rounded="xl" />
+              <div>
+                <h3 className="text-base sm:text-lg font-bold text-gray-900 tracking-tight">
+                  পালের সারসংক্ষেপ ও অপারেশনাল কেপিআই (Herd Summary & KPIs)
+                </h3>
+                <p className="text-[13px] text-gray-500 mt-0.5">
+                  নির্ধারিত সময়সীমার গড় দৈনিক দুধ উৎপাদন, খাদ্য ব্যয় কার্যক্ষমতা ও পালের মৃত্যুহার বিশ্লেষণ
+                </p>
+              </div>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
               <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-800">
                 সময়কাল: {herdKpiData.daysInPeriod} দিন
               </span>
-              <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-blue-50 border border-blue-200 text-blue-800">
+              <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-purple-50 border border-purple-200 text-purple-800">
                 সক্রিয় পশু: {herdKpiData.activeAnimalsCount}টি
               </span>
             </div>

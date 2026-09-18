@@ -39,6 +39,7 @@ import { Account, ClosedPeriod, JournalEntry, JournalLine, RecurringExpenseTempl
 import { generateTransactionNumber, generateUniqueId, safeInsert } from '../utils/idGenerator';
 import { HIGH_AMOUNT_CONFIRMATION_THRESHOLD } from '../constants/validation';
 import { notifyUndoableAction } from '../services/undoService';
+import { StatusBadge, Card } from './ui';
 
 interface Props {
   role: UserRole;
@@ -1078,66 +1079,75 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
               return (
                 <div className="space-y-3">
                   {visible.map((j) => (
-                    <div
+                    <Card
                       key={j.id}
-                      className={`p-3.5 rounded-xl border space-y-2.5 text-[14px] transition-all ${
+                      variant="static"
+                      padding="md"
+                      className={`space-y-3 transition-all ${
                         j.reversedBy
-                          ? 'bg-amber-50/30 border-amber-200'
+                          ? 'border-amber-300/80 bg-amber-50/20'
                           : j.reversalOf
-                          ? 'bg-blue-50/30 border-blue-200'
-                          : 'bg-[#F8FAFC] border-gray-200'
+                          ? 'border-blue-200/80 bg-blue-50/20'
+                          : ''
                       }`}
                     >
-                      <div className="flex items-center justify-between flex-wrap gap-2 border-b border-gray-200 pb-2">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <span className="font-mono font-bold text-[#1E5128] text-[15px]">{j.voucherNumber}</span>
-                          <span className="px-2 py-0.5 rounded bg-white border border-gray-200 text-xs text-gray-700 font-semibold">
-                            {j.voucherType}
-                          </span>
-
-                          {/* Badges */}
-                          {j.reversedBy && (
-                            <span
-                              className="px-2.5 py-0.5 rounded-full bg-amber-100 text-amber-900 border border-amber-300 text-xs font-bold flex items-center gap-1 shadow-2xs"
-                              title={`সংশোধিত এন্ট্রি (রিভার্সাল আইডি: ${j.reversedBy})`}
-                            >
-                              <span className="w-1.5 h-1.5 rounded-full bg-amber-600"></span>
-                              সংশোধিত
+                      <div className="flex items-start justify-between flex-wrap gap-3 border-b border-gray-100 dark:border-slate-800 pb-3">
+                        <div className="space-y-1">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="font-mono font-bold text-[#1E5128] dark:text-emerald-400 text-[15px]">
+                              {j.voucherNumber}
                             </span>
-                          )}
-
-                          {j.reversalOf && (
-                            <span
-                              className="px-2.5 py-0.5 rounded-full bg-blue-100 text-blue-900 border border-blue-200 text-xs font-semibold flex items-center gap-1"
-                              title={`বিপরীত দাখিলা - মূল ভাউচার আইডি: ${j.reversalOf}`}
-                            >
-                              <ArrowRightLeft className="w-3 h-3 text-blue-700" />
-                              বিপরীত দাখিলা (Reversal)
+                            <span className="px-2 py-0.5 rounded bg-gray-100 dark:bg-slate-700 border border-gray-200 dark:border-slate-600 text-xs text-gray-700 dark:text-slate-300 font-semibold">
+                              {j.voucherType}
                             </span>
-                          )}
 
-                          {j.correctionOf && (
-                            <span
-                              className="px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-900 border border-emerald-300 text-xs font-semibold flex items-center gap-1"
-                              title={`সংশোধিত নতুন দাখিলা - রিভার্সাল আইডি: ${j.correctionOf}`}
-                            >
-                              <CheckCircle2 className="w-3 h-3 text-emerald-700" />
-                              নতুন সংশোধিত দাখিলা
-                            </span>
-                          )}
+                            {/* Reversed/corrected entries get a distinct StatusBadge */}
+                            {j.reversedBy && (
+                              <StatusBadge
+                                status="overdue"
+                                label="সংশোধিত"
+                              />
+                            )}
 
-                          <span className="text-gray-500 text-[13px]">{j.date}</span>
+                            {j.reversalOf && (
+                              <StatusBadge
+                                status="info"
+                                icon={ArrowRightLeft}
+                                label="বিপরীত দাখিলা"
+                              />
+                            )}
+
+                            {j.correctionOf && (
+                              <StatusBadge
+                                status="done"
+                                icon={CheckCircle2}
+                                label="নতুন সংশোধিত দাখিলা"
+                              />
+                            )}
+                          </div>
+
+                          {/* Date and description in smaller gray text below it */}
+                          <div className="text-xs text-gray-500 dark:text-slate-400">
+                            {j.date} • {j.narration || 'কোনো বিবরণ নেই'}
+                          </div>
                         </div>
 
                         <div className="flex items-center gap-3">
-                          <div className="font-bold text-gray-900 font-mono text-[15px]">
-                            মোট: {fmt(j.totalDebit)}
+                          <div className="text-right">
+                            {/* Amount in large bold text */}
+                            <div className="text-lg sm:text-xl font-bold font-mono text-gray-900 dark:text-slate-100">
+                              {fmt(j.totalDebit)}
+                            </div>
+                            <div className="text-[11px] text-gray-400 font-medium">
+                              মোট ভাউচার মূল্য
+                            </div>
                           </div>
+
                           {!j.reversedBy && role === 'OWNER' && (
                             <button
                               type="button"
                               onClick={() => setReversingEntry(j)}
-                              className="px-2.5 py-1 rounded-lg bg-white hover:bg-amber-50 text-amber-900 border border-amber-300 hover:border-amber-400 text-[12px] font-bold flex items-center gap-1.5 transition-all cursor-pointer shadow-2xs active:scale-95"
+                              className="px-2.5 py-1.5 rounded-lg bg-white hover:bg-amber-50 text-amber-900 border border-amber-300 hover:border-amber-400 text-[12px] font-bold flex items-center gap-1.5 transition-all cursor-pointer shadow-2xs active:scale-95"
                               title="এই এন্ট্রিটি সংশোধন বা রিভার্স করুন"
                             >
                               <ArrowRightLeft className="w-3.5 h-3.5 text-amber-700" />
@@ -1147,27 +1157,25 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
                         </div>
                       </div>
 
-                      <p className="text-gray-800 text-[14px]">{j.narration}</p>
-
                       {/* Lines preview */}
-                      <div className="space-y-1.5 pt-1 text-[13px]">
+                      <div className="space-y-1.5 text-[13px] bg-gray-50/60 dark:bg-slate-800/40 p-2.5 rounded-lg border border-gray-100 dark:border-slate-800">
                         {j.lines.map((line, lIdx) => (
-                          <div key={lIdx} className="flex items-center justify-between text-gray-700">
+                          <div key={lIdx} className="flex items-center justify-between text-gray-700 dark:text-slate-300">
                             <span className="truncate pr-2 font-medium">
                               {line.accountCode} - {line.accountName}
                             </span>
                             <div className="flex gap-3 shrink-0 font-bold">
                               {line.debit > 0 && (
-                                <span className="text-[#15803D]">Dr: {fmt(line.debit)}</span>
+                                <span className="text-[#15803D] dark:text-emerald-400">Dr: {fmt(line.debit)}</span>
                               )}
                               {line.credit > 0 && (
-                                <span className="text-sky-700">Cr: {fmt(line.credit)}</span>
+                                <span className="text-sky-700 dark:text-sky-400">Cr: {fmt(line.credit)}</span>
                               )}
                             </div>
                           </div>
                         ))}
                       </div>
-                    </div>
+                    </Card>
                   ))}
 
                   {/* Load More Button for Daybook */}
@@ -1312,94 +1320,109 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
 
             return (
               <div className="space-y-3">
-                <div className="overflow-x-auto rounded-xl border border-gray-200">
-                  <table className="w-full text-left text-[13px] text-gray-800">
-                    <thead className="bg-gray-100 text-gray-600 uppercase text-[11px] font-bold">
-                      <tr>
-                        <th className="p-3">তারিখ</th>
-                        <th className="p-3">ভাউচার নং</th>
-                        <th className="p-3">বিবরণ</th>
-                        <th className="p-3 text-right">ডেবিট (৳)</th>
-                        <th className="p-3 text-right">ক্রেডিট (৳)</th>
-                        <th className="p-3 text-right">ব্যালেন্স (৳)</th>
-                        <th className="p-3 text-right">অবস্থা ও অ্যাকশন</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-gray-200">
-                      {ledgerEntries.length === 0 ? (
-                        <tr>
-                          <td colSpan={7} className="p-6 text-center text-gray-500 text-[14px]">
-                            এই হিসাবে এখনো কোনো লেনদেন সংঘটিত হয়নি।
-                          </td>
-                        </tr>
-                      ) : filtered.length === 0 ? (
-                        <tr>
-                          <td colSpan={7} className="p-6 text-center text-gray-500 text-[14px]">
-                            "{ledgerSearchQuery}" এর সাথে মিলে এমন কোনো খতিয়ান লেনদেন পাওয়া যায়নি।
-                          </td>
-                        </tr>
-                      ) : (
-                        visibleRows.map((row, idx) => (
-                          <tr key={idx} className="hover:bg-gray-50 transition-colors">
-                            <td className="p-3 text-gray-600 whitespace-nowrap">{row.date}</td>
-                            <td className="p-3 font-bold text-[#1E5128] whitespace-nowrap font-mono">{row.voucherNumber}</td>
-                            <td className="p-3 text-gray-800 truncate max-w-xs">{row.narration}</td>
-                            <td className="p-3 text-right font-semibold text-[#15803D] whitespace-nowrap">{row.debit > 0 ? fmt(row.debit) : '-'}</td>
-                            <td className="p-3 text-right font-semibold text-sky-700 whitespace-nowrap">{row.credit > 0 ? fmt(row.credit) : '-'}</td>
-                            <td className="p-3 text-right font-bold text-gray-900 whitespace-nowrap">{fmt(row.runningBalance)}</td>
-                            <td className="p-3 text-right whitespace-nowrap">
-                              {row.reversedBy ? (
-                                <span
-                                  className="px-2.5 py-0.5 rounded-full bg-amber-100 text-amber-900 border border-amber-300 font-bold text-[11px] inline-flex items-center gap-1 shadow-2xs"
-                                  title={`সংশোধিত এন্ট্রি (রিভার্সাল আইডি: ${row.reversedBy})`}
-                                >
-                                  <span className="w-1.5 h-1.5 rounded-full bg-amber-600"></span>
-                                  সংশোধিত
-                                </span>
-                              ) : row.reversalOf ? (
-                                <span
-                                  className="px-2.5 py-0.5 rounded-full bg-blue-100 text-blue-900 border border-blue-200 font-semibold text-[11px] inline-flex items-center gap-1"
-                                  title={`বিপরীত দাখিলা - মূল এন্ট্রি আইডি: ${row.reversalOf}`}
-                                >
-                                  রিভার্সাল
-                                </span>
-                              ) : row.correctionOf ? (
-                                <span
-                                  className="px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-900 border border-emerald-300 font-semibold text-[11px] inline-flex items-center gap-1"
-                                  title={`সংশোধিত নতুন দাখিলা - রিভার্সাল আইডি: ${row.correctionOf}`}
-                                >
-                                  সংশোধিত দাখিলা
-                                </span>
-                              ) : (
-                                role === 'OWNER' && (
-                                  <button
-                                    type="button"
-                                    onClick={async () => {
-                                      let entryToReverse = journals.find((j) => j.id === row.journalEntryId);
-                                      if (!entryToReverse && row.journalEntryId) {
-                                        entryToReverse = await db.journalEntries.get(row.journalEntryId);
-                                      }
-                                      if (!entryToReverse) {
-                                        entryToReverse = await db.journalEntries.where('voucherNumber').equals(row.voucherNumber).first();
-                                      }
-                                      if (entryToReverse) {
-                                        setReversingEntry(entryToReverse);
-                                      }
-                                    }}
-                                    className="px-2.5 py-1 rounded-md bg-white hover:bg-amber-50 text-amber-900 border border-amber-300 hover:border-amber-400 text-[11px] font-bold transition-all cursor-pointer shadow-2xs"
-                                    title="এই এন্ট্রিটি সংশোধন করুন"
-                                  >
-                                    সংশোধন করুন
-                                  </button>
-                                )
+                {ledgerEntries.length === 0 ? (
+                  <div className="p-8 text-center text-gray-500 text-[14px] bg-gray-50 rounded-xl border border-dashed border-gray-300">
+                    এই হিসাবে এখনো কোনো লেনদেন সংঘটিত হয়নি।
+                  </div>
+                ) : filtered.length === 0 ? (
+                  <div className="p-8 text-center text-gray-500 text-[14px] bg-gray-50 rounded-xl border border-dashed border-gray-300">
+                    "{ledgerSearchQuery}" এর সাথে মিলে এমন কোনো খতিয়ান লেনদেন পাওয়া যায়নি।
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {visibleRows.map((row, idx) => (
+                      <Card
+                        key={idx}
+                        variant="static"
+                        padding="md"
+                        className={`space-y-2 transition-all ${
+                          row.reversedBy
+                            ? 'border-amber-300/80 bg-amber-50/20'
+                            : row.reversalOf
+                            ? 'border-blue-200/80 bg-blue-50/20'
+                            : ''
+                        }`}
+                      >
+                        <div className="flex items-start justify-between flex-wrap gap-3 border-b border-gray-100 dark:border-slate-800 pb-2.5">
+                          <div className="space-y-1">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="font-mono font-bold text-[#1E5128] dark:text-emerald-400 text-[15px]">
+                                {row.voucherNumber}
+                              </span>
+
+                              {/* Reversed/corrected entries get a distinct StatusBadge */}
+                              {row.reversedBy && (
+                                <StatusBadge
+                                  status="overdue"
+                                  label="সংশোধিত"
+                                />
                               )}
-                            </td>
-                          </tr>
-                        ))
-                      )}
-                    </tbody>
-                  </table>
-                </div>
+
+                              {row.reversalOf && (
+                                <StatusBadge
+                                  status="info"
+                                  icon={ArrowRightLeft}
+                                  label="রিভার্সাল"
+                                />
+                              )}
+
+                              {row.correctionOf && (
+                                <StatusBadge
+                                  status="done"
+                                  icon={CheckCircle2}
+                                  label="সংশোধিত দাখিলা"
+                                />
+                              )}
+                            </div>
+
+                            {/* Date and description in smaller gray text below it */}
+                            <div className="text-xs text-gray-500 dark:text-slate-400">
+                              {row.date} • {row.narration || 'কোনো বিবরণ নেই'}
+                            </div>
+                          </div>
+
+                          <div className="flex items-center gap-3">
+                            <div className="text-right">
+                              {/* Amount in large bold text */}
+                              <div className="text-lg sm:text-xl font-bold font-mono">
+                                {row.debit > 0 ? (
+                                  <span className="text-[#15803D] dark:text-emerald-400">Dr: {fmt(row.debit)}</span>
+                                ) : (
+                                  <span className="text-sky-700 dark:text-sky-400">Cr: {fmt(row.credit)}</span>
+                                )}
+                              </div>
+                              <div className="text-xs font-mono text-gray-500 dark:text-slate-400">
+                                চলমান জের: {fmt(row.runningBalance)}
+                              </div>
+                            </div>
+
+                            {!row.reversedBy && role === 'OWNER' && (
+                              <button
+                                type="button"
+                                onClick={async () => {
+                                  let entryToReverse = journals.find((j) => j.id === row.journalEntryId);
+                                  if (!entryToReverse && row.journalEntryId) {
+                                    entryToReverse = await db.journalEntries.get(row.journalEntryId);
+                                  }
+                                  if (!entryToReverse) {
+                                    entryToReverse = await db.journalEntries.where('voucherNumber').equals(row.voucherNumber).first();
+                                  }
+                                  if (entryToReverse) {
+                                    setReversingEntry(entryToReverse);
+                                  }
+                                }}
+                                className="px-2.5 py-1.5 rounded-lg bg-white hover:bg-amber-50 text-amber-900 border border-amber-300 hover:border-amber-400 text-[11px] font-bold transition-all cursor-pointer shadow-2xs"
+                                title="এই এন্ট্রিটি সংশোধন করুন"
+                              >
+                                সংশোধন করুন
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      </Card>
+                    ))}
+                  </div>
+                )}
 
                 {/* Load More Button for General Ledger */}
                 {filtered.length > ledgerVisibleCount && (

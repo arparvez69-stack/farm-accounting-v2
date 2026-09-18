@@ -26,7 +26,14 @@ import {
   Edit3,
   Trash2,
   RotateCcw,
-  Wallet
+  Wallet,
+  LayoutDashboard,
+  BookOpen,
+  Tractor,
+  Package,
+  Landmark,
+  FileSpreadsheet,
+  Menu
 } from 'lucide-react';
 import { useLanguage } from '../i18n/translations';
 import { db } from '../db/indexedDb';
@@ -36,6 +43,8 @@ import { generateTransactionNumber, safeInsert } from '../utils/idGenerator';
 import { getLastSyncTime, formatBackupTimestamp } from '../services/exportService';
 import { runAutomatedDepreciation } from '../accounting/depreciationService';
 import { getVaccineTemplates, saveVaccineTemplates, DEFAULT_VACCINE_TEMPLATES } from '../data/vaccineTemplates';
+import { IconTile } from './ui/IconTile';
+import { ActiveTab } from './MobileBottomNav';
 
 interface Props {
   role: UserRole;
@@ -43,11 +52,78 @@ interface Props {
   systemConfig: SystemConfig | null;
   userEmail?: string;
   onLogout?: () => void;
+  onNavigate?: (tab: ActiveTab) => void;
 }
+
+const MAIN_MODULES: {
+  id: ActiveTab;
+  nameBn: string;
+  nameEn: string;
+  icon: React.ElementType;
+  color: string;
+  subtitle: string;
+}[] = [
+  {
+    id: 'dashboard',
+    nameBn: 'ড্যাশবোর্ড',
+    nameEn: 'Dashboard',
+    icon: LayoutDashboard,
+    color: 'emerald',
+    subtitle: 'সারসংক্ষেপ ও জরুরি রিমাইন্ডার'
+  },
+  {
+    id: 'accounting',
+    nameBn: 'হিসাবরক্ষণ',
+    nameEn: 'Accounting',
+    icon: BookOpen,
+    color: 'blue',
+    subtitle: 'জাবেদা, খতিয়ান ও হিসাবের তালিকা'
+  },
+  {
+    id: 'operations',
+    nameBn: 'খামার ও পশুপালন',
+    nameEn: 'Livestock & Ops',
+    icon: Tractor,
+    color: 'emerald',
+    subtitle: 'পশু ব্যবস্থাপনা, খাদ্য ও দুধ উৎপাদন'
+  },
+  {
+    id: 'commerce',
+    nameBn: 'ইনভেন্টরি ও বাণিজ্য',
+    nameEn: 'Inventory & Commerce',
+    icon: Package,
+    color: 'purple',
+    subtitle: 'পণ্য স্টক, খাদ্য সরবরাহ ও চালান'
+  },
+  {
+    id: 'finance',
+    nameBn: 'ব্যাংক ও তহবিল',
+    nameEn: 'Banking & Finance',
+    icon: Landmark,
+    color: 'indigo',
+    subtitle: 'ব্যাংক খতিয়ান, ঋণ ও বিনিয়োগকারী'
+  },
+  {
+    id: 'reports',
+    nameBn: 'রিপোর্টস ও বিবরণী',
+    nameEn: 'Reports & Analytics',
+    icon: FileSpreadsheet,
+    color: 'amber',
+    subtitle: 'লাভ-ক্ষতি, ব্যালেন্স শিট ও আর্থিক বিশ্লেষণ'
+  },
+  {
+    id: 'more',
+    nameBn: 'সিস্টেম ও অডিট',
+    nameEn: 'System & More',
+    icon: Menu,
+    color: 'gray',
+    subtitle: 'অডিট ট্রেইল, গোপন পিন ও ফার্ম সেটিংস'
+  }
+];
 
 type MoreTab = 'accessLogs' | 'changePin' | 'audit' | 'assets' | 'owners' | 'settings' | 'vaccines';
 
-export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig, userEmail, onLogout }) => {
+export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig, userEmail, onLogout, onNavigate }) => {
   const [tab, setTab] = useState<MoreTab>('accessLogs');
   const [logs, setLogs] = useState<AuditLog[]>([]);
   const [accessLogs, setAccessLogs] = useState<AppAccessLog[]>([]);
@@ -406,26 +482,93 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
   const fmt = (n: number) => `৳${Number(n || 0).toLocaleString('en-IN', { minimumFractionDigits: 0 })}`;
 
   return (
-    <div className="space-y-4 pb-6 max-w-5xl mx-auto">
+    <div className="space-y-5 pb-6 max-w-5xl mx-auto">
+      {/* ===================== MAIN MODULE SELECTION SCREEN / SECTION ===================== */}
+      <div className="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 rounded-2xl p-4 sm:p-5 shadow-xs space-y-4 transition-colors">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-gray-100 dark:border-slate-800 pb-3">
+          <div>
+            <h3 className="text-base sm:text-lg font-bold text-gray-900 dark:text-slate-100 flex items-center gap-2">
+              <span>মূল মডিউলসমূহ (Main Modules)</span>
+            </h3>
+            <p className="text-[13px] text-gray-500 dark:text-slate-400 mt-0.5">
+              খামারের যেকোনো মডিউলে সরাসরি প্রবেশ করতে নিচের কার্ডে ট্যাপ করুন
+            </p>
+          </div>
+          <span className="self-start sm:self-auto text-xs font-semibold px-2.5 py-1 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300">
+            ৭টি প্রধান বিভাগ
+          </span>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
+          {MAIN_MODULES.map((mod) => {
+            const isCurrent = mod.id === 'more';
+            return (
+              <button
+                key={mod.id}
+                id={`btn-module-select-${mod.id}`}
+                type="button"
+                onClick={() => onNavigate && onNavigate(mod.id)}
+                className={`flex items-start gap-3.5 p-3.5 rounded-xl border text-left transition-all cursor-pointer min-h-[64px] active:scale-[0.98] ${
+                  isCurrent
+                    ? 'bg-slate-50 dark:bg-slate-800/90 border-slate-300 dark:border-slate-600 ring-2 ring-slate-400/30 shadow-xs'
+                    : 'bg-white dark:bg-slate-900 border-gray-200 dark:border-slate-800 hover:border-gray-300 dark:hover:border-slate-700 hover:shadow-xs'
+                }`}
+              >
+                <IconTile
+                  icon={mod.icon}
+                  color={mod.color}
+                  size="md"
+                  rounded="xl"
+                />
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center justify-between gap-1.5">
+                    <span className="text-sm font-bold text-gray-900 dark:text-slate-100 truncate">
+                      {mod.nameBn}
+                    </span>
+                    {isCurrent ? (
+                      <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300 shrink-0">
+                        বর্তমান
+                      </span>
+                    ) : (
+                      <span className="text-[10px] font-medium text-gray-400 dark:text-slate-500 uppercase shrink-0">
+                        প্রবেশ
+                      </span>
+                    )}
+                  </div>
+                  <span className="text-xs font-medium text-gray-500 dark:text-slate-400 block truncate mt-0.5">
+                    {mod.nameEn}
+                  </span>
+                  <span className="text-[11px] text-gray-400 dark:text-slate-500 block truncate mt-0.5">
+                    {mod.subtitle}
+                  </span>
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
       {/* Header & Subtabs */}
       <div className="flex flex-col gap-3 p-4 sm:p-5 rounded-2xl bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 shadow-xs transition-colors">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-          <div>
-            <h2 className="text-lg sm:text-xl font-bold text-gray-900 dark:text-slate-100 flex items-center gap-2">
-              <ShieldCheck className="w-5 h-5 text-[#1E5128] dark:text-emerald-400" />
-              <span>নিরাপত্তা, স্থায়ী সম্পদ ও অডিট (System & Security)</span>
-            </h2>
-            <p className="text-[14px] text-gray-600 dark:text-slate-400 mt-0.5">
-              অডিট ট্রেইল, খামার মালিক তালিকা, গোপন পিন পরিবর্তন ও ফার্ম সেটিংস
-            </p>
-            {/* TASK 2: Small সর্বশেষ ব্যাকআপ timestamp showing last cloud sync */}
-            <div
-              id="more-last-backup-timestamp"
-              className="mt-2 inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-200 dark:border-emerald-800 text-emerald-900 dark:text-emerald-300 text-xs font-semibold shadow-2xs"
-              title="ক্লাউড ফায়ারস্টোরে সর্বশেষ ডেটা সিঙ্ক ও ব্যাকআপের সময়"
-            >
-              <RefreshCw className="w-3 h-3 text-emerald-700 dark:text-emerald-400 shrink-0" />
-              <span>সর্বশেষ ব্যাকআপ: {formatBackupTimestamp(lastBackupTime)}</span>
+          <div className="flex items-start gap-3.5">
+            <IconTile icon={ShieldCheck} color="gray" size="lg" rounded="xl" />
+            <div>
+              <h2 className="text-lg sm:text-xl font-bold text-gray-900 dark:text-slate-100">
+                নিরাপত্তা, স্থায়ী সম্পদ ও অডিট (System & Security)
+              </h2>
+              <p className="text-[14px] text-gray-600 dark:text-slate-400 mt-0.5">
+                অডিট ট্রেইল, খামার মালিক তালিকা, গোপন পিন পরিবর্তন ও ফার্ম সেটিংস
+              </p>
+              {/* TASK 2: Small সর্বশেষ ব্যাকআপ timestamp showing last cloud sync */}
+              <div
+                id="more-last-backup-timestamp"
+                className="mt-2 inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-200 dark:border-emerald-800 text-emerald-900 dark:text-emerald-300 text-xs font-semibold shadow-2xs"
+                title="ক্লাউড ফায়ারস্টোরে সর্বশেষ ডেটা সিঙ্ক ও ব্যাকআপের সময়"
+              >
+                <RefreshCw className="w-3 h-3 text-emerald-700 dark:text-emerald-400 shrink-0" />
+                <span>সর্বশেষ ব্যাকআপ: {formatBackupTimestamp(lastBackupTime)}</span>
+              </div>
             </div>
           </div>
 
@@ -446,7 +589,7 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
             id="tab-access-logs-btn"
             onClick={() => setTab('accessLogs')}
             className={`px-3.5 py-2 rounded-lg whitespace-nowrap transition-all cursor-pointer min-h-[40px] flex items-center gap-1.5 ${
-              tab === 'accessLogs' ? 'bg-[#1E5128] text-white shadow-xs' : 'text-gray-600 dark:text-slate-400 hover:text-gray-900 dark:hover:text-slate-100 hover:bg-gray-200/60 dark:hover:bg-slate-700/60'
+              tab === 'accessLogs' ? 'bg-slate-900 dark:bg-slate-700 text-white shadow-xs' : 'text-gray-600 dark:text-slate-400 hover:text-gray-900 dark:hover:text-slate-100 hover:bg-gray-200/60 dark:hover:bg-slate-700/60'
             }`}
           >
             <UserCheck className="w-4 h-4" />
@@ -456,7 +599,7 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
             id="tab-change-pin-btn"
             onClick={() => setTab('changePin')}
             className={`px-3.5 py-2 rounded-lg whitespace-nowrap transition-all cursor-pointer min-h-[40px] flex items-center gap-1.5 ${
-              tab === 'changePin' ? 'bg-[#1E5128] text-white shadow-xs' : 'text-gray-600 dark:text-slate-400 hover:text-gray-900 dark:hover:text-slate-100 hover:bg-gray-200/60 dark:hover:bg-slate-700/60'
+              tab === 'changePin' ? 'bg-slate-900 dark:bg-slate-700 text-white shadow-xs' : 'text-gray-600 dark:text-slate-400 hover:text-gray-900 dark:hover:text-slate-100 hover:bg-gray-200/60 dark:hover:bg-slate-700/60'
             }`}
           >
             <KeyRound className="w-4 h-4" />
@@ -464,41 +607,45 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
           </button>
           <button
             onClick={() => setTab('audit')}
-            className={`px-3.5 py-2 rounded-lg whitespace-nowrap transition-all cursor-pointer min-h-[40px] ${
-              tab === 'audit' ? 'bg-[#1E5128] text-white shadow-xs' : 'text-gray-600 dark:text-slate-400 hover:text-gray-900 dark:hover:text-slate-100 hover:bg-gray-200/60 dark:hover:bg-slate-700/60'
+            className={`px-3.5 py-2 rounded-lg whitespace-nowrap transition-all cursor-pointer min-h-[40px] flex items-center gap-1.5 ${
+              tab === 'audit' ? 'bg-slate-900 dark:bg-slate-700 text-white shadow-xs' : 'text-gray-600 dark:text-slate-400 hover:text-gray-900 dark:hover:text-slate-100 hover:bg-gray-200/60 dark:hover:bg-slate-700/60'
             }`}
           >
-            অডিট ট্রেইল (Audit Trail)
+            <History className="w-4 h-4" />
+            <span>অডিট ট্রেইল (Audit Trail)</span>
           </button>
           <button
             onClick={() => setTab('assets')}
-            className={`px-3.5 py-2 rounded-lg whitespace-nowrap transition-all cursor-pointer min-h-[40px] ${
-              tab === 'assets' ? 'bg-[#1E5128] text-white shadow-xs' : 'text-gray-600 dark:text-slate-400 hover:text-gray-900 dark:hover:text-slate-100 hover:bg-gray-200/60 dark:hover:bg-slate-700/60'
+            className={`px-3.5 py-2 rounded-lg whitespace-nowrap transition-all cursor-pointer min-h-[40px] flex items-center gap-1.5 ${
+              tab === 'assets' ? 'bg-slate-900 dark:bg-slate-700 text-white shadow-xs' : 'text-gray-600 dark:text-slate-400 hover:text-gray-900 dark:hover:text-slate-100 hover:bg-gray-200/60 dark:hover:bg-slate-700/60'
             }`}
           >
-            স্থায়ী সম্পদ (Assets)
+            <HardDrive className="w-4 h-4" />
+            <span>স্থায়ী সম্পদ (Assets)</span>
           </button>
           <button
             onClick={() => setTab('owners')}
-            className={`px-3.5 py-2 rounded-lg whitespace-nowrap transition-all cursor-pointer min-h-[40px] ${
-              tab === 'owners' ? 'bg-[#1E5128] text-white shadow-xs' : 'text-gray-600 dark:text-slate-400 hover:text-gray-900 dark:hover:text-slate-100 hover:bg-gray-200/60 dark:hover:bg-slate-700/60'
+            className={`px-3.5 py-2 rounded-lg whitespace-nowrap transition-all cursor-pointer min-h-[40px] flex items-center gap-1.5 ${
+              tab === 'owners' ? 'bg-slate-900 dark:bg-slate-700 text-white shadow-xs' : 'text-gray-600 dark:text-slate-400 hover:text-gray-900 dark:hover:text-slate-100 hover:bg-gray-200/60 dark:hover:bg-slate-700/60'
             }`}
           >
-            অনুমোদিত মালিকবৃন্দ (Owners)
+            <Users className="w-4 h-4" />
+            <span>অনুমোদিত মালিকবৃন্দ (Owners)</span>
           </button>
           <button
             onClick={() => setTab('settings')}
-            className={`px-3.5 py-2 rounded-lg whitespace-nowrap transition-all cursor-pointer min-h-[40px] ${
-              tab === 'settings' ? 'bg-[#1E5128] text-white shadow-xs' : 'text-gray-600 dark:text-slate-400 hover:text-gray-900 dark:hover:text-slate-100 hover:bg-gray-200/60 dark:hover:bg-slate-700/60'
+            className={`px-3.5 py-2 rounded-lg whitespace-nowrap transition-all cursor-pointer min-h-[40px] flex items-center gap-1.5 ${
+              tab === 'settings' ? 'bg-slate-900 dark:bg-slate-700 text-white shadow-xs' : 'text-gray-600 dark:text-slate-400 hover:text-gray-900 dark:hover:text-slate-100 hover:bg-gray-200/60 dark:hover:bg-slate-700/60'
             }`}
           >
-            ফার্ম সেটিংস (Settings)
+            <Building className="w-4 h-4" />
+            <span>ফার্ম সেটিংস (Settings)</span>
           </button>
           <button
             id="tab-vaccines-btn"
             onClick={() => setTab('vaccines')}
             className={`px-3.5 py-2 rounded-lg whitespace-nowrap transition-all cursor-pointer min-h-[40px] flex items-center gap-1.5 ${
-              tab === 'vaccines' ? 'bg-[#1E5128] text-white shadow-xs' : 'text-gray-600 dark:text-slate-400 hover:text-gray-900 dark:hover:text-slate-100 hover:bg-gray-200/60 dark:hover:bg-slate-700/60'
+              tab === 'vaccines' ? 'bg-slate-900 dark:bg-slate-700 text-white shadow-xs' : 'text-gray-600 dark:text-slate-400 hover:text-gray-900 dark:hover:text-slate-100 hover:bg-gray-200/60 dark:hover:bg-slate-700/60'
             }`}
           >
             <Syringe className="w-4 h-4" />

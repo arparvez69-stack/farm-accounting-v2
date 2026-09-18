@@ -27,14 +27,62 @@ interface Props {
 export const MobileBottomNav: React.FC<Props> = ({ activeTab, onChangeTab }) => {
   const { language } = useLanguage();
 
-  const tabs: { id: ActiveTab; labelKey: string; icon: React.ElementType }[] = [
-    { id: 'dashboard', labelKey: 'nav.dashboard', icon: LayoutDashboard },
-    { id: 'accounting', labelKey: 'nav.accounting', icon: BookOpen },
-    { id: 'operations', labelKey: 'nav.operations', icon: Tractor },
-    { id: 'commerce', labelKey: 'nav.commerce', icon: Package },
-    { id: 'finance', labelKey: 'nav.finance', icon: Landmark },
-    { id: 'reports', labelKey: 'nav.reports', icon: FileSpreadsheet },
-    { id: 'more', labelKey: 'nav.more', icon: Menu }
+  const tabs: {
+    id: ActiveTab;
+    labelKey: string;
+    icon: React.ElementType;
+    activeTextColor: string;
+    activeBgColor: string;
+  }[] = [
+    {
+      id: 'dashboard',
+      labelKey: 'nav.dashboard',
+      icon: LayoutDashboard,
+      activeTextColor: 'text-emerald-700 dark:text-emerald-400',
+      activeBgColor: 'bg-emerald-50 dark:bg-emerald-950/70 text-emerald-700 dark:text-emerald-400'
+    },
+    {
+      id: 'accounting',
+      labelKey: 'nav.accounting',
+      icon: BookOpen,
+      activeTextColor: 'text-blue-700 dark:text-blue-400',
+      activeBgColor: 'bg-blue-50 dark:bg-blue-950/70 text-blue-700 dark:text-blue-400'
+    },
+    {
+      id: 'operations',
+      labelKey: 'nav.operations',
+      icon: Tractor,
+      activeTextColor: 'text-[#1E5128] dark:text-emerald-400',
+      activeBgColor: 'bg-[#F0FDF4] dark:bg-emerald-950/70 text-[#1E5128] dark:text-emerald-400'
+    },
+    {
+      id: 'commerce',
+      labelKey: 'nav.commerce',
+      icon: Package,
+      activeTextColor: 'text-purple-700 dark:text-purple-400',
+      activeBgColor: 'bg-purple-50 dark:bg-purple-950/70 text-purple-700 dark:text-purple-400'
+    },
+    {
+      id: 'finance',
+      labelKey: 'nav.finance',
+      icon: Landmark,
+      activeTextColor: 'text-indigo-700 dark:text-indigo-400',
+      activeBgColor: 'bg-indigo-50 dark:bg-indigo-950/70 text-indigo-700 dark:text-indigo-400'
+    },
+    {
+      id: 'reports',
+      labelKey: 'nav.reports',
+      icon: FileSpreadsheet,
+      activeTextColor: 'text-amber-700 dark:text-amber-400',
+      activeBgColor: 'bg-amber-50 dark:bg-amber-950/70 text-amber-700 dark:text-amber-400'
+    },
+    {
+      id: 'more',
+      labelKey: 'nav.more',
+      icon: Menu,
+      activeTextColor: 'text-slate-700 dark:text-slate-300',
+      activeBgColor: 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300'
+    }
   ];
 
   return (
@@ -49,13 +97,13 @@ export const MobileBottomNav: React.FC<Props> = ({ activeTab, onChangeTab }) => 
               onClick={() => onChangeTab(tab.id)}
               className={`flex flex-col items-center justify-center min-w-[44px] min-h-[50px] py-1 px-1 rounded-xl transition-all cursor-pointer active:scale-95 ${
                 isActive
-                  ? 'text-[#1E5128] dark:text-emerald-400 font-bold'
+                  ? `${tab.activeTextColor} font-bold`
                   : 'text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-slate-100 font-medium'
               }`}
             >
               <div
                 className={`p-1.5 rounded-xl transition-all ${
-                  isActive ? 'bg-[#F0FDF4] dark:bg-emerald-950/70 text-[#1E5128] dark:text-emerald-400' : 'text-gray-500 dark:text-slate-400'
+                  isActive ? tab.activeBgColor : 'text-gray-500 dark:text-slate-400'
                 }`}
               >
                 <Icon className={`w-5 h-5 ${isActive ? 'stroke-[2.5]' : 'stroke-[1.8]'}`} />

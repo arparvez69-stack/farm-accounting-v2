@@ -514,6 +514,7 @@ export default function App() {
               systemConfig={systemConfig}
               userEmail={userProfile.email}
               onLogout={handleLogout}
+              onNavigate={setActiveTab}
             />
           )}
         </ErrorBoundary>
