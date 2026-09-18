@@ -397,26 +397,26 @@ export const Dashboard: React.FC<Props> = ({ role, onNavigate, regressionTestRes
       )}
 
       {/* 0. PROMINENT DUE THIS WEEK (এই সপ্তাহে করণীয়) CARD AT THE TOP */}
-      <div className="bg-white rounded-2xl border-2 border-emerald-600/30 p-4 sm:p-5 shadow-sm space-y-3.5">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 pb-2.5 border-b border-gray-100">
+      <div className="bg-white dark:bg-slate-900 rounded-2xl border-2 border-emerald-600/30 dark:border-emerald-500/40 p-4 sm:p-5 shadow-sm space-y-3.5 transition-colors">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 pb-2.5 border-b border-gray-100 dark:border-slate-800">
           <div className="flex items-center gap-2.5">
-            <div className="w-9 h-9 rounded-xl bg-[#1E5128] text-white flex items-center justify-center shrink-0 shadow-xs">
+            <div className="w-9 h-9 rounded-xl bg-[#1E5128] dark:bg-emerald-800 text-white flex items-center justify-center shrink-0 shadow-xs">
               <Calendar className="w-5 h-5" />
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <h3 className="text-base sm:text-lg font-bold text-gray-900 tracking-tight">
+                <h3 className="text-base sm:text-lg font-bold text-gray-900 dark:text-slate-100 tracking-tight">
                   {t('dashboard.dueThisWeek')}
                 </h3>
                 <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${
                   reminders.length > 0
-                    ? 'bg-emerald-100 text-[#1E5128] border border-emerald-200'
-                    : 'bg-gray-100 text-gray-600'
+                    ? 'bg-emerald-100 dark:bg-emerald-950/60 text-[#1E5128] dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800'
+                    : 'bg-gray-100 dark:bg-slate-800 text-gray-600 dark:text-slate-400'
                 }`}>
                   {reminders.length} {t('dashboard.pendingCount')}
                 </span>
               </div>
-              <p className="text-xs sm:text-[13px] text-gray-600">
+              <p className="text-xs sm:text-[13px] text-gray-600 dark:text-slate-400">
                 {lang === 'en'
                   ? 'Vaccine, treatment follow-up & farm operational schedule (overdue & next 7 days)'
                   : 'টিকা, চিকিৎসা ফলোআপ ও খামার পরিচালনার জরুরি সময়সূচি (বকেয়া ও আগামী ৭ দিন)'}
@@ -426,7 +426,7 @@ export const Dashboard: React.FC<Props> = ({ role, onNavigate, regressionTestRes
 
           <button
             onClick={() => onNavigate('operations')}
-            className="text-xs sm:text-[13px] font-bold text-[#1E5128] hover:text-[#173F1F] flex items-center gap-1 self-start sm:self-auto cursor-pointer"
+            className="text-xs sm:text-[13px] font-bold text-[#1E5128] dark:text-emerald-400 hover:text-[#173F1F] dark:hover:text-emerald-300 flex items-center gap-1 self-start sm:self-auto cursor-pointer"
           >
             <span>{t('nav.operations')} →</span>
             <ChevronRight className="w-4 h-4" />
@@ -434,12 +434,12 @@ export const Dashboard: React.FC<Props> = ({ role, onNavigate, regressionTestRes
         </div>
 
         {reminders.length === 0 ? (
-          <div className="p-4 rounded-xl bg-gray-50 border border-gray-200 text-center flex flex-col items-center justify-center py-6 text-gray-600 space-y-1.5">
-            <CheckCircle2 className="w-7 h-7 text-[#15803D]" />
-            <p className="text-[14px] font-semibold text-gray-900">
+          <div className="p-4 rounded-xl bg-gray-50 dark:bg-slate-800/60 border border-gray-200 dark:border-slate-800 text-center flex flex-col items-center justify-center py-6 text-gray-600 dark:text-slate-400 space-y-1.5">
+            <CheckCircle2 className="w-7 h-7 text-[#15803D] dark:text-emerald-400" />
+            <p className="text-[14px] font-semibold text-gray-900 dark:text-slate-200">
               {t('dashboard.noReminders')}
             </p>
-            <p className="text-xs text-gray-500">
+            <p className="text-xs text-gray-500 dark:text-slate-400">
               {lang === 'en'
                 ? 'All animal vaccination & medical treatment schedules are up to date.'
                 : 'খামারের সকল পশু টিকা ও চিকিৎসা সময়সূচি হালনাগাদ রয়েছে।'}
@@ -564,20 +564,20 @@ export const Dashboard: React.FC<Props> = ({ role, onNavigate, regressionTestRes
       </div>
 
       {/* 1. Top Executive Banner & Hero Balances */}
-      <div className="bg-white rounded-2xl border border-gray-200 p-4 sm:p-6 shadow-xs space-y-4">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-gray-100">
+      <div className="bg-white dark:bg-slate-900 rounded-2xl border border-gray-200 dark:border-slate-800 p-4 sm:p-6 shadow-xs space-y-4 transition-colors">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-gray-100 dark:border-slate-800">
           <div>
             <div className="flex items-center gap-2 flex-wrap">
-              <h2 className="text-xl sm:text-2xl font-bold text-gray-900 tracking-tight">
+              <h2 className="text-xl sm:text-2xl font-bold text-gray-900 dark:text-slate-100 tracking-tight">
                 {t('dashboard.title')}
               </h2>
               {isAccountingBalanced && (
-                <span className="inline-flex items-center gap-1 text-[13px] px-2.5 py-0.5 rounded-full bg-[#F0FDF4] text-[#15803D] border border-[#BBF7D0] font-semibold">
+                <span className="inline-flex items-center gap-1 text-[13px] px-2.5 py-0.5 rounded-full bg-[#F0FDF4] dark:bg-emerald-950/60 text-[#15803D] dark:text-emerald-400 border border-[#BBF7D0] dark:border-emerald-800 font-semibold">
                   {t('dashboard.balanced')}
                 </span>
               )}
             </div>
-            <p className="text-[14px] text-gray-600 mt-1">
+            <p className="text-[14px] text-gray-600 dark:text-slate-400 mt-1">
               {t('dashboard.subtitle')}
             </p>
           </div>
@@ -594,7 +594,7 @@ export const Dashboard: React.FC<Props> = ({ role, onNavigate, regressionTestRes
               </button>
               <button
                 onClick={() => onNavigate('commerce')}
-                className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-gray-100 hover:bg-gray-200 text-gray-800 border border-gray-200 text-[14px] font-semibold shadow-xs transition-all active:scale-95 cursor-pointer min-h-[44px]"
+                className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-gray-100 dark:bg-slate-800 hover:bg-gray-200 dark:hover:bg-slate-700 text-gray-800 dark:text-slate-200 border border-gray-200 dark:border-slate-700 text-[14px] font-semibold shadow-xs transition-all active:scale-95 cursor-pointer min-h-[44px]"
               >
                 <FileText className="w-4 h-4" />
                 <span>{t('btn.salesInvoice')}</span>
@@ -606,35 +606,35 @@ export const Dashboard: React.FC<Props> = ({ role, onNavigate, regressionTestRes
         {/* Hero 2 Key Metrics (Total Liquidity & Net Margin) */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5 pt-1">
           {/* Liquidity (Cash + Bank) */}
-          <div className="p-4 rounded-xl bg-[#F8FAFC] border border-gray-200/80">
-            <div className="flex items-center justify-between text-[14px] text-gray-600 font-medium">
+          <div className="p-4 rounded-xl bg-[#F8FAFC] dark:bg-slate-800/80 border border-gray-200/80 dark:border-slate-700/80">
+            <div className="flex items-center justify-between text-[14px] text-gray-600 dark:text-slate-400 font-medium">
               <span>{t('dashboard.totalLiquidity')}</span>
-              <div className="p-2 rounded-lg bg-blue-100/80 text-blue-700">
+              <div className="p-2 rounded-lg bg-blue-100/80 dark:bg-blue-950/60 text-blue-700 dark:text-blue-400">
                 <Wallet className="w-5 h-5" />
               </div>
             </div>
-            <div className="text-2xl sm:text-3xl font-extrabold text-gray-900 tracking-tight mt-1">
+            <div className="text-2xl sm:text-3xl font-extrabold text-gray-900 dark:text-slate-100 tracking-tight mt-1">
               {fmtMoney(cashBalance + bankBalance)}
             </div>
-            <div className="flex items-center gap-3 text-[13px] text-gray-600 mt-2 pt-2 border-t border-gray-200/60 font-medium">
-              <span>{t('dashboard.cash')} <strong className="text-gray-900">{fmtMoney(cashBalance)}</strong></span>
+            <div className="flex items-center gap-3 text-[13px] text-gray-600 dark:text-slate-400 mt-2 pt-2 border-t border-gray-200/60 dark:border-slate-700/60 font-medium">
+              <span>{t('dashboard.cash')} <strong className="text-gray-900 dark:text-slate-200">{fmtMoney(cashBalance)}</strong></span>
               <span>•</span>
-              <span>{t('dashboard.bank')} <strong className="text-gray-900">{fmtMoney(bankBalance)}</strong></span>
+              <span>{t('dashboard.bank')} <strong className="text-gray-900 dark:text-slate-200">{fmtMoney(bankBalance)}</strong></span>
             </div>
           </div>
 
           {/* Net Profit / Margin */}
-          <div className="p-4 rounded-xl bg-[#F8FAFC] border border-gray-200/80">
-            <div className="flex items-center justify-between text-[14px] text-gray-600 font-medium">
+          <div className="p-4 rounded-xl bg-[#F8FAFC] dark:bg-slate-800/80 border border-gray-200/80 dark:border-slate-700/80">
+            <div className="flex items-center justify-between text-[14px] text-gray-600 dark:text-slate-400 font-medium">
               <span>{t('dashboard.netProfit')}</span>
-              <div className={`p-2 rounded-lg ${netProfit >= 0 ? 'bg-emerald-100/80 text-[#15803D]' : 'bg-red-100/80 text-[#C2410C]'}`}>
+              <div className={`p-2 rounded-lg ${netProfit >= 0 ? 'bg-emerald-100/80 dark:bg-emerald-950/60 text-[#15803D] dark:text-emerald-400' : 'bg-red-100/80 dark:bg-red-950/60 text-[#C2410C] dark:text-rose-400'}`}>
                 {netProfit >= 0 ? <TrendingUp className="w-5 h-5" /> : <TrendingDown className="w-5 h-5" />}
               </div>
             </div>
-            <div className={`text-2xl sm:text-3xl font-extrabold tracking-tight mt-1 ${netProfit >= 0 ? 'text-[#15803D]' : 'text-[#C2410C]'}`}>
+            <div className={`text-2xl sm:text-3xl font-extrabold tracking-tight mt-1 ${netProfit >= 0 ? 'text-[#15803D] dark:text-emerald-400' : 'text-[#C2410C] dark:text-rose-400'}`}>
               {fmtMoney(netProfit)}
             </div>
-            <div className="text-[13px] text-gray-600 mt-2 pt-2 border-t border-gray-200/60 font-medium">
+            <div className="text-[13px] text-gray-600 dark:text-slate-400 mt-2 pt-2 border-t border-gray-200/60 dark:border-slate-700/60 font-medium">
               {t('dashboard.netProfitNote')}
             </div>
           </div>
@@ -685,64 +685,64 @@ export const Dashboard: React.FC<Props> = ({ role, onNavigate, regressionTestRes
       {/* 3. Secondary Revenue, Expense & Working Capital */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
         {/* Total Revenue */}
-        <div className="p-4 rounded-xl bg-white border border-gray-200 shadow-xs">
-          <div className="flex items-center justify-between text-[13px] text-gray-600 font-medium">
+        <div className="p-4 rounded-xl bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 shadow-xs transition-colors">
+          <div className="flex items-center justify-between text-[13px] text-gray-600 dark:text-slate-400 font-medium">
             <span>{t('dashboard.totalRevenue')}</span>
-            <div className="p-1.5 rounded-lg bg-emerald-50 text-[#15803D]">
+            <div className="p-1.5 rounded-lg bg-emerald-50 dark:bg-emerald-950/60 text-[#15803D] dark:text-emerald-400">
               <ArrowUpRight className="w-4 h-4" />
             </div>
           </div>
-          <div className="text-xl font-bold text-gray-900 tracking-tight mt-1.5">
+          <div className="text-xl font-bold text-gray-900 dark:text-slate-100 tracking-tight mt-1.5">
             {fmtMoney(totalRevenue)}
           </div>
-          <p className="text-[13px] text-gray-600 mt-1">{t('dashboard.revenueDesc')}</p>
+          <p className="text-[13px] text-gray-600 dark:text-slate-400 mt-1">{t('dashboard.revenueDesc')}</p>
         </div>
 
         {/* Total Expenses */}
-        <div className="p-4 rounded-xl bg-white border border-gray-200 shadow-xs">
-          <div className="flex items-center justify-between text-[13px] text-gray-600 font-medium">
+        <div className="p-4 rounded-xl bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 shadow-xs transition-colors">
+          <div className="flex items-center justify-between text-[13px] text-gray-600 dark:text-slate-400 font-medium">
             <span>{t('dashboard.totalExpenses')}</span>
-            <div className="p-1.5 rounded-lg bg-rose-50 text-[#C2410C]">
+            <div className="p-1.5 rounded-lg bg-rose-50 dark:bg-rose-950/60 text-[#C2410C] dark:text-rose-400">
               <ArrowDownLeft className="w-4 h-4" />
             </div>
           </div>
-          <div className="text-xl font-bold text-gray-900 tracking-tight mt-1.5">
+          <div className="text-xl font-bold text-gray-900 dark:text-slate-100 tracking-tight mt-1.5">
             {fmtMoney(totalExpenses)}
           </div>
-          <p className="text-[13px] text-gray-600 mt-1">{t('dashboard.expensesDesc')}</p>
+          <p className="text-[13px] text-gray-600 dark:text-slate-400 mt-1">{t('dashboard.expensesDesc')}</p>
         </div>
 
         {/* AR (Receivable) */}
-        <div className="p-4 rounded-xl bg-white border border-gray-200 shadow-xs">
-          <div className="text-[13px] text-gray-600 font-medium">{t('dashboard.receivables')}</div>
-          <div className="text-xl font-bold text-sky-700 tracking-tight mt-1.5">
+        <div className="p-4 rounded-xl bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 shadow-xs transition-colors">
+          <div className="text-[13px] text-gray-600 dark:text-slate-400 font-medium">{t('dashboard.receivables')}</div>
+          <div className="text-xl font-bold text-sky-700 dark:text-sky-400 tracking-tight mt-1.5">
             {fmtMoney(arBalance)}
           </div>
-          <p className="text-[13px] text-gray-600 mt-1">{t('dashboard.receivablesDesc')}</p>
+          <p className="text-[13px] text-gray-600 dark:text-slate-400 mt-1">{t('dashboard.receivablesDesc')}</p>
         </div>
 
         {/* AP (Payable) */}
-        <div className="p-4 rounded-xl bg-white border border-gray-200 shadow-xs">
-          <div className="text-[13px] text-gray-600 font-medium">{t('dashboard.payables')}</div>
-          <div className="text-xl font-bold text-amber-700 tracking-tight mt-1.5">
+        <div className="p-4 rounded-xl bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 shadow-xs transition-colors">
+          <div className="text-[13px] text-gray-600 dark:text-slate-400 font-medium">{t('dashboard.payables')}</div>
+          <div className="text-xl font-bold text-amber-700 dark:text-amber-400 tracking-tight mt-1.5">
             {fmtMoney(apBalance)}
           </div>
-          <p className="text-[13px] text-gray-600 mt-1">{t('dashboard.payablesDesc')}</p>
+          <p className="text-[13px] text-gray-600 dark:text-slate-400 mt-1">{t('dashboard.payablesDesc')}</p>
         </div>
       </div>
 
       {/* 4. Live Farm Biological Assets (Operations) */}
-      <div className="bg-white rounded-2xl border border-gray-200 p-4 sm:p-5 shadow-xs">
-        <div className="flex items-center justify-between mb-3.5 pb-2 border-b border-gray-100">
+      <div className="bg-white dark:bg-slate-900 rounded-2xl border border-gray-200 dark:border-slate-800 p-4 sm:p-5 shadow-xs transition-colors">
+        <div className="flex items-center justify-between mb-3.5 pb-2 border-b border-gray-100 dark:border-slate-800">
           <div className="flex items-center gap-2">
-            <Activity className="w-5 h-5 text-[#1E5128]" />
-            <h3 className="text-[16px] sm:text-[17px] font-bold text-gray-900">
+            <Activity className="w-5 h-5 text-[#1E5128] dark:text-emerald-400" />
+            <h3 className="text-[16px] sm:text-[17px] font-bold text-gray-900 dark:text-slate-100">
               {t('dashboard.bioAssets')}
             </h3>
           </div>
           <button
             onClick={() => onNavigate('operations')}
-            className="text-[14px] text-[#1E5128] hover:underline font-bold cursor-pointer py-1 px-2"
+            className="text-[14px] text-[#1E5128] dark:text-emerald-400 hover:underline font-bold cursor-pointer py-1 px-2"
           >
             {t('dashboard.details')}
           </button>
@@ -752,54 +752,54 @@ export const Dashboard: React.FC<Props> = ({ role, onNavigate, regressionTestRes
           {/* Livestock */}
           <div
             onClick={() => onNavigate('operations')}
-            className="p-4 rounded-xl bg-[#F8FAFC] border border-gray-200 hover:border-[#1E5128]/60 cursor-pointer transition-all active:scale-98"
+            className="p-4 rounded-xl bg-[#F8FAFC] dark:bg-slate-800/80 border border-gray-200 dark:border-slate-700/80 hover:border-[#1E5128]/60 dark:hover:border-emerald-500/60 cursor-pointer transition-all active:scale-98"
           >
-            <div className="text-[13px] text-gray-600 font-medium">{t('dashboard.activeLivestock')}</div>
-            <div className="text-2xl font-bold text-gray-900 mt-1">{animalCount} {t('dashboard.unitPieces')}</div>
-            <div className="text-[13px] font-semibold text-[#1E5128] mt-1">{t('dashboard.livestockDesc')}</div>
+            <div className="text-[13px] text-gray-600 dark:text-slate-400 font-medium">{t('dashboard.activeLivestock')}</div>
+            <div className="text-2xl font-bold text-gray-900 dark:text-slate-100 mt-1">{animalCount} {t('dashboard.unitPieces')}</div>
+            <div className="text-[13px] font-semibold text-[#1E5128] dark:text-emerald-400 mt-1">{t('dashboard.livestockDesc')}</div>
           </div>
 
           {/* Fisheries */}
           <div
             onClick={() => onNavigate('operations')}
-            className="p-4 rounded-xl bg-[#F8FAFC] border border-gray-200 hover:border-[#1E5128]/60 cursor-pointer transition-all active:scale-98"
+            className="p-4 rounded-xl bg-[#F8FAFC] dark:bg-slate-800/80 border border-gray-200 dark:border-slate-700/80 hover:border-[#1E5128]/60 dark:hover:border-emerald-500/60 cursor-pointer transition-all active:scale-98"
           >
-            <div className="text-[13px] text-gray-600 font-medium">{t('dashboard.activeFish')}</div>
-            <div className="text-2xl font-bold text-gray-900 mt-1">{fishBatchCount} {t('dashboard.unitPieces')}</div>
-            <div className="text-[13px] font-semibold text-sky-700 mt-1">{t('dashboard.fishDesc')}</div>
+            <div className="text-[13px] text-gray-600 dark:text-slate-400 font-medium">{t('dashboard.activeFish')}</div>
+            <div className="text-2xl font-bold text-gray-900 dark:text-slate-100 mt-1">{fishBatchCount} {t('dashboard.unitPieces')}</div>
+            <div className="text-[13px] font-semibold text-sky-700 dark:text-sky-400 mt-1">{t('dashboard.fishDesc')}</div>
           </div>
 
           {/* Crops */}
           <div
             onClick={() => onNavigate('operations')}
-            className="p-4 rounded-xl bg-[#F8FAFC] border border-gray-200 hover:border-[#1E5128]/60 cursor-pointer transition-all active:scale-98"
+            className="p-4 rounded-xl bg-[#F8FAFC] dark:bg-slate-800/80 border border-gray-200 dark:border-slate-700/80 hover:border-[#1E5128]/60 dark:hover:border-emerald-500/60 cursor-pointer transition-all active:scale-98"
           >
-            <div className="text-[13px] text-gray-600 font-medium">{t('dashboard.activeCrops')}</div>
-            <div className="text-2xl font-bold text-gray-900 mt-1">{cropCycleCount} {t('dashboard.unitPieces')}</div>
-            <div className="text-[13px] font-semibold text-amber-700 mt-1">{t('dashboard.cropDesc')}</div>
+            <div className="text-[13px] text-gray-600 dark:text-slate-400 font-medium">{t('dashboard.activeCrops')}</div>
+            <div className="text-2xl font-bold text-gray-900 dark:text-slate-100 mt-1">{cropCycleCount} {t('dashboard.unitPieces')}</div>
+            <div className="text-[13px] font-semibold text-amber-700 dark:text-amber-400 mt-1">{t('dashboard.cropDesc')}</div>
           </div>
         </div>
       </div>
 
       {/* 5. Recent Posted Financial Transactions */}
-      <div className="bg-white rounded-2xl border border-gray-200 p-4 sm:p-5 shadow-xs">
-        <div className="flex items-center justify-between mb-3.5 pb-2 border-b border-gray-100">
+      <div className="bg-white dark:bg-slate-900 rounded-2xl border border-gray-200 dark:border-slate-800 p-4 sm:p-5 shadow-xs transition-colors">
+        <div className="flex items-center justify-between mb-3.5 pb-2 border-b border-gray-100 dark:border-slate-800">
           <div className="flex items-center gap-2">
-            <Clock className="w-5 h-5 text-gray-500" />
-            <h3 className="text-[16px] sm:text-[17px] font-bold text-gray-900">
+            <Clock className="w-5 h-5 text-gray-500 dark:text-slate-400" />
+            <h3 className="text-[16px] sm:text-[17px] font-bold text-gray-900 dark:text-slate-100">
               {t('dashboard.recentTx')}
             </h3>
           </div>
           <button
             onClick={() => onNavigate('accounting')}
-            className="text-[14px] text-[#1E5128] hover:underline font-bold cursor-pointer py-1 px-2"
+            className="text-[14px] text-[#1E5128] dark:text-emerald-400 hover:underline font-bold cursor-pointer py-1 px-2"
           >
             {t('dashboard.allJournals')}
           </button>
         </div>
 
         {recentTransactions.length === 0 ? (
-          <div className="p-8 text-center text-gray-500 text-[14px]">
+          <div className="p-8 text-center text-gray-500 dark:text-slate-400 text-[14px]">
             {t('dashboard.noTx')}
           </div>
         ) : (
@@ -808,32 +808,32 @@ export const Dashboard: React.FC<Props> = ({ role, onNavigate, regressionTestRes
               <div
                 key={tx.id}
                 onClick={() => onNavigate('accounting')}
-                className="flex flex-col sm:flex-row sm:items-center justify-between p-3.5 rounded-xl bg-[#F8FAFC] border border-gray-200 hover:border-gray-300 hover:bg-gray-50/80 transition-all cursor-pointer gap-2"
+                className="flex flex-col sm:flex-row sm:items-center justify-between p-3.5 rounded-xl bg-[#F8FAFC] dark:bg-slate-800/80 border border-gray-200 dark:border-slate-700/80 hover:border-gray-300 dark:hover:border-slate-600 hover:bg-gray-50/80 dark:hover:bg-slate-750 transition-all cursor-pointer gap-2"
               >
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2 flex-wrap">
-                    <span className="font-mono text-[#1E5128] font-bold text-[14px]">
+                    <span className="font-mono text-[#1E5128] dark:text-emerald-400 font-bold text-[14px]">
                       {tx.voucherNumber}
                     </span>
-                    <span className="text-[12px] font-semibold px-2 py-0.5 rounded-md bg-white border border-gray-200 text-gray-700">
+                    <span className="text-[12px] font-semibold px-2 py-0.5 rounded-md bg-white dark:bg-slate-700 border border-gray-200 dark:border-slate-600 text-gray-700 dark:text-slate-200">
                       {tx.voucherType}
                     </span>
                     {tx.reversedBy && (
-                      <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-amber-100 text-amber-900 border border-amber-300">
+                      <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-amber-100 dark:bg-amber-950/60 text-amber-900 dark:text-amber-300 border border-amber-300 dark:border-amber-800">
                         {t('dashboard.corrected')}
                       </span>
                     )}
-                    <span className="text-gray-500 text-[13px]">{tx.date}</span>
+                    <span className="text-gray-500 dark:text-slate-400 text-[13px]">{tx.date}</span>
                   </div>
-                  <p className="text-gray-800 text-[14px] truncate mt-1">
+                  <p className="text-gray-800 dark:text-slate-200 text-[14px] truncate mt-1">
                     {tx.narration || t('dashboard.noNarration')}
                   </p>
                 </div>
-                <div className="text-left sm:text-right shrink-0 pt-1 sm:pt-0 border-t sm:border-t-0 border-gray-200/50">
-                  <div className="font-bold text-[16px] text-gray-900">
+                <div className="text-left sm:text-right shrink-0 pt-1 sm:pt-0 border-t sm:border-t-0 border-gray-200/50 dark:border-slate-700/50">
+                  <div className="font-bold text-[16px] text-gray-900 dark:text-slate-100">
                     {fmtMoney(tx.totalDebit)}
                   </div>
-                  <div className="text-[12px] text-gray-500 font-medium">{t('dashboard.balancedDebitCredit')}</div>
+                  <div className="text-[12px] text-gray-500 dark:text-slate-400 font-medium">{t('dashboard.balancedDebitCredit')}</div>
                 </div>
               </div>
             ))}

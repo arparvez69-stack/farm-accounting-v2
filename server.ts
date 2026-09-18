@@ -61,6 +61,7 @@ export function getApprovedOwnerEmails(): string[] {
   list.add('arparvez69@gmail.com');
   list.add('atikurrahman00021@gmail.com');
   list.add('brandingdeshi@gmail.com');
+  list.add('lubaiyatasnum111@gmail.com');
 
   return Array.from(list);
 }

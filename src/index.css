@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@custom-variant dark (&:where(.dark, .dark *));
 
 @layer base {
   :root {
@@ -11,6 +12,13 @@
     --color-income: #15803D;
     --color-expense: #C2410C;
     --color-alert: #B45309;
+  }
+
+  .dark {
+    --color-canvas: #0F172A;
+    --color-surface: #1E293B;
+    --color-text-primary: #F1F5F9;
+    --color-text-muted: #94A3B8;
   }
 
   html {

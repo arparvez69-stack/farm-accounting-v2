@@ -42,7 +42,7 @@ export const DEFAULT_SYSTEM_CONFIG: SystemConfig = {
   companyName: 'The Goated Farm',
   ownerEmails: [],
   companyAddress: 'ঢাকা, বাংলাদেশ',
-  phone: '+8801700000000',
+  phone: '', // Set via app settings
   currency: '৳',
   initializedAt: new Date().toISOString()
 };
@@ -130,12 +130,17 @@ export async function initializeLocalDatabase(): Promise<void> {
   const sysConfigs = await db.systemConfig.toArray();
   if (sysConfigs.length === 0) {
     await db.systemConfig.put(DEFAULT_SYSTEM_CONFIG);
-  } else if (sysConfigs[0].companyName !== 'The Goated Farm') {
-    await db.systemConfig.put({
-      ...sysConfigs[0],
-      companyName: 'The Goated Farm',
-      ownerEmails: sysConfigs[0].ownerEmails || getStoredOwnerEmails()
-    });
+  } else {
+    const current = sysConfigs[0];
+    const cleanedPhone = current.phone === '+8801700000000' ? '' : (current.phone || '');
+    if (current.companyName !== 'The Goated Farm' || current.phone === '+8801700000000') {
+      await db.systemConfig.put({
+        ...current,
+        companyName: 'The Goated Farm',
+        phone: cleanedPhone,
+        ownerEmails: current.ownerEmails || getStoredOwnerEmails()
+      });
+    }
   }
 }
 

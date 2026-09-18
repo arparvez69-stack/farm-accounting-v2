@@ -73,21 +73,21 @@ export const Header: React.FC<Props> = ({
 
   return (
     <>
-      <header className="sticky top-0 z-30 bg-white/95 backdrop-blur-md border-b border-gray-200 text-gray-900 pt-safe px-3.5 sm:px-6 py-2.5 shadow-xs">
+      <header className="sticky top-0 z-30 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-b border-gray-200 dark:border-slate-800 text-gray-900 dark:text-slate-100 pt-safe px-3.5 sm:px-6 py-2.5 shadow-xs transition-colors">
         <div className="max-w-5xl mx-auto flex items-center justify-between gap-2">
           {/* Left: Brand / Farm Info */}
           <div className="flex items-center gap-2.5 min-w-0">
-            <div className="w-10 h-10 rounded-xl bg-[#1E5128] flex items-center justify-center shadow-sm shrink-0">
+            <div className="w-10 h-10 rounded-xl bg-[#1E5128] dark:bg-emerald-800 flex items-center justify-center shadow-sm shrink-0">
               <Sprout className="w-5 h-5 text-white" />
             </div>
             <div className="truncate">
-              <h1 className="text-[15px] sm:text-base font-bold text-gray-900 tracking-tight leading-tight truncate">
+              <h1 className="text-[15px] sm:text-base font-bold text-gray-900 dark:text-slate-100 tracking-tight leading-tight truncate">
                 {systemConfig?.companyName || 'The Goated Farm'}
               </h1>
-              <p className="text-[13px] text-[#1E5128] font-semibold truncate flex items-center gap-1.5">
+              <p className="text-[13px] text-[#1E5128] dark:text-emerald-400 font-semibold truncate flex items-center gap-1.5">
                 <span>{t('app.tagline', language)}</span>
-                <span className="hidden lg:inline text-xs text-gray-400">•</span>
-                <span className="hidden lg:inline text-xs text-gray-500 font-normal">
+                <span className="hidden lg:inline text-xs text-gray-400 dark:text-slate-600">•</span>
+                <span className="hidden lg:inline text-xs text-gray-500 dark:text-slate-400 font-normal">
                   {language === 'en' ? 'Last backup: ' : 'সর্বশেষ ব্যাকআপ: '}{formatBackupTimestamp(lastBackupTime)}
                 </span>
               </p>
@@ -103,16 +103,16 @@ export const Header: React.FC<Props> = ({
             />
 
             {/* Owner Role Badge */}
-            <span className="hidden sm:inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-[#F0FDF4] text-[#1E5128] border border-[#BBF7D0]">
-              <Shield className="w-3.5 h-3.5 text-[#1E5128]" />
+            <span className="hidden sm:inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-[#F0FDF4] dark:bg-emerald-950/60 text-[#1E5128] dark:text-emerald-400 border border-[#BBF7D0] dark:border-emerald-800">
+              <Shield className="w-3.5 h-3.5 text-[#1E5128] dark:text-emerald-400" />
               <span>{language === 'en' ? 'Owner' : 'মালিক (OWNER)'}</span>
             </span>
 
             {/* User & Logout */}
-            <div className="flex items-center gap-1.5 border-l border-gray-200 pl-2">
+            <div className="flex items-center gap-1.5 border-l border-gray-200 dark:border-slate-800 pl-2">
               <span
                 title={userProfile.email || 'Owner'}
-                className="text-xs text-gray-600 max-w-[120px] sm:max-w-[180px] truncate font-medium hidden md:inline-block"
+                className="text-xs text-gray-600 dark:text-slate-300 max-w-[120px] sm:max-w-[180px] truncate font-medium hidden md:inline-block"
               >
                 {userProfile.email || userProfile.displayName || 'Owner'}
               </span>
@@ -120,9 +120,9 @@ export const Header: React.FC<Props> = ({
                 id="btn-header-logout"
                 onClick={onLogout}
                 title={language === 'en' ? 'Log out this device' : 'এই ডিভাইস থেকে লগ আউট করুন (Log out this device)'}
-                className="p-2 sm:px-3 sm:py-1.5 rounded-xl text-red-600 hover:text-red-700 hover:bg-red-50 border border-transparent hover:border-red-200 transition-colors cursor-pointer min-h-[44px] flex items-center justify-center gap-1.5 active:scale-95 text-xs font-bold"
+                className="p-2 sm:px-3 sm:py-1.5 rounded-xl text-red-600 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300 hover:bg-red-50 dark:hover:bg-red-950/40 border border-transparent hover:border-red-200 dark:hover:border-red-800 transition-colors cursor-pointer min-h-[44px] flex items-center justify-center gap-1.5 active:scale-95 text-xs font-bold"
               >
-                <LogOut className="w-4 h-4 text-red-600" />
+                <LogOut className="w-4 h-4 text-red-600 dark:text-red-400" />
                 <span className="hidden md:inline">{t('btn.logout', language)}</span>
               </button>
             </div>

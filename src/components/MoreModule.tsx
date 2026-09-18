@@ -18,7 +18,9 @@ import {
   AlertCircle,
   Calculator,
   FileText,
-  Globe
+  Globe,
+  Phone,
+  Moon
 } from 'lucide-react';
 import { useLanguage } from '../i18n/translations';
 import { db } from '../db/indexedDb';
@@ -59,6 +61,25 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
   const [binNumber, setBinNumber] = useState<string>(() => {
     return localStorage.getItem('goted_bin_number') || '';
   });
+  const [farmPhone, setFarmPhone] = useState<string>(() => {
+    return (systemConfig?.phone && systemConfig.phone !== '+8801700000000') ? systemConfig.phone : (localStorage.getItem('goted_farm_phone') || '');
+  });
+
+  // Dark Mode state (saved to local settings, defaulting to off)
+  const [isDarkMode, setIsDarkMode] = useState<boolean>(() => {
+    return localStorage.getItem('goted_dark_mode') === 'true';
+  });
+
+  const handleToggleDarkMode = (checked: boolean) => {
+    setIsDarkMode(checked);
+    localStorage.setItem('goted_dark_mode', checked ? 'true' : 'false');
+    if (checked) {
+      document.documentElement.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+    }
+    window.dispatchEvent(new Event('goted_settings_changed'));
+  };
 
   const handleToggleVat = (checked: boolean) => {
     setIsVatRegistered(checked);
@@ -75,6 +96,20 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
   const handleBinChange = (val: string) => {
     setBinNumber(val);
     localStorage.setItem('goted_bin_number', val);
+    window.dispatchEvent(new Event('goted_settings_changed'));
+  };
+
+  const handlePhoneChange = async (val: string) => {
+    setFarmPhone(val);
+    localStorage.setItem('goted_farm_phone', val);
+    try {
+      const configs = await db.systemConfig.toArray();
+      if (configs.length > 0) {
+        await db.systemConfig.update(configs[0].ownerUid, { phone: val.trim() });
+      }
+    } catch (err) {
+      console.warn('Could not update phone in systemConfig:', err);
+    }
     window.dispatchEvent(new Event('goted_settings_changed'));
   };
 
@@ -256,23 +291,23 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
   return (
     <div className="space-y-4 pb-6 max-w-5xl mx-auto">
       {/* Header & Subtabs */}
-      <div className="flex flex-col gap-3 p-4 sm:p-5 rounded-2xl bg-white border border-gray-200 shadow-xs">
+      <div className="flex flex-col gap-3 p-4 sm:p-5 rounded-2xl bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 shadow-xs transition-colors">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div>
-            <h2 className="text-lg sm:text-xl font-bold text-gray-900 flex items-center gap-2">
-              <ShieldCheck className="w-5 h-5 text-[#1E5128]" />
+            <h2 className="text-lg sm:text-xl font-bold text-gray-900 dark:text-slate-100 flex items-center gap-2">
+              <ShieldCheck className="w-5 h-5 text-[#1E5128] dark:text-emerald-400" />
               <span>নিরাপত্তা, স্থায়ী সম্পদ ও অডিট (System & Security)</span>
             </h2>
-            <p className="text-[14px] text-gray-600 mt-0.5">
+            <p className="text-[14px] text-gray-600 dark:text-slate-400 mt-0.5">
               অডিট ট্রেইল, খামার মালিক তালিকা, গোপন পিন পরিবর্তন ও ফার্ম সেটিংস
             </p>
             {/* TASK 2: Small সর্বশেষ ব্যাকআপ timestamp showing last cloud sync */}
             <div
               id="more-last-backup-timestamp"
-              className="mt-2 inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-900 text-xs font-semibold shadow-2xs"
+              className="mt-2 inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-200 dark:border-emerald-800 text-emerald-900 dark:text-emerald-300 text-xs font-semibold shadow-2xs"
               title="ক্লাউড ফায়ারস্টোরে সর্বশেষ ডেটা সিঙ্ক ও ব্যাকআপের সময়"
             >
-              <RefreshCw className="w-3 h-3 text-emerald-700 shrink-0" />
+              <RefreshCw className="w-3 h-3 text-emerald-700 dark:text-emerald-400 shrink-0" />
               <span>সর্বশেষ ব্যাকআপ: {formatBackupTimestamp(lastBackupTime)}</span>
             </div>
           </div>
@@ -281,20 +316,20 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
           <button
             id="btn-logout-device-header"
             onClick={handleLogoutDevice}
-            className="self-start sm:self-auto px-4 py-2.5 rounded-xl bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 text-[13px] font-bold flex items-center gap-2 transition-all cursor-pointer min-h-[44px] shadow-xs active:scale-95"
+            className="self-start sm:self-auto px-4 py-2.5 rounded-xl bg-red-50 dark:bg-red-950/40 hover:bg-red-100 dark:hover:bg-red-900/60 text-red-700 dark:text-red-300 border border-red-200 dark:border-red-800 text-[13px] font-bold flex items-center gap-2 transition-all cursor-pointer min-h-[44px] shadow-xs active:scale-95"
             title="এই ডিভাইস থেকে লগ আউট করুন (Log out this device)"
           >
-            <LogOut className="w-4 h-4 text-red-600 shrink-0" />
+            <LogOut className="w-4 h-4 text-red-600 dark:text-red-400 shrink-0" />
             <span>এই ডিভাইস থেকে লগ আউট করুন / Log out this device</span>
           </button>
         </div>
 
-        <div className="flex items-center gap-1.5 bg-gray-100 p-1.5 rounded-xl overflow-x-auto text-[13px] font-semibold">
+        <div className="flex items-center gap-1.5 bg-gray-100 dark:bg-slate-800/80 p-1.5 rounded-xl overflow-x-auto text-[13px] font-semibold">
           <button
             id="tab-access-logs-btn"
             onClick={() => setTab('accessLogs')}
             className={`px-3.5 py-2 rounded-lg whitespace-nowrap transition-all cursor-pointer min-h-[40px] flex items-center gap-1.5 ${
-              tab === 'accessLogs' ? 'bg-[#1E5128] text-white shadow-xs' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200/60'
+              tab === 'accessLogs' ? 'bg-[#1E5128] text-white shadow-xs' : 'text-gray-600 dark:text-slate-400 hover:text-gray-900 dark:hover:text-slate-100 hover:bg-gray-200/60 dark:hover:bg-slate-700/60'
             }`}
           >
             <UserCheck className="w-4 h-4" />
@@ -304,7 +339,7 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
             id="tab-change-pin-btn"
             onClick={() => setTab('changePin')}
             className={`px-3.5 py-2 rounded-lg whitespace-nowrap transition-all cursor-pointer min-h-[40px] flex items-center gap-1.5 ${
-              tab === 'changePin' ? 'bg-[#1E5128] text-white shadow-xs' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200/60'
+              tab === 'changePin' ? 'bg-[#1E5128] text-white shadow-xs' : 'text-gray-600 dark:text-slate-400 hover:text-gray-900 dark:hover:text-slate-100 hover:bg-gray-200/60 dark:hover:bg-slate-700/60'
             }`}
           >
             <KeyRound className="w-4 h-4" />
@@ -313,7 +348,7 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
           <button
             onClick={() => setTab('audit')}
             className={`px-3.5 py-2 rounded-lg whitespace-nowrap transition-all cursor-pointer min-h-[40px] ${
-              tab === 'audit' ? 'bg-[#1E5128] text-white shadow-xs' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200/60'
+              tab === 'audit' ? 'bg-[#1E5128] text-white shadow-xs' : 'text-gray-600 dark:text-slate-400 hover:text-gray-900 dark:hover:text-slate-100 hover:bg-gray-200/60 dark:hover:bg-slate-700/60'
             }`}
           >
             অডিট ট্রেইল (Audit Trail)
@@ -321,7 +356,7 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
           <button
             onClick={() => setTab('assets')}
             className={`px-3.5 py-2 rounded-lg whitespace-nowrap transition-all cursor-pointer min-h-[40px] ${
-              tab === 'assets' ? 'bg-[#1E5128] text-white shadow-xs' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200/60'
+              tab === 'assets' ? 'bg-[#1E5128] text-white shadow-xs' : 'text-gray-600 dark:text-slate-400 hover:text-gray-900 dark:hover:text-slate-100 hover:bg-gray-200/60 dark:hover:bg-slate-700/60'
             }`}
           >
             স্থায়ী সম্পদ (Assets)
@@ -329,7 +364,7 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
           <button
             onClick={() => setTab('owners')}
             className={`px-3.5 py-2 rounded-lg whitespace-nowrap transition-all cursor-pointer min-h-[40px] ${
-              tab === 'owners' ? 'bg-[#1E5128] text-white shadow-xs' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200/60'
+              tab === 'owners' ? 'bg-[#1E5128] text-white shadow-xs' : 'text-gray-600 dark:text-slate-400 hover:text-gray-900 dark:hover:text-slate-100 hover:bg-gray-200/60 dark:hover:bg-slate-700/60'
             }`}
           >
             অনুমোদিত মালিকবৃন্দ (Owners)
@@ -337,7 +372,7 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
           <button
             onClick={() => setTab('settings')}
             className={`px-3.5 py-2 rounded-lg whitespace-nowrap transition-all cursor-pointer min-h-[40px] ${
-              tab === 'settings' ? 'bg-[#1E5128] text-white shadow-xs' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200/60'
+              tab === 'settings' ? 'bg-[#1E5128] text-white shadow-xs' : 'text-gray-600 dark:text-slate-400 hover:text-gray-900 dark:hover:text-slate-100 hover:bg-gray-200/60 dark:hover:bg-slate-700/60'
             }`}
           >
             ফার্ম সেটিংস (Settings)
@@ -917,63 +952,94 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
 
       {/* ===================== TAB 4: SETTINGS ===================== */}
       {tab === 'settings' && (
-        <div className="bg-white border border-gray-200 rounded-2xl p-6 space-y-5 max-w-xl mx-auto shadow-xs">
-          <div className="flex items-center gap-3 border-b border-gray-100 pb-4">
-            <div className="p-3 rounded-2xl bg-[#E8F5E9] text-[#1E5128]">
+        <div className="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 rounded-2xl p-6 space-y-5 max-w-xl mx-auto shadow-xs transition-colors">
+          <div className="flex items-center gap-3 border-b border-gray-100 dark:border-slate-800 pb-4">
+            <div className="p-3 rounded-2xl bg-[#E8F5E9] dark:bg-emerald-950/60 text-[#1E5128] dark:text-emerald-400">
               <Building className="w-8 h-8" />
             </div>
             <div>
-              <h3 className="font-bold text-gray-900 text-lg">
+              <h3 className="font-bold text-gray-900 dark:text-slate-100 text-lg">
                 {systemConfig?.companyName || 'The Goated Farm'}
               </h3>
-              <p className="text-[13px] text-gray-500">
+              <p className="text-[13px] text-gray-500 dark:text-slate-400">
                 {systemConfig?.companyAddress || 'ঢাকা, বাংলাদেশ'}
               </p>
             </div>
           </div>
 
-          <div className="space-y-3 text-[14px] text-gray-700">
-            <div className="flex justify-between py-2 border-b border-gray-100">
-              <span className="text-gray-500">খামার আর্কিটেকচার:</span>
-              <span className="font-bold text-[#15803D]">একক মালিকানা (Single Tenant)</span>
+          <div className="space-y-3 text-[14px] text-gray-700 dark:text-slate-300">
+            <div className="flex justify-between py-2 border-b border-gray-100 dark:border-slate-800">
+              <span className="text-gray-500 dark:text-slate-400">খামার আর্কিটেকচার:</span>
+              <span className="font-bold text-[#15803D] dark:text-emerald-400">একক মালিকানা (Single Tenant)</span>
             </div>
-            <div className="flex justify-between py-2 border-b border-gray-100">
-              <span className="text-gray-500">অনুমোদিত মালিক সংখ্যা:</span>
-              <span className="font-mono font-semibold text-gray-900">৪ জন সক্রিয় অংশীদার</span>
+            <div className="flex justify-between py-2 border-b border-gray-100 dark:border-slate-800">
+              <span className="text-gray-500 dark:text-slate-400">অনুমোদিত মালিক সংখ্যা:</span>
+              <span className="font-mono font-semibold text-gray-900 dark:text-slate-100">৪ জন সক্রিয় অংশীদার</span>
             </div>
-            <div className="flex justify-between py-2 border-b border-gray-100">
-              <span className="text-gray-500">মুদ্রা (Currency):</span>
-              <span className="font-bold text-[#15803D]">{systemConfig?.currency || '৳'} (BDT)</span>
+            <div className="flex justify-between py-2 border-b border-gray-100 dark:border-slate-800">
+              <span className="text-gray-500 dark:text-slate-400">যোগাযোগ নম্বর (Phone):</span>
+              <span className="font-mono text-gray-900 dark:text-slate-100">{farmPhone ? farmPhone : 'নির্ধারণ করা হয়নি (Not set)'}</span>
             </div>
-            <div className="flex justify-between py-2 border-b border-gray-100">
-              <span className="text-gray-500">প্রমাণীকরণ পদ্ধতি:</span>
-              <span className="font-semibold text-gray-900">সার্ভার-সাইড Bcrypt হ্যাশ যাচাইকরণ (Bcrypt Hashed PIN)</span>
+            <div className="flex justify-between py-2 border-b border-gray-100 dark:border-slate-800">
+              <span className="text-gray-500 dark:text-slate-400">মুদ্রা (Currency):</span>
+              <span className="font-bold text-[#15803D] dark:text-emerald-400">{systemConfig?.currency || '৳'} (BDT)</span>
             </div>
-            <div className="flex justify-between py-2 border-b border-gray-100">
-              <span className="text-gray-500">সিক্রেট পিন নিরাপত্তা:</span>
-              <span className="font-mono font-bold text-[#15803D]">•••••• (Bcrypt Cost 12 Secured)</span>
+            <div className="flex justify-between py-2 border-b border-gray-100 dark:border-slate-800">
+              <span className="text-gray-500 dark:text-slate-400">প্রমাণীকরণ পদ্ধতি:</span>
+              <span className="font-semibold text-gray-900 dark:text-slate-100">সার্ভার-সাইড Bcrypt হ্যাশ যাচাইকরণ (Bcrypt Hashed PIN)</span>
             </div>
-            <div className="flex justify-between py-2 border-b border-gray-100">
-              <span className="text-gray-500">ইনিশিয়ালাইজেশন:</span>
-              <span className="font-mono text-gray-600">The Goated Farm Enterprise</span>
+            <div className="flex justify-between py-2 border-b border-gray-100 dark:border-slate-800">
+              <span className="text-gray-500 dark:text-slate-400">সিক্রেট পিন নিরাপত্তা:</span>
+              <span className="font-mono font-bold text-[#15803D] dark:text-emerald-400">•••••• (Bcrypt Cost 12 Secured)</span>
+            </div>
+            <div className="flex justify-between py-2 border-b border-gray-100 dark:border-slate-800">
+              <span className="text-gray-500 dark:text-slate-400">ইনিশিয়ালাইজেশন:</span>
+              <span className="font-mono text-gray-600 dark:text-slate-400">The Goated Farm Enterprise</span>
+            </div>
+          </div>
+
+          {/* ডার্ক মোড / Dark Mode Setting */}
+          <div className="pt-2 border-t border-gray-100 dark:border-slate-800">
+            <div className="p-4 rounded-xl bg-gray-50 dark:bg-slate-800/80 border border-gray-200 dark:border-slate-700 space-y-3">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <h4 className="font-bold text-gray-900 dark:text-slate-100 text-[14px] flex items-center gap-1.5">
+                    <Moon className="w-4 h-4 text-[#1E5128] dark:text-emerald-400" />
+                    <span>ডার্ক মোড (Dark Mode)</span>
+                  </h4>
+                  <p className="text-xs text-gray-500 dark:text-slate-400 mt-0.5">
+                    কম আলোতে বা রাতে খামার ব্যবহারের সুবিধার্থে ডার্ক মোড সক্রিয় করুন (Enable dark mode for night usage)
+                  </p>
+                </div>
+                <label className="relative inline-flex items-center cursor-pointer shrink-0">
+                  <input
+                    type="checkbox"
+                    id="toggle-dark-mode"
+                    checked={isDarkMode}
+                    onChange={(e) => handleToggleDarkMode(e.target.checked)}
+                    className="sr-only peer"
+                  />
+                  <div className="w-11 h-6 bg-gray-300 dark:bg-slate-600 peer-focus:outline-hidden rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#1E5128]"></div>
+                </label>
+              </div>
             </div>
           </div>
 
           {/* ভাষা / Language Setting */}
-          <div className="pt-2 border-t border-gray-100">
-            <div className="p-4 rounded-xl bg-gray-50 border border-gray-200 space-y-3">
+          <div className="pt-2 border-t border-gray-100 dark:border-slate-800">
+            <div className="p-4 rounded-xl bg-gray-50 dark:bg-slate-800/80 border border-gray-200 dark:border-slate-700 space-y-3">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div>
-                  <h4 className="font-bold text-gray-900 text-[14px] flex items-center gap-1.5">
-                    <Globe className="w-4 h-4 text-[#1E5128]" />
+                  <h4 className="font-bold text-gray-900 dark:text-slate-100 text-[14px] flex items-center gap-1.5">
+                    <Globe className="w-4 h-4 text-[#1E5128] dark:text-emerald-400" />
                     <span>ভাষা / Language</span>
                   </h4>
-                  <p className="text-xs text-gray-500 mt-0.5">
+                  <p className="text-xs text-gray-500 dark:text-slate-400 mt-0.5">
                     অ্যাপের দৃশ্যমান লেখার ভাষা পরিবর্তন করুন (Change app display language)
                   </p>
                 </div>
 
-                <div className="flex items-center gap-1.5 bg-white p-1 rounded-xl border border-gray-300 shadow-2xs self-start sm:self-auto">
+                <div className="flex items-center gap-1.5 bg-white dark:bg-slate-900 p-1 rounded-xl border border-gray-300 dark:border-slate-700 shadow-2xs self-start sm:self-auto">
                   <button
                     type="button"
                     id="btn-lang-bn"
@@ -981,7 +1047,7 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
                     className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer min-h-[36px] ${
                       currentLanguage === 'bn'
                         ? 'bg-[#1E5128] text-white shadow-xs'
-                        : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
+                        : 'text-gray-600 dark:text-slate-400 hover:text-gray-900 dark:hover:text-slate-100 hover:bg-gray-100 dark:hover:bg-slate-800'
                     }`}
                   >
                     বাংলা (ডিফল্ট)
@@ -993,7 +1059,7 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
                     className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer min-h-[36px] ${
                       currentLanguage === 'en'
                         ? 'bg-[#1E5128] text-white shadow-xs'
-                        : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
+                        : 'text-gray-600 dark:text-slate-400 hover:text-gray-900 dark:hover:text-slate-100 hover:bg-gray-100 dark:hover:bg-slate-800'
                     }`}
                   >
                     English
@@ -1004,15 +1070,15 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
           </div>
 
           {/* ভ্যাট/টিন নিবন্ধন সেটিংস (VAT/TIN Registered Business Toggle) */}
-          <div className="pt-2 border-t border-gray-100">
-            <div className="p-4 rounded-xl bg-gray-50 border border-gray-200 space-y-3">
+          <div className="pt-2 border-t border-gray-100 dark:border-slate-800">
+            <div className="p-4 rounded-xl bg-gray-50 dark:bg-slate-800/80 border border-gray-200 dark:border-slate-700 space-y-3">
               <div className="flex items-center justify-between gap-3">
                 <div>
-                  <h4 className="font-bold text-gray-900 text-[14px] flex items-center gap-1.5">
-                    <FileText className="w-4 h-4 text-[#1E5128]" />
+                  <h4 className="font-bold text-gray-900 dark:text-slate-100 text-[14px] flex items-center gap-1.5">
+                    <FileText className="w-4 h-4 text-[#1E5128] dark:text-emerald-400" />
                     <span>ভ্যাট/টিন নিবন্ধিত ব্যবসা (VAT/TIN Registered Business)</span>
                   </h4>
-                  <p className="text-xs text-gray-500 mt-0.5">
+                  <p className="text-xs text-gray-500 dark:text-slate-400 mt-0.5">
                     ব্যবসায়িক ভ্যাট বা কর নিবন্ধন থাকলে সক্রিয় করুন। এটি সক্রিয় থাকলে আর্থিক প্রতিবেদন মডিউলে "ভ্যাট সারাংশ" প্রদর্শিত হবে।
                   </p>
                 </div>
@@ -1024,15 +1090,15 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
                     onChange={(e) => handleToggleVat(e.target.checked)}
                     className="sr-only peer"
                   />
-                  <div className="w-11 h-6 bg-gray-300 peer-focus:outline-hidden rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#1E5128]"></div>
+                  <div className="w-11 h-6 bg-gray-300 dark:bg-slate-600 peer-focus:outline-hidden rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#1E5128]"></div>
                 </label>
               </div>
 
               {/* Only when toggle is ON, show TIN/BIN-related fields */}
               {isVatRegistered && (
-                <div className="pt-3 border-t border-gray-200 grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="pt-3 border-t border-gray-200 dark:border-slate-700 grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
-                    <label className="block text-xs font-semibold text-gray-700 mb-1">
+                    <label className="block text-xs font-semibold text-gray-700 dark:text-slate-300 mb-1">
                       ই-টিন নম্বর (e-TIN Number)
                     </label>
                     <input
@@ -1041,11 +1107,11 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
                       placeholder="যেমন: ১২৩৪৫৬৭৮৯১০১"
                       value={tinNumber}
                       onChange={(e) => handleTinChange(e.target.value)}
-                      className="w-full bg-white border border-gray-300 rounded-lg p-2 text-[13px] text-gray-900 font-mono focus:ring-1 focus:ring-[#1E5128]"
+                      className="w-full bg-white dark:bg-slate-900 border border-gray-300 dark:border-slate-700 rounded-lg p-2 text-[13px] text-gray-900 dark:text-slate-100 font-mono focus:ring-1 focus:ring-[#1E5128]"
                     />
                   </div>
                   <div>
-                    <label className="block text-xs font-semibold text-gray-700 mb-1">
+                    <label className="block text-xs font-semibold text-gray-700 dark:text-slate-300 mb-1">
                       বিআইএন / ভ্যাট নিবন্ধন নম্বর (BIN / VAT Reg No.)
                     </label>
                     <input
@@ -1054,7 +1120,7 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
                       placeholder="যেমন: ০০১২৩৪৫৬৭-০১০১"
                       value={binNumber}
                       onChange={(e) => handleBinChange(e.target.value)}
-                      className="w-full bg-white border border-gray-300 rounded-lg p-2 text-[13px] text-gray-900 font-mono focus:ring-1 focus:ring-[#1E5128]"
+                      className="w-full bg-white dark:bg-slate-900 border border-gray-300 dark:border-slate-700 rounded-lg p-2 text-[13px] text-gray-900 dark:text-slate-100 font-mono focus:ring-1 focus:ring-[#1E5128]"
                     />
                   </div>
                 </div>
@@ -1062,17 +1128,40 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
             </div>
           </div>
 
+          {/* খামারের ফোন নম্বর / Farm Phone Number */}
+          <div className="pt-2 border-t border-gray-100 dark:border-slate-800">
+            <div className="p-4 rounded-xl bg-gray-50 dark:bg-slate-800/80 border border-gray-200 dark:border-slate-700 space-y-2">
+              <div className="flex items-center justify-between">
+                <h4 className="font-bold text-gray-900 dark:text-slate-100 text-[14px] flex items-center gap-1.5">
+                  <Phone className="w-4 h-4 text-[#1E5128] dark:text-emerald-400" />
+                  <span>খামারের যোগাযোগ নম্বর (Owner / Farm Phone)</span>
+                </h4>
+              </div>
+              <p className="text-xs text-gray-500 dark:text-slate-400">
+                খামার বা মালিকের অফিসিয়াল ফোন নম্বর (ঐচ্ছিক ক্ষেত্র, সেটিংস থেকে পূরণযোগ্য)
+              </p>
+              <input
+                type="tel"
+                id="input-farm-phone"
+                placeholder="যেমন: +৮৮০ ১৭XXXXXXXXX (খামারের ফোন নম্বর লিখুন)"
+                value={farmPhone}
+                onChange={(e) => handlePhoneChange(e.target.value)}
+                className="w-full bg-white dark:bg-slate-900 border border-gray-300 dark:border-slate-700 rounded-lg p-2 text-[13px] text-gray-900 dark:text-slate-100 font-mono focus:ring-1 focus:ring-[#1E5128]"
+              />
+            </div>
+          </div>
+
           {/* TASK 6: Prominent Logout Button in Settings */}
-          <div className="pt-3 border-t border-gray-100">
+          <div className="pt-3 border-t border-gray-100 dark:border-slate-800">
             <button
               id="btn-logout-device-settings"
               onClick={handleLogoutDevice}
-              className="w-full py-3 px-4 rounded-xl bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 text-[14px] font-bold flex items-center justify-center gap-2 transition-all cursor-pointer shadow-xs active:scale-98"
+              className="w-full py-3 px-4 rounded-xl bg-red-50 dark:bg-red-950/40 hover:bg-red-100 dark:hover:bg-red-900/60 text-red-700 dark:text-red-300 border border-red-200 dark:border-red-800 text-[14px] font-bold flex items-center justify-center gap-2 transition-all cursor-pointer shadow-xs active:scale-98"
             >
-              <LogOut className="w-5 h-5 text-red-600" />
+              <LogOut className="w-5 h-5 text-red-600 dark:text-red-400" />
               <span>এই ডিভাইস থেকে লগ আউট করুন / Log out this device</span>
             </button>
-            <p className="text-[12px] text-gray-500 text-center mt-2">
+            <p className="text-[12px] text-gray-500 dark:text-slate-400 text-center mt-2">
               লগ আউট করলে এই ডিভাইসে সংরক্ষিত সেশন মুছে যাবে এবং পুনরায় প্রবেশ করতে ইমেইল ও গোপন পিন প্রয়োজন হবে।
             </p>
           </div>

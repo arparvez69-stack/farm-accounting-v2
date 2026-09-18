@@ -73,6 +73,26 @@ export default function App() {
     return () => window.removeEventListener('online', handleOnlineEvent);
   }, []);
 
+  // Synchronize dark mode class on root HTML element
+  useEffect(() => {
+    const applyTheme = () => {
+      const isDark = localStorage.getItem('goted_dark_mode') === 'true';
+      if (isDark) {
+        document.documentElement.classList.add('dark');
+      } else {
+        document.documentElement.classList.remove('dark');
+      }
+    };
+
+    applyTheme();
+    window.addEventListener('goted_settings_changed', applyTheme);
+    window.addEventListener('storage', applyTheme);
+    return () => {
+      window.removeEventListener('goted_settings_changed', applyTheme);
+      window.removeEventListener('storage', applyTheme);
+    };
+  }, []);
+
   const initApp = async () => {
     try {
       setLoading(true);
@@ -208,7 +228,7 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-[#F8F9FA] text-[#111827] flex flex-col antialiased selection:bg-[#1E5128] selection:text-white">
+    <div className="min-h-screen bg-[#F8F9FA] dark:bg-slate-950 text-[#111827] dark:text-slate-100 flex flex-col antialiased selection:bg-[#1E5128] selection:text-white transition-colors">
       {/* Sticky Top Header */}
       <Header
         userProfile={userProfile}
