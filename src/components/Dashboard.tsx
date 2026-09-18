@@ -37,6 +37,7 @@ import { Card } from './ui/Card';
 import { StatusBadge } from './ui/StatusBadge';
 import { IconTile } from './ui/IconTile';
 import { EmptyState } from './ui/EmptyState';
+import { triggerSuccessAnimation } from './ui/SuccessAnimation';
 
 interface LowFeedItemInfo {
   item: InventoryItem;
@@ -387,8 +388,10 @@ export const Dashboard: React.FC<Props> = ({ role, onNavigate, regressionTestRes
   const handleMarkDone = async (reminderId: string, e: React.MouseEvent) => {
     e.stopPropagation();
     try {
+      const target = reminders.find((r) => r.id === reminderId);
       await db.reminders.update(reminderId, { status: 'DONE' });
       setReminders((prev) => prev.filter((r) => r.id !== reminderId));
+      triggerSuccessAnimation('রিমাইন্ডার সম্পন্ন হয়েছে!', target?.title || 'রিমাইন্ডার সম্পন্ন হিসেবে চিহ্নিত করা হয়েছে');
     } catch (err) {
       console.error('Failed to mark reminder done:', err);
     }
@@ -894,7 +897,7 @@ export const Dashboard: React.FC<Props> = ({ role, onNavigate, regressionTestRes
           />
         ) : (
           <div className="space-y-2">
-            {reminders.map((rem) => {
+            {reminders.map((rem, idx) => {
               const dueTime = new Date(rem.dueDate).getTime();
               const diffDays = Math.round((dueTime - todayTime) / 86400000);
               const isOverdue = diffDays < 0;
@@ -931,7 +934,8 @@ export const Dashboard: React.FC<Props> = ({ role, onNavigate, regressionTestRes
                 <div
                   key={rem.id}
                   onClick={() => handleRowClick(rem)}
-                  className={`p-3 sm:p-3.5 rounded-xl border transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${
+                  style={{ animationDelay: `${Math.min(idx * 35, 240)}ms` }}
+                  className={`p-3 sm:p-3.5 rounded-xl border transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-3 animate-fade-slide-up ${
                     isOverdue
                       ? 'bg-red-50/50 border-red-200'
                       : isToday

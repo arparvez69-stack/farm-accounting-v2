@@ -32,6 +32,7 @@ import { generateTransactionNumber, generateUniqueId, safeInsert } from './utils
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { subscribeToUndo, executeUndo, UndoableAction } from './services/undoService';
 import { PatternBackground } from './components/ui/PatternBackground';
+import { SuccessAnimationToast } from './components/ui/SuccessAnimation';
 
 export default function App() {
   const [systemConfig, setSystemConfig] = useState<SystemConfig | null>(null);
@@ -573,6 +574,9 @@ export default function App() {
           </div>
         </div>
       )}
+
+      {/* Global Spring Checkmark Success Animation */}
+      <SuccessAnimationToast />
 
       {/* Auto-posted Recurring Expenses Toast Confirmation */}
       {recurringToastMessage && (

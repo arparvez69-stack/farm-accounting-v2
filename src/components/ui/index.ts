@@ -11,3 +11,6 @@ export { EmptyState } from './EmptyState';
 export type { EmptyStateProps, EmptyStateAction } from './EmptyState';
 
 export { PatternBackground } from './PatternBackground';
+
+export { SuccessAnimationToast, triggerSuccessAnimation } from './SuccessAnimation';
+export type { SuccessToastData } from './SuccessAnimation';

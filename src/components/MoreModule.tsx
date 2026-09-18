@@ -45,6 +45,7 @@ import { runAutomatedDepreciation } from '../accounting/depreciationService';
 import { getVaccineTemplates, saveVaccineTemplates, DEFAULT_VACCINE_TEMPLATES } from '../data/vaccineTemplates';
 import { IconTile } from './ui/IconTile';
 import { ActiveTab } from './MobileBottomNav';
+import { triggerSuccessAnimation } from './ui/SuccessAnimation';
 
 interface Props {
   role: UserRole;
@@ -301,6 +302,7 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
       const data = await res.json();
       if (res.ok && data.success) {
         setPinSuccess('গোপন পিন সফলভাবে পরিবর্তন করা হয়েছে! আপনার পরবর্তী লগইনে এই নতুন পিনটি ব্যবহার করুন।');
+        triggerSuccessAnimation('গোপন পিন সফলভাবে পরিবর্তন হয়েছে!');
         setCurrentPin('');
         setNewPin('');
         setConfirmPin('');
@@ -361,6 +363,7 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
       setShowAddAsset(false);
       setAssetName('');
       setAssetDepreciationRate('10');
+      triggerSuccessAnimation('স্থায়ী সম্পদ সংরক্ষিত হয়েছে!', item.name);
       loadData();
     } catch (err: any) {
       alert(err.message);
@@ -374,8 +377,10 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
       const res = await runAutomatedDepreciation(currentUserId);
       if (res.entriesPosted > 0) {
         setDeprFeedback(`সফলভাবে ${res.entriesPosted}টি অবচয় জাবেদা (মোট ৳${res.totalDepreciationAmount.toLocaleString()}) দাখিলা করা হয়েছে।`);
+        triggerSuccessAnimation('অবচয় হিসাব সম্পন্ন!', `${res.entriesPosted}টি অবচয় দাখিলা পোস্ট হয়েছে`);
       } else {
         setDeprFeedback('সকল সক্রিয় স্থায়ী সম্পদের অবচয় ইতোমধ্যে হালনাগাদ রয়েছে। নতুন কোনো বকেয়া অবচয় নেই।');
+        triggerSuccessAnimation('সকল অবচয় হালনাগাদ রয়েছে');
       }
       await loadData();
     } catch (err: any) {
@@ -1140,21 +1145,44 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
             </form>
           )}
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
-            {assets.map((ast) => {
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            {assets.map((ast, idx) => {
               const rate = ast.depreciationRatePercent ?? (ast.usefulLifeYears ? Number((100 / ast.usefulLifeYears).toFixed(1)) : 10);
               const monthly = Math.round(((ast.originalCost * rate / 100) / 12) * 100) / 100;
               return (
-                <div key={ast.id} className="p-4 rounded-xl bg-[#F8FAFC] border border-gray-200 space-y-2 shadow-xs">
-                  <div className="flex justify-between items-start">
-                    <div>
-                      <h4 className="font-bold text-gray-900 text-[15px]">{ast.name}</h4>
-                      <span className="text-[12px] text-gray-500 font-mono">{ast.id} | {ast.category}</span>
+                <div
+                  key={ast.id}
+                  style={{ animationDelay: `${Math.min(idx * 35, 350)}ms` }}
+                  className="p-4 rounded-2xl bg-white border border-gray-200 hover:border-gray-300 space-y-3 shadow-xs animate-fade-slide-up flex flex-col justify-between"
+                >
+                  <div className="space-y-3">
+                    {/* Standardized Aspect-Video Media Card */}
+                    <div className="relative w-full aspect-video rounded-xl overflow-hidden bg-slate-100 dark:bg-slate-800 border border-gray-100 dark:border-slate-700/60 shrink-0 flex items-center justify-center">
+                      {ast.photoUrl ? (
+                        <img
+                          src={ast.photoUrl}
+                          alt={ast.name}
+                          className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                          loading="lazy"
+                        />
+                      ) : (
+                        <div className="w-full h-full flex flex-col items-center justify-center bg-gradient-to-br from-slate-100 to-slate-200 text-slate-500">
+                          <Tractor className="w-10 h-10 text-slate-400 mb-1 stroke-[1.5]" />
+                          <span className="text-[11px] font-semibold text-slate-500">{ast.category}</span>
+                        </div>
+                      )}
+                      <div className="absolute top-2.5 right-2.5">
+                        <span className="px-2.5 py-1 rounded-full bg-white/95 dark:bg-slate-900/90 backdrop-blur-xs border border-gray-200 text-xs font-bold text-gray-800 shadow-xs">
+                          {ast.usefulLifeYears} বছর ({rate}%/বছর)
+                        </span>
+                      </div>
                     </div>
-                    <div className="text-right">
-                      <span className="px-2.5 py-1 rounded-full bg-gray-200 text-gray-700 text-xs font-semibold">
-                        {ast.usefulLifeYears} বছর ({rate}%/বছর)
-                      </span>
+
+                    <div className="flex justify-between items-start">
+                      <div>
+                        <h4 className="font-bold text-gray-900 text-[15px]">{ast.name}</h4>
+                        <span className="text-[12px] text-gray-500 font-mono">{ast.id} | {ast.category}</span>
+                      </div>
                     </div>
                   </div>
 

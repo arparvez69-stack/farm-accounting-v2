@@ -56,6 +56,7 @@ import { VaccineTemplate } from '../types';
 import { Card } from './ui/Card';
 import { StatusBadge } from './ui/StatusBadge';
 import { EmptyState } from './ui/EmptyState';
+import { triggerSuccessAnimation } from './ui/SuccessAnimation';
 
 /**
  * Compresses an image file client-side to a max width of 800px preserving aspect ratio,
@@ -558,6 +559,7 @@ export const FarmOperationsModule: React.FC<Props> = ({
       setAnimalBirthDate(new Date().toISOString().split('T')[0]);
       setAnimalPurchaseDate(new Date().toISOString().split('T')[0]);
       setMsg({ type: 'success', text: `পশু ট্যাগ ${animalToSave.id} সফলভাবে যুক্ত হয়েছে!` });
+      triggerSuccessAnimation('পশু সফলভাবে নিবন্ধিত হয়েছে!', `ট্যাগ: ${animalToSave.id}`);
       await loadOpsData();
     } catch (err: any) {
       setMsg({ type: 'error', text: err.message });
@@ -853,6 +855,11 @@ export const FarmOperationsModule: React.FC<Props> = ({
           ? `একত্রে ${targetAnimals.length}টি পশুর ${eventType} কার্যক্রম সফলভাবে যুক্ত ও সংরক্ষিত হয়েছে!${totalRecordedCost > 0 ? ` (মোট ব্যয় ৳${totalRecordedCost.toFixed(2)} জাবেদায় পোস্ট করা হয়েছে)` : ''}${eventNextDueDate ? ' (পরবর্তী তারিখের রিমাইন্ডার তৈরি করা হয়েছে)' : ''}`
           : `পশু ${targetAnimals[0].id} এর ${eventType} কার্যক্রম সফলভাবে যুক্ত ও সংরক্ষিত হয়েছে!${rawCost > 0 ? ` (ব্যয় ৳${rawCost} জাবেদায় পোস্ট করা হয়েছে)` : ''}${eventNextDueDate ? ' (পরবর্তী তারিখের রিমাইন্ডার তৈরি করা হয়েছে)' : ''}`
       });
+      triggerSuccessAnimation(
+        isBulkMode
+          ? `${targetAnimals.length}টি পশুর ${eventType} কার্যক্রম সফলভাবে সংরক্ষিত!`
+          : `পশু ${targetAnimals[0].id} এর ${eventType} কার্যক্রম সংরক্ষিত!`
+      );
 
       handleCloseEventModal();
       await loadOpsData();
@@ -890,6 +897,7 @@ export const FarmOperationsModule: React.FC<Props> = ({
         type: 'success',
         text: `রিমাইন্ডার "${newReminder.title}" সফলভাবে তৈরি হয়েছে!`
       });
+      triggerSuccessAnimation('রিমাইন্ডার সফলভাবে সংরক্ষিত হয়েছে!', newReminder.title);
     } catch (err: any) {
       setMsg({ type: 'error', text: `রিমাইন্ডার তৈরিতে ত্রুটি: ${err.message}` });
     }
@@ -1535,7 +1543,7 @@ export const FarmOperationsModule: React.FC<Props> = ({
 
             return (
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                {displayedAnimals.map((a) => {
+                {displayedAnimals.map((a, idx) => {
                   const eventsForAnimal = animalEvents.filter((ev) => ev.animalId === a.id);
                   const isInactive = a.status !== 'ACTIVE';
 
@@ -1572,16 +1580,17 @@ export const FarmOperationsModule: React.FC<Props> = ({
                       id={`animal-card-${a.id}`}
                       variant="interactive"
                       onClick={() => setSelectedAnimalId(a.id)}
-                      className={`flex flex-col justify-between group overflow-hidden ${
+                      className={`flex flex-col justify-between group overflow-hidden animate-fade-slide-up ${
                         isInactive
                           ? 'opacity-90 border-gray-300 dark:border-slate-700 bg-gray-50/70 dark:bg-slate-800/60'
                           : 'border-gray-200/90 dark:border-slate-800 bg-white dark:bg-slate-900'
                       }`}
+                      style={{ animationDelay: `${Math.min(idx * 35, 350)}ms` }}
                       padding="md"
                     >
                       <div className="space-y-3">
-                        {/* Prominent Animal Photo */}
-                        <div className="relative w-full h-44 sm:h-48 rounded-xl overflow-hidden bg-slate-100 dark:bg-slate-800 border border-gray-100 dark:border-slate-700/60 shrink-0">
+                        {/* Prominent Animal Photo - standardized aspect-video and object-cover */}
+                        <div className="relative w-full aspect-video rounded-xl overflow-hidden bg-slate-100 dark:bg-slate-800 border border-gray-100 dark:border-slate-700/60 shrink-0">
                           {a.photoUrl ? (
                             <img
                               src={a.photoUrl}
@@ -2787,10 +2796,11 @@ export const FarmOperationsModule: React.FC<Props> = ({
           )}
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-            {fishBatches.map((b) => (
+            {fishBatches.map((b, idx) => (
               <div
                 key={b.id}
-                className="p-4 rounded-xl bg-[#F8FAFC] border border-gray-200 space-y-2.5 shadow-xs"
+                className="p-4 rounded-xl bg-[#F8FAFC] border border-gray-200 space-y-2.5 shadow-xs animate-fade-slide-up"
+                style={{ animationDelay: `${Math.min(idx * 35, 350)}ms` }}
               >
                 <div className="flex items-center justify-between">
                   <div>
@@ -2898,10 +2908,11 @@ export const FarmOperationsModule: React.FC<Props> = ({
           )}
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-            {cropCycles.map((c) => (
+            {cropCycles.map((c, idx) => (
               <div
                 key={c.id}
-                className="p-4 rounded-xl bg-[#F8FAFC] border border-gray-200 space-y-2.5 shadow-xs"
+                className="p-4 rounded-xl bg-[#F8FAFC] border border-gray-200 space-y-2.5 shadow-xs animate-fade-slide-up"
+                style={{ animationDelay: `${Math.min(idx * 35, 350)}ms` }}
               >
                 <div className="flex items-center justify-between">
                   <div>

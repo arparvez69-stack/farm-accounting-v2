@@ -285,6 +285,7 @@ export interface InventoryItem {
   sellingPrice: number;
   lastRestockAmount?: number;
   lowStockThreshold?: number;
+  photoUrl?: string;
   synced?: boolean;
 }
 
@@ -526,6 +527,7 @@ export interface FixedAsset {
   currentBookValue: number;
   depreciationRatePercent?: number; // annual %, entered once at purchase
   lastDepreciationDate?: string; // defaults to purchase date, hidden from the user
+  photoUrl?: string;
   synced?: boolean;
 }
 

@@ -8,7 +8,9 @@ import {
   AlertTriangle,
   FileCheck,
   Phone,
-  X
+  X,
+  LayoutGrid,
+  List
 } from 'lucide-react';
 import { db } from '../db/indexedDb';
 import { executePurchaseTransaction, executeSaleTransaction } from '../services/transactionService';
@@ -16,6 +18,7 @@ import { generateTransactionNumber, generateUniqueId, safeInsert } from '../util
 import { InventoryItem, Party, PaymentRecord, Purchase, Sale, UserRole } from '../types';
 import { HIGH_AMOUNT_CONFIRMATION_THRESHOLD } from '../constants/validation';
 import { notifyUndoableAction } from '../services/undoService';
+import { triggerSuccessAnimation } from './ui/SuccessAnimation';
 
 interface Props {
   role: UserRole;
@@ -26,6 +29,7 @@ type CommerceTab = 'inventory' | 'sales' | 'purchases' | 'parties';
 
 export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }) => {
   const [tab, setTab] = useState<CommerceTab>('inventory');
+  const [inventoryViewMode, setInventoryViewMode] = useState<'cards' | 'table'>('cards');
   const [loading, setLoading] = useState(false);
   const [msg, setMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
@@ -187,6 +191,7 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
       setItemReorder('10');
       setItemThreshold('');
       setMsg({ type: 'success', text: `পণ্য ${item.nameBn} যুক্ত হয়েছে!` });
+      triggerSuccessAnimation('পণ্য সফলভাবে যুক্ত হয়েছে!', item.nameBn);
       window.dispatchEvent(new CustomEvent('goted_data_changed'));
       loadCommerceData();
     } catch (err: any) {
@@ -203,6 +208,7 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
       });
       setEditingThresholdItem(null);
       setMsg({ type: 'success', text: `${item.nameBn} এর সতর্কতার সীমা ৳${thresholdVal} ${item.unit} আপডেট হয়েছে!` });
+      triggerSuccessAnimation('সতর্কতার সীমা হালনাগাদ হয়েছে!', `${item.nameBn}: ${thresholdVal} ${item.unit}`);
       window.dispatchEvent(new CustomEvent('goted_data_changed'));
       loadCommerceData();
     } catch (err: any) {
@@ -230,6 +236,7 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
       setPartyPhone('');
       setPartyAddress('');
       setMsg({ type: 'success', text: `${partyType === 'CUSTOMER' ? 'ক্রেতা' : 'সরবরাহকারী'} সংরক্ষিত হয়েছে!` });
+      triggerSuccessAnimation('পার্টি সংরক্ষিত হয়েছে!', pty.name);
       loadCommerceData();
     } catch (err: any) {
       setMsg({ type: 'error', text: err.message });
@@ -264,6 +271,7 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
         type: 'success',
         text: `বিক্রয় চালান ${res.sale.invoiceNumber} (৳${res.sale.totalAmount}) সফলভাবে সম্পন্ন এবং দ্বৈত-দাখিলায় পোস্ট হয়েছে!`
       });
+      triggerSuccessAnimation('বিক্রয় চালান সফলভাবে তৈরি হয়েছে!', `চালান: ${res.sale.invoiceNumber} (৳${res.sale.totalAmount.toLocaleString()})`);
       notifyUndoableAction({
         type: 'SALE',
         saleId: res.sale.id,
@@ -349,6 +357,7 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
         type: 'success',
         text: `ক্রয় চালান ${res.purchase.invoiceNumber} (৳${res.purchase.grandTotal}) সফলভাবে সংরক্ষিত এবং স্টকে যুক্ত হয়েছে!`
       });
+      triggerSuccessAnimation('ক্রয় চালান সফলভাবে সংরক্ষিত হয়েছে!', `চালান: ${res.purchase.invoiceNumber} (৳${res.purchase.grandTotal.toLocaleString()})`);
       notifyUndoableAction({
         type: 'PURCHASE',
         purchaseId: res.purchase.id,
@@ -470,6 +479,10 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
 
       setPaymentModal(null);
       setMsg({ type: 'success', text: `৳${amt.toLocaleString()} কিস্তি সফলভাবে সংরক্ষিত হয়েছে!` });
+      triggerSuccessAnimation(
+        'কিস্তি পরিশোধ সফলভাবে সংরক্ষিত হয়েছে!',
+        `চালান নং: ${paymentModal.invoiceNumber} (৳${amt.toLocaleString()})`
+      );
       await loadCommerceData();
     } catch (err: any) {
       console.error(err);
@@ -570,15 +583,46 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
               <p className="text-[13px] text-gray-600 mt-0.5">গড় ক্রয়মূল্য (Weighted Average Cost) ভিত্তিতে মূল্যায়ন</p>
             </div>
 
-            {role === 'OWNER' && (
-              <button
-                onClick={() => setShowAddItem(!showAddItem)}
-                className="px-3.5 py-2 rounded-xl bg-[#1E5128] hover:bg-[#173F1F] text-white text-[13px] font-bold shadow-xs transition-all cursor-pointer min-h-[40px] flex items-center gap-1.5"
-              >
-                <PlusCircle className="w-4 h-4" />
-                <span>+ নতুন পণ্য</span>
-              </button>
-            )}
+            <div className="flex items-center gap-2">
+              <div className="flex items-center gap-1 bg-gray-100 p-1 rounded-xl border border-gray-200">
+                <button
+                  type="button"
+                  onClick={() => setInventoryViewMode('cards')}
+                  className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer ${
+                    inventoryViewMode === 'cards'
+                      ? 'bg-white text-[#1E5128] shadow-xs'
+                      : 'text-gray-600 hover:text-gray-900'
+                  }`}
+                  title="কার্ড ভিউ"
+                >
+                  <LayoutGrid className="w-3.5 h-3.5" />
+                  <span>কার্ড</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setInventoryViewMode('table')}
+                  className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer ${
+                    inventoryViewMode === 'table'
+                      ? 'bg-white text-[#1E5128] shadow-xs'
+                      : 'text-gray-600 hover:text-gray-900'
+                  }`}
+                  title="তালিকা ভিউ"
+                >
+                  <List className="w-3.5 h-3.5" />
+                  <span>তালিকা</span>
+                </button>
+              </div>
+
+              {role === 'OWNER' && (
+                <button
+                  onClick={() => setShowAddItem(!showAddItem)}
+                  className="px-3.5 py-2 rounded-xl bg-[#1E5128] hover:bg-[#173F1F] text-white text-[13px] font-bold shadow-xs transition-all cursor-pointer min-h-[40px] flex items-center gap-1.5"
+                >
+                  <PlusCircle className="w-4 h-4" />
+                  <span>+ নতুন পণ্য</span>
+                </button>
+              )}
+            </div>
           </div>
 
           {showAddItem && (
@@ -705,80 +749,179 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
             </form>
           )}
 
-          <div className="overflow-x-auto rounded-xl border border-gray-200">
-            <table className="w-full text-left text-[14px] text-gray-800">
-              <thead className="bg-[#F8FAFC] text-gray-600 font-semibold border-b border-gray-200 text-[13px]">
-                <tr>
-                  <th className="p-3">পণ্যের নাম</th>
-                  <th className="p-3">ক্যাটাগরি</th>
-                  <th className="p-3">বর্তমান স্টক</th>
-                  <th className="p-3">গড় ক্রয়মূল্য</th>
-                  <th className="p-3">বিক্রয় মূল্য</th>
-                  <th className="p-3 text-right">মোট মজুদ মূল্য (৳)</th>
-                  <th className="p-3">সতর্কতার সীমা</th>
-                  <th className="p-3">অবস্থা</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100">
-                {items.map((it) => {
-                  const val = it.currentStock * it.avgCostPrice;
-                  const lastRestock = it.lastRestockAmount && it.lastRestockAmount > 0 ? it.lastRestockAmount : (it.currentStock || 100);
-                  const defaultThreshold = Math.round(lastRestock * 0.20 * 100) / 100;
-                  const effectiveThreshold = (it.lowStockThreshold != null && it.lowStockThreshold >= 0)
-                    ? it.lowStockThreshold
-                    : (it.reorderLevel && it.reorderLevel > 0 ? it.reorderLevel : defaultThreshold);
-                  const isLow = it.currentStock <= effectiveThreshold;
+          {inventoryViewMode === 'cards' ? (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+              {items.map((it, idx) => {
+                const val = it.currentStock * it.avgCostPrice;
+                const lastRestock = it.lastRestockAmount && it.lastRestockAmount > 0 ? it.lastRestockAmount : (it.currentStock || 100);
+                const defaultThreshold = Math.round(lastRestock * 0.20 * 100) / 100;
+                const effectiveThreshold = (it.lowStockThreshold != null && it.lowStockThreshold >= 0)
+                  ? it.lowStockThreshold
+                  : (it.reorderLevel && it.reorderLevel > 0 ? it.reorderLevel : defaultThreshold);
+                const isLow = it.currentStock <= effectiveThreshold;
 
-                  return (
-                    <tr key={it.id} className="hover:bg-gray-50/80">
-                      <td className="p-3 font-medium text-gray-900">
-                        <div>{it.nameBn}</div>
-                        <div className="text-[11px] text-gray-400 font-mono">{it.code}</div>
-                      </td>
-                      <td className="p-3 text-gray-600 text-[13px]">
-                        {it.category === 'FEED' ? (
-                          <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold bg-emerald-50 text-emerald-800 border border-emerald-200">
-                            ফিড স্টক
-                          </span>
+                return (
+                  <div
+                    key={it.id}
+                    style={{ animationDelay: `${Math.min(idx * 35, 350)}ms` }}
+                    className="p-4 rounded-2xl bg-white border border-gray-200 hover:border-gray-300 space-y-3 shadow-xs animate-fade-slide-up flex flex-col justify-between"
+                  >
+                    <div className="space-y-3">
+                      {/* Standardized Aspect-Video Media Card */}
+                      <div className="relative w-full aspect-video rounded-xl overflow-hidden bg-slate-100 dark:bg-slate-800 border border-gray-100 dark:border-slate-700/60 shrink-0 flex items-center justify-center">
+                        {it.photoUrl ? (
+                          <img
+                            src={it.photoUrl}
+                            alt={it.nameBn}
+                            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                            loading="lazy"
+                          />
                         ) : (
-                          it.category
+                          <div className="w-full h-full flex flex-col items-center justify-center bg-gradient-to-br from-amber-50 to-emerald-50/50 text-slate-500">
+                            <Package className="w-10 h-10 text-amber-700/70 mb-1 stroke-[1.5]" />
+                            <span className="text-[11px] font-semibold text-gray-500">{it.category}</span>
+                          </div>
                         )}
-                      </td>
-                      <td className="p-3 font-bold text-gray-900">{it.currentStock} {it.unit}</td>
-                      <td className="p-3 text-gray-700">{fmt(it.avgCostPrice)}</td>
-                      <td className="p-3 text-[#15803D] font-semibold">{it.sellingPrice > 0 ? fmt(it.sellingPrice) : '-'}</td>
-                      <td className="p-3 text-right font-bold text-[#1E5128]">{fmt(val)}</td>
-                      <td className="p-3 text-gray-700">
-                        <div className="flex items-center gap-1.5">
-                          <span className="font-semibold">{effectiveThreshold} {it.unit}</span>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setEditingThresholdItem(it);
-                              setNewThresholdValue(effectiveThreshold.toString());
-                            }}
-                            className="text-gray-400 hover:text-[#1E5128] text-xs font-semibold p-1 hover:bg-gray-100 rounded transition-colors"
-                            title="সতর্কতার সীমা পরিবর্তন করুন"
-                          >
-                            ✏️
-                          </button>
+                        <div className="absolute top-2.5 right-2.5">
+                          {isLow ? (
+                            <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-amber-500 text-white shadow-xs">
+                              মজুদ কম!
+                            </span>
+                          ) : (
+                            <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-[#15803D] text-white shadow-xs">
+                              মজুদ পর্যাপ্ত
+                            </span>
+                          )}
                         </div>
-                      </td>
-                      <td className="p-3">
-                        {isLow ? (
-                          <span className="px-2.5 py-1 rounded-full text-xs font-semibold bg-amber-50 text-amber-800 border border-amber-200">
-                            মজুদ কম!
-                          </span>
-                        ) : (
-                          <span className="text-xs font-medium text-gray-500">পর্যাপ্ত</span>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+                      </div>
+
+                      <div>
+                        <div className="flex items-start justify-between gap-2">
+                          <h4 className="font-bold text-gray-900 text-[15px]">{it.nameBn}</h4>
+                          <span className="text-[11px] text-gray-400 font-mono shrink-0">{it.code}</span>
+                        </div>
+                        <div className="text-[12px] text-gray-500 mt-0.5">
+                          {it.category === 'FEED' ? 'ফিড স্টক' : it.category}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="space-y-1.5 pt-2.5 border-t border-gray-100 font-mono text-[13px]">
+                      <div className="flex justify-between">
+                        <span className="font-sans text-gray-600">বর্তমান স্টক:</span>
+                        <span className="text-gray-900 font-bold">{it.currentStock} {it.unit}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="font-sans text-gray-600">গড় ক্রয়মূল্য:</span>
+                        <span className="text-gray-700 font-semibold">{fmt(it.avgCostPrice)}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="font-sans text-gray-600">বিক্রয় মূল্য:</span>
+                        <span className="text-[#15803D] font-semibold">{it.sellingPrice > 0 ? fmt(it.sellingPrice) : '-'}</span>
+                      </div>
+                      <div className="flex justify-between font-bold text-[#1E5128] pt-1 border-t border-gray-100">
+                        <span className="font-sans text-gray-900">মোট মজুদ মূল্য:</span>
+                        <span>{fmt(val)}</span>
+                      </div>
+                      <div className="flex justify-between items-center text-[12px] pt-1.5 border-t border-gray-100 font-sans">
+                        <span className="text-gray-500">সতর্কতার সীমা: {effectiveThreshold} {it.unit}</span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setEditingThresholdItem(it);
+                            setNewThresholdValue(effectiveThreshold.toString());
+                          }}
+                          className="text-gray-400 hover:text-[#1E5128] text-xs font-semibold p-1 hover:bg-gray-100 rounded transition-colors"
+                          title="সতর্কতার সীমা পরিবর্তন করুন"
+                        >
+                          ✏️ সীমা পরিবর্তন
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="overflow-x-auto rounded-xl border border-gray-200">
+              <table className="w-full text-left text-[14px] text-gray-800">
+                <thead className="bg-[#F8FAFC] text-gray-600 font-semibold border-b border-gray-200 text-[13px]">
+                  <tr>
+                    <th className="p-3">পণ্যের নাম</th>
+                    <th className="p-3">ক্যাটাগরি</th>
+                    <th className="p-3">বর্তমান স্টক</th>
+                    <th className="p-3">গড় ক্রয়মূল্য</th>
+                    <th className="p-3">বিক্রয় মূল্য</th>
+                    <th className="p-3 text-right">মোট মজুদ মূল্য (৳)</th>
+                    <th className="p-3">সতর্কতার সীমা</th>
+                    <th className="p-3">অবস্থা</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {items.map((it, idx) => {
+                    const val = it.currentStock * it.avgCostPrice;
+                    const lastRestock = it.lastRestockAmount && it.lastRestockAmount > 0 ? it.lastRestockAmount : (it.currentStock || 100);
+                    const defaultThreshold = Math.round(lastRestock * 0.20 * 100) / 100;
+                    const effectiveThreshold = (it.lowStockThreshold != null && it.lowStockThreshold >= 0)
+                      ? it.lowStockThreshold
+                      : (it.reorderLevel && it.reorderLevel > 0 ? it.reorderLevel : defaultThreshold);
+                    const isLow = it.currentStock <= effectiveThreshold;
+
+                    return (
+                      <tr
+                        key={it.id}
+                        style={{ animationDelay: `${Math.min(idx * 25, 250)}ms` }}
+                        className="hover:bg-gray-50/80 animate-fade-slide-up"
+                      >
+                        <td className="p-3 font-medium text-gray-900">
+                          <div>{it.nameBn}</div>
+                          <div className="text-[11px] text-gray-400 font-mono">{it.code}</div>
+                        </td>
+                        <td className="p-3 text-gray-600 text-[13px]">
+                          {it.category === 'FEED' ? (
+                            <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold bg-emerald-50 text-emerald-800 border border-emerald-200">
+                              ফিড স্টক
+                            </span>
+                          ) : (
+                            it.category
+                          )}
+                        </td>
+                        <td className="p-3 font-bold text-gray-900">{it.currentStock} {it.unit}</td>
+                        <td className="p-3 text-gray-700">{fmt(it.avgCostPrice)}</td>
+                        <td className="p-3 text-[#15803D] font-semibold">{it.sellingPrice > 0 ? fmt(it.sellingPrice) : '-'}</td>
+                        <td className="p-3 text-right font-bold text-[#1E5128]">{fmt(val)}</td>
+                        <td className="p-3 text-gray-700">
+                          <div className="flex items-center gap-1.5">
+                            <span className="font-semibold">{effectiveThreshold} {it.unit}</span>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setEditingThresholdItem(it);
+                                setNewThresholdValue(effectiveThreshold.toString());
+                              }}
+                              className="text-gray-400 hover:text-[#1E5128] text-xs font-semibold p-1 hover:bg-gray-100 rounded transition-colors"
+                              title="সতর্কতার সীমা পরিবর্তন করুন"
+                            >
+                              ✏️
+                            </button>
+                          </div>
+                        </td>
+                        <td className="p-3">
+                          {isLow ? (
+                            <span className="px-2.5 py-1 rounded-full text-xs font-semibold bg-amber-50 text-amber-800 border border-amber-200">
+                              মজুদ কম!
+                            </span>
+                          ) : (
+                            <span className="text-xs font-medium text-gray-500">পর্যাপ্ত</span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
 
           {/* Edit Threshold Modal */}
           {editingThresholdItem && (
@@ -1403,10 +1546,11 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
           )}
 
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
-            {parties.map((p) => (
+            {parties.map((p, idx) => (
               <div
                 key={p.id}
-                className="p-4 rounded-xl bg-[#F8FAFC] border border-gray-200 space-y-2 shadow-xs"
+                style={{ animationDelay: `${Math.min(idx * 35, 350)}ms` }}
+                className="p-4 rounded-2xl bg-[#F8FAFC] border border-gray-200 space-y-2 shadow-xs animate-fade-slide-up hover:border-gray-300 transition-colors"
               >
                 <div className="flex items-center justify-between">
                   <span className="font-bold text-gray-900 text-[15px]">{p.name}</span>
