@@ -27,6 +27,8 @@ import {
   Trash2,
   RotateCcw,
   Wallet,
+  Clock,
+  Laptop,
   LayoutDashboard,
   BookOpen,
   Tractor,
@@ -871,70 +873,92 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
             </div>
           </div>
 
-          <div className="overflow-x-auto rounded-xl border border-gray-200">
-            <table className="w-full text-left text-[14px] text-gray-800">
-              <thead className="bg-[#F8FAFC] text-gray-600 font-semibold border-b border-gray-200 text-[13px]">
-                <tr>
-                  <th className="p-3">সময় (Timestamp)</th>
-                  <th className="p-3">ব্যবহারকারীর ইমেইল (User Email)</th>
-                  <th className="p-3">লগইন পদ্ধতি</th>
-                  <th className="p-3">অবস্থা (Status)</th>
-                  <th className="p-3">ডিভাইস / ব্রাউজার</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100">
-                {accessLogs.length === 0 ? (
-                  <tr>
-                    <td colSpan={5} className="p-8 text-center text-gray-500 text-[14px]">
-                      এখনো কোনো অ্যাক্সেস লগ নেই। নতুন কেউ পিন দিয়ে লগইন করলে এখানে প্রদর্শিত হবে।
-                    </td>
-                  </tr>
-                ) : (
-                  accessLogs.map((log) => (
-                    <tr key={log.id} className="hover:bg-gray-50/80 transition-colors">
-                      <td className="p-3 font-mono text-[13px] text-gray-600 whitespace-nowrap">
-                        {new Date(log.timestamp).toLocaleString('bn-BD', {
-                          year: 'numeric',
-                          month: 'short',
-                          day: 'numeric',
-                          hour: '2-digit',
-                          minute: '2-digit',
-                          second: '2-digit'
-                        })}
-                      </td>
-                      <td className="p-3">
-                        <div className="flex items-center gap-2">
-                          <div className="w-7 h-7 rounded-full bg-slate-100 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 flex items-center justify-center text-slate-700 dark:text-slate-300 font-bold text-xs">
-                            {log.email.charAt(0).toUpperCase()}
-                          </div>
-                          <span className="font-semibold text-gray-900 font-mono text-[14px]">{log.email}</span>
+          {accessLogs.length === 0 ? (
+            <div className="rounded-xl border border-dashed border-gray-300 dark:border-slate-700 p-8 text-center text-gray-500 dark:text-slate-400 text-[14px] bg-gray-50/50 dark:bg-slate-900/30">
+              এখনো কোনো অ্যাক্সেস লগ নেই। নতুন কেউ পিন দিয়ে লগইন করলে এখানে প্রদর্শিত হবে।
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {accessLogs.map((log) => {
+                const isSuccess = log.status === 'SUCCESS';
+                const formattedDate = new Date(log.timestamp).toLocaleString('bn-BD', {
+                  year: 'numeric',
+                  month: 'short',
+                  day: 'numeric',
+                  hour: '2-digit',
+                  minute: '2-digit',
+                  second: '2-digit'
+                });
+
+                return (
+                  <div
+                    key={log.id}
+                    className="p-4 rounded-xl border border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900/80 hover:border-gray-300 dark:hover:border-slate-700 transition-colors shadow-2xs space-y-2.5"
+                  >
+                    {/* Top line: Email in bold with avatar & status badge */}
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <div className="w-8 h-8 rounded-full bg-slate-100 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 flex items-center justify-center text-slate-700 dark:text-slate-300 font-bold text-xs shrink-0">
+                          {log.email ? log.email.charAt(0).toUpperCase() : 'U'}
                         </div>
-                      </td>
-                      <td className="p-3">
-                        <span className="px-2.5 py-1 rounded-md text-xs font-semibold bg-gray-100 text-gray-700 border border-gray-200">
-                          {log.loginMethod === 'SECRET_PIN' ? 'গোপন পিন (Secret PIN)' : 'সংরক্ষিত সেশন'}
+                        <span className="font-bold text-gray-900 dark:text-slate-100 font-mono text-[14px] sm:text-[15px] truncate">
+                          {log.email}
                         </span>
-                      </td>
-                      <td className="p-3">
+                      </div>
+
+                      <div className="flex items-center gap-2 shrink-0">
+                        <span className="px-2 py-0.5 rounded-md text-[11px] font-medium bg-gray-100 dark:bg-slate-800 text-gray-600 dark:text-slate-400 border border-gray-200 dark:border-slate-700">
+                          {log.loginMethod === 'SECRET_PIN' ? 'গোপন পিন' : 'সংরক্ষিত সেশন'}
+                        </span>
                         <span
-                          className={`px-2.5 py-1 rounded-full text-xs font-bold ${
-                            log.status === 'SUCCESS'
-                              ? 'bg-[#F0FDF4] text-[#15803D] border border-[#BBF7D0]'
-                              : 'bg-red-50 text-red-700 border border-red-200'
+                          className={`px-2.5 py-0.5 rounded-full text-xs font-bold ${
+                            isSuccess
+                              ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800'
+                              : 'bg-red-50 dark:bg-red-950/40 text-red-700 dark:text-red-300 border border-red-200 dark:border-red-800'
                           }`}
                         >
-                          {log.status === 'SUCCESS' ? 'সফল (Success)' : 'প্রত্যাখ্যাত (Denied)'}
+                          {isSuccess ? 'সফল (Success)' : 'প্রত্যাখ্যাত (Denied)'}
                         </span>
-                      </td>
-                      <td className="p-3 max-w-xs truncate text-gray-500 text-[13px]">
-                        {log.userAgent || 'ওয়েব ব্রাউজার'}
-                      </td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
+                      </div>
+                    </div>
+
+                    {/* Stacked details: Date/Time, Device, and IP each on their own line */}
+                    <div className="pt-2 border-t border-gray-100 dark:border-slate-800/80 space-y-1.5 text-xs sm:text-[13px] text-gray-600 dark:text-slate-400">
+                      {/* Date / Time */}
+                      <div className="flex items-center gap-2">
+                        <span className="font-semibold text-gray-700 dark:text-slate-300 w-24 shrink-0">
+                          সময়:
+                        </span>
+                        <span className="font-mono text-gray-900 dark:text-slate-200">
+                          {formattedDate}
+                        </span>
+                      </div>
+
+                      {/* Device / User Agent */}
+                      <div className="flex items-start gap-2">
+                        <span className="font-semibold text-gray-700 dark:text-slate-300 w-24 shrink-0">
+                          ডিভাইস:
+                        </span>
+                        <span className="text-gray-800 dark:text-slate-200 break-words flex-1">
+                          {log.userAgent || 'ওয়েব ব্রাউজার (Web Browser)'}
+                        </span>
+                      </div>
+
+                      {/* IP Address */}
+                      <div className="flex items-center gap-2">
+                        <span className="font-semibold text-gray-700 dark:text-slate-300 w-24 shrink-0">
+                          আইপি (IP):
+                        </span>
+                        <span className="font-mono text-gray-800 dark:text-slate-300">
+                          {log.ip || '127.0.0.1 (Local)'}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       )}
 

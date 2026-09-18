@@ -17,7 +17,8 @@ import {
   Search,
   Repeat,
   Edit2,
-  Clock
+  Clock,
+  Scale
 } from 'lucide-react';
 import { db } from '../db/indexedDb';
 import {
@@ -603,69 +604,16 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
   return (
     <div className="space-y-4 pb-6 max-w-5xl mx-auto rounded-3xl p-2 sm:p-4 bg-gradient-to-b from-blue-500/[0.08] via-sky-500/[0.03] to-transparent dark:from-blue-950/30 dark:via-blue-950/10 dark:to-transparent">
       {/* Top Header & Subtabs */}
-      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 p-4 sm:p-5 rounded-2xl bg-white border border-gray-200 shadow-xs">
-        <div>
-          <h2 className="text-lg sm:text-xl font-bold text-gray-900 flex items-center gap-2">
-            <BookOpen className="w-5 h-5 text-blue-700" />
-            <span>দ্বৈত-দাখিলা হিসাবরক্ষণ</span>
-          </h2>
-          <p className="text-[14px] text-gray-600 mt-0.5">
-            রশিদ, পরিশোধ, কন্ট্রা, সাধারণ জাবেদা, খতিয়ান ও স্বয়ংক্রিয় রেওয়ামিল
-          </p>
-        </div>
-
-        {/* Sub Navigation Bar & Run Depreciation Button */}
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="flex items-center gap-1.5 bg-blue-50/50 border border-blue-100 p-1.5 rounded-xl overflow-x-auto text-[13px] font-semibold">
-            <button
-              onClick={() => setSubTab('daybook')}
-              className={`px-3.5 py-2 rounded-lg whitespace-nowrap transition-all cursor-pointer min-h-[40px] ${
-                subTab === 'daybook' ? 'bg-blue-700 text-white shadow-xs' : 'text-blue-950 hover:text-blue-900 hover:bg-blue-100/70'
-              }`}
-            >
-              জাবেদা তালিকা (Daybook)
-            </button>
-            <button
-              onClick={() => setSubTab('vouchers')}
-              className={`px-3.5 py-2 rounded-lg whitespace-nowrap transition-all cursor-pointer min-h-[40px] ${
-                subTab === 'vouchers' ? 'bg-blue-700 text-white shadow-xs' : 'text-blue-950 hover:text-blue-900 hover:bg-blue-100/70'
-              }`}
-            >
-              + নতুন ভাউচার
-            </button>
-            <button
-              onClick={() => setSubTab('ledger')}
-              className={`px-3.5 py-2 rounded-lg whitespace-nowrap transition-all cursor-pointer min-h-[40px] ${
-                subTab === 'ledger' ? 'bg-blue-700 text-white shadow-xs' : 'text-blue-950 hover:text-blue-900 hover:bg-blue-100/70'
-              }`}
-            >
-              খতিয়ান (Ledger)
-            </button>
-            <button
-              onClick={() => setSubTab('trialBalance')}
-              className={`px-3.5 py-2 rounded-lg whitespace-nowrap transition-all cursor-pointer min-h-[40px] ${
-                subTab === 'trialBalance' ? 'bg-blue-700 text-white shadow-xs' : 'text-blue-950 hover:text-blue-900 hover:bg-blue-100/70'
-              }`}
-            >
-              রেওয়ামিল (Trial Balance)
-            </button>
-            <button
-              onClick={() => setSubTab('chart')}
-              className={`px-3.5 py-2 rounded-lg whitespace-nowrap transition-all cursor-pointer min-h-[40px] ${
-                subTab === 'chart' ? 'bg-blue-700 text-white shadow-xs' : 'text-blue-950 hover:text-blue-900 hover:bg-blue-100/70'
-              }`}
-            >
-              হিসাবের চার্ট (COA)
-            </button>
-            <button
-              id="tab-btn-recurring-costs"
-              onClick={() => setSubTab('recurring')}
-              className={`px-3.5 py-2 rounded-lg whitespace-nowrap transition-all cursor-pointer min-h-[40px] ${
-                subTab === 'recurring' ? 'bg-blue-700 text-white shadow-xs' : 'text-blue-950 hover:text-blue-900 hover:bg-blue-100/70'
-              }`}
-            >
-              পুনরাবৃত্ত খরচ (Recurring)
-            </button>
+      <div className="flex flex-col gap-3.5 p-4 sm:p-5 rounded-2xl bg-white border border-gray-200 shadow-xs">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div>
+            <h2 className="text-lg sm:text-xl font-bold text-gray-900 flex items-center gap-2">
+              <BookOpen className="w-5 h-5 text-blue-700" />
+              <span>দ্বৈত-দাখিলা হিসাবরক্ষণ</span>
+            </h2>
+            <p className="text-[14px] text-gray-600 mt-0.5">
+              রশিদ, পরিশোধ, কন্ট্রা, সাধারণ জাবেদা, খতিয়ান ও স্বয়ংক্রিয় রেওয়ামিল
+            </p>
           </div>
 
           <div className="flex items-center gap-2 flex-wrap">
@@ -694,6 +642,83 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
               </button>
             )}
           </div>
+        </div>
+
+        {/* Sub Navigation Tabs Grid */}
+        <div className="w-full grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 bg-blue-50/50 dark:bg-slate-800/80 border border-blue-100 dark:border-slate-700 p-1.5 rounded-xl text-[13px] font-semibold">
+          <button
+            type="button"
+            onClick={() => setSubTab('daybook')}
+            className={`flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg transition-all cursor-pointer min-h-[42px] text-center text-xs sm:text-[13px] font-bold ${
+              subTab === 'daybook'
+                ? 'bg-blue-700 text-white shadow-xs border border-blue-700'
+                : 'bg-white dark:bg-slate-900/60 text-blue-950 dark:text-blue-300 border border-blue-200/80 dark:border-blue-800 hover:bg-blue-100/80'
+            }`}
+          >
+            <BookOpen className="w-4 h-4 shrink-0" />
+            <span>জাবেদা তালিকা</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setSubTab('vouchers')}
+            className={`flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg transition-all cursor-pointer min-h-[42px] text-center text-xs sm:text-[13px] font-bold ${
+              subTab === 'vouchers'
+                ? 'bg-emerald-700 text-white shadow-xs border border-emerald-700'
+                : 'bg-white dark:bg-slate-900/60 text-emerald-950 dark:text-emerald-300 border border-emerald-200/80 dark:border-emerald-800 hover:bg-emerald-100/80'
+            }`}
+          >
+            <PlusCircle className="w-4 h-4 shrink-0" />
+            <span>নতুন ভাউচার</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setSubTab('ledger')}
+            className={`flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg transition-all cursor-pointer min-h-[42px] text-center text-xs sm:text-[13px] font-bold ${
+              subTab === 'ledger'
+                ? 'bg-indigo-700 text-white shadow-xs border border-indigo-700'
+                : 'bg-white dark:bg-slate-900/60 text-indigo-950 dark:text-indigo-300 border border-indigo-200/80 dark:border-indigo-800 hover:bg-indigo-100/80'
+            }`}
+          >
+            <FileText className="w-4 h-4 shrink-0" />
+            <span>খতিয়ান</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setSubTab('trialBalance')}
+            className={`flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg transition-all cursor-pointer min-h-[42px] text-center text-xs sm:text-[13px] font-bold ${
+              subTab === 'trialBalance'
+                ? 'bg-amber-700 text-white shadow-xs border border-amber-700'
+                : 'bg-white dark:bg-slate-900/60 text-amber-950 dark:text-amber-300 border border-amber-200/80 dark:border-amber-800 hover:bg-amber-100/80'
+            }`}
+          >
+            <Scale className="w-4 h-4 shrink-0" />
+            <span>রেওয়ামিল</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setSubTab('chart')}
+            className={`flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg transition-all cursor-pointer min-h-[42px] text-center text-xs sm:text-[13px] font-bold ${
+              subTab === 'chart'
+                ? 'bg-teal-700 text-white shadow-xs border border-teal-700'
+                : 'bg-white dark:bg-slate-900/60 text-teal-950 dark:text-teal-300 border border-teal-200/80 dark:border-teal-800 hover:bg-teal-100/80'
+            }`}
+          >
+            <Layers className="w-4 h-4 shrink-0" />
+            <span>হিসাবের চার্ট</span>
+          </button>
+          <button
+            type="button"
+            id="tab-btn-recurring-costs"
+            onClick={() => setSubTab('recurring')}
+            className={`flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg transition-all cursor-pointer min-h-[42px] text-center text-xs sm:text-[13px] font-bold ${
+              subTab === 'recurring'
+                ? 'bg-rose-700 text-white shadow-xs border border-rose-700'
+                : 'bg-white dark:bg-slate-900/60 text-rose-950 dark:text-rose-300 border border-rose-200/80 dark:border-rose-800 hover:bg-rose-100/80'
+            }`}
+          >
+            <Repeat className="w-4 h-4 shrink-0" />
+            <span>পুনরাবৃত্ত খরচ</span>
+          </button>
         </div>
       </div>
 

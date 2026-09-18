@@ -31,6 +31,7 @@ export interface AppAccessLog {
   id: string;
   email: string;
   timestamp: string;
+  ip?: string;
   userAgent?: string;
   loginMethod: 'SECRET_PIN' | 'SESSION_RESTORE';
   status: 'SUCCESS' | 'FAILED';

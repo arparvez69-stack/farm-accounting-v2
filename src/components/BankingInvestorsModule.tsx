@@ -339,38 +339,54 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
           </p>
         </div>
 
-        <div className="flex items-center gap-1.5 bg-gray-100 p-1.5 rounded-xl overflow-x-auto text-[13px] font-semibold">
+        <div className="w-full sm:w-auto grid grid-cols-2 sm:grid-cols-4 gap-2 bg-gray-100 dark:bg-slate-800/80 border border-gray-200/80 dark:border-slate-700 p-1.5 rounded-xl text-[13px] font-semibold">
           <button
+            type="button"
             onClick={() => setTab('accounts')}
-            className={`px-3.5 py-2 rounded-lg whitespace-nowrap transition-all cursor-pointer min-h-[40px] ${
-              tab === 'accounts' ? 'bg-[#1E5128] text-white shadow-xs' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200/60'
+            className={`flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg transition-all cursor-pointer min-h-[42px] text-center text-xs sm:text-[13px] font-bold ${
+              tab === 'accounts'
+                ? 'bg-blue-700 text-white shadow-xs border border-blue-700'
+                : 'bg-white dark:bg-slate-900/60 text-blue-950 dark:text-blue-300 border border-blue-200/80 dark:border-blue-800 hover:bg-blue-100/80'
             }`}
           >
-            তহবিল ও ব্যাংক (Accounts)
+            <Landmark className="w-4 h-4 shrink-0" />
+            <span>তহবিল ও ব্যাংক</span>
           </button>
           <button
+            type="button"
             onClick={() => setTab('transfers')}
-            className={`px-3.5 py-2 rounded-lg whitespace-nowrap transition-all cursor-pointer min-h-[40px] ${
-              tab === 'transfers' ? 'bg-[#1E5128] text-white shadow-xs' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200/60'
+            className={`flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg transition-all cursor-pointer min-h-[42px] text-center text-xs sm:text-[13px] font-bold ${
+              tab === 'transfers'
+                ? 'bg-indigo-700 text-white shadow-xs border border-indigo-700'
+                : 'bg-white dark:bg-slate-900/60 text-indigo-950 dark:text-indigo-300 border border-indigo-200/80 dark:border-indigo-800 hover:bg-indigo-100/80'
             }`}
           >
-            কন্ট্রা স্থানান্তর (Contra)
+            <ArrowRightLeft className="w-4 h-4 shrink-0" />
+            <span>কন্ট্রা স্থানান্তর</span>
           </button>
           <button
+            type="button"
             onClick={() => setTab('loans')}
-            className={`px-3.5 py-2 rounded-lg whitespace-nowrap transition-all cursor-pointer min-h-[40px] ${
-              tab === 'loans' ? 'bg-[#1E5128] text-white shadow-xs' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200/60'
+            className={`flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg transition-all cursor-pointer min-h-[42px] text-center text-xs sm:text-[13px] font-bold ${
+              tab === 'loans'
+                ? 'bg-rose-700 text-white shadow-xs border border-rose-700'
+                : 'bg-white dark:bg-slate-900/60 text-rose-950 dark:text-rose-300 border border-rose-200/80 dark:border-rose-800 hover:bg-rose-100/80'
             }`}
           >
-            ব্যাংক ও মহাজনি ঋণ (Loans)
+            <CreditCard className="w-4 h-4 shrink-0" />
+            <span>ব্যাংক ঋণ</span>
           </button>
           <button
+            type="button"
             onClick={() => setTab('investors')}
-            className={`px-3.5 py-2 rounded-lg whitespace-nowrap transition-all cursor-pointer min-h-[40px] ${
-              tab === 'investors' ? 'bg-[#1E5128] text-white shadow-xs' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200/60'
+            className={`flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg transition-all cursor-pointer min-h-[42px] text-center text-xs sm:text-[13px] font-bold ${
+              tab === 'investors'
+                ? 'bg-emerald-700 text-white shadow-xs border border-emerald-700'
+                : 'bg-white dark:bg-slate-900/60 text-emerald-950 dark:text-emerald-300 border border-emerald-200/80 dark:border-emerald-800 hover:bg-emerald-100/80'
             }`}
           >
-            বিনিয়োগকারী ও শেয়ার (Investors)
+            <Users className="w-4 h-4 shrink-0" />
+            <span>বিনিয়োগকারী</span>
           </button>
         </div>
       </div>

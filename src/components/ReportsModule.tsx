@@ -1633,139 +1633,160 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
       </div>
 
       {/* Report Switcher Tabs */}
-      <div className="flex items-center gap-1.5 bg-teal-50/50 border border-teal-100 p-1.5 rounded-xl overflow-x-auto text-[13px] font-semibold">
+      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-2 bg-teal-50/50 dark:bg-slate-800/80 border border-teal-100 dark:border-slate-700 p-2 rounded-xl text-[13px] font-semibold">
         <button
+          type="button"
           onClick={() => setActiveReport('pl')}
-          className={`flex items-center gap-1.5 px-3.5 py-2 rounded-lg whitespace-nowrap transition-all cursor-pointer min-h-[40px] ${
-            activeReport === 'pl' ? 'bg-teal-700 text-white shadow-xs' : 'text-teal-950 hover:text-teal-900 hover:bg-teal-100/70'
+          className={`flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg transition-all cursor-pointer min-h-[42px] text-center text-xs sm:text-[13px] font-bold ${
+            activeReport === 'pl'
+              ? 'bg-emerald-700 text-white shadow-xs border border-emerald-700'
+              : 'bg-white dark:bg-slate-900/60 text-emerald-950 dark:text-emerald-300 border border-emerald-200/80 dark:border-emerald-800 hover:bg-emerald-100/80'
           }`}
         >
-          <PieChart className="w-4 h-4" />
-          <span>লাভ-ক্ষতি বিবরণী (Profit & Loss)</span>
+          <PieChart className="w-4 h-4 shrink-0" />
+          <span>লাভ-ক্ষতি (P&L)</span>
         </button>
 
         <button
+          type="button"
           onClick={() => setActiveReport('balanceSheet')}
-          className={`flex items-center gap-1.5 px-3.5 py-2 rounded-lg whitespace-nowrap transition-all cursor-pointer min-h-[40px] ${
-            activeReport === 'balanceSheet' ? 'bg-teal-700 text-white shadow-xs' : 'text-teal-950 hover:text-teal-900 hover:bg-teal-100/70'
+          className={`flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg transition-all cursor-pointer min-h-[42px] text-center text-xs sm:text-[13px] font-bold ${
+            activeReport === 'balanceSheet'
+              ? 'bg-blue-700 text-white shadow-xs border border-blue-700'
+              : 'bg-white dark:bg-slate-900/60 text-blue-950 dark:text-blue-300 border border-blue-200/80 dark:border-blue-800 hover:bg-blue-100/80'
           }`}
         >
-          <Scale className="w-4 h-4" />
-          <span>উদ্বৃত্তপত্র (Balance Sheet)</span>
+          <Scale className="w-4 h-4 shrink-0" />
+          <span>উদ্বৃত্তপত্র</span>
         </button>
 
         <button
+          type="button"
           onClick={() => setActiveReport('trialBalance')}
-          className={`flex items-center gap-1.5 px-3.5 py-2 rounded-lg whitespace-nowrap transition-all cursor-pointer min-h-[40px] ${
-            activeReport === 'trialBalance' ? 'bg-teal-700 text-white shadow-xs' : 'text-teal-950 hover:text-teal-900 hover:bg-teal-100/70'
+          className={`flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg transition-all cursor-pointer min-h-[42px] text-center text-xs sm:text-[13px] font-bold ${
+            activeReport === 'trialBalance'
+              ? 'bg-amber-700 text-white shadow-xs border border-amber-700'
+              : 'bg-white dark:bg-slate-900/60 text-amber-950 dark:text-amber-300 border border-amber-200/80 dark:border-amber-800 hover:bg-amber-100/80'
           }`}
         >
-          <Layers className="w-4 h-4" />
-          <span>রেওয়ামিল অডিট (Trial Balance)</span>
+          <Layers className="w-4 h-4 shrink-0" />
+          <span>রেওয়ামিল অডিট</span>
         </button>
 
         <button
+          type="button"
           id="tab-ledger-report"
           onClick={() => {
             setActiveReport('ledger');
             loadLedgerReport(selectedLedgerAccountCode);
           }}
-          className={`flex items-center gap-1.5 px-3.5 py-2 rounded-lg whitespace-nowrap transition-all cursor-pointer min-h-[40px] ${
-            activeReport === 'ledger' ? 'bg-teal-700 text-white shadow-xs' : 'text-teal-950 hover:text-teal-900 hover:bg-teal-100/70'
+          className={`flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg transition-all cursor-pointer min-h-[42px] text-center text-xs sm:text-[13px] font-bold ${
+            activeReport === 'ledger'
+              ? 'bg-indigo-700 text-white shadow-xs border border-indigo-700'
+              : 'bg-white dark:bg-slate-900/60 text-indigo-950 dark:text-indigo-300 border border-indigo-200/80 dark:border-indigo-800 hover:bg-indigo-100/80'
           }`}
         >
-          <BookOpen className="w-4 h-4" />
-          <span>খতিয়ান বহি (General Ledger)</span>
+          <BookOpen className="w-4 h-4 shrink-0" />
+          <span>খতিয়ান বহি</span>
         </button>
 
         <button
+          type="button"
           onClick={() => setActiveReport('animalProfitability')}
-          className={`flex items-center gap-1.5 px-3.5 py-2 rounded-lg whitespace-nowrap transition-all cursor-pointer min-h-[40px] ${
+          className={`flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg transition-all cursor-pointer min-h-[42px] text-center text-xs sm:text-[13px] font-bold ${
             activeReport === 'animalProfitability'
-              ? 'bg-teal-700 text-white shadow-xs'
-              : 'text-teal-950 hover:text-teal-900 hover:bg-teal-100/70'
+              ? 'bg-teal-700 text-white shadow-xs border border-teal-700'
+              : 'bg-white dark:bg-slate-900/60 text-teal-950 dark:text-teal-300 border border-teal-200/80 dark:border-teal-800 hover:bg-teal-100/80'
           }`}
         >
-          <TrendingUp className="w-4 h-4" />
-          <span>পশুভিত্তিক লাভ-ক্ষতি (Animal Profitability)</span>
+          <TrendingUp className="w-4 h-4 shrink-0" />
+          <span>পশুভিত্তিক লাভ-ক্ষতি</span>
         </button>
 
         <button
+          type="button"
           id="tab-herd-summary"
           onClick={() => setActiveReport('herdSummary')}
-          className={`flex items-center gap-1.5 px-3.5 py-2 rounded-lg whitespace-nowrap transition-all cursor-pointer min-h-[40px] ${
+          className={`flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg transition-all cursor-pointer min-h-[42px] text-center text-xs sm:text-[13px] font-bold ${
             activeReport === 'herdSummary'
-              ? 'bg-teal-700 text-white shadow-xs'
-              : 'text-teal-950 hover:text-teal-900 hover:bg-teal-100/70'
+              ? 'bg-cyan-700 text-white shadow-xs border border-cyan-700'
+              : 'bg-white dark:bg-slate-900/60 text-cyan-950 dark:text-cyan-300 border border-cyan-200/80 dark:border-cyan-800 hover:bg-cyan-100/80'
           }`}
         >
-          <Activity className="w-4 h-4" />
-          <span>পালের সারসংক্ষেপ (Herd Summary)</span>
+          <Activity className="w-4 h-4 shrink-0" />
+          <span>পালের সারসংক্ষেপ</span>
         </button>
 
         <button
+          type="button"
           id="tab-aging-report"
           onClick={() => setActiveReport('aging')}
-          className={`flex items-center gap-1.5 px-3.5 py-2 rounded-lg whitespace-nowrap transition-all cursor-pointer min-h-[40px] ${
+          className={`flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg transition-all cursor-pointer min-h-[42px] text-center text-xs sm:text-[13px] font-bold ${
             activeReport === 'aging'
-              ? 'bg-teal-700 text-white shadow-xs'
-              : 'text-teal-950 hover:text-teal-900 hover:bg-teal-100/70'
+              ? 'bg-rose-700 text-white shadow-xs border border-rose-700'
+              : 'bg-white dark:bg-slate-900/60 text-rose-950 dark:text-rose-300 border border-rose-200/80 dark:border-rose-800 hover:bg-rose-100/80'
           }`}
         >
-          <Clock className="w-4 h-4" />
-          <span>পাওনা-দেনার হিসাব (Aging Report)</span>
+          <Clock className="w-4 h-4 shrink-0" />
+          <span>পাওনা-দেনার হিসাব</span>
         </button>
 
         <button
+          type="button"
           id="tab-cash-flow"
           onClick={() => setActiveReport('cashFlow')}
-          className={`flex items-center gap-1.5 px-3.5 py-2 rounded-lg whitespace-nowrap transition-all cursor-pointer min-h-[40px] ${
+          className={`flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg transition-all cursor-pointer min-h-[42px] text-center text-xs sm:text-[13px] font-bold ${
             activeReport === 'cashFlow'
-              ? 'bg-teal-700 text-white shadow-xs'
-              : 'text-teal-950 hover:text-teal-900 hover:bg-teal-100/70'
+              ? 'bg-violet-700 text-white shadow-xs border border-violet-700'
+              : 'bg-white dark:bg-slate-900/60 text-violet-950 dark:text-violet-300 border border-violet-200/80 dark:border-violet-800 hover:bg-violet-100/80'
           }`}
         >
-          <Coins className="w-4 h-4" />
-          <span>নগদ প্রবাহ (Cash Flow)</span>
+          <Coins className="w-4 h-4 shrink-0" />
+          <span>নগদ প্রবাহ</span>
         </button>
 
         {isVatRegistered && (
           <button
+            type="button"
             id="tab-vat-summary"
             onClick={() => setActiveReport('vatSummary')}
-            className={`flex items-center gap-1.5 px-3.5 py-2 rounded-lg whitespace-nowrap transition-all cursor-pointer min-h-[40px] ${
+            className={`flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg transition-all cursor-pointer min-h-[42px] text-center text-xs sm:text-[13px] font-bold ${
               activeReport === 'vatSummary'
-                ? 'bg-teal-700 text-white shadow-xs'
-                : 'text-teal-950 hover:text-teal-900 hover:bg-teal-100/70'
+                ? 'bg-orange-700 text-white shadow-xs border border-orange-700'
+                : 'bg-white dark:bg-slate-900/60 text-orange-950 dark:text-orange-300 border border-orange-200/80 dark:border-orange-800 hover:bg-orange-100/80'
             }`}
           >
-            <FileText className="w-4 h-4" />
-            <span>ভ্যাট সারাংশ (VAT Summary)</span>
+            <FileText className="w-4 h-4 shrink-0" />
+            <span>ভ্যাট সারাংশ</span>
           </button>
         )}
 
         <button
+          type="button"
           id="tab-yoy-comparison"
           onClick={() => setActiveReport('yoyComparison')}
-          className={`flex items-center gap-1.5 px-3.5 py-2 rounded-lg whitespace-nowrap transition-all cursor-pointer min-h-[40px] ${
+          className={`flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg transition-all cursor-pointer min-h-[42px] text-center text-xs sm:text-[13px] font-bold ${
             activeReport === 'yoyComparison'
-              ? 'bg-teal-700 text-white shadow-xs'
-              : 'text-teal-950 hover:text-teal-900 hover:bg-teal-100/70'
+              ? 'bg-fuchsia-700 text-white shadow-xs border border-fuchsia-700'
+              : 'bg-white dark:bg-slate-900/60 text-fuchsia-950 dark:text-fuchsia-300 border border-fuchsia-200/80 dark:border-fuchsia-800 hover:bg-fuchsia-100/80'
           }`}
         >
-          <GitCompare className="w-4 h-4" />
-          <span>বার্ষিক তুলনা (This Year vs Last Year)</span>
+          <GitCompare className="w-4 h-4 shrink-0" />
+          <span>বার্ষিক তুলনা</span>
         </button>
 
         <button
+          type="button"
           id="tab-backup-restore"
           onClick={() => setActiveReport('backup')}
-          className={`flex items-center gap-1.5 px-3.5 py-2 rounded-lg whitespace-nowrap transition-all cursor-pointer min-h-[40px] ${
-            activeReport === 'backup' ? 'bg-teal-700 text-white shadow-xs' : 'text-teal-950 hover:text-teal-900 hover:bg-teal-100/70'
+          className={`flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg transition-all cursor-pointer min-h-[42px] text-center text-xs sm:text-[13px] font-bold ${
+            activeReport === 'backup'
+              ? 'bg-slate-700 text-white shadow-xs border border-slate-700'
+              : 'bg-white dark:bg-slate-900/60 text-slate-950 dark:text-slate-300 border border-slate-200/80 dark:border-slate-800 hover:bg-slate-100/80'
           }`}
         >
-          <Upload className="w-4 h-4" />
-          <span>ব্যাকআপ ও রিস্টোর (JSON Backup)</span>
+          <Upload className="w-4 h-4 shrink-0" />
+          <span>ব্যাকআপ ও রিস্টোর</span>
         </button>
       </div>
 

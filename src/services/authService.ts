@@ -74,6 +74,7 @@ export async function getAppAccessLogs(): Promise<AppAccessLog[]> {
             id: l.id,
             email: l.email,
             timestamp: l.timestamp,
+            ip: l.ip,
             userAgent: l.userAgent,
             loginMethod: 'SECRET_PIN',
             status: l.status,
