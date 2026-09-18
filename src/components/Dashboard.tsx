@@ -30,9 +30,13 @@ import { generateProfitLoss, generateTrialBalance } from '../accounting/accounti
 import { ActiveTab } from './MobileBottomNav';
 import { Reminder, UserRole, InventoryItem } from '../types';
 import { createFullJsonBackup, getLastSyncTime, getLastExportTime } from '../services/exportService';
-import { synchronizePendingData } from '../firebase/firebaseClient';
+import { auth, synchronizePendingData } from '../firebase/firebaseClient';
 import { useLanguage } from '../i18n/translations';
 import { runRegressionTests, getLatestRegressionTestResult, TestResult } from '../utils/regressionTests';
+import { Card } from './ui/Card';
+import { StatusBadge } from './ui/StatusBadge';
+import { IconTile } from './ui/IconTile';
+import { EmptyState } from './ui/EmptyState';
 
 interface LowFeedItemInfo {
   item: InventoryItem;
@@ -429,8 +433,141 @@ export const Dashboard: React.FC<Props> = ({ role, onNavigate, regressionTestRes
   const combinedCashBankBalance = cashBalance + bankBalance;
   const isLowCash = !loading && (combinedCashBankBalance < lowCashThreshold);
 
+  // Owner greeting & time of day
+  const [ownerName, setOwnerName] = useState<string>('আতিকুর রহমান');
+
+  useEffect(() => {
+    const fetchOwnerName = async () => {
+      try {
+        if (auth.currentUser?.displayName) {
+          setOwnerName(auth.currentUser.displayName);
+          return;
+        }
+        if (auth.currentUser?.email) {
+          const emailPrefix = auth.currentUser.email.split('@')[0];
+          const cleanName = emailPrefix.replace(/[0-9_.-]+$/, '');
+          setOwnerName(cleanName.charAt(0).toUpperCase() + cleanName.slice(1));
+          return;
+        }
+        const configs = await db.systemConfig.toArray();
+        if (configs.length > 0) {
+          if (configs[0].companyName) {
+            setOwnerName(configs[0].companyName);
+            return;
+          }
+          if (configs[0].ownerEmail) {
+            const emailPrefix = configs[0].ownerEmail.split('@')[0];
+            const cleanName = emailPrefix.replace(/[0-9_.-]+$/, '');
+            setOwnerName(cleanName.charAt(0).toUpperCase() + cleanName.slice(1));
+            return;
+          }
+        }
+      } catch (err) {
+        console.warn('Could not determine owner name for greeting:', err);
+      }
+    };
+    fetchOwnerName();
+  }, []);
+
+  const getGreeting = () => {
+    const hour = new Date().getHours();
+    if (hour >= 5 && hour < 12) return 'শুভ সকাল';
+    if (hour >= 12 && hour < 17) return 'শুভ দুপুর';
+    return 'শুভ সন্ধ্যা';
+  };
+
+  const getFormattedDate = () => {
+    try {
+      const now = new Date();
+      return new Intl.DateTimeFormat('bn-BD', {
+        weekday: 'long',
+        day: 'numeric',
+        month: 'long',
+        year: 'numeric'
+      }).format(now);
+    } catch {
+      return new Date().toLocaleDateString();
+    }
+  };
+
+  const overdueRemindersCount = reminders.filter((r) => {
+    const diffDays = Math.round((new Date(r.dueDate).getTime() - todayTime) / 86400000);
+    return diffDays < 0;
+  }).length;
+
+  const dueTodayRemindersCount = reminders.filter((r) => {
+    const diffDays = Math.round((new Date(r.dueDate).getTime() - todayTime) / 86400000);
+    return diffDays === 0;
+  }).length;
+
+  const totalDueOrOverdue = overdueRemindersCount + dueTodayRemindersCount;
+
   return (
     <div className="space-y-5 pb-6 max-w-5xl mx-auto">
+      {/* 1. GREETING HEADER AT THE TOP */}
+      <div id="dashboard-greeting-header" className="pt-1 pb-0.5">
+        <h1 className="text-2xl sm:text-3xl font-extrabold text-gray-900 dark:text-slate-100 tracking-tight leading-tight">
+          {getGreeting()}, {ownerName}!
+        </h1>
+        <p className="text-sm sm:text-base text-gray-600 dark:text-slate-400 font-medium mt-1">
+          {getFormattedDate()}
+        </p>
+      </div>
+
+      {/* 2. SUMMARY CARD (STATIC VARIANT) */}
+      <Card
+        id="dashboard-cash-reminders-summary-card"
+        variant="static"
+        padding="md"
+        className="border-gray-200/90 dark:border-slate-800"
+      >
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="flex items-center gap-3.5">
+            <div className="w-12 h-12 rounded-2xl bg-emerald-50 dark:bg-emerald-950/50 text-[#1E5128] dark:text-emerald-300 border border-emerald-100 dark:border-emerald-900/60 flex items-center justify-center shrink-0 shadow-2xs">
+              <Wallet className="w-6 h-6" />
+            </div>
+            <div>
+              <span className="text-xs sm:text-[13px] font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wider block">
+                {lang === 'en' ? "Today's Cash + Bank Balance" : 'আজকের মোট নগদ ও ব্যাংক তহবিল'}
+              </span>
+              <div className="text-2xl sm:text-3xl font-extrabold text-gray-900 dark:text-slate-100 tracking-tight leading-tight mt-0.5">
+                {fmtMoney(combinedCashBankBalance)}
+              </div>
+              <div className="flex items-center gap-2 text-xs text-gray-500 dark:text-slate-400 mt-1 font-medium">
+                <span>নগদ: {fmtMoney(cashBalance)}</span>
+                <span>•</span>
+                <span>ব্যাংক: {fmtMoney(bankBalance)}</span>
+              </div>
+            </div>
+          </div>
+
+          <div className="flex items-center sm:justify-end border-t sm:border-t-0 sm:border-l border-gray-100 dark:border-slate-800/80 pt-3 sm:pt-0 sm:pl-6">
+            <div className="flex items-center gap-2.5">
+              <div className="w-9 h-9 rounded-xl bg-amber-50 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400 flex items-center justify-center shrink-0 border border-amber-100 dark:border-amber-900/50">
+                <Bell className="w-4 h-4" />
+              </div>
+              <div>
+                <span className="text-xs font-semibold text-gray-500 dark:text-slate-400 block">
+                  {lang === 'en' ? 'Due / Overdue Reminders' : 'জরুরি রিমাইন্ডার (আজ ও বকেয়া)'}
+                </span>
+                <div className="text-sm sm:text-[15px] font-bold text-gray-800 dark:text-slate-200 mt-0.5">
+                  {totalDueOrOverdue > 0 ? (
+                    <span className="text-amber-700 dark:text-amber-400">
+                      {overdueRemindersCount > 0 && `${overdueRemindersCount}টি বিলম্বিত (Overdue)`}
+                      {overdueRemindersCount > 0 && dueTodayRemindersCount > 0 && ', '}
+                      {dueTodayRemindersCount > 0 && `${dueTodayRemindersCount}টি আজ করণীয়`}
+                    </span>
+                  ) : (
+                    <span className="text-[#15803D] dark:text-emerald-400 font-semibold">
+                      {lang === 'en' ? 'No urgent reminders today' : 'আজ বা বকেয়া কোনো তাগিদ নেই (সব ঠিক আছে)'}
+                    </span>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </Card>
       {/* LOW CASH ALERT WARNING BANNER */}
       {isLowCash && (
         <div
@@ -632,42 +769,72 @@ export const Dashboard: React.FC<Props> = ({ role, onNavigate, regressionTestRes
         </div>
       )}
 
-      {/* 0. QUICK ACTIVITY ACTION BUTTONS */}
+      {/* 0. QUICK ACTIVITY ACTION BUTTONS WITH ICONTILE */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         <button
           id="btn-quick-feed-cost"
           type="button"
           onClick={() => onNavigate('operations', undefined, { openActivityModal: true, eventType: 'FEED' })}
-          className="flex items-center justify-center gap-3 p-4 sm:p-4.5 rounded-2xl bg-amber-50 dark:bg-amber-950/40 hover:bg-amber-100 dark:hover:bg-amber-950/60 text-amber-900 dark:text-amber-200 border-2 border-amber-300 dark:border-amber-700/60 font-bold text-base sm:text-lg shadow-sm hover:shadow active:scale-[0.98] transition-all cursor-pointer min-h-[56px]"
+          className="flex items-center gap-3.5 p-3.5 sm:p-4 rounded-xl bg-white dark:bg-slate-800/90 border border-gray-200/90 dark:border-slate-700 shadow-xs hover:shadow-md active:scale-[0.99] transition-all cursor-pointer text-left group min-h-[58px]"
         >
-          <div className="w-9 h-9 rounded-xl bg-amber-600 text-white flex items-center justify-center shadow-xs shrink-0">
-            <PlusCircle className="w-5 h-5" />
+          <IconTile
+            icon={PlusCircle}
+            color="warning"
+            size="md"
+            rounded="xl"
+          />
+          <div className="min-w-0">
+            <span className="block text-base sm:text-lg font-bold text-gray-900 dark:text-slate-100 group-hover:text-amber-700 dark:group-hover:text-amber-400 transition-colors">
+              + ফিড খরচ
+            </span>
+            <span className="block text-xs text-gray-500 dark:text-slate-400 truncate">
+              দৈনিক খাদ্য খরচ এন্ট্রি
+            </span>
           </div>
-          <span>+ ফিড খরচ</span>
         </button>
 
         <button
           id="btn-quick-milk-today"
           type="button"
           onClick={() => onNavigate('operations', undefined, { openActivityModal: true, eventType: 'MILK' })}
-          className="flex items-center justify-center gap-3 p-4 sm:p-4.5 rounded-2xl bg-blue-50 dark:bg-blue-950/40 hover:bg-blue-100 dark:hover:bg-blue-950/60 text-blue-900 dark:text-blue-200 border-2 border-blue-300 dark:border-blue-700/60 font-bold text-base sm:text-lg shadow-sm hover:shadow active:scale-[0.98] transition-all cursor-pointer min-h-[56px]"
+          className="flex items-center gap-3.5 p-3.5 sm:p-4 rounded-xl bg-white dark:bg-slate-800/90 border border-gray-200/90 dark:border-slate-700 shadow-xs hover:shadow-md active:scale-[0.99] transition-all cursor-pointer text-left group min-h-[58px]"
         >
-          <div className="w-9 h-9 rounded-xl bg-blue-600 text-white flex items-center justify-center shadow-xs shrink-0">
-            <Droplets className="w-5 h-5" />
+          <IconTile
+            icon={Droplets}
+            color="info"
+            size="md"
+            rounded="xl"
+          />
+          <div className="min-w-0">
+            <span className="block text-base sm:text-lg font-bold text-gray-900 dark:text-slate-100 group-hover:text-blue-700 dark:group-hover:text-blue-400 transition-colors">
+              + আজকের দুধ
+            </span>
+            <span className="block text-xs text-gray-500 dark:text-slate-400 truncate">
+              দুধ দোহন ও উৎপাদন হিসাব
+            </span>
           </div>
-          <span>+ আজকের দুধ</span>
         </button>
 
         <button
           id="btn-quick-vaccine"
           type="button"
           onClick={() => onNavigate('operations', undefined, { openActivityModal: true, eventType: 'VACCINE' })}
-          className="flex items-center justify-center gap-3 p-4 sm:p-4.5 rounded-2xl bg-emerald-50 dark:bg-emerald-950/40 hover:bg-emerald-100 dark:hover:bg-emerald-950/60 text-emerald-900 dark:text-emerald-200 border-2 border-emerald-300 dark:border-emerald-700/60 font-bold text-base sm:text-lg shadow-sm hover:shadow active:scale-[0.98] transition-all cursor-pointer min-h-[56px]"
+          className="flex items-center gap-3.5 p-3.5 sm:p-4 rounded-xl bg-white dark:bg-slate-800/90 border border-gray-200/90 dark:border-slate-700 shadow-xs hover:shadow-md active:scale-[0.99] transition-all cursor-pointer text-left group min-h-[58px]"
         >
-          <div className="w-9 h-9 rounded-xl bg-[#1E5128] dark:bg-emerald-700 text-white flex items-center justify-center shadow-xs shrink-0">
-            <Syringe className="w-5 h-5" />
+          <IconTile
+            icon={Syringe}
+            color="success"
+            size="md"
+            rounded="xl"
+          />
+          <div className="min-w-0">
+            <span className="block text-base sm:text-lg font-bold text-gray-900 dark:text-slate-100 group-hover:text-emerald-700 dark:group-hover:text-emerald-400 transition-colors">
+              + ভ্যাকসিন
+            </span>
+            <span className="block text-xs text-gray-500 dark:text-slate-400 truncate">
+              টিকা ও অ্যান্টিবায়োটিক প্রয়োগ
+            </span>
           </div>
-          <span>+ ভ্যাকসিন</span>
         </button>
       </div>
 
@@ -709,17 +876,22 @@ export const Dashboard: React.FC<Props> = ({ role, onNavigate, regressionTestRes
         </div>
 
         {reminders.length === 0 ? (
-          <div className="p-4 rounded-xl bg-gray-50 dark:bg-slate-800/60 border border-gray-200 dark:border-slate-800 text-center flex flex-col items-center justify-center py-6 text-gray-600 dark:text-slate-400 space-y-1.5">
-            <CheckCircle2 className="w-7 h-7 text-[#15803D] dark:text-emerald-400" />
-            <p className="text-[14px] font-semibold text-gray-900 dark:text-slate-200">
-              {t('dashboard.noReminders')}
-            </p>
-            <p className="text-xs text-gray-500 dark:text-slate-400">
-              {lang === 'en'
+          <EmptyState
+            id="empty-reminders-state"
+            icon={CheckCircle2}
+            heading={t('dashboard.noReminders')}
+            message={
+              lang === 'en'
                 ? 'All animal vaccination & medical treatment schedules are up to date.'
-                : 'খামারের সকল পশু টিকা ও চিকিৎসা সময়সূচি হালনাগাদ রয়েছে।'}
-            </p>
-          </div>
+                : 'খামারের সকল পশু টিকা ও চিকিৎসা সময়সূচি হালনাগাদ রয়েছে।'
+            }
+            action={{
+              label: lang === 'en' ? 'Manage Schedule' : 'সময়সূচি দেখুন',
+              onClick: () => onNavigate('operations'),
+              icon: Calendar,
+            }}
+            compact
+          />
         ) : (
           <div className="space-y-2">
             {reminders.map((rem) => {
@@ -774,22 +946,22 @@ export const Dashboard: React.FC<Props> = ({ role, onNavigate, regressionTestRes
                         <span>{catBadge.label}</span>
                       </span>
 
-                      {isOverdue && (
-                        <span className="text-[11px] font-bold px-2 py-0.5 rounded-md bg-red-100 text-red-800 border border-red-300 animate-pulse">
-                          {t('dashboard.overdue')} ({Math.abs(diffDays)} {lang === 'en' ? 'days ago' : 'দিন আগে'})
-                        </span>
-                      )}
-
-                      {isToday && (
-                        <span className="text-[11px] font-bold px-2 py-0.5 rounded-md bg-amber-100 text-amber-900 border border-amber-300">
-                          {t('dashboard.today')}
-                        </span>
-                      )}
-
-                      {!isOverdue && !isToday && (
-                        <span className="text-[11px] font-semibold px-2 py-0.5 rounded-md bg-emerald-50 text-[#15803D] border border-emerald-200">
-                          {diffDays === 1 ? t('dashboard.tomorrow') : `${diffDays} ${t('dashboard.daysRemaining')}`}
-                        </span>
+                      {/* StatusBadge: danger for overdue, warning for due-within-3-days, info for others */}
+                      {isOverdue ? (
+                        <StatusBadge
+                          status="overdue"
+                          label={`${t('dashboard.overdue')} (${Math.abs(diffDays)} ${lang === 'en' ? 'days ago' : 'দিন আগে'})`}
+                        />
+                      ) : diffDays <= 3 ? (
+                        <StatusBadge
+                          status="due-soon"
+                          label={isToday ? t('dashboard.today') : diffDays === 1 ? t('dashboard.tomorrow') : `${diffDays} দিন বাকি`}
+                        />
+                      ) : (
+                        <StatusBadge
+                          status="info"
+                          label={`${diffDays} ${t('dashboard.daysRemaining')}`}
+                        />
                       )}
 
                       <span className="text-[12px] text-gray-500 font-mono">

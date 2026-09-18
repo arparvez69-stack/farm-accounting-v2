@@ -36,7 +36,11 @@ import {
   CartesianGrid
 } from 'recharts';
 import { db } from '../db/indexedDb';
-import { Animal, AnimalEvent, UserRole } from '../types';
+import { Animal, AnimalEvent, UserRole, Reminder } from '../types';
+import { IconTile } from './ui/IconTile';
+import { Card } from './ui/Card';
+import { StatusBadge } from './ui/StatusBadge';
+import { EmptyState } from './ui/EmptyState';
 
 interface AnimalDetailViewProps {
   animal: Animal;
@@ -137,6 +141,42 @@ export const AnimalDetailView: React.FC<AnimalDetailViewProps> = ({
   role
 }) => {
   const [qrCodeDataUrl, setQrCodeDataUrl] = useState<string>('');
+  const [reminders, setReminders] = useState<Reminder[]>([]);
+
+  useEffect(() => {
+    let isMounted = true;
+    db.reminders.toArray().then((all) => {
+      if (isMounted) {
+        setReminders(all.filter((r) => r.animalId === animal.id || r.animalId === animal.tag));
+      }
+    }).catch(console.error);
+    return () => {
+      isMounted = false;
+    };
+  }, [animal.id, animal.tag]);
+
+  const vaccineStatus = useMemo<'overdue' | 'due-soon' | null>(() => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const todayTime = today.getTime();
+
+    const pending = reminders.filter(
+      (r) =>
+        r.status === 'PENDING' &&
+        (r.category === 'VACCINE' || r.category === 'TREATMENT' || r.title.toLowerCase().includes('vaccin') || r.title.includes('টিকা'))
+    );
+
+    const overdue = pending.find((r) => new Date(r.dueDate).getTime() < todayTime);
+    if (overdue) return 'overdue';
+
+    const dueSoon = pending.find((r) => {
+      const diffDays = Math.ceil((new Date(r.dueDate).getTime() - todayTime) / 86400000);
+      return diffDays >= 0 && diffDays <= 7;
+    });
+    if (dueSoon) return 'due-soon';
+
+    return null;
+  }, [reminders]);
 
   useEffect(() => {
     if (animal.id) {
@@ -934,6 +974,12 @@ export const AnimalDetailView: React.FC<AnimalDetailViewProps> = ({
                   ? 'মৃত (DECEASED)'
                   : animal.status}
               </span>
+              {vaccineStatus && (
+                <StatusBadge
+                  status={vaccineStatus}
+                  label={vaccineStatus === 'overdue' ? 'টিকা বকেয়া (Overdue)' : 'টিকা আসন্ন (Due Soon)'}
+                />
+              )}
             </div>
             <p className="text-[13px] text-gray-500 mt-1">
               ট্যাগ: {animal.tag || animal.id} • শেড/অবস্থান: {animal.location || 'নির্ধারিত নয়'}
@@ -976,29 +1022,27 @@ export const AnimalDetailView: React.FC<AnimalDetailViewProps> = ({
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
         {/* Main Content Area (2 Cols) */}
         <div className="lg:col-span-2 space-y-5">
-          {/* SECTION 2: WEIGHT PROGRESSION LINE CHART */}
-          <div className="bg-white p-4 sm:p-5 rounded-2xl border border-gray-200 shadow-xs space-y-3">
-            <div className="flex items-center justify-between border-b border-gray-100 pb-3">
-              <div className="flex items-center gap-2">
-                <div className="p-2 rounded-lg bg-emerald-50 border border-emerald-200 text-[#1E5128]">
-                  <Scale className="w-5 h-5" />
-                </div>
+          {/* SECTION 1: WEIGHT PROGRESSION (GROWTH CHART) */}
+          <div id="section-growth-chart" className="bg-white dark:bg-slate-900 p-4 sm:p-5 rounded-2xl border border-emerald-200/80 dark:border-emerald-900/60 shadow-xs space-y-4">
+            <div className="flex items-center justify-between border-b border-emerald-100/70 dark:border-emerald-950 pb-3 flex-wrap gap-2">
+              <div className="flex items-center gap-3">
+                <IconTile icon={Scale} color="emerald" size="md" rounded="xl" />
                 <div>
-                  <h3 className="font-bold text-gray-900 text-[15px]">
-                    ওজন বৃদ্ধির চার্ট (Weight Progression)
+                  <h3 className="font-bold text-gray-900 dark:text-slate-100 text-[15px]">
+                    ওজন বৃদ্ধির চার্ট (Growth Chart)
                   </h3>
-                  <p className="text-[12px] text-gray-500">
-                    সময় অনুযায়ী ওজন (কেজি) পরিবর্তনের সাধারণ সূচক
+                  <p className="text-[12px] text-gray-500 dark:text-slate-400">
+                    সময় অনুযায়ী দৈহিক বৃদ্ধি ও ওজনের অগ্রগতি সূচক
                   </p>
                 </div>
               </div>
-              <span className="text-[13px] font-bold text-emerald-800 bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-200">
+              <span className="text-[13px] font-bold text-emerald-800 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/50 px-3 py-1 rounded-lg border border-emerald-200 dark:border-emerald-900">
                 বর্তমান: {animal.currentWeightKg} কেজি
               </span>
             </div>
 
             {weightChartData.length > 0 ? (
-              <div className="w-full pt-2">
+              <div className="w-full pt-1">
                 <div className="h-60 w-full">
                   <ResponsiveContainer width="100%" height="100%">
                     <LineChart data={weightChartData} margin={{ top: 10, right: 20, left: -10, bottom: 5 }}>
@@ -1044,25 +1088,27 @@ export const AnimalDetailView: React.FC<AnimalDetailViewProps> = ({
                 )}
               </div>
             ) : (
-              <div className="p-6 text-center bg-gray-50 rounded-xl border border-dashed border-gray-200 text-gray-500 text-[13px]">
-                কোনো ওজন পরিমাপের রেকর্ড নেই। '+ কার্যক্রম যোগ করুন' থেকে ওজন রেকর্ড করুন।
-              </div>
+              <EmptyState
+                id="empty-growth-chart"
+                icon={Scale}
+                heading="কোনো ওজন পরিমাপের রেকর্ড নেই"
+                message="পশুর শারীরিক বৃদ্ধির অগ্রগতি পর্যবেক্ষণ করতে '+ কার্যক্রম যোগ করুন' থেকে নতুন ওজন রেকর্ড করুন।"
+                compact
+              />
             )}
           </div>
 
-          {/* SECTION 3: MILK PRODUCTION (দুধ উৎপাদন) */}
-          <div className="bg-white p-4 sm:p-5 rounded-2xl border border-gray-200 shadow-xs space-y-3">
-            <div className="flex items-center justify-between border-b border-gray-100 pb-3">
-              <div className="flex items-center gap-2">
-                <div className="p-2 rounded-lg bg-cyan-50 border border-cyan-200 text-cyan-700">
-                  <Droplets className="w-5 h-5" />
-                </div>
+          {/* SECTION 2: MILK PRODUCTION (MILK LOG) */}
+          <div id="section-milk-log" className="bg-white dark:bg-slate-900 p-4 sm:p-5 rounded-2xl border border-cyan-200/80 dark:border-cyan-900/60 shadow-xs space-y-4">
+            <div className="flex items-center justify-between border-b border-cyan-100/70 dark:border-cyan-950 pb-3 flex-wrap gap-2">
+              <div className="flex items-center gap-3">
+                <IconTile icon={Droplets} color="cyan" size="md" rounded="xl" />
                 <div>
-                  <h3 className="font-bold text-gray-900 text-[15px]">
-                    দুধ উৎপাদন (Milk Production)
+                  <h3 className="font-bold text-gray-900 dark:text-slate-100 text-[15px]">
+                    দুধ উৎপাদন লগ (Milk Log)
                   </h3>
-                  <p className="text-[12px] text-gray-500">
-                    দুধের দৈনিক ও মাসিক উৎপাদন রেকর্ড
+                  <p className="text-[12px] text-gray-500 dark:text-slate-400">
+                    দৈনিক ও মাসিক দুধের উৎপাদন ও খাদ্য খরচ রেকর্ড
                   </p>
                 </div>
               </div>
@@ -1070,15 +1116,15 @@ export const AnimalDetailView: React.FC<AnimalDetailViewProps> = ({
               {/* Small total-this-month figure */}
               <div className="flex items-center gap-3">
                 <div className="text-right">
-                  <span className="text-[11px] text-gray-500 block">চলতি মাসে মোট</span>
-                  <span className="text-[15px] font-bold text-cyan-800 font-mono">
+                  <span className="text-[11px] text-gray-500 dark:text-slate-400 block">চলতি মাসে মোট</span>
+                  <span className="text-[15px] font-bold text-cyan-800 dark:text-cyan-400 font-mono">
                     {totalMilkThisMonth} লিটার
                   </span>
                 </div>
                 {totalMilkAllTime > totalMilkThisMonth && (
-                  <div className="text-right pl-3 border-l border-gray-200 hidden sm:block">
-                    <span className="text-[11px] text-gray-500 block">সর্বমোট উৎপাদিত</span>
-                    <span className="text-[14px] font-semibold text-gray-700 font-mono">
+                  <div className="text-right pl-3 border-l border-gray-200 dark:border-slate-700 hidden sm:block">
+                    <span className="text-[11px] text-gray-500 dark:text-slate-400 block">সর্বমোট উৎপাদিত</span>
+                    <span className="text-[14px] font-semibold text-gray-700 dark:text-slate-300 font-mono">
                       {totalMilkAllTime} লিটার
                     </span>
                   </div>
@@ -1091,28 +1137,28 @@ export const AnimalDetailView: React.FC<AnimalDetailViewProps> = ({
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-[13px]">
                   <thead>
-                    <tr className="border-b border-gray-200 text-gray-500 text-[12px]">
+                    <tr className="border-b border-gray-200 dark:border-slate-800 text-gray-500 dark:text-slate-400 text-[12px]">
                       <th className="py-2 px-2 font-medium">তারিখ</th>
                       <th className="py-2 px-2 font-medium">দুধের পরিমাণ</th>
                       <th className="py-2 px-2 font-medium">ব্যয় / ফিড</th>
                       <th className="py-2 px-2 font-medium">নোট বা বিবরণ</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-gray-100">
+                  <tbody className="divide-y divide-gray-100 dark:divide-slate-800">
                     {milkEvents.map((m) => (
-                      <tr key={m.id} className="hover:bg-cyan-50/40 transition-colors">
-                        <td className="py-2.5 px-2 font-mono text-gray-800 font-semibold whitespace-nowrap">
+                      <tr key={m.id} className="hover:bg-cyan-50/40 dark:hover:bg-cyan-950/20 transition-colors">
+                        <td className="py-2.5 px-2 font-mono text-gray-800 dark:text-slate-200 font-semibold whitespace-nowrap">
                           {m.date}
                         </td>
                         <td className="py-2.5 px-2">
-                          <span className="font-bold text-cyan-800 font-mono text-[14px]">
+                          <span className="font-bold text-cyan-800 dark:text-cyan-400 font-mono text-[14px]">
                             {m.milkLiters} লিটার
                           </span>
                         </td>
-                        <td className="py-2.5 px-2 font-mono text-gray-600">
+                        <td className="py-2.5 px-2 font-mono text-gray-600 dark:text-slate-400">
                           {m.cost > 0 ? fmt(m.cost) : '—'}
                         </td>
-                        <td className="py-2.5 px-2 text-gray-600 max-w-xs truncate">
+                        <td className="py-2.5 px-2 text-gray-600 dark:text-slate-300 max-w-xs truncate">
                           {m.details || '—'}
                         </td>
                       </tr>
@@ -1121,46 +1167,50 @@ export const AnimalDetailView: React.FC<AnimalDetailViewProps> = ({
                 </table>
               </div>
             ) : (
-              <div className="p-6 text-center bg-gray-50 rounded-xl border border-dashed border-gray-200 text-gray-500 text-[13px]">
-                {animal.gender === 'FEMALE'
-                  ? 'কোনো দুধ উৎপাদনের তথ্য রেকর্ড নেই। নতুন রেকর্ড করতে উপরের "+ কার্যক্রম যোগ করুন" বোতামে চাপুন।'
-                  : 'এই গবাদিপশুর দুধ উৎপাদনের কোনো রেকর্ড প্রযোজ্য নয়।'}
-              </div>
+              <EmptyState
+                id="empty-milk-log"
+                icon={Droplets}
+                heading="কোনো দুধ উৎপাদনের তথ্য নেই"
+                message={
+                  animal.gender === 'FEMALE'
+                    ? 'দুধের ফলন ও উৎপাদন ট্র্যাক করতে "+ কার্যক্রম যোগ করুন" বোতামে চাপুন।'
+                    : 'এই গবাদিপশুর দুধ উৎপাদনের কোনো রেকর্ড প্রযোজ্য নয়।'
+                }
+                compact
+              />
             )}
           </div>
 
-          {/* SECTION 1: REVERSE-CHRONOLOGICAL TIMELINE OF ALL ANIMAL EVENTS */}
-          <div className="bg-white p-4 sm:p-5 rounded-2xl border border-gray-200 shadow-xs space-y-4">
-            <div className="flex items-center justify-between border-b border-gray-100 pb-3">
-              <div className="flex items-center gap-2">
-                <div className="p-2 rounded-lg bg-emerald-50 border border-emerald-200 text-[#1E5128]">
-                  <Clock className="w-5 h-5" />
-                </div>
+          {/* SECTION 3: REVERSE-CHRONOLOGICAL TIMELINE OF ALL ANIMAL EVENTS */}
+          <div id="section-timeline" className="bg-white dark:bg-slate-900 p-4 sm:p-5 rounded-2xl border border-indigo-200/80 dark:border-indigo-900/60 shadow-xs space-y-4">
+            <div className="flex items-center justify-between border-b border-indigo-100/70 dark:border-indigo-950 pb-3 flex-wrap gap-2">
+              <div className="flex items-center gap-3">
+                <IconTile icon={Clock} color="indigo" size="md" rounded="xl" />
                 <div>
-                  <h3 className="font-bold text-gray-900 text-[15px]">
+                  <h3 className="font-bold text-gray-900 dark:text-slate-100 text-[15px]">
                     কার্যক্রমের টাইমলাইন (Activity Timeline)
                   </h3>
-                  <p className="text-[12px] text-gray-500">
-                    সর্বমোট {animalEvents.length}টি কার্যক্রম সংরক্ষিত (নতুন থেকে পুরনো)
+                  <p className="text-[12px] text-gray-500 dark:text-slate-400">
+                    সর্বমোট {animalEvents.length}টি খাদ্য, ওষুধ, চিকিৎসা ও পরিচর্যা কার্যক্রম সংরক্ষিত
                   </p>
                 </div>
               </div>
             </div>
 
             {animalEvents.length > 0 ? (
-              <div className="relative pl-6 space-y-4 before:absolute before:left-2.5 before:top-2 before:bottom-2 before:w-0.5 before:bg-gray-200">
+              <div className="relative pl-6 space-y-4 before:absolute before:left-2.5 before:top-2 before:bottom-2 before:w-0.5 before:bg-gray-200 dark:before:bg-slate-800">
                 {animalEvents.map((ev) => {
                   const badge = getEventBadge(ev.eventType);
 
                   return (
                     <div key={ev.id} className="relative group">
                       {/* Timeline Dot with Icon */}
-                      <div className="absolute -left-6 top-1.5 w-5 h-5 rounded-full bg-white border-2 border-[#1E5128] flex items-center justify-center shadow-xs">
-                        <div className="w-1.5 h-1.5 rounded-full bg-[#1E5128]" />
+                      <div className="absolute -left-6 top-1.5 w-5 h-5 rounded-full bg-white dark:bg-slate-900 border-2 border-indigo-600 flex items-center justify-center shadow-xs">
+                        <div className="w-1.5 h-1.5 rounded-full bg-indigo-600" />
                       </div>
 
                       {/* Event Card */}
-                      <div className="p-3.5 bg-gray-50 rounded-xl border border-gray-200 hover:border-gray-300 transition-all space-y-2 text-[13px]">
+                      <div className="p-3.5 bg-gray-50/80 dark:bg-slate-800/60 rounded-xl border border-gray-200 dark:border-slate-700 hover:border-indigo-300 dark:hover:border-indigo-700 transition-all space-y-2 text-[13px]">
                         <div className="flex items-center justify-between flex-wrap gap-2">
                           <div className="flex items-center gap-2">
                             <span
@@ -1169,7 +1219,7 @@ export const AnimalDetailView: React.FC<AnimalDetailViewProps> = ({
                               {badge.icon}
                               <span>{badge.label}</span>
                             </span>
-                            <span className="font-mono text-gray-500 text-[12px] flex items-center gap-1">
+                            <span className="font-mono text-gray-500 dark:text-slate-400 text-[12px] flex items-center gap-1">
                               <Calendar className="w-3.5 h-3.5" />
                               {ev.date}
                             </span>
@@ -1177,7 +1227,7 @@ export const AnimalDetailView: React.FC<AnimalDetailViewProps> = ({
 
                           {/* Cost if any */}
                           {ev.cost > 0 && (
-                            <div className="font-mono font-bold text-rose-700 bg-rose-50 px-2.5 py-1 rounded-lg border border-rose-200">
+                            <div className="font-mono font-bold text-rose-700 dark:text-rose-400 bg-rose-50 dark:bg-rose-950/50 px-2.5 py-1 rounded-lg border border-rose-200 dark:border-rose-900">
                               খরচ: {fmt(ev.cost)}
                             </div>
                           )}
@@ -1185,22 +1235,22 @@ export const AnimalDetailView: React.FC<AnimalDetailViewProps> = ({
 
                         {/* Specific Event Metadata */}
                         {ev.weightKg !== undefined && ev.weightKg > 0 && (
-                          <div className="font-semibold text-emerald-800 bg-emerald-50/80 px-2.5 py-1 rounded-md inline-block">
+                          <div className="font-semibold text-emerald-800 dark:text-emerald-300 bg-emerald-50/80 dark:bg-emerald-950/40 px-2.5 py-1 rounded-md inline-block">
                             পরিমাপকৃত ওজন: {ev.weightKg} কেজি
                           </div>
                         )}
 
                         {ev.milkLiters !== undefined && ev.milkLiters > 0 && (
-                          <div className="font-semibold text-cyan-800 bg-cyan-50/80 px-2.5 py-1 rounded-md inline-block">
+                          <div className="font-semibold text-cyan-800 dark:text-cyan-300 bg-cyan-50/80 dark:bg-cyan-950/40 px-2.5 py-1 rounded-md inline-block">
                             দুধের পরিমাণ: {ev.milkLiters} লিটার
                           </div>
                         )}
 
                         {ev.vaccineName && (
-                          <div className="text-[12px] text-blue-800 bg-blue-50 px-2.5 py-1.5 rounded-lg border border-blue-200">
+                          <div className="text-[12px] text-blue-800 dark:text-blue-300 bg-blue-50 dark:bg-blue-950/40 px-2.5 py-1.5 rounded-lg border border-blue-200 dark:border-blue-900">
                             <span className="font-semibold">টিকা/ওষুধের নাম:</span> {ev.vaccineName}
                             {ev.nextDueDate && (
-                              <span className="ml-2 font-mono text-blue-600">
+                              <span className="ml-2 font-mono text-blue-600 dark:text-blue-400">
                                 (পরবর্তী ডোজ: {ev.nextDueDate})
                               </span>
                             )}
@@ -1209,7 +1259,7 @@ export const AnimalDetailView: React.FC<AnimalDetailViewProps> = ({
 
                         {/* Notes / Details */}
                         {ev.details && (
-                          <p className="text-gray-700 leading-relaxed pt-1">
+                          <p className="text-gray-700 dark:text-slate-300 leading-relaxed pt-1">
                             {ev.details}
                           </p>
                         )}
@@ -1219,28 +1269,35 @@ export const AnimalDetailView: React.FC<AnimalDetailViewProps> = ({
                 })}
               </div>
             ) : (
-              <div className="p-8 text-center bg-gray-50 rounded-xl border border-dashed border-gray-200 text-gray-500 text-[14px]">
-                এই পশুর কোনো কার্যক্রম রেকর্ড করা নেই। '+ কার্যক্রম যোগ করুন' বোতামে চাপ দিয়ে খাদ্য, চিকিৎসা, ওজন বা দুধ উৎপাদনের বিবরণ যোগ করুন।
-              </div>
+              <EmptyState
+                id="empty-activity-timeline"
+                icon={Clock}
+                heading="কোনো কার্যক্রম রেকর্ড করা নেই"
+                message="খাদ্য, চিকিৎসা, টিকা বা ওজন সংক্রান্ত বিবরণ সংরক্ষণ করতে '+ কার্যক্রম যোগ করুন' বোতামে চাপুন।"
+                compact
+              />
             )}
           </div>
         </div>
 
-        {/* Right Column: SECTION 4: PROFIT & LOSS (লাভ-ক্ষতি) & COST BREAKDOWN */}
+        {/* Right Column: SECTION 4: PROFIT & LOSS (PROFITABILITY) & COST BREAKDOWN */}
         <div className="space-y-4">
-          <div className="bg-white p-4 sm:p-5 rounded-2xl border border-gray-200 shadow-xs space-y-4 sticky top-4">
+          <div id="section-profitability" className="bg-white dark:bg-slate-900 p-4 sm:p-5 rounded-2xl border border-amber-200/80 dark:border-amber-900/60 shadow-xs space-y-4 sticky top-4">
             {/* Header */}
-            <div className="flex items-center justify-between border-b border-gray-100 pb-3">
-              <div className="flex items-center gap-2">
-                <div className={`p-2 rounded-lg ${netProfitLoss >= 0 ? 'bg-emerald-50 text-[#15803D]' : 'bg-rose-50 text-rose-700'}`}>
-                  {netProfitLoss >= 0 ? <TrendingUp className="w-5 h-5" /> : <TrendingDown className="w-5 h-5" />}
-                </div>
+            <div className="flex items-center justify-between border-b border-amber-100/70 dark:border-amber-950 pb-3">
+              <div className="flex items-center gap-3">
+                <IconTile
+                  icon={netProfitLoss >= 0 ? TrendingUp : TrendingDown}
+                  color={netProfitLoss >= 0 ? 'emerald' : 'danger'}
+                  size="md"
+                  rounded="xl"
+                />
                 <div>
-                  <h3 className="font-bold text-gray-900 text-[15px]">
-                    লাভ-ক্ষতি বিশ্লেষণ (Profit & Loss)
+                  <h3 className="font-bold text-gray-900 dark:text-slate-100 text-[15px]">
+                    লাভ-ক্ষতি ও আর্থিক বিশ্লেষণ (Profitability)
                   </h3>
-                  <p className="text-[12px] text-gray-500">
-                    আয়, মোট ব্যয় ও লাভ-ক্ষতির পূর্ণাঙ্গ হিসাব
+                  <p className="text-[12px] text-gray-500 dark:text-slate-400">
+                    আয়, মোট ব্যয় ও লাভ-ক্ষতির পূর্ণাঙ্গ হিসাব
                   </p>
                 </div>
               </div>
@@ -1250,8 +1307,8 @@ export const AnimalDetailView: React.FC<AnimalDetailViewProps> = ({
             <div
               className={`p-4 rounded-xl border ${
                 netProfitLoss >= 0
-                  ? 'bg-emerald-50/60 border-emerald-200 text-emerald-950'
-                  : 'bg-rose-50/60 border-rose-200 text-rose-950'
+                  ? 'bg-emerald-50/60 dark:bg-emerald-950/40 border-emerald-200 dark:border-emerald-800 text-emerald-950 dark:text-emerald-200'
+                  : 'bg-rose-50/60 dark:bg-rose-950/40 border-rose-200 dark:border-rose-800 text-rose-950 dark:text-rose-200'
               }`}
             >
               <div className="flex items-center justify-between">
@@ -1260,14 +1317,14 @@ export const AnimalDetailView: React.FC<AnimalDetailViewProps> = ({
                 </span>
                 <span
                   className={`text-[18px] font-mono font-bold ${
-                    netProfitLoss >= 0 ? 'text-[#15803D]' : 'text-rose-700'
+                    netProfitLoss >= 0 ? 'text-[#15803D] dark:text-emerald-400' : 'text-rose-700 dark:text-rose-400'
                   }`}
                 >
                   {netProfitLoss >= 0 ? '+' : ''}
                   {fmt(netProfitLoss)}
                 </span>
               </div>
-              <div className="text-[11px] text-gray-600 mt-1 flex justify-between">
+              <div className="text-[11px] text-gray-600 dark:text-slate-400 mt-1 flex justify-between">
                 <span>সর্বমোট রাজস্ব {fmt(totalRevenue)}</span>
                 <span>−</span>
                 <span>সর্বমোট খরচ {fmt(totalCost)}</span>
@@ -1276,83 +1333,83 @@ export const AnimalDetailView: React.FC<AnimalDetailViewProps> = ({
 
             {/* Cost Breakdown Details */}
             <div className="space-y-2 text-[13px]">
-              <div className="text-[12px] font-bold text-gray-700 uppercase tracking-wide pt-1">
+              <div className="text-[12px] font-bold text-gray-700 dark:text-slate-300 uppercase tracking-wide pt-1">
                 ১. ব্যয়ের বিবরণী (Cost Breakdown)
               </div>
-              <div className="flex justify-between items-center py-1 border-b border-gray-100">
-                <span className="text-gray-600">ক্রয়মূল্য (Purchase Cost):</span>
-                <span className="font-mono font-bold text-gray-900">
+              <div className="flex justify-between items-center py-1 border-b border-gray-100 dark:border-slate-800">
+                <span className="text-gray-600 dark:text-slate-400">ক্রয়মূল্য (Purchase Cost):</span>
+                <span className="font-mono font-bold text-gray-900 dark:text-slate-200">
                   {fmt(animal.purchaseCost || 0)}
                 </span>
               </div>
 
-              <div className="flex justify-between items-center py-1 border-b border-gray-100">
-                <span className="text-gray-600">পুঞ্জীভূত খাদ্য খরচ (Feed):</span>
-                <span className="font-mono font-bold text-amber-700">
+              <div className="flex justify-between items-center py-1 border-b border-gray-100 dark:border-slate-800">
+                <span className="text-gray-600 dark:text-slate-400">পুঞ্জীভূত খাদ্য খরচ (Feed):</span>
+                <span className="font-mono font-bold text-amber-700 dark:text-amber-400">
                   {fmt(animal.accumulatedFeedCost || 0)}
                 </span>
               </div>
 
-              <div className="flex justify-between items-center py-1 border-b border-gray-100">
-                <span className="text-gray-600">চিকিৎসা ও ওষুধ খরচ (Med):</span>
-                <span className="font-mono font-bold text-blue-700">
+              <div className="flex justify-between items-center py-1 border-b border-gray-100 dark:border-slate-800">
+                <span className="text-gray-600 dark:text-slate-400">চিকিৎসা ও ওষুধ খরচ (Med):</span>
+                <span className="font-mono font-bold text-blue-700 dark:text-blue-400">
                   {fmt(animal.accumulatedMedCost || 0)}
                 </span>
               </div>
 
-              <div className="flex justify-between items-center py-1 border-b border-gray-100">
-                <span className="text-gray-600">শ্রমিক ব্যয় (Labour):</span>
-                <span className="font-mono font-bold text-gray-800">
+              <div className="flex justify-between items-center py-1 border-b border-gray-100 dark:border-slate-800">
+                <span className="text-gray-600 dark:text-slate-400">শ্রমিক ব্যয় (Labour):</span>
+                <span className="font-mono font-bold text-gray-800 dark:text-slate-200">
                   {fmt(animal.accumulatedLabourCost || 0)}
                 </span>
               </div>
 
-              <div className="flex justify-between items-center py-1 border-b border-gray-100">
-                <span className="text-gray-600">অন্যান্য খরচ (Other):</span>
-                <span className="font-mono font-bold text-gray-800">
+              <div className="flex justify-between items-center py-1 border-b border-gray-100 dark:border-slate-800">
+                <span className="text-gray-600 dark:text-slate-400">অন্যান্য খরচ (Other):</span>
+                <span className="font-mono font-bold text-gray-800 dark:text-slate-200">
                   {fmt(animal.otherCosts || 0)}
                 </span>
               </div>
 
               {/* Total Cost Highlight */}
-              <div className="flex justify-between items-center py-2 px-3 bg-gray-50 border border-gray-200 rounded-xl font-bold text-[13px]">
-                <span className="text-gray-900">সর্বমোট খরচ (Total Cost):</span>
-                <span className="font-mono text-gray-900 text-[14px]">
+              <div className="flex justify-between items-center py-2 px-3 bg-gray-50 dark:bg-slate-800/80 border border-gray-200 dark:border-slate-700 rounded-xl font-bold text-[13px]">
+                <span className="text-gray-900 dark:text-slate-200">সর্বমোট খরচ (Total Cost):</span>
+                <span className="font-mono text-gray-900 dark:text-slate-100 text-[14px]">
                   {fmt(totalCost)}
                 </span>
               </div>
 
               {/* Revenue Breakdown */}
-              <div className="text-[12px] font-bold text-gray-700 uppercase tracking-wide pt-3">
+              <div className="text-[12px] font-bold text-gray-700 dark:text-slate-300 uppercase tracking-wide pt-3">
                 ২. আয়ের বিবরণী (Revenue Breakdown)
               </div>
 
-              <div className="flex justify-between items-center py-1 border-b border-gray-100">
-                <span className="text-gray-600">বিক্রয়মূল্য (Sale Price):</span>
-                <span className="font-mono font-bold text-gray-900">
+              <div className="flex justify-between items-center py-1 border-b border-gray-100 dark:border-slate-800">
+                <span className="text-gray-600 dark:text-slate-400">বিক্রয়মূল্য (Sale Price):</span>
+                <span className="font-mono font-bold text-gray-900 dark:text-slate-200">
                   {animal.status === 'SOLD' ? fmt(animal.salePrice || 0) : 'সক্রিয় (অবিক্রিত)'}
                 </span>
               </div>
 
               {animal.status === 'SOLD' && animal.saleDate && (
-                <div className="text-[11px] text-gray-500 text-right">
+                <div className="text-[11px] text-gray-500 dark:text-slate-400 text-right">
                   বিক্রয়ের তারিখ: {animal.saleDate}
                 </div>
               )}
 
               {milkSalesRevenue > 0 && (
-                <div className="flex justify-between items-center py-1 border-b border-gray-100">
-                  <span className="text-gray-600">সংযুক্ত দুধ বিক্রয় (Milk Sales):</span>
-                  <span className="font-mono font-bold text-cyan-700">
+                <div className="flex justify-between items-center py-1 border-b border-gray-100 dark:border-slate-800">
+                  <span className="text-gray-600 dark:text-slate-400">সংযুক্ত দুধ বিক্রয় (Milk Sales):</span>
+                  <span className="font-mono font-bold text-cyan-700 dark:text-cyan-400">
                     {fmt(milkSalesRevenue)}
                   </span>
                 </div>
               )}
 
               {/* Milk production as memo line */}
-              <div className="p-2.5 bg-cyan-50/70 border border-cyan-200 rounded-xl text-[12px] text-cyan-900 flex items-center justify-between">
+              <div className="p-2.5 bg-cyan-50/70 dark:bg-cyan-950/40 border border-cyan-200 dark:border-cyan-800 rounded-xl text-[12px] text-cyan-900 dark:text-cyan-200 flex items-center justify-between">
                 <span className="flex items-center gap-1.5 font-medium">
-                  <Droplets className="w-4 h-4 text-cyan-600" />
+                  <Droplets className="w-4 h-4 text-cyan-600 dark:text-cyan-400" />
                   <span>দুধ উৎপাদন (মেমো লাইন / Memo line):</span>
                 </span>
                 <span className="font-mono font-bold">
@@ -1360,55 +1417,55 @@ export const AnimalDetailView: React.FC<AnimalDetailViewProps> = ({
                 </span>
               </div>
 
-              <div className="flex justify-between items-center py-2 px-3 bg-emerald-50/50 border border-emerald-200 rounded-xl font-bold text-[13px]">
-                <span className="text-gray-900">সর্বমোট রাজস্ব (Total Revenue):</span>
-                <span className="font-mono text-[#15803D] text-[14px]">
+              <div className="flex justify-between items-center py-2 px-3 bg-emerald-50/50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 rounded-xl font-bold text-[13px]">
+                <span className="text-gray-900 dark:text-slate-200">সর্বমোট রাজস্ব (Total Revenue):</span>
+                <span className="font-mono text-[#15803D] dark:text-emerald-400 text-[14px]">
                   {fmt(totalRevenue)}
                 </span>
               </div>
 
               {/* Cost Per Day Held */}
-              <div className="text-[12px] font-bold text-gray-700 uppercase tracking-wide pt-3">
+              <div className="text-[12px] font-bold text-gray-700 dark:text-slate-300 uppercase tracking-wide pt-3">
                 ৩. প্রতিপালন ব্যয় সূচক (Daily Cost)
               </div>
 
-              <div className="p-3 bg-amber-50/60 border border-amber-200 rounded-xl space-y-1.5 text-[12px]">
+              <div className="p-3 bg-amber-50/60 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 rounded-xl space-y-1.5 text-[12px]">
                 <div className="flex justify-between items-center">
-                  <span className="text-amber-900 font-medium flex items-center gap-1">
-                    <CalendarDays className="w-3.5 h-3.5 text-amber-700" />
+                  <span className="text-amber-900 dark:text-amber-300 font-medium flex items-center gap-1">
+                    <CalendarDays className="w-3.5 h-3.5 text-amber-700 dark:text-amber-400" />
                     <span>ক্রয়ের পর থেকে দিন সংখ্যা:</span>
                   </span>
-                  <span className="font-mono font-bold text-amber-950">
+                  <span className="font-mono font-bold text-amber-950 dark:text-amber-200">
                     {daysSincePurchase} দিন
                   </span>
                 </div>
-                <div className="flex justify-between items-center pt-1.5 border-t border-amber-200/60">
-                  <span className="text-gray-800 font-bold">দৈনিক খরচ (Cost / Day):</span>
-                  <span className="font-mono font-bold text-amber-800 text-[13px]">
+                <div className="flex justify-between items-center pt-1.5 border-t border-amber-200/60 dark:border-amber-800">
+                  <span className="text-gray-800 dark:text-slate-200 font-bold">দৈনিক খরচ (Cost / Day):</span>
+                  <span className="font-mono font-bold text-amber-800 dark:text-amber-400 text-[13px]">
                     {fmt(costPerDayHeld)} / দিন
                   </span>
                 </div>
-                <div className="text-[10px] text-gray-500 italic">
+                <div className="text-[10px] text-gray-500 dark:text-slate-400 italic">
                   (সূত্র: মোট খরচ {fmt(totalCost)} ÷ {daysSincePurchase} দিন)
                 </div>
               </div>
             </div>
 
             {/* Quick Stats Summary */}
-            <div className="pt-2 text-[12px] text-gray-500 bg-gray-50 p-3 rounded-xl border border-gray-100 space-y-1">
+            <div className="pt-2 text-[12px] text-gray-500 dark:text-slate-400 bg-gray-50 dark:bg-slate-800/60 p-3 rounded-xl border border-gray-100 dark:border-slate-800 space-y-1">
               <div className="flex justify-between">
                 <span>মোট কার্যক্রম রেকর্ড:</span>
-                <span className="font-bold text-gray-700">{animalEvents.length}টি</span>
+                <span className="font-bold text-gray-700 dark:text-slate-300">{animalEvents.length}টি</span>
               </div>
               <div className="flex justify-between">
                 <span>ওজন পরিমাপ রেকর্ড:</span>
-                <span className="font-bold text-gray-700">
+                <span className="font-bold text-gray-700 dark:text-slate-300">
                   {animalEvents.filter((e) => e.eventType === 'WEIGHT').length}টি
                 </span>
               </div>
               <div className="flex justify-between">
                 <span>দুধ উৎপাদনের এন্ট্রি:</span>
-                <span className="font-bold text-gray-700">{milkEvents.length}টি</span>
+                <span className="font-bold text-gray-700 dark:text-slate-300">{milkEvents.length}টি</span>
               </div>
             </div>
           </div>

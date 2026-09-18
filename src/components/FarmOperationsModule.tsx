@@ -53,6 +53,9 @@ import { AnimalDetailView } from './AnimalDetailView';
 import { notifyUndoableAction } from '../services/undoService';
 import { getVaccineTemplates } from '../data/vaccineTemplates';
 import { VaccineTemplate } from '../types';
+import { Card } from './ui/Card';
+import { StatusBadge } from './ui/StatusBadge';
+import { EmptyState } from './ui/EmptyState';
 
 /**
  * Compresses an image file client-side to a max width of 800px preserving aspect ratio,
@@ -195,6 +198,7 @@ export const FarmOperationsModule: React.FC<Props> = ({
 
   const [animals, setAnimals] = useState<Animal[]>([]);
   const [animalEvents, setAnimalEvents] = useState<AnimalEvent[]>([]);
+  const [reminders, setReminders] = useState<Reminder[]>([]);
   const [animalFilter, setAnimalFilter] = useState<'ACTIVE' | 'INACTIVE'>('ACTIVE');
   const [selectedAnimalId, setSelectedAnimalId] = useState<string | null>(null);
   const selectedAnimal = animals.find((a) => a.id === selectedAnimalId) || null;
@@ -470,6 +474,9 @@ export const FarmOperationsModule: React.FC<Props> = ({
 
       const evList = await db.animalEvents.orderBy('date').reverse().toArray();
       setAnimalEvents(evList);
+
+      const remList = await db.reminders.toArray();
+      setReminders(remList);
 
       // Seed default fish batches if empty
       let fList = await db.fishBatches.toArray();
@@ -1468,105 +1475,203 @@ export const FarmOperationsModule: React.FC<Props> = ({
             });
 
             if (displayedAnimals.length === 0) {
+              if (animals.length === 0) {
+                return (
+                  <EmptyState
+                    id="empty-animals-state"
+                    icon={Tractor}
+                    heading="কোনো গবাদিপশু নিবন্ধিত নেই"
+                    message="আপনার খামারের গবাদিপশুর পরিচিতি, ওজন, খাদ্য ও ভ্যাকসিনের ট্র্যাক রাখতে প্রথম পশুটি যোগ করুন।"
+                    action={{
+                      label: 'Add Your First Animal',
+                      onClick: () => setShowAddAnimal(true),
+                      icon: PlusCircle
+                    }}
+                  />
+                );
+              }
+
               return (
-                <div className="p-8 text-center bg-gray-50 border border-dashed border-gray-300 rounded-xl text-gray-500">
-                  <p className="text-[15px] font-medium">
-                    {animalSearch.trim()
-                      ? `"${animalSearch}" দিয়ে কোনো পশু খুঁজে পাওয়া যায়নি।`
+                <EmptyState
+                  id="empty-filtered-animals-state"
+                  icon={Search}
+                  heading="কোনো পশু খুঁজে পাওয়া যায়নি"
+                  message={
+                    animalSearch.trim()
+                      ? `"${animalSearch}" দিয়ে কোনো পশু খুঁজে পাওয়া যায়নি। অনুসন্ধান ফিল্টার পরিবর্তন করুন।`
                       : animalFilter === 'ACTIVE'
-                      ? 'কোনো সক্রিয় গবাদিপশু নেই। নতুন পশু নিবন্ধন করতে উপরের বাটনে ক্লিক করুন।'
-                      : 'কোনো নিষ্ক্রিয় বা বিক্রিত পশুর রেকর্ড নেই।'}
-                  </p>
-                </div>
+                      ? 'কোনো সক্রিয় গবাদিপশু নেই। নতুন পশু নিবন্ধন করতে যোগ করুন।'
+                      : 'কোনো নিষ্ক্রিয় বা বিক্রিত পশুর রেকর্ড নেই।'
+                  }
+                  action={{
+                    label: 'Add Your First Animal',
+                    onClick: () => setShowAddAnimal(true),
+                    icon: PlusCircle
+                  }}
+                  compact
+                />
               );
             }
 
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
+            const todayTime = today.getTime();
+
             return (
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                 {displayedAnimals.map((a) => {
                   const eventsForAnimal = animalEvents.filter((ev) => ev.animalId === a.id);
                   const isInactive = a.status !== 'ACTIVE';
 
+                  // Vaccine status calculation for StatusBadge:
+                  // 'overdue' if past due, 'due-soon' if within 7 days, otherwise nothing shown
+                  const animalVaccineReminders = reminders.filter(
+                    (r) =>
+                      (r.animalId === a.id || r.animalId === a.tag) &&
+                      r.status === 'PENDING' &&
+                      (r.category === 'VACCINE' || r.category === 'TREATMENT' || r.title.toLowerCase().includes('vaccin') || r.title.includes('টিকা'))
+                  );
+
+                  const overdueReminder = animalVaccineReminders.find((r) => {
+                    const due = new Date(r.dueDate).getTime();
+                    return due < todayTime;
+                  });
+
+                  const dueSoonReminder = !overdueReminder
+                    ? animalVaccineReminders.find((r) => {
+                        const diffDays = Math.ceil((new Date(r.dueDate).getTime() - todayTime) / 86400000);
+                        return diffDays >= 0 && diffDays <= 7;
+                      })
+                    : null;
+
+                  const vaccineStatus: 'overdue' | 'due-soon' | null = overdueReminder
+                    ? 'overdue'
+                    : dueSoonReminder
+                    ? 'due-soon'
+                    : null;
+
                   return (
-                    <div
+                    <Card
                       key={a.id}
+                      id={`animal-card-${a.id}`}
+                      variant="interactive"
                       onClick={() => setSelectedAnimalId(a.id)}
-                      className={`p-4 rounded-xl border space-y-3 shadow-xs transition-all flex flex-col justify-between cursor-pointer hover:shadow-md hover:border-[#1E5128]/50 ${
+                      className={`flex flex-col justify-between group overflow-hidden ${
                         isInactive
-                          ? 'bg-gray-50/90 border-gray-300 hover:bg-gray-100/80'
-                          : 'bg-[#F8FAFC] border-gray-200 hover:bg-emerald-50/20'
+                          ? 'opacity-90 border-gray-300 dark:border-slate-700 bg-gray-50/70 dark:bg-slate-800/60'
+                          : 'border-gray-200/90 dark:border-slate-800 bg-white dark:bg-slate-900'
                       }`}
+                      padding="md"
                     >
-                      <div className="space-y-2.5">
-                        <div className="flex items-start justify-between gap-2">
-                          <div>
-                            <div className="flex items-center gap-1.5 flex-wrap">
-                              <span className="font-mono font-bold text-[#1E5128] text-[15px]">{a.id}</span>
-                              {isInactive && (
-                                <span
-                                  className={`px-2 py-0.5 rounded text-[11px] font-bold tracking-wide ${
-                                    a.status === 'SOLD'
-                                      ? 'bg-amber-100 text-amber-800 border border-amber-300'
-                                      : a.status === 'DECEASED'
-                                      ? 'bg-rose-100 text-rose-800 border border-rose-300'
-                                      : a.status === 'STOLEN'
-                                      ? 'bg-purple-100 text-purple-800 border border-purple-300'
-                                      : 'bg-blue-100 text-blue-800 border border-blue-300'
-                                  }`}
-                                >
-                                  {a.status === 'SOLD'
-                                    ? 'বিক্রিত (SOLD)'
-                                    : a.status === 'DECEASED'
-                                    ? 'মৃত (DECEASED)'
-                                    : a.status === 'STOLEN'
-                                    ? 'চুরি/হারানো (STOLEN)'
-                                    : 'স্থানান্তরিত (TRANSFERRED)'}
-                                </span>
-                              )}
-                            </div>
-                            <h4 className="font-bold text-gray-900 text-[14px] mt-0.5">{a.breed}</h4>
-                          </div>
-                          <span className="px-2.5 py-1 rounded-full bg-white border border-gray-200 text-xs text-gray-700 font-semibold shrink-0">
-                            {a.gender === 'FEMALE' ? 'গাভী' : 'ষাঁড়'} ({a.currentWeightKg} কেজি)
-                          </span>
-                        </div>
-
-                        {/* Cost & Financial Breakdown */}
-                        <div className="space-y-1.5 text-[13px] pt-2 border-t border-gray-200">
-                          <div className="flex justify-between">
-                            <span className="text-gray-600">ক্রয়মূল্য:</span>
-                            <span className="font-semibold text-gray-900">{fmt(a.purchaseCost)}</span>
-                          </div>
-                          <div className="flex justify-between">
-                            <span className="text-gray-600">খাদ্য খরচ:</span>
-                            <span className="font-semibold text-amber-700">{fmt(a.accumulatedFeedCost)}</span>
-                          </div>
-                          <div className="flex justify-between">
-                            <span className="text-gray-600">চিকিৎসা ও টিকা:</span>
-                            <span className="font-semibold text-blue-700">{fmt(a.accumulatedMedCost)}</span>
-                          </div>
-                          <div className="flex justify-between">
-                            <span className="text-gray-600">লেবার ও অন্যান্য:</span>
-                            <span className="font-semibold text-gray-900">
-                              {fmt(a.accumulatedLabourCost + (a.otherCosts || 0))}
-                            </span>
-                          </div>
-                          <div className="flex justify-between font-bold text-gray-900 pt-1.5 border-t border-gray-200 text-[14px]">
-                            <span>মোট পুঞ্জীভূত খরচ:</span>
-                            <span className="text-[#15803D]">{fmt(a.totalCost)}</span>
-                          </div>
-
-                          {a.status === 'SOLD' && (
-                            <div className="flex justify-between font-bold text-amber-900 pt-1.5 border-t border-amber-200 text-[13px] bg-amber-50/80 px-2.5 py-1.5 rounded-lg">
-                              <span>বিক্রয়মূল্য ({a.saleDate || 'তারিখ অপ্রাপ্ত'}):</span>
-                              <span className="text-amber-700">{fmt(a.salePrice || 0)}</span>
+                      <div className="space-y-3">
+                        {/* Prominent Animal Photo */}
+                        <div className="relative w-full h-44 sm:h-48 rounded-xl overflow-hidden bg-slate-100 dark:bg-slate-800 border border-gray-100 dark:border-slate-700/60 shrink-0">
+                          {a.photoUrl ? (
+                            <img
+                              src={a.photoUrl}
+                              alt={a.tag || a.id}
+                              className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                              loading="lazy"
+                            />
+                          ) : (
+                            <div className="w-full h-full flex flex-col items-center justify-center bg-linear-to-br from-emerald-50/60 to-slate-100 dark:from-slate-800 dark:to-slate-900 text-slate-400">
+                              <Camera className="w-9 h-9 text-slate-300 dark:text-slate-600 mb-1 stroke-[1.5]" />
+                              <span className="text-[11px] text-slate-400 font-medium">ছবি যুক্ত করা হয়নি</span>
                             </div>
                           )}
+
+                          {/* Species & Weight Badge overlaid on photo */}
+                          <div className="absolute top-2.5 right-2.5 flex items-center gap-1.5">
+                            <span className="px-2.5 py-1 rounded-full bg-white/95 dark:bg-slate-900/90 backdrop-blur-xs border border-gray-200/80 dark:border-slate-700 text-xs text-gray-800 dark:text-slate-200 font-bold shadow-xs">
+                              {a.gender === 'FEMALE' ? 'গাভী' : 'ষাঁড়'} ({a.currentWeightKg} কেজি)
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* Name / Tag in bold and StatusBadge for vaccine */}
+                        <div>
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="space-y-1">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className="font-mono font-extrabold text-[#1E5128] dark:text-emerald-400 text-base">
+                                  {a.tag || a.id}
+                                </span>
+                                {(a as any).name && (
+                                  <span className="font-bold text-gray-900 dark:text-slate-100 text-sm">
+                                    {(a as any).name}
+                                  </span>
+                                )}
+                                {vaccineStatus && (
+                                  <StatusBadge
+                                    status={vaccineStatus}
+                                    label={vaccineStatus === 'overdue' ? 'টিকা বকেয়া' : 'টিকা আসন্ন'}
+                                  />
+                                )}
+                                {isInactive && (
+                                  <span
+                                    className={`px-2 py-0.5 rounded text-[11px] font-bold tracking-wide ${
+                                      a.status === 'SOLD'
+                                        ? 'bg-amber-100 text-amber-800 border border-amber-300'
+                                        : a.status === 'DECEASED'
+                                        ? 'bg-rose-100 text-rose-800 border border-rose-300'
+                                        : a.status === 'STOLEN'
+                                        ? 'bg-purple-100 text-purple-800 border border-purple-300'
+                                        : 'bg-blue-100 text-blue-800 border border-blue-300'
+                                    }`}
+                                  >
+                                    {a.status === 'SOLD'
+                                      ? 'বিক্রিত (SOLD)'
+                                      : a.status === 'DECEASED'
+                                      ? 'মৃত (DECEASED)'
+                                      : a.status === 'STOLEN'
+                                      ? 'চুরি/হারানো (STOLEN)'
+                                      : 'স্থানান্তরিত (TRANSFERRED)'}
+                                  </span>
+                                )}
+                              </div>
+                              <h4 className="font-bold text-gray-900 dark:text-slate-100 text-[14px]">
+                                {a.breed}
+                              </h4>
+                            </div>
+                          </div>
+
+                          {/* Cost & Financial Breakdown */}
+                          <div className="space-y-1.5 text-[13px] pt-2.5 mt-2 border-t border-gray-100 dark:border-slate-800">
+                            <div className="flex justify-between">
+                              <span className="text-gray-500 dark:text-slate-400">ক্রয়মূল্য:</span>
+                              <span className="font-semibold text-gray-900 dark:text-slate-200">{fmt(a.purchaseCost)}</span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span className="text-gray-500 dark:text-slate-400">খাদ্য খরচ:</span>
+                              <span className="font-semibold text-amber-700 dark:text-amber-400">{fmt(a.accumulatedFeedCost)}</span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span className="text-gray-500 dark:text-slate-400">চিকিৎসা ও টিকা:</span>
+                              <span className="font-semibold text-blue-700 dark:text-blue-400">{fmt(a.accumulatedMedCost)}</span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span className="text-gray-500 dark:text-slate-400">লেবার ও অন্যান্য:</span>
+                              <span className="font-semibold text-gray-900 dark:text-slate-200">
+                                {fmt(a.accumulatedLabourCost + (a.otherCosts || 0))}
+                              </span>
+                            </div>
+                            <div className="flex justify-between font-bold text-gray-900 dark:text-slate-100 pt-1.5 border-t border-gray-100 dark:border-slate-800 text-[14px]">
+                              <span>মোট পুঞ্জীভূত খরচ:</span>
+                              <span className="text-[#15803D] dark:text-emerald-400">{fmt(a.totalCost)}</span>
+                            </div>
+
+                            {a.status === 'SOLD' && (
+                              <div className="flex justify-between font-bold text-amber-900 dark:text-amber-300 pt-1.5 border-t border-amber-200/80 dark:border-amber-900/60 text-[13px] bg-amber-50/80 dark:bg-amber-950/40 px-2.5 py-1.5 rounded-lg">
+                                <span>বিক্রয়মূল্য ({a.saleDate || 'তারিখ অপ্রাপ্ত'}):</span>
+                                <span className="text-amber-700 dark:text-amber-400">{fmt(a.salePrice || 0)}</span>
+                              </div>
+                            )}
+                          </div>
                         </div>
                       </div>
 
                       {/* Action Buttons: "+ কার্যক্রম যোগ করুন" and "পশু বিক্রি/হারানো" */}
-                      <div className="pt-2.5 border-t border-gray-200 space-y-2">
+                      <div className="pt-3 mt-2 border-t border-gray-100 dark:border-slate-800 space-y-2">
                         <div className="grid grid-cols-2 gap-2">
                           <button
                             type="button"
@@ -1590,7 +1695,7 @@ export const FarmOperationsModule: React.FC<Props> = ({
                             className="w-full py-2 px-2 rounded-lg bg-[#1E5128] hover:bg-[#173F1F] text-white text-[12px] font-bold shadow-xs transition-all cursor-pointer flex items-center justify-center gap-1 min-h-[38px]"
                           >
                             <PlusCircle className="w-3.5 h-3.5 shrink-0" />
-                            <span className="whitespace-nowrap">+ কার্যক্রম যোগ করুন</span>
+                            <span className="whitespace-nowrap">+ কার্যক্রম যোগ</span>
                           </button>
 
                           <button
@@ -1605,9 +1710,9 @@ export const FarmOperationsModule: React.FC<Props> = ({
                               setStatusNotes('');
                               setStatusPaymentMethod('CASH');
                             }}
-                            className="w-full py-2 px-2 rounded-lg bg-amber-50 hover:bg-amber-100 border border-amber-300 text-amber-900 text-[12px] font-bold shadow-xs transition-all cursor-pointer flex items-center justify-center gap-1 min-h-[38px]"
+                            className="w-full py-2 px-2 rounded-lg bg-amber-50 hover:bg-amber-100 border border-amber-300 text-amber-900 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-800 text-[12px] font-bold shadow-xs transition-all cursor-pointer flex items-center justify-center gap-1 min-h-[38px]"
                           >
-                            <Tag className="w-3.5 h-3.5 shrink-0 text-amber-700" />
+                            <Tag className="w-3.5 h-3.5 shrink-0 text-amber-700 dark:text-amber-400" />
                             <span className="whitespace-nowrap">পশু বিক্রি/হারানো</span>
                           </button>
                         </div>
@@ -1619,7 +1724,7 @@ export const FarmOperationsModule: React.FC<Props> = ({
                               e.stopPropagation();
                               setHistoryModalAnimal(a);
                             }}
-                            className="w-full py-1.5 px-2 rounded-lg bg-white hover:bg-gray-100 border border-gray-200 text-gray-700 text-[12px] font-medium transition-all cursor-pointer flex items-center justify-center gap-1.5"
+                            className="w-full py-1.5 px-2 rounded-lg bg-white hover:bg-gray-100 dark:bg-slate-800 dark:hover:bg-slate-700 border border-gray-200 dark:border-slate-700 text-gray-700 dark:text-slate-200 text-[12px] font-medium transition-all cursor-pointer flex items-center justify-center gap-1.5"
                           >
                             <History className="w-3.5 h-3.5 text-gray-500" />
                             <span>কার্যক্রম ইতিহাস ({eventsForAnimal.length}টি)</span>
@@ -1627,12 +1732,12 @@ export const FarmOperationsModule: React.FC<Props> = ({
                         )}
 
                         {/* Tap to view detail link */}
-                        <div className="flex items-center justify-between pt-1 border-t border-dashed border-gray-200 text-[12px] font-semibold text-[#1E5128]">
+                        <div className="flex items-center justify-between pt-1 text-[12px] font-semibold text-[#1E5128] dark:text-emerald-400 group-hover:translate-x-0.5 transition-transform">
                           <span>বিস্তারিত তথ্য, ওজন চার্ট ও দুধ উৎপাদন</span>
                           <span>→</span>
                         </div>
                       </div>
-                    </div>
+                    </Card>
                   );
                 })}
               </div>
