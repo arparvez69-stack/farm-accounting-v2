@@ -147,6 +147,9 @@ export interface AnimalEvent {
   eventType: 'FEED' | 'VACCINE' | 'TREATMENT' | 'WEIGHT' | 'MILK' | 'BREEDING' | 'MORTALITY';
   date: string;
   cost: number;
+  feedItemId?: string;
+  feedQuantityUsed?: number;
+  feedUnit?: string;
   milkLiters?: number;
   weightKg?: number;
   vaccineName?: string;
@@ -267,6 +270,7 @@ export interface InventoryItem {
   nameEn: string;
   category:
     | 'FEED'
+    | 'FEED_STOCK'
     | 'SEED'
     | 'FERTILIZER'
     | 'MEDICINE'
@@ -279,6 +283,8 @@ export interface InventoryItem {
   reorderLevel: number;
   avgCostPrice: number;
   sellingPrice: number;
+  lastRestockAmount?: number;
+  lowStockThreshold?: number;
   synced?: boolean;
 }
 

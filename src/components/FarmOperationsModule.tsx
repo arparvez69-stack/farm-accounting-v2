@@ -39,7 +39,8 @@ import {
   InternalFlow,
   ProcessingRun,
   Reminder,
-  UserRole
+  UserRole,
+  InventoryItem
 } from '../types';
 import { generateTransactionNumber, generateUniqueId, safeInsert } from '../utils/idGenerator';
 import {
@@ -180,6 +181,9 @@ export const FarmOperationsModule: React.FC<Props> = ({
   const [eventType, setEventType] = useState<AnimalEvent['eventType']>('FEED');
   const [eventDate, setEventDate] = useState<string>(new Date().toISOString().split('T')[0]);
   const [eventCost, setEventCost] = useState<string>('0');
+  const [feedStockItems, setFeedStockItems] = useState<InventoryItem[]>([]);
+  const [selectedFeedItemId, setSelectedFeedItemId] = useState<string>('');
+  const [feedQuantityUsed, setFeedQuantityUsed] = useState<string>('');
   const [eventMilkLiters, setEventMilkLiters] = useState<string>('');
   const [eventWeightKg, setEventWeightKg] = useState<string>('');
   const [eventVaccineName, setEventVaccineName] = useState<string>('');
@@ -245,6 +249,7 @@ export const FarmOperationsModule: React.FC<Props> = ({
       setIsBulkMode(false);
       setEventDate(new Date().toISOString().split('T')[0]);
       setEventCost('0');
+      setFeedQuantityUsed('');
       setEventMilkLiters('');
       setEventWeightKg('');
       setEventVaccineName('');
@@ -330,6 +335,14 @@ export const FarmOperationsModule: React.FC<Props> = ({
         aList = seedA;
       }
       setAnimals(aList);
+
+      // Load feed items for feed event logging
+      const allInv = await db.inventoryItems.toArray();
+      const feeds = allInv.filter((i) => i.category === 'FEED' || i.category === 'FEED_STOCK');
+      setFeedStockItems(feeds);
+      if (feeds.length > 0) {
+        setSelectedFeedItemId((prev) => prev || feeds[0].id);
+      }
 
       const evList = await db.animalEvents.orderBy('date').reverse().toArray();
       setAnimalEvents(evList);
@@ -540,6 +553,7 @@ export const FarmOperationsModule: React.FC<Props> = ({
     setBulkSelectedAnimalIds([]);
     setCostAllocation('PER_ANIMAL');
     setEventCost('0');
+    setFeedQuantityUsed('');
     setEventMilkLiters('');
     setEventWeightKg('');
     setEventVaccineName('');
@@ -613,6 +627,7 @@ export const FarmOperationsModule: React.FC<Props> = ({
     setSubmittingEvent(true);
     try {
       const rawCost = Math.max(0, parseFloat(eventCost) || 0);
+      const rawFeedQty = (eventType === 'FEED' && feedQuantityUsed) ? Math.max(0, parseFloat(feedQuantityUsed) || 0) : undefined;
       const milk = eventType === 'MILK' && eventMilkLiters ? Math.max(0, parseFloat(eventMilkLiters) || 0) : undefined;
       const weight = eventType === 'WEIGHT' && eventWeightKg ? Math.max(0, parseFloat(eventWeightKg) || 0) : undefined;
 
@@ -620,6 +635,10 @@ export const FarmOperationsModule: React.FC<Props> = ({
       const costPerAnimal = (isBulkMode && costAllocation === 'SPLIT_EVENLY')
         ? (targetAnimals.length > 0 ? Math.round((rawCost / targetAnimals.length) * 100) / 100 : 0)
         : rawCost;
+
+      const feedQtyPerAnimal = (isBulkMode && rawFeedQty !== undefined && targetAnimals.length > 0)
+        ? Math.round((rawFeedQty / targetAnimals.length) * 100) / 100
+        : rawFeedQty;
 
       // Process each selected animal: one AnimalEvent (and matching journal entry) per selected animal
       for (let i = 0; i < targetAnimals.length; i++) {
@@ -630,6 +649,12 @@ export const FarmOperationsModule: React.FC<Props> = ({
               : costPerAnimal)
           : rawCost;
 
+        const animalFeedQty = (isBulkMode && rawFeedQty !== undefined && targetAnimals.length > 0)
+          ? (i === targetAnimals.length - 1
+              ? Math.max(0, Math.round((rawFeedQty - (feedQtyPerAnimal || 0) * (targetAnimals.length - 1)) * 100) / 100)
+              : feedQtyPerAnimal)
+          : rawFeedQty;
+
         const res = await executeAnimalEventTransaction({
           animal,
           event: {
@@ -637,6 +662,9 @@ export const FarmOperationsModule: React.FC<Props> = ({
             eventType,
             date: eventDate || new Date().toISOString().split('T')[0],
             cost: animalCost,
+            feedItemId: (eventType === 'FEED' && selectedFeedItemId) ? selectedFeedItemId : undefined,
+            feedQuantityUsed: animalFeedQty,
+            feedUnit: (eventType === 'FEED' && selectedFeedItemId) ? (feedStockItems.find(f => f.id === selectedFeedItemId)?.unit) : undefined,
             milkLiters: milk,
             weightKg: weight,
             vaccineName: (eventType === 'VACCINE' || eventType === 'TREATMENT') ? eventVaccineName.trim() || undefined : undefined,
@@ -675,10 +703,14 @@ export const FarmOperationsModule: React.FC<Props> = ({
           animalId: animal.id,
           cost: animalCost,
           eventType,
+          feedItemId: (eventType === 'FEED' && selectedFeedItemId) ? selectedFeedItemId : undefined,
+          feedQuantityUsed: animalFeedQty,
           createdReminderId: autoReminderId,
           currentUserId
         });
       }
+
+      window.dispatchEvent(new CustomEvent('goted_data_changed'));
 
       const totalRecordedCost = (isBulkMode && costAllocation === 'SPLIT_EVENLY')
         ? rawCost
@@ -1744,6 +1776,94 @@ export const FarmOperationsModule: React.FC<Props> = ({
                       })()}
                     </div>
                   </div>
+
+                  {/* FEED STOCK ITEM & QUANTITY USED */}
+                  {eventType === 'FEED' && (
+                    <div className="p-3.5 bg-emerald-50/70 border border-emerald-200 rounded-xl space-y-3">
+                      <div>
+                        <div className="flex items-center justify-between mb-1">
+                          <label className="text-[13px] font-semibold text-emerald-950">
+                            ফিড স্টক নির্বাচন (Select Feed Stock)
+                          </label>
+                          {feedStockItems.length > 0 && (
+                            <span className="text-[11px] text-emerald-700 font-medium">ইনভেন্টরি আইটেম</span>
+                          )}
+                        </div>
+                        {feedStockItems.length > 0 ? (
+                          <select
+                            value={selectedFeedItemId}
+                            onChange={(e) => {
+                              const newId = e.target.value;
+                              setSelectedFeedItemId(newId);
+                              const it = feedStockItems.find(f => f.id === newId);
+                              if (it && it.avgCostPrice > 0 && feedQuantityUsed) {
+                                const q = parseFloat(feedQuantityUsed) || 0;
+                                setEventCost((Math.round(q * it.avgCostPrice * 100) / 100).toString());
+                              }
+                            }}
+                            className="w-full bg-white border border-emerald-300 rounded-lg p-2.5 text-[14px] text-gray-900 focus:ring-2 focus:ring-[#1E5128]"
+                          >
+                            <option value="">-- ফিড স্টক নির্বাচন করুন --</option>
+                            {feedStockItems.map((f) => (
+                              <option key={f.id} value={f.id}>
+                                {f.nameBn} (বর্তমান মজুদ: {f.currentStock} {f.unit}, গড় দর: ৳{f.avgCostPrice}/{f.unit})
+                              </option>
+                            ))}
+                          </select>
+                        ) : (
+                          <div className="text-xs text-amber-800 bg-amber-50 p-2.5 rounded-lg border border-amber-200">
+                            ইনভেন্টরিতে কোনো ফিড স্টক পাওয়া যায়নি। ইনভেন্টরি মডিউলে &quot;ফিড স্টক&quot; ক্যাটাগরিতে আইটেম যুক্ত করুন।
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Optional Quantity Used Field */}
+                      <div>
+                        <div className="flex items-center justify-between mb-1">
+                          <label className="text-[13px] font-semibold text-emerald-950">
+                            কত পরিমাণ ব্যবহার হলো (Quantity Used)
+                          </label>
+                          <span className="text-[11px] text-emerald-700 font-medium">ঐচ্ছিক (মজুদ থেকে বাদ হবে)</span>
+                        </div>
+                        <div className="relative flex items-center">
+                          <input
+                            type="number"
+                            step="0.01"
+                            min="0"
+                            placeholder="যেমন: ৫ বা ১০"
+                            value={feedQuantityUsed}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              setFeedQuantityUsed(val);
+                              const it = feedStockItems.find(f => f.id === selectedFeedItemId);
+                              if (it && it.avgCostPrice > 0) {
+                                const q = parseFloat(val) || 0;
+                                if (q > 0) {
+                                  setEventCost((Math.round(q * it.avgCostPrice * 100) / 100).toString());
+                                }
+                              }
+                            }}
+                            className="w-full bg-white border border-emerald-300 rounded-lg p-2.5 pr-20 text-[14px] text-gray-900 font-mono focus:ring-2 focus:ring-[#1E5128]"
+                          />
+                          <span className="absolute right-3 text-xs font-bold text-gray-600 pointer-events-none">
+                            {feedStockItems.find(f => f.id === selectedFeedItemId)?.unit || 'কেজি'}
+                          </span>
+                        </div>
+                        {selectedFeedItemId && (
+                          <div className="text-[11px] text-emerald-800 mt-1.5 flex flex-wrap items-center justify-between gap-1">
+                            <span>
+                              বর্তমান স্টক: <strong>{feedStockItems.find(f => f.id === selectedFeedItemId)?.currentStock} {feedStockItems.find(f => f.id === selectedFeedItemId)?.unit}</strong>
+                            </span>
+                            {feedQuantityUsed && parseFloat(feedQuantityUsed) > 0 && (
+                              <span className="font-semibold text-emerald-900">
+                                ব্যবহারের পর থাকবে: {Math.max(0, Math.round(((feedStockItems.find(f => f.id === selectedFeedItemId)?.currentStock || 0) - (parseFloat(feedQuantityUsed) || 0)) * 100) / 100)} {feedStockItems.find(f => f.id === selectedFeedItemId)?.unit}
+                              </span>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
 
                   {/* Shared Field: Cost Field */}
                   <div className="space-y-2">

@@ -129,6 +129,7 @@ export function getCashBankAccountGLCode(accountType: 'CASH' | 'BANK' | 'MOBILE_
 export function getInventoryAssetAccount(category?: string): string {
   switch (category) {
     case 'FEED':
+    case 'FEED_STOCK':
       return CANONICAL_ACCOUNTS.FEED_INVENTORY; // 1051
     case 'SEED':
     case 'FERTILIZER':

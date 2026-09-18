@@ -386,6 +386,7 @@ export async function executePurchaseTransaction(params: {
       await db.inventoryItems.update(freshItem.id, {
         currentStock: newStock,
         avgCostPrice: newAvgCost,
+        lastRestockAmount: quantity,
         synced: false
       });
 
@@ -823,7 +824,9 @@ export async function executeAnimalEventTransaction(params: {
       db.cashBankAccounts,
       db.accounts,
       db.auditLogs,
-      db.closedPeriods
+      db.closedPeriods,
+      db.inventoryItems,
+      db.stockMovements
     ],
     async () => {
       const { animal, event, paymentMethod = 'CASH', bankAccountId, currentUserId } = params;
@@ -967,6 +970,35 @@ export async function executeAnimalEventTransaction(params: {
       }
 
       await db.animals.update(freshAnimal.id, animalUpdates);
+
+      // Deduct feed stock from matching InventoryItem if feedItemId and feedQuantityUsed provided
+      if (event.eventType === 'FEED' && event.feedItemId && event.feedQuantityUsed && event.feedQuantityUsed > 0) {
+        const feedItem = await db.inventoryItems.get(event.feedItemId);
+        if (feedItem) {
+          const newStock = Math.max(0, Math.round((feedItem.currentStock - event.feedQuantityUsed) * 100) / 100);
+          await db.inventoryItems.update(feedItem.id, {
+            currentStock: newStock,
+            synced: false
+          });
+
+          await safeInsert(
+            db.stockMovements,
+            {
+              id: generateUniqueId('stkm'),
+              date: event.date,
+              itemId: feedItem.id,
+              movementType: 'CONSUMPTION',
+              quantity: event.feedQuantityUsed,
+              unitCost: feedItem.avgCostPrice,
+              totalValue: Math.round(event.feedQuantityUsed * feedItem.avgCostPrice * 100) / 100,
+              referenceId: eventId,
+              notes: `পশু ${animal.tag || animal.id}: খাদ্য ব্যবহার (${event.feedQuantityUsed} ${feedItem.unit})`,
+              synced: false
+            },
+            { idPrefix: 'stkm' }
+          );
+        }
+      }
 
       // Audit Log
       await safeInsert(db.auditLogs, {

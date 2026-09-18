@@ -25,7 +25,8 @@ import {
   Plus,
   Edit3,
   Trash2,
-  RotateCcw
+  RotateCcw,
+  Wallet
 } from 'lucide-react';
 import { useLanguage } from '../i18n/translations';
 import { db } from '../db/indexedDb';
@@ -70,6 +71,22 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
   const [farmPhone, setFarmPhone] = useState<string>(() => {
     return (systemConfig?.phone && systemConfig.phone !== '+8801700000000') ? systemConfig.phone : (localStorage.getItem('goted_farm_phone') || '');
   });
+
+  // Low Cash Alert Threshold Setting (নগদ সতর্কতা সীমা, default: 5000)
+  const [lowCashAlertThreshold, setLowCashAlertThreshold] = useState<number>(() => {
+    const saved = localStorage.getItem('goted_low_cash_alert_threshold');
+    if (saved !== null && !isNaN(Number(saved))) {
+      return Number(saved);
+    }
+    return 5000;
+  });
+
+  const handleLowCashAlertThresholdChange = (val: number) => {
+    const safeVal = isNaN(val) ? 0 : val;
+    setLowCashAlertThreshold(safeVal);
+    localStorage.setItem('goted_low_cash_alert_threshold', safeVal.toString());
+    window.dispatchEvent(new Event('goted_settings_changed'));
+  };
 
   // Dark Mode state (saved to local settings, defaulting to off)
   const [isDarkMode, setIsDarkMode] = useState<boolean>(() => {
@@ -1258,6 +1275,39 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
                 onChange={(e) => handlePhoneChange(e.target.value)}
                 className="w-full bg-white dark:bg-slate-900 border border-gray-300 dark:border-slate-700 rounded-lg p-2 text-[13px] text-gray-900 dark:text-slate-100 font-mono focus:ring-1 focus:ring-[#1E5128]"
               />
+            </div>
+          </div>
+
+          {/* নগদ সতর্কতা সীমা (Low Cash Alert Threshold) */}
+          <div className="pt-2 border-t border-gray-100 dark:border-slate-800">
+            <div className="p-4 rounded-xl bg-gray-50 dark:bg-slate-800/80 border border-gray-200 dark:border-slate-700 space-y-2">
+              <div className="flex items-center justify-between">
+                <h4 className="font-bold text-gray-900 dark:text-slate-100 text-[14px] flex items-center gap-1.5">
+                  <Wallet className="w-4 h-4 text-[#1E5128] dark:text-emerald-400" />
+                  <span>নগদ সতর্কতা সীমা (Low Cash Alert Threshold)</span>
+                </h4>
+                <span className="text-xs font-semibold px-2 py-0.5 rounded bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 font-mono">
+                  ডিফল্ট: ৳৫,০০০
+                </span>
+              </div>
+              <p className="text-xs text-gray-500 dark:text-slate-400">
+                নগদ এবং ব্যাংক জমার সম্মিলিত ব্যালেন্স এই সীমার নিচে নামলে ড্যাশবোর্ডে সতর্কতা ব্যানার প্রদর্শিত হবে (Show warning banner on dashboard if combined cash + bank balance falls below this limit)
+              </p>
+              <div className="relative max-w-xs">
+                <span className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-gray-500 dark:text-slate-400 font-bold">
+                  ৳
+                </span>
+                <input
+                  type="number"
+                  id="input-low-cash-alert-threshold"
+                  min="0"
+                  step="500"
+                  placeholder="5000"
+                  value={lowCashAlertThreshold}
+                  onChange={(e) => handleLowCashAlertThresholdChange(parseFloat(e.target.value) || 0)}
+                  className="w-full pl-8 pr-3 py-2 bg-white dark:bg-slate-900 border border-gray-300 dark:border-slate-700 rounded-lg text-[13px] text-gray-900 dark:text-slate-100 font-mono focus:ring-1 focus:ring-[#1E5128]"
+                />
+              </div>
             </div>
           </div>
 

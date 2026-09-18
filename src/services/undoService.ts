@@ -10,6 +10,8 @@ export type UndoableAction =
       cost: number;
       eventType: string;
       createdReminderId?: string;
+      feedItemId?: string;
+      feedQuantityUsed?: number;
       currentUserId: string;
     }
   | {
@@ -126,6 +128,17 @@ export async function executeUndo(action: UndoableAction): Promise<{ success: bo
           totalCost: Math.round(newTotal * 100) / 100,
           synced: false
         });
+      }
+
+      // 5. Restore feed stock if quantity was deducted
+      if (action.feedItemId && action.feedQuantityUsed && action.feedQuantityUsed > 0) {
+        const feedItem = await db.inventoryItems.get(action.feedItemId);
+        if (feedItem) {
+          await db.inventoryItems.update(feedItem.id, {
+            currentStock: Math.round((feedItem.currentStock + action.feedQuantityUsed) * 100) / 100,
+            synced: false
+          });
+        }
       }
     } else if (action.type === 'SALE') {
       // 1. Reverse the journal entry

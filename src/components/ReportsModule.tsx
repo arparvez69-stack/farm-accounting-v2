@@ -28,7 +28,8 @@ import {
   Lock,
   Calendar,
   BookOpen,
-  X
+  X,
+  Activity
 } from 'lucide-react';
 import {
   BalanceSheetReport,
@@ -42,9 +43,19 @@ import {
   ProfitLossReport,
   TrialBalance
 } from '../accounting/accountingEngine';
+import {
+  ResponsiveContainer,
+  BarChart as RechartsBarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  Tooltip,
+  Legend,
+  CartesianGrid
+} from 'recharts';
 import { exportAllToExcel, createFullJsonBackup, restoreFromJsonBackup } from '../services/exportService';
 import { db } from '../db/indexedDb';
-import { UserRole, Sale, Purchase, PaymentRecord, Loan, Investor, CashBankAccount, JournalEntry, ClosedPeriod, Account } from '../types';
+import { UserRole, Sale, Purchase, PaymentRecord, Loan, Investor, CashBankAccount, JournalEntry, ClosedPeriod, Account, Animal, AnimalEvent } from '../types';
 
 type DatePreset = 'this_month' | 'last_month' | 'this_year' | 'custom';
 
@@ -199,6 +210,36 @@ export interface YoyComparisonData {
   }>;
 }
 
+export interface HerdKpiReportData {
+  periodStartDate: string;
+  periodEndDate: string;
+  daysInPeriod: number;
+  totalAnimalsEverOwned: number;
+  activeAnimalsCount: number;
+  soldAnimalsCount: number;
+  deceasedAnimalsCount: number;
+  otherStatusCount: number;
+  totalMilkLiters: number;
+  milkEventsCount: number;
+  avgDailyMilkPerActiveAnimal: number;
+  avgDailyMilkHerdTotal: number;
+  totalFeedCost: number;
+  feedEventsCount: number;
+  feedCostPerLiter: number;
+  deceasedInPeriodCount: number;
+  mortalityRate: number;
+  speciesBreakdown: Array<{
+    species: string;
+    total: number;
+    active: number;
+    sold: number;
+    deceased: number;
+    milkLiters: number;
+    feedCost: number;
+  }>;
+  deceasedAnimals: Animal[];
+}
+
 type ReportType =
   | 'pl'
   | 'balanceSheet'
@@ -209,7 +250,8 @@ type ReportType =
   | 'cashFlow'
   | 'backup'
   | 'vatSummary'
-  | 'yoyComparison';
+  | 'yoyComparison'
+  | 'herdSummary';
 
 export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
   const [activeReport, setActiveReport] = useState<ReportType>('pl');
@@ -218,6 +260,9 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
   const [pl, setPl] = useState<ProfitLossReport | null>(null);
   const [bs, setBs] = useState<BalanceSheetReport | null>(null);
   const [tb, setTb] = useState<TrialBalance | null>(null);
+
+  // Herd Summary KPI Report State
+  const [herdKpiData, setHerdKpiData] = useState<HerdKpiReportData | null>(null);
 
   // General Ledger Report State
   const [reportAccounts, setReportAccounts] = useState<Account[]>([]);
@@ -248,6 +293,26 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
   const [comparisonMode, setComparisonMode] = useState<'calendar' | 'closed_period'>('calendar');
   const [selectedClosedPeriodId, setSelectedClosedPeriodId] = useState<string>('');
   const [yoyData, setYoyData] = useState<YoyComparisonData | null>(null);
+
+  // Simple YOY Profit Bar Chart State (only shown once at least one prior year has been closed)
+  const [yoyProfitBarData, setYoyProfitBarData] = useState<Array<{
+    monthKey: string;
+    monthName: string;
+    thisYearProfit: number;
+    lastYearProfit: number;
+    diff: number;
+    pctChange: number | null;
+  }>>([]);
+  const [yoyProfitBarSummary, setYoyProfitBarSummary] = useState<{
+    thisYearYtd: number;
+    lastYearYtd: number;
+    diff: number;
+    pctChange: number | null;
+    thisYear: number;
+    lastYear: number;
+    monthsCount: number;
+    latestClosedPeriod: ClosedPeriod | null;
+  } | null>(null);
 
   useEffect(() => {
     const handleSettingsChanged = () => {
@@ -898,6 +963,15 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
   const loadReports = async () => {
     setLoading(true);
     try {
+      const periods = await getClosedPeriods();
+      setClosedPeriodsList(periods);
+      if (periods.length > 0) {
+        await loadYoyProfitBarChart(periods);
+      } else {
+        setYoyProfitBarData([]);
+        setYoyProfitBarSummary(null);
+      }
+
       const dateFilter: DateRangeFilter | undefined = (startDate || endDate) ? { startDate, endDate } : undefined;
       if (activeReport === 'pl') {
         const res = await generateProfitLoss(dateFilter);
@@ -920,12 +994,269 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
         await loadVatSummary();
       } else if (activeReport === 'yoyComparison') {
         await loadYoyComparison();
+      } else if (activeReport === 'herdSummary') {
+        await loadHerdSummaryReport();
       }
     } catch (e) {
       console.error(e);
     } finally {
       setLoading(false);
     }
+  };
+
+  const loadYoyProfitBarChart = async (periods: ClosedPeriod[]) => {
+    if (!periods || periods.length === 0) {
+      setYoyProfitBarData([]);
+      setYoyProfitBarSummary(null);
+      return;
+    }
+
+    try {
+      const now = new Date();
+      const thisYear = now.getFullYear();
+      const lastYear = thisYear - 1;
+      const currentMonthIdx = now.getMonth(); // 0 to 11
+
+      const monthNamesBn = [
+        'জানুয়ারি', 'ফেব্রুয়ারি', 'মার্চ', 'এপ্রিল', 'মে', 'জুন',
+        'জুলাই', 'আগস্ট', 'সেপ্টেম্বর', 'অক্টোবর', 'নভেম্বর', 'ডিসেম্বর'
+      ];
+      const monthShortBn = [
+        'জানু', 'ফেব্রু', 'মার্চ', 'এপ্রিল', 'মে', 'জুন',
+        'জুলাই', 'আগস্ট', 'সেপ্টে', 'অক্টো', 'নভে', 'ডিসে'
+      ];
+
+      const barItems: Array<{
+        monthKey: string;
+        monthName: string;
+        thisYearProfit: number;
+        lastYearProfit: number;
+        diff: number;
+        pctChange: number | null;
+      }> = [];
+
+      let thisYearYtd = 0;
+      let lastYearYtd = 0;
+
+      for (let m = 0; m <= currentMonthIdx; m++) {
+        const monthStr = String(m + 1).padStart(2, '0');
+        const daysThis = new Date(thisYear, m + 1, 0).getDate();
+        const daysLast = new Date(lastYear, m + 1, 0).getDate();
+
+        const dayThis = m === currentMonthIdx ? Math.min(now.getDate(), daysThis) : daysThis;
+        const dayLast = m === currentMonthIdx ? Math.min(now.getDate(), daysLast) : daysLast;
+
+        const thisStartDate = `${thisYear}-${monthStr}-01`;
+        const thisEndDate = `${thisYear}-${monthStr}-${String(dayThis).padStart(2, '0')}`;
+        const lastStartDate = `${lastYear}-${monthStr}-01`;
+        const lastEndDate = `${lastYear}-${monthStr}-${String(dayLast).padStart(2, '0')}`;
+
+        const [thisReport, lastReport] = await Promise.all([
+          generateProfitLoss({ startDate: thisStartDate, endDate: thisEndDate }),
+          generateProfitLoss({ startDate: lastStartDate, endDate: lastEndDate })
+        ]);
+
+        const thisVal = Math.round(thisReport.netProfit);
+        const lastVal = Math.round(lastReport.netProfit);
+        thisYearYtd += thisVal;
+        lastYearYtd += lastVal;
+
+        const diff = thisVal - lastVal;
+        let pctChange: number | null = null;
+        if (lastVal !== 0) {
+          pctChange = Math.round(((thisVal - lastVal) / Math.abs(lastVal)) * 100);
+        }
+
+        barItems.push({
+          monthKey: monthShortBn[m],
+          monthName: `${monthNamesBn[m]} (${thisYear})`,
+          thisYearProfit: thisVal,
+          lastYearProfit: lastVal,
+          diff,
+          pctChange
+        });
+      }
+
+      const diff = thisYearYtd - lastYearYtd;
+      let pctChange: number | null = null;
+      if (lastYearYtd !== 0) {
+        pctChange = Math.round(((thisYearYtd - lastYearYtd) / Math.abs(lastYearYtd)) * 100);
+      }
+
+      const sortedPeriods = [...periods].sort((a, b) => b.endDate.localeCompare(a.endDate));
+
+      setYoyProfitBarSummary({
+        thisYearYtd,
+        lastYearYtd,
+        diff,
+        pctChange,
+        thisYear,
+        lastYear,
+        monthsCount: currentMonthIdx + 1,
+        latestClosedPeriod: sortedPeriods[0] || null
+      });
+      setYoyProfitBarData(barItems);
+    } catch (err) {
+      console.error('Error calculating YOY profit bar chart data:', err);
+    }
+  };
+
+  const loadHerdSummaryReport = async () => {
+    const [allAnimals, allEvents] = await Promise.all([
+      db.animals.toArray(),
+      db.animalEvents.toArray()
+    ]);
+
+    const isWithinRange = (dateStr?: string) => {
+      if (!dateStr) return false;
+      if (startDate && dateStr < startDate) return false;
+      if (endDate && dateStr > endDate) return false;
+      return true;
+    };
+
+    let daysInPeriod = 30;
+    if (startDate && endDate) {
+      const s = new Date(startDate).getTime();
+      const e = new Date(endDate).getTime();
+      if (!isNaN(s) && !isNaN(e) && e >= s) {
+        daysInPeriod = Math.max(1, Math.round((e - s) / (1000 * 60 * 60 * 24)) + 1);
+      }
+    }
+
+    const totalAnimalsEverOwned = allAnimals.length;
+    const activeAnimals = allAnimals.filter((a) => a.status === 'ACTIVE');
+    const activeAnimalsCount = activeAnimals.length;
+    const soldAnimalsCount = allAnimals.filter((a) => a.status === 'SOLD').length;
+    const totalDeceasedCount = allAnimals.filter((a) => a.status === 'DECEASED').length;
+    const otherStatusCount = allAnimals.filter(
+      (a) => a.status !== 'ACTIVE' && a.status !== 'SOLD' && a.status !== 'DECEASED'
+    ).length;
+
+    // 1. Milk yield in period across all active animals
+    const milkEventsInRange = allEvents.filter(
+      (ev) => ev.eventType === 'MILK' && isWithinRange(ev.date)
+    );
+    const totalMilkLiters =
+      Math.round(
+        milkEventsInRange.reduce((acc, ev) => acc + (Number(ev.milkLiters) || 0), 0) * 100
+      ) / 100;
+    const milkEventsCount = milkEventsInRange.length;
+
+    const avgDailyMilkHerdTotal =
+      daysInPeriod > 0 ? Math.round((totalMilkLiters / daysInPeriod) * 100) / 100 : 0;
+    const avgDailyMilkPerActiveAnimal =
+      daysInPeriod > 0 && activeAnimalsCount > 0
+        ? Math.round((totalMilkLiters / (daysInPeriod * activeAnimalsCount)) * 100) / 100
+        : 0;
+
+    // 2. Feed cost in period
+    const feedEventsInRange = allEvents.filter(
+      (ev) => ev.eventType === 'FEED' && isWithinRange(ev.date)
+    );
+    let totalFeedCost =
+      Math.round(feedEventsInRange.reduce((acc, ev) => acc + (Number(ev.cost) || 0), 0) * 100) / 100;
+
+    // Fallback: check stockMovements if feed events had 0 cost recorded
+    if (totalFeedCost === 0) {
+      const stockMovements = await db.stockMovements.toArray();
+      const inRangeFeedConsumptions = stockMovements.filter(
+        (sm) => sm.movementType === 'CONSUMPTION' && isWithinRange(sm.date)
+      );
+      if (inRangeFeedConsumptions.length > 0) {
+        totalFeedCost =
+          Math.round(
+            inRangeFeedConsumptions.reduce((acc, sm) => acc + (Number(sm.totalValue) || 0), 0) * 100
+          ) / 100;
+      }
+    }
+
+    // Feed-cost-per-liter = total feed cost / total milk liters
+    const feedCostPerLiter =
+      totalMilkLiters > 0 ? Math.round((totalFeedCost / totalMilkLiters) * 100) / 100 : 0;
+
+    // 3. Mortality rate = (deceased ÷ total animals ever owned) for selected period
+    const deceasedInPeriod = allAnimals.filter((a) => {
+      if (a.status !== 'DECEASED') return false;
+      if (a.saleDate && isWithinRange(String(a.saleDate))) return true;
+      if (allEvents.some((ev) => ev.animalId === a.id && ev.eventType === 'MORTALITY' && isWithinRange(ev.date))) {
+        return true;
+      }
+      if (!startDate && !endDate) return true;
+      return false;
+    });
+
+    const deceasedInPeriodCount = deceasedInPeriod.length;
+    const mortalityRate =
+      totalAnimalsEverOwned > 0
+        ? Math.round((deceasedInPeriodCount / totalAnimalsEverOwned) * 1000) / 10
+        : 0;
+
+    // Species breakdown
+    const speciesMap = new Map<
+      string,
+      { total: number; active: number; sold: number; deceased: number; milkLiters: number; feedCost: number }
+    >();
+    for (const a of allAnimals) {
+      const sp = a.species || 'OTHER';
+      if (!speciesMap.has(sp)) {
+        speciesMap.set(sp, { total: 0, active: 0, sold: 0, deceased: 0, milkLiters: 0, feedCost: 0 });
+      }
+      const item = speciesMap.get(sp)!;
+      item.total++;
+      if (a.status === 'ACTIVE') item.active++;
+      else if (a.status === 'SOLD') item.sold++;
+      else if (a.status === 'DECEASED') item.deceased++;
+    }
+
+    for (const ev of milkEventsInRange) {
+      const a = allAnimals.find((anim) => anim.id === ev.animalId);
+      const sp = a?.species || 'OTHER';
+      const item = speciesMap.get(sp);
+      if (item) {
+        item.milkLiters += Number(ev.milkLiters) || 0;
+      }
+    }
+
+    for (const ev of feedEventsInRange) {
+      const a = allAnimals.find((anim) => anim.id === ev.animalId);
+      const sp = a?.species || 'OTHER';
+      const item = speciesMap.get(sp);
+      if (item) {
+        item.feedCost += Number(ev.cost) || 0;
+      }
+    }
+
+    const speciesBreakdown = Array.from(speciesMap.entries()).map(([species, stats]) => ({
+      species,
+      total: stats.total,
+      active: stats.active,
+      sold: stats.sold,
+      deceased: stats.deceased,
+      milkLiters: Math.round(stats.milkLiters * 100) / 100,
+      feedCost: Math.round(stats.feedCost * 100) / 100
+    }));
+
+    setHerdKpiData({
+      periodStartDate: startDate,
+      periodEndDate: endDate,
+      daysInPeriod,
+      totalAnimalsEverOwned,
+      activeAnimalsCount,
+      soldAnimalsCount,
+      deceasedAnimalsCount: totalDeceasedCount,
+      otherStatusCount,
+      totalMilkLiters,
+      milkEventsCount,
+      avgDailyMilkPerActiveAnimal,
+      avgDailyMilkHerdTotal,
+      totalFeedCost,
+      feedEventsCount: feedEventsInRange.length,
+      feedCostPerLiter,
+      deceasedInPeriodCount,
+      mortalityRate,
+      speciesBreakdown,
+      deceasedAnimals: deceasedInPeriod
+    });
   };
 
   const toggleSort = (key: 'netProfit' | 'totalCost' | 'totalRevenue' | 'costPerDay') => {
@@ -1114,6 +1445,162 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
 
   const fmt = (n: number) => `৳${Number(n || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`;
 
+  const renderYoyProfitBarChart = () => {
+    if (closedPeriodsList.length === 0 || !yoyProfitBarSummary) return null;
+
+    return (
+      <div
+        id="yoy-profit-bar-chart-card"
+        className="bg-white border border-gray-200 rounded-2xl p-4 sm:p-6 space-y-4 shadow-xs"
+      >
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-gray-100 pb-3">
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="p-1.5 rounded-lg bg-emerald-100 text-emerald-800">
+                <Lock className="w-4 h-4" />
+              </span>
+              <h3 className="text-base sm:text-lg font-bold text-gray-900 tracking-tight">
+                চলতি বছরের মুনাফা বনাম বিগত বছরের সমসাময়িক তুলনা (YTD Profit vs Prior Year)
+              </h3>
+            </div>
+            <p className="text-xs sm:text-[13px] text-gray-600 mt-1">
+              সমাপ্ত হিসাবকালের (Closed Periods) তথ্যের ভিত্তিতে চলতি বছরের আজ পর্যন্ত মুনাফা ও বিগত বছরের একই মাসসমূহের নিট লাভের বার চার্ট
+            </p>
+          </div>
+
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-purple-100 text-purple-900 border border-purple-200 flex items-center gap-1.5">
+              <Lock className="w-3.5 h-3.5" />
+              <span>সমাপ্ত হিসাবকাল: {closedPeriodsList.length}টি বছর সমাপ্ত</span>
+            </span>
+            {yoyProfitBarSummary.latestClosedPeriod && (
+              <span className="px-2.5 py-1 rounded-full text-xs font-semibold bg-gray-100 text-gray-700 border border-gray-200">
+                সর্বশেষ সমাপ্তি: {yoyProfitBarSummary.latestClosedPeriod.endDate}
+              </span>
+            )}
+          </div>
+        </div>
+
+        {/* 3 Summary metric cards */}
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <div className="p-3.5 rounded-xl bg-emerald-50/70 border border-emerald-200 space-y-1">
+            <div className="text-xs font-bold text-emerald-900 flex items-center justify-between">
+              <span>চলতি বছর ({yoyProfitBarSummary.thisYear}) আজ পর্যন্ত</span>
+              <span className="px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800 text-[10px] font-mono">
+                ১ম-{yoyProfitBarSummary.monthsCount} মাস
+              </span>
+            </div>
+            <div className={`text-xl font-extrabold font-mono ${
+              yoyProfitBarSummary.thisYearYtd >= 0 ? 'text-[#15803D]' : 'text-red-600'
+            }`}>
+              {fmt(yoyProfitBarSummary.thisYearYtd)}
+            </div>
+            <div className="text-[11px] text-emerald-800">মোট অর্জিত মুনাফা (Profit-so-far)</div>
+          </div>
+
+          <div className="p-3.5 rounded-xl bg-purple-50/70 border border-purple-200 space-y-1">
+            <div className="text-xs font-bold text-purple-900 flex items-center justify-between">
+              <span>বিগত বছর ({yoyProfitBarSummary.lastYear}) একই সময়কাল</span>
+              <span className="px-1.5 py-0.5 rounded bg-purple-200 text-purple-900 text-[10px] font-mono">
+                সমাপ্ত হিসাবকাল
+              </span>
+            </div>
+            <div className={`text-xl font-extrabold font-mono ${
+              yoyProfitBarSummary.lastYearYtd >= 0 ? 'text-purple-800' : 'text-red-600'
+            }`}>
+              {fmt(yoyProfitBarSummary.lastYearYtd)}
+            </div>
+            <div className="text-[11px] text-purple-800">বিগত সমাপ্ত বছরে একই মাসসমূহের নিট লাভ</div>
+          </div>
+
+          <div className={`p-3.5 rounded-xl border space-y-1 ${
+            yoyProfitBarSummary.diff >= 0 ? 'bg-blue-50/70 border-blue-200 text-blue-950' : 'bg-rose-50/70 border-rose-200 text-rose-950'
+          }`}>
+            <div className="text-xs font-bold flex items-center justify-between">
+              <span>পার্থক্য / প্রবৃদ্ধি (Variance)</span>
+              {yoyProfitBarSummary.pctChange !== null && (
+                <span className={`px-1.5 py-0.5 rounded text-[10px] font-mono font-bold ${
+                  yoyProfitBarSummary.diff >= 0 ? 'bg-blue-100 text-blue-800' : 'bg-rose-100 text-rose-800'
+                }`}>
+                  {yoyProfitBarSummary.diff >= 0 ? '+' : ''}{yoyProfitBarSummary.pctChange}%
+                </span>
+              )}
+            </div>
+            <div className={`text-xl font-extrabold font-mono ${
+              yoyProfitBarSummary.diff >= 0 ? 'text-blue-700' : 'text-rose-700'
+            }`}>
+              {yoyProfitBarSummary.diff >= 0 ? '+' : ''}{fmt(yoyProfitBarSummary.diff)}
+            </div>
+            <div className="text-[11px] text-gray-600">
+              {yoyProfitBarSummary.diff >= 0 ? 'বিগত বছরের চেয়ে মুনাফা বৃদ্ধি পেয়েছে' : 'বিগত বছরের চেয়ে মুনাফা হ্রাস পেয়েছে'}
+            </div>
+          </div>
+        </div>
+
+        {/* Recharts Bar Chart */}
+        <div className="w-full pt-2">
+          <div className="h-64 sm:h-72 w-full">
+            <ResponsiveContainer width="100%" height="100%">
+              <RechartsBarChart
+                data={yoyProfitBarData}
+                margin={{ top: 15, right: 15, left: -5, bottom: 5 }}
+              >
+                <CartesianGrid strokeDasharray="3 3" stroke="#F1F5F9" vertical={false} />
+                <XAxis
+                  dataKey="monthKey"
+                  tick={{ fontSize: 12, fill: '#475569', fontWeight: 600 }}
+                  tickLine={false}
+                  axisLine={{ stroke: '#CBD5E1' }}
+                />
+                <YAxis
+                  tick={{ fontSize: 11, fill: '#64748B' }}
+                  tickLine={false}
+                  axisLine={{ stroke: '#CBD5E1' }}
+                  tickFormatter={(v) => `৳${(v / 1000).toFixed(0)}k`}
+                />
+                <Tooltip
+                  contentStyle={{
+                    backgroundColor: '#FFFFFF',
+                    borderColor: '#CBD5E1',
+                    borderRadius: '0.75rem',
+                    fontSize: '12px',
+                    boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)'
+                  }}
+                  formatter={(val: any, name: any) => [`৳${Number(val || 0).toLocaleString('en-IN')}`, name]}
+                  labelFormatter={(label) => {
+                    const item = yoyProfitBarData.find((d) => d.monthKey === label);
+                    return item ? item.monthName : `মাস: ${label}`;
+                  }}
+                />
+                <Legend
+                  verticalAlign="top"
+                  align="right"
+                  wrapperStyle={{ paddingBottom: '10px', fontSize: '12px', fontWeight: 600 }}
+                />
+                <Bar
+                  dataKey="thisYearProfit"
+                  name={`চলতি বছর (${yoyProfitBarSummary.thisYear})`}
+                  fill="#15803D"
+                  radius={[4, 4, 0, 0]}
+                />
+                <Bar
+                  dataKey="lastYearProfit"
+                  name={`বিগত বছর (${yoyProfitBarSummary.lastYear} সমাপ্ত)`}
+                  fill="#7C3AED"
+                  radius={[4, 4, 0, 0]}
+                />
+              </RechartsBarChart>
+            </ResponsiveContainer>
+          </div>
+          <div className="flex items-center justify-between text-[11px] text-gray-500 pt-2 px-1">
+            <span>* গ্রাফে চলতি বছরের মাসসমূহের সাথে বিগত সমাপ্ত হিসাবকালের একই মাসসমূহের নিট মুনাফা পাশাপাশি প্রদর্শিত হয়েছে।</span>
+            <span className="font-mono font-semibold text-gray-700">১ম হতে {yoyProfitBarSummary.monthsCount}ম মাস</span>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div className="space-y-4 pb-6 max-w-5xl mx-auto">
       {/* Header & Report Selectors */}
@@ -1196,6 +1683,19 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
         >
           <TrendingUp className="w-4 h-4" />
           <span>পশুভিত্তিক লাভ-ক্ষতি (Animal Profitability)</span>
+        </button>
+
+        <button
+          id="tab-herd-summary"
+          onClick={() => setActiveReport('herdSummary')}
+          className={`flex items-center gap-1.5 px-3.5 py-2 rounded-lg whitespace-nowrap transition-all cursor-pointer min-h-[40px] ${
+            activeReport === 'herdSummary'
+              ? 'bg-[#1E5128] text-white shadow-xs'
+              : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200/60'
+          }`}
+        >
+          <Activity className="w-4 h-4" />
+          <span>পালের সারসংক্ষেপ (Herd Summary)</span>
         </button>
 
         <button
@@ -1465,6 +1965,8 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
               </button>
             </div>
           </div>
+
+          {renderYoyProfitBarChart()}
         </div>
       )}
 
@@ -3443,6 +3945,7 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
                 </div>
               </div>
             )}
+            {renderYoyProfitBarChart()}
           </div>
 
           {/* Top 4 KPI Comparison Cards */}
@@ -3699,6 +4202,335 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
                   </span>
                 </div>
               )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ===================== REPORT 11: HERD SUMMARY & OPERATIONAL KPIS ===================== */}
+      {activeReport === 'herdSummary' && herdKpiData && (
+        <div className="bg-white border border-gray-200 rounded-2xl p-4 sm:p-6 space-y-6 shadow-xs">
+          {/* Header */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-gray-100 pb-4">
+            <div>
+              <h3 className="text-base sm:text-lg font-bold text-gray-900 tracking-tight flex items-center gap-2">
+                <Activity className="w-5 h-5 text-[#1E5128]" />
+                <span>পালের সারসংক্ষেপ ও অপারেশনাল কেপিআই (Herd Summary & KPIs)</span>
+              </h3>
+              <p className="text-[13px] text-gray-500 mt-0.5">
+                নির্ধারিত সময়সীমার গড় দৈনিক দুধ উৎপাদন, খাদ্য ব্যয় কার্যক্ষমতা ও পালের মৃত্যুহার বিশ্লেষণ
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-800">
+                সময়কাল: {herdKpiData.daysInPeriod} দিন
+              </span>
+              <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-blue-50 border border-blue-200 text-blue-800">
+                সক্রিয় পশু: {herdKpiData.activeAnimalsCount}টি
+              </span>
+            </div>
+          </div>
+
+          {/* 3 Primary Requested KPI Cards */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            {/* KPI 1: Average Daily Milk Yield across all active animals */}
+            <div className="bg-[#F8FAFC] rounded-2xl p-4 sm:p-5 border border-gray-200 flex flex-col justify-between space-y-3">
+              <div className="flex items-start justify-between">
+                <div>
+                  <span className="text-xs font-semibold text-gray-500 tracking-wide">দুধ উৎপাদন কেপিআই</span>
+                  <h4 className="text-[15px] font-bold text-gray-900 mt-0.5">গড় দৈনিক দুধ উৎপাদন</h4>
+                </div>
+                <div className="p-2 bg-emerald-100/80 rounded-xl text-emerald-800">
+                  <Droplets className="w-5 h-5" />
+                </div>
+              </div>
+
+              <div>
+                <div className="flex items-baseline gap-1.5">
+                  <span className="text-2xl sm:text-3xl font-bold font-mono text-[#15803D]">
+                    {herdKpiData.avgDailyMilkPerActiveAnimal.toFixed(2)}
+                  </span>
+                  <span className="text-sm font-semibold text-gray-600">লিটার / দিন / পশু</span>
+                </div>
+                <p className="text-xs text-gray-600 mt-1">
+                  সকল সক্রিয় পশুর সাপেক্ষে দৈনিক গড় হিসাব
+                </p>
+              </div>
+
+              <div className="pt-2 border-t border-gray-200 space-y-1 text-xs text-gray-600">
+                <div className="flex justify-between">
+                  <span>পালে দৈনিক মোট দুধ:</span>
+                  <span className="font-semibold text-gray-900 font-mono">
+                    {herdKpiData.avgDailyMilkHerdTotal.toFixed(1)} লিটার / দিন
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span>নির্বাচিত সময়কালে মোট দুধ:</span>
+                  <span className="font-semibold text-gray-900 font-mono">
+                    {herdKpiData.totalMilkLiters.toLocaleString()} লিটার
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span>দুধ দোয়ানোর এন্ট্রি:</span>
+                  <span className="font-semibold text-gray-900 font-mono">
+                    {herdKpiData.milkEventsCount}টি
+                  </span>
+                </div>
+              </div>
+
+              <div className="p-2 rounded-lg bg-emerald-50 border border-emerald-200/70 text-[11px] text-emerald-900 font-medium">
+                সূত্র: মোট দুধ ({herdKpiData.totalMilkLiters}L) ÷ ({herdKpiData.daysInPeriod} দিন × {herdKpiData.activeAnimalsCount} সক্রিয় পশু)
+              </div>
+            </div>
+
+            {/* KPI 2: Total Feed Cost divided by Total Milk Liters (feed-cost-per-liter) */}
+            <div className="bg-[#F8FAFC] rounded-2xl p-4 sm:p-5 border border-gray-200 flex flex-col justify-between space-y-3">
+              <div className="flex items-start justify-between">
+                <div>
+                  <span className="text-xs font-semibold text-gray-500 tracking-wide">খাদ্য ব্যয় দক্ষতা কেপিআই</span>
+                  <h4 className="text-[15px] font-bold text-gray-900 mt-0.5">দুধ প্রতি খাদ্য ব্যয়</h4>
+                </div>
+                <div className="p-2 bg-amber-100/80 rounded-xl text-amber-800">
+                  <Coins className="w-5 h-5" />
+                </div>
+              </div>
+
+              <div>
+                <div className="flex items-baseline gap-1.5">
+                  <span className="text-2xl sm:text-3xl font-bold font-mono text-amber-800">
+                    {fmt(herdKpiData.feedCostPerLiter)}
+                  </span>
+                  <span className="text-sm font-semibold text-gray-600">/ লিটার</span>
+                </div>
+                <p className="text-xs text-gray-600 mt-1">
+                  মোট খাদ্য ব্যয় ÷ মোট দুধ উৎপাদন (Liters)
+                </p>
+              </div>
+
+              <div className="pt-2 border-t border-gray-200 space-y-1 text-xs text-gray-600">
+                <div className="flex justify-between">
+                  <span>সময়কালে মোট খাদ্য ব্যয়:</span>
+                  <span className="font-semibold text-gray-900 font-mono">
+                    {fmt(herdKpiData.totalFeedCost)}
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span>মোট উৎপাদিত দুধ:</span>
+                  <span className="font-semibold text-gray-900 font-mono">
+                    {herdKpiData.totalMilkLiters.toLocaleString()} লিটার
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span>ব্যয় দক্ষতা সূচক:</span>
+                  <span className="font-semibold">
+                    {herdKpiData.totalMilkLiters === 0 ? (
+                      <span className="text-gray-500">দুধের রেকর্ড নেই</span>
+                    ) : herdKpiData.feedCostPerLiter <= 45 ? (
+                      <span className="text-emerald-700">উচ্চ সাশ্রয়ী (≤ ৳৪৫)</span>
+                    ) : herdKpiData.feedCostPerLiter <= 65 ? (
+                      <span className="text-amber-700">পরিমিত (৳৪৫-৳৬৫)</span>
+                    ) : (
+                      <span className="text-rose-700">উচ্চ ব্যয় (&gt; ৳৬৫)</span>
+                    )}
+                  </span>
+                </div>
+              </div>
+
+              <div className="p-2 rounded-lg bg-amber-50 border border-amber-200/70 text-[11px] text-amber-900 font-medium">
+                সূত্র: মোট খাদ্য খরচ ({fmt(herdKpiData.totalFeedCost)}) ÷ মোট দুধ ({herdKpiData.totalMilkLiters} লিটার)
+              </div>
+            </div>
+
+            {/* KPI 3: Mortality Rate (deceased ÷ total animals ever owned) for selected period */}
+            <div className="bg-[#F8FAFC] rounded-2xl p-4 sm:p-5 border border-gray-200 flex flex-col justify-between space-y-3">
+              <div className="flex items-start justify-between">
+                <div>
+                  <span className="text-xs font-semibold text-gray-500 tracking-wide">স্বাস্থ্য ও নিরাপত্তা কেপিআই</span>
+                  <h4 className="text-[15px] font-bold text-gray-900 mt-0.5">পালের মৃত্যুহার</h4>
+                </div>
+                <div className="p-2 bg-rose-100/80 rounded-xl text-rose-800">
+                  <AlertCircle className="w-5 h-5" />
+                </div>
+              </div>
+
+              <div>
+                <div className="flex items-baseline gap-1.5">
+                  <span className={`text-2xl sm:text-3xl font-bold font-mono ${
+                    herdKpiData.mortalityRate === 0
+                      ? 'text-emerald-700'
+                      : herdKpiData.mortalityRate <= 3
+                      ? 'text-emerald-700'
+                      : herdKpiData.mortalityRate <= 5
+                      ? 'text-amber-700'
+                      : 'text-rose-700'
+                  }`}>
+                    {herdKpiData.mortalityRate.toFixed(1)}%
+                  </span>
+                  <span className="text-sm font-semibold text-gray-600">মৃত্যুহার</span>
+                </div>
+                <p className="text-xs text-gray-600 mt-1">
+                  নির্বাচিত সময়কালে মৃত ÷ খামারের সর্বমোট পশু
+                </p>
+              </div>
+
+              <div className="pt-2 border-t border-gray-200 space-y-1 text-xs text-gray-600">
+                <div className="flex justify-between">
+                  <span>সময়কালে মৃত পশু:</span>
+                  <span className="font-semibold text-gray-900 font-mono">
+                    {herdKpiData.deceasedInPeriodCount}টি পশু
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span>খামারের মোট মালিকানাধীন পশু:</span>
+                  <span className="font-semibold text-gray-900 font-mono">
+                    {herdKpiData.totalAnimalsEverOwned}টি
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span>ঝুঁকি সূচক মানদণ্ড:</span>
+                  <span className="font-semibold">
+                    {herdKpiData.mortalityRate === 0 ? (
+                      <span className="text-emerald-700">০% (নিখুঁত স্বাস্থ্য)</span>
+                    ) : herdKpiData.mortalityRate <= 3 ? (
+                      <span className="text-emerald-700">সন্তোষজনক (&lt; ৩%)</span>
+                    ) : herdKpiData.mortalityRate <= 5 ? (
+                      <span className="text-amber-700">মাঝারি ঝুঁকি (৩-৫%)</span>
+                    ) : (
+                      <span className="text-rose-700">উচ্চ সতর্কতা (&gt; ৫%)</span>
+                    )}
+                  </span>
+                </div>
+              </div>
+
+              <div className="p-2 rounded-lg bg-rose-50 border border-rose-200/70 text-[11px] text-rose-900 font-medium">
+                সূত্র: সময়কালে মৃত ({herdKpiData.deceasedInPeriodCount}) ÷ খামারের মোট পশু ({herdKpiData.totalAnimalsEverOwned})
+              </div>
+            </div>
+          </div>
+
+          {/* Herd Population Dynamics Cards */}
+          <div>
+            <h4 className="text-[14px] font-bold text-gray-900 mb-3 flex items-center gap-1.5">
+              <Scale className="w-4 h-4 text-gray-600" />
+              <span>খামারের পালের স্থিতি ও পরিসংখ্যান (Herd Population Dynamics)</span>
+            </h4>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              <div className="p-3.5 rounded-xl bg-gray-50 border border-gray-200">
+                <div className="text-xs text-gray-500 font-medium">সর্বমোট মালিকানাধীন পশু</div>
+                <div className="text-lg font-bold font-mono text-gray-900 mt-1">
+                  {herdKpiData.totalAnimalsEverOwned} <span className="text-xs font-normal">টি</span>
+                </div>
+                <div className="text-[11px] text-gray-500 mt-0.5">খামারের শুরু হতে এখন পর্যন্ত</div>
+              </div>
+
+              <div className="p-3.5 rounded-xl bg-emerald-50/70 border border-emerald-200">
+                <div className="text-xs text-emerald-800 font-medium">বর্তমানে সক্রিয় পশু</div>
+                <div className="text-lg font-bold font-mono text-emerald-900 mt-1">
+                  {herdKpiData.activeAnimalsCount} <span className="text-xs font-normal">টি</span>
+                </div>
+                <div className="text-[11px] text-emerald-700 mt-0.5">
+                  {herdKpiData.totalAnimalsEverOwned > 0
+                    ? `${((herdKpiData.activeAnimalsCount / herdKpiData.totalAnimalsEverOwned) * 100).toFixed(0)}% সক্রিয়`
+                    : '০%'}
+                </div>
+              </div>
+
+              <div className="p-3.5 rounded-xl bg-amber-50/70 border border-amber-200">
+                <div className="text-xs text-amber-800 font-medium">বিক্রয়কৃত পশু</div>
+                <div className="text-lg font-bold font-mono text-amber-900 mt-1">
+                  {herdKpiData.soldAnimalsCount} <span className="text-xs font-normal">টি</span>
+                </div>
+                <div className="text-[11px] text-amber-700 mt-0.5">সফলভাবে বাজারজাতকৃত</div>
+              </div>
+
+              <div className="p-3.5 rounded-xl bg-rose-50/70 border border-rose-200">
+                <div className="text-xs text-rose-800 font-medium">মোট মৃত পশু (সর্বকাল)</div>
+                <div className="text-lg font-bold font-mono text-rose-900 mt-1">
+                  {herdKpiData.deceasedAnimalsCount} <span className="text-xs font-normal">টি</span>
+                </div>
+                <div className="text-[11px] text-rose-700 mt-0.5">
+                  সময়কালে: {herdKpiData.deceasedInPeriodCount}টি
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Species-wise Breakdown Table */}
+          {herdKpiData.speciesBreakdown.length > 0 && (
+            <div className="space-y-3">
+              <h4 className="text-[14px] font-bold text-gray-900 flex items-center gap-1.5">
+                <Layers className="w-4 h-4 text-gray-600" />
+                <span>প্রজাতিভিত্তিক উৎপাদন ও ব্যয়ের বিভাজন (Species Breakdown)</span>
+              </h4>
+              <div className="overflow-x-auto border border-gray-200 rounded-xl">
+                <table className="w-full text-left text-xs border-collapse">
+                  <thead>
+                    <tr className="bg-gray-50 border-b border-gray-200 font-semibold text-gray-700">
+                      <th className="py-2.5 px-3">প্রজাতি (Species)</th>
+                      <th className="py-2.5 px-3 text-right">মোট পশু</th>
+                      <th className="py-2.5 px-3 text-right">সক্রিয় পশু</th>
+                      <th className="py-2.5 px-3 text-right">দুধ উৎপাদন</th>
+                      <th className="py-2.5 px-3 text-right">খাদ্য ব্যয়</th>
+                      <th className="py-2.5 px-3 text-right">দুধ প্রতি খাদ্য ব্যয়</th>
+                      <th className="py-2.5 px-3 text-right">সময়কালে মৃত্যু</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100 text-gray-800 font-mono">
+                    {herdKpiData.speciesBreakdown.map((sb) => {
+                      const spName =
+                        sb.species === 'CATTLE'
+                          ? 'গরু (Cattle)'
+                          : sb.species === 'GOAT'
+                          ? 'ছাগল (Goat)'
+                          : sb.species === 'SHEEP'
+                          ? 'ভেড়া (Sheep)'
+                          : sb.species;
+                      const spFeedPerLiter = sb.milkLiters > 0 ? sb.feedCost / sb.milkLiters : 0;
+                      return (
+                        <tr key={sb.species} className="hover:bg-gray-50/80">
+                          <td className="py-2 px-3 font-sans font-medium text-gray-900">{spName}</td>
+                          <td className="py-2 px-3 text-right">{sb.total}টি</td>
+                          <td className="py-2 px-3 text-right text-emerald-800 font-semibold">{sb.active}টি</td>
+                          <td className="py-2 px-3 text-right">{sb.milkLiters.toLocaleString()} L</td>
+                          <td className="py-2 px-3 text-right">{fmt(sb.feedCost)}</td>
+                          <td className="py-2 px-3 text-right font-semibold">
+                            {sb.milkLiters > 0 ? fmt(spFeedPerLiter) : '—'}
+                          </td>
+                          <td className="py-2 px-3 text-right text-rose-700 font-semibold">{sb.deceased}টি</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* List of Deceased Animals in this Period (if any) */}
+          {herdKpiData.deceasedAnimals && herdKpiData.deceasedAnimals.length > 0 && (
+            <div className="p-4 rounded-xl bg-rose-50/60 border border-rose-200 space-y-2.5">
+              <h5 className="text-xs font-bold text-rose-900 flex items-center gap-1.5">
+                <AlertCircle className="w-4 h-4 text-rose-700" />
+                <span>নির্বাচিত সময়কালে মৃত পশুর তালিকা ({herdKpiData.deceasedAnimals.length}টি)</span>
+              </h5>
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
+                {herdKpiData.deceasedAnimals.map((da) => (
+                  <div key={da.id} className="p-2.5 bg-white rounded-lg border border-rose-100 text-xs text-gray-800 shadow-2xs">
+                    <div className="font-bold text-rose-950 flex items-center justify-between">
+                      <span>ট্যাগ: {da.id}</span>
+                      <span className="text-[11px] font-mono text-gray-500">{da.saleDate || 'তারিখ নেই'}</span>
+                    </div>
+                    <div className="text-[11px] text-gray-600 mt-0.5">
+                      জাত: {da.breed} | প্রজাতি: {da.species}
+                    </div>
+                    {da.notes && (
+                      <div className="text-[10px] text-gray-500 mt-1 line-clamp-1 italic">
+                        নোট: {da.notes}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
             </div>
           )}
         </div>

@@ -64,6 +64,9 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
   const [itemCost, setItemCost] = useState('0');
   const [itemPrice, setItemPrice] = useState('0');
   const [itemReorder, setItemReorder] = useState('10');
+  const [itemThreshold, setItemThreshold] = useState('');
+  const [editingThresholdItem, setEditingThresholdItem] = useState<InventoryItem | null>(null);
+  const [newThresholdValue, setNewThresholdValue] = useState('');
 
   // New Sale Form
   const [showNewSale, setShowNewSale] = useState(false);
@@ -154,23 +157,53 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
   const handleAddItem = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
+      const stockNum = parseFloat(itemStock) || 0;
+      const reorderNum = parseFloat(itemReorder) || 10;
+      const customThreshold = itemThreshold.trim() !== '' ? parseFloat(itemThreshold) : undefined;
+      const defaultThreshold = Math.round((stockNum > 0 ? stockNum : reorderNum) * 0.20 * 100) / 100;
+      const finalThreshold = customThreshold !== undefined && !isNaN(customThreshold) ? customThreshold : defaultThreshold;
+
       const item: InventoryItem = {
         id: generateUniqueId('it'),
-        code: generateTransactionNumber('ITM'),
+        code: itemCategory === 'FEED' ? generateTransactionNumber('FED') : generateTransactionNumber('ITM'),
         nameBn: itemNameBn.trim(),
         nameEn: itemNameBn.trim(),
         category: itemCategory,
-        unit: itemUnit.trim(),
-        currentStock: parseFloat(itemStock) || 0,
-        reorderLevel: parseFloat(itemReorder) || 10,
+        unit: itemUnit.trim() || 'কেজি',
+        currentStock: stockNum,
+        reorderLevel: reorderNum,
         avgCostPrice: parseFloat(itemCost) || 0,
         sellingPrice: parseFloat(itemPrice) || 0,
+        lastRestockAmount: stockNum,
+        lowStockThreshold: finalThreshold,
         synced: false
       };
       await safeInsert(db.inventoryItems, item, { idPrefix: 'it' });
       setShowAddItem(false);
       setItemNameBn('');
+      setItemStock('0');
+      setItemCost('0');
+      setItemPrice('0');
+      setItemReorder('10');
+      setItemThreshold('');
       setMsg({ type: 'success', text: `পণ্য ${item.nameBn} যুক্ত হয়েছে!` });
+      window.dispatchEvent(new CustomEvent('goted_data_changed'));
+      loadCommerceData();
+    } catch (err: any) {
+      setMsg({ type: 'error', text: err.message });
+    }
+  };
+
+  const handleSaveThreshold = async (item: InventoryItem, thresholdVal: number) => {
+    try {
+      await db.inventoryItems.update(item.id, {
+        lowStockThreshold: thresholdVal,
+        reorderLevel: thresholdVal,
+        synced: false
+      });
+      setEditingThresholdItem(null);
+      setMsg({ type: 'success', text: `${item.nameBn} এর সতর্কতার সীমা ৳${thresholdVal} ${item.unit} আপডেট হয়েছে!` });
+      window.dispatchEvent(new CustomEvent('goted_data_changed'));
       loadCommerceData();
     } catch (err: any) {
       setMsg({ type: 'error', text: err.message });
@@ -554,7 +587,7 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                     onChange={(e) => setItemCategory(e.target.value as any)}
                     className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900"
                   >
-                    <option value="FEED">ফিড/খাদ্য (Feed - 1051)</option>
+                    <option value="FEED">ফিড স্টক (Feed Stock - 1051)</option>
                     <option value="FERTILIZER">সার (Fertilizer - 1052)</option>
                     <option value="SEED">বীজ (Seed - 1052)</option>
                     <option value="RAW_MATERIAL">কাঁচামাল (Raw Material - 1053)</option>
@@ -563,18 +596,32 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                   </select>
                 </div>
                 <div>
-                  <label className="block text-[13px] font-medium text-gray-700 mb-1">একক (Unit)</label>
+                  <label className="block text-[13px] font-medium text-gray-700 mb-1">একক (Unit: কেজি/ব্যাগ)</label>
                   <input
                     type="text"
                     value={itemUnit}
                     onChange={(e) => setItemUnit(e.target.value)}
-                    placeholder="কেজি / লিটার / ব্যাগ"
+                    placeholder="কেজি / ব্যাগ / লিটার"
                     className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900"
                   />
+                  <div className="flex gap-1.5 mt-1.5">
+                    {['কেজি', 'ব্যাগ', 'লিটার', 'মণ'].map((u) => (
+                      <button
+                        key={u}
+                        type="button"
+                        onClick={() => setItemUnit(u)}
+                        className={`text-[11px] px-2 py-0.5 rounded border transition-colors ${
+                          itemUnit === u ? 'bg-[#1E5128] text-white border-[#1E5128]' : 'bg-gray-100 text-gray-700 border-gray-200 hover:bg-gray-200'
+                        }`}
+                      >
+                        {u}
+                      </button>
+                    ))}
+                  </div>
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+              <div className="grid grid-cols-2 sm:grid-cols-5 gap-2.5">
                 <div>
                   <label className="block text-[13px] font-medium text-gray-700 mb-1">বর্তমান স্টক</label>
                   <input
@@ -611,6 +658,17 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                     className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900"
                   />
                 </div>
+                <div>
+                  <label className="block text-[13px] font-medium text-gray-700 mb-1">সতর্কতার সীমা (Threshold)</label>
+                  <input
+                    type="number"
+                    value={itemThreshold}
+                    placeholder="ডিফল্ট: ২০%"
+                    onChange={(e) => setItemThreshold(e.target.value)}
+                    className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900"
+                  />
+                  <span className="text-[11px] text-gray-500">ডিফল্ট: ২০% রিস্টক</span>
+                </div>
               </div>
 
               <div className="flex justify-end gap-2.5 pt-1">
@@ -641,21 +699,55 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                   <th className="p-3">গড় ক্রয়মূল্য</th>
                   <th className="p-3">বিক্রয় মূল্য</th>
                   <th className="p-3 text-right">মোট মজুদ মূল্য (৳)</th>
-                  <th className="p-3">সতর্কতা</th>
+                  <th className="p-3">সতর্কতার সীমা</th>
+                  <th className="p-3">অবস্থা</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
                 {items.map((it) => {
                   const val = it.currentStock * it.avgCostPrice;
-                  const isLow = it.currentStock <= it.reorderLevel;
+                  const lastRestock = it.lastRestockAmount && it.lastRestockAmount > 0 ? it.lastRestockAmount : (it.currentStock || 100);
+                  const defaultThreshold = Math.round(lastRestock * 0.20 * 100) / 100;
+                  const effectiveThreshold = (it.lowStockThreshold != null && it.lowStockThreshold >= 0)
+                    ? it.lowStockThreshold
+                    : (it.reorderLevel && it.reorderLevel > 0 ? it.reorderLevel : defaultThreshold);
+                  const isLow = it.currentStock <= effectiveThreshold;
+
                   return (
                     <tr key={it.id} className="hover:bg-gray-50/80">
-                      <td className="p-3 font-medium text-gray-900">{it.nameBn}</td>
-                      <td className="p-3 text-gray-600 text-[13px]">{it.category}</td>
+                      <td className="p-3 font-medium text-gray-900">
+                        <div>{it.nameBn}</div>
+                        <div className="text-[11px] text-gray-400 font-mono">{it.code}</div>
+                      </td>
+                      <td className="p-3 text-gray-600 text-[13px]">
+                        {it.category === 'FEED' ? (
+                          <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold bg-emerald-50 text-emerald-800 border border-emerald-200">
+                            ফিড স্টক
+                          </span>
+                        ) : (
+                          it.category
+                        )}
+                      </td>
                       <td className="p-3 font-bold text-gray-900">{it.currentStock} {it.unit}</td>
                       <td className="p-3 text-gray-700">{fmt(it.avgCostPrice)}</td>
                       <td className="p-3 text-[#15803D] font-semibold">{it.sellingPrice > 0 ? fmt(it.sellingPrice) : '-'}</td>
                       <td className="p-3 text-right font-bold text-[#1E5128]">{fmt(val)}</td>
+                      <td className="p-3 text-gray-700">
+                        <div className="flex items-center gap-1.5">
+                          <span className="font-semibold">{effectiveThreshold} {it.unit}</span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setEditingThresholdItem(it);
+                              setNewThresholdValue(effectiveThreshold.toString());
+                            }}
+                            className="text-gray-400 hover:text-[#1E5128] text-xs font-semibold p-1 hover:bg-gray-100 rounded transition-colors"
+                            title="সতর্কতার সীমা পরিবর্তন করুন"
+                          >
+                            ✏️
+                          </button>
+                        </div>
+                      </td>
                       <td className="p-3">
                         {isLow ? (
                           <span className="px-2.5 py-1 rounded-full text-xs font-semibold bg-amber-50 text-amber-800 border border-amber-200">
@@ -671,6 +763,61 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
               </tbody>
             </table>
           </div>
+
+          {/* Edit Threshold Modal */}
+          {editingThresholdItem && (
+            <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
+              <div className="bg-white rounded-2xl p-5 max-w-sm w-full space-y-4 shadow-xl border border-gray-200">
+                <div className="flex items-center justify-between">
+                  <h4 className="font-bold text-gray-900 text-[15px]">কম মজুদের সীমা নির্ধারণ</h4>
+                  <button
+                    type="button"
+                    onClick={() => setEditingThresholdItem(null)}
+                    className="text-gray-400 hover:text-gray-600"
+                  >
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+                <p className="text-xs text-gray-600">
+                  <strong>{editingThresholdItem.nameBn}</strong>-এর জন্য কম মজুদের সতর্কতা সীমা নির্ধারণ করুন ({editingThresholdItem.unit}):
+                </p>
+                <div>
+                  <input
+                    type="number"
+                    min="0"
+                    step="1"
+                    value={newThresholdValue}
+                    onChange={(e) => setNewThresholdValue(e.target.value)}
+                    className="w-full border border-gray-300 rounded-lg p-2.5 text-sm text-gray-900"
+                  />
+                  <p className="text-[11px] text-gray-500 mt-1">
+                    ডিফল্ট: শেষ রিস্টকের ২০% ({editingThresholdItem.lastRestockAmount ? Math.round(editingThresholdItem.lastRestockAmount * 0.2) : Math.round(editingThresholdItem.currentStock * 0.2)} {editingThresholdItem.unit})
+                  </p>
+                </div>
+                <div className="flex justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setEditingThresholdItem(null)}
+                    className="px-3.5 py-2 text-xs font-semibold text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg"
+                  >
+                    বাতিল
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const val = parseFloat(newThresholdValue);
+                      if (!isNaN(val) && val >= 0) {
+                        handleSaveThreshold(editingThresholdItem, val);
+                      }
+                    }}
+                    className="px-4 py-2 text-xs font-bold text-white bg-[#1E5128] hover:bg-[#173F1F] rounded-lg"
+                  >
+                    সংরক্ষণ করুন
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       )}
 

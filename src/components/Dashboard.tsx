@@ -28,11 +28,19 @@ import {
 import { db } from '../db/indexedDb';
 import { generateProfitLoss, generateTrialBalance } from '../accounting/accountingEngine';
 import { ActiveTab } from './MobileBottomNav';
-import { Reminder, UserRole } from '../types';
+import { Reminder, UserRole, InventoryItem } from '../types';
 import { createFullJsonBackup, getLastSyncTime, getLastExportTime } from '../services/exportService';
 import { synchronizePendingData } from '../firebase/firebaseClient';
 import { useLanguage } from '../i18n/translations';
 import { runRegressionTests, getLatestRegressionTestResult, TestResult } from '../utils/regressionTests';
+
+interface LowFeedItemInfo {
+  item: InventoryItem;
+  currentStock: number;
+  threshold: number;
+  unit: string;
+  isCustomThreshold: boolean;
+}
 
 interface Props {
   role: UserRole;
@@ -68,6 +76,22 @@ export const Dashboard: React.FC<Props> = ({ role, onNavigate, regressionTestRes
   const [recentTransactions, setRecentTransactions] = useState<any[]>([]);
   const [alerts, setAlerts] = useState<string[]>([]);
   const [isAccountingBalanced, setIsAccountingBalanced] = useState(true);
+
+  // Low feed stock warnings and threshold setting
+  const [lowFeedItems, setLowFeedItems] = useState<LowFeedItemInfo[]>([]);
+  const [editingThresholdItem, setEditingThresholdItem] = useState<InventoryItem | null>(null);
+  const [editThresholdValue, setEditThresholdValue] = useState<string>('');
+
+  // Low Cash Alert Threshold (default: 5000)
+  const [lowCashThreshold, setLowCashThreshold] = useState<number>(() => {
+    try {
+      const saved = localStorage.getItem('goted_low_cash_alert_threshold');
+      if (saved !== null && !isNaN(Number(saved))) {
+        return Number(saved);
+      }
+    } catch {}
+    return 5000;
+  });
 
   // Backup & sync reminder banner state
   const [bannerDismissed, setBannerDismissed] = useState<boolean>(() => {
@@ -165,6 +189,27 @@ export const Dashboard: React.FC<Props> = ({ role, onNavigate, regressionTestRes
 
   useEffect(() => {
     loadDashboardData();
+    const handleDataChanged = () => {
+      loadDashboardData();
+    };
+    const handleSettingsChanged = () => {
+      try {
+        const saved = localStorage.getItem('goted_low_cash_alert_threshold');
+        if (saved !== null && !isNaN(Number(saved))) {
+          setLowCashThreshold(Number(saved));
+        } else {
+          setLowCashThreshold(5000);
+        }
+      } catch {}
+    };
+    window.addEventListener('goted_data_changed', handleDataChanged);
+    window.addEventListener('goted_settings_changed', handleSettingsChanged);
+    window.addEventListener('storage', handleSettingsChanged);
+    return () => {
+      window.removeEventListener('goted_data_changed', handleDataChanged);
+      window.removeEventListener('goted_settings_changed', handleSettingsChanged);
+      window.removeEventListener('storage', handleSettingsChanged);
+    };
   }, []);
 
   const loadDashboardData = async () => {
@@ -203,17 +248,40 @@ export const Dashboard: React.FC<Props> = ({ role, onNavigate, regressionTestRes
       setArBalance(ar);
       setApBalance(ap);
 
-      // Inventory valuation
+      // Inventory valuation & low feed stock checking
       const items = await db.inventoryItems.toArray();
       let invTotal = 0;
       const lowStockAlerts: string[] = [];
+      const lowFeeds: LowFeedItemInfo[] = [];
+
       for (const it of items) {
         invTotal += it.currentStock * it.avgCostPrice;
         if (it.currentStock <= it.reorderLevel) {
           lowStockAlerts.push(`${it.nameBn} মজুদ কমে গেছে (স্টক: ${it.currentStock} ${it.unit})`);
         }
+
+        // Low feed stock calculation per item
+        if (it.category === 'FEED' || it.category === 'FEED_STOCK') {
+          const restockBase = (it.lastRestockAmount && it.lastRestockAmount > 0)
+            ? it.lastRestockAmount
+            : (it.currentStock > 0 ? it.currentStock : (it.reorderLevel ? it.reorderLevel * 5 : 100));
+          const defaultThreshold = Math.round(restockBase * 0.20 * 100) / 100;
+          const hasCustomThreshold = it.lowStockThreshold != null && it.lowStockThreshold >= 0;
+          const effectiveThreshold = hasCustomThreshold ? (it.lowStockThreshold as number) : defaultThreshold;
+
+          if (it.currentStock <= effectiveThreshold) {
+            lowFeeds.push({
+              item: it,
+              currentStock: it.currentStock,
+              threshold: effectiveThreshold,
+              unit: it.unit || 'কেজি',
+              isCustomThreshold: hasCustomThreshold
+            });
+          }
+        }
       }
       setInventoryValue(invTotal);
+      setLowFeedItems(lowFeeds);
 
       // Counts
       const animals = await db.animals.where('status').equals('ACTIVE').count();
@@ -338,13 +406,176 @@ export const Dashboard: React.FC<Props> = ({ role, onNavigate, regressionTestRes
     }
   };
 
+  const handleSaveThreshold = async (item: InventoryItem, newThreshold: number) => {
+    try {
+      await db.inventoryItems.update(item.id, {
+        lowStockThreshold: newThreshold,
+        reorderLevel: newThreshold,
+        synced: false
+      });
+      setEditingThresholdItem(null);
+      window.dispatchEvent(new CustomEvent('goted_data_changed'));
+      await loadDashboardData();
+    } catch (err) {
+      console.error('Failed to update feed stock threshold:', err);
+    }
+  };
+
   const fmtMoney = (val: number) => `৳${Number(val || 0).toLocaleString('en-IN', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
 
   const todayStr = new Date().toISOString().split('T')[0];
   const todayTime = new Date(todayStr).getTime();
 
+  const combinedCashBankBalance = cashBalance + bankBalance;
+  const isLowCash = !loading && (combinedCashBankBalance < lowCashThreshold);
+
   return (
     <div className="space-y-5 pb-6 max-w-5xl mx-auto">
+      {/* LOW CASH ALERT WARNING BANNER */}
+      {isLowCash && (
+        <div
+          id="low-cash-alert-banner"
+          role="alert"
+          className="relative p-4 sm:p-5 rounded-2xl bg-rose-50/95 dark:bg-rose-950/40 border-2 border-rose-400 dark:border-rose-600 text-rose-950 dark:text-rose-100 shadow-sm space-y-3"
+        >
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="flex items-start gap-3.5">
+              <div className="w-10 h-10 rounded-xl bg-rose-200 dark:bg-rose-800/80 text-rose-900 dark:text-rose-200 flex items-center justify-center shrink-0 shadow-2xs">
+                <AlertTriangle className="w-5 h-5 text-rose-700 dark:text-rose-300" />
+              </div>
+              <div>
+                <h4 className="font-bold text-[15px] sm:text-base text-rose-950 dark:text-rose-100 leading-snug">
+                  নগদ সতর্কতা সীমা সতর্কতা (Low Cash Balance Alert)
+                </h4>
+                <p className="text-xs sm:text-[13px] text-rose-800 dark:text-rose-200 mt-0.5 font-medium">
+                  সম্মিলিত নগদ ও ব্যাংক জমার ব্যালেন্স নির্ধারিত সতর্কতা সীমার নিচে নেমে গেছে। জরুরি পরিচালন ব্যয়ের জন্য তহবিল বৃদ্ধি করুন।
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 self-end sm:self-auto shrink-0">
+              <button
+                type="button"
+                id="btn-nav-to-banking"
+                onClick={() => onNavigate('finance')}
+                className="px-3.5 py-2 rounded-xl bg-rose-700 hover:bg-rose-800 text-white text-xs sm:text-[13px] font-bold transition-all shadow-xs cursor-pointer flex items-center gap-1.5 min-h-[38px]"
+              >
+                <Wallet className="w-4 h-4" />
+                <span>তহবিল ও ব্যাংক হিসাব দেখুন</span>
+                <ChevronRight className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 pt-1">
+            <div className="p-3 rounded-xl bg-white/90 dark:bg-slate-900/85 border border-rose-300 dark:border-rose-700/60 shadow-2xs">
+              <div className="text-[11px] text-gray-500 dark:text-slate-400">বর্তমান সম্মিলিত নগদ ও ব্যাংক তহবিল:</div>
+              <div className="text-base font-extrabold text-rose-600 dark:text-rose-400 mt-0.5 font-mono">
+                {fmtMoney(combinedCashBankBalance)}
+              </div>
+            </div>
+            <div className="p-3 rounded-xl bg-white/90 dark:bg-slate-900/85 border border-rose-300 dark:border-rose-700/60 shadow-2xs">
+              <div className="text-[11px] text-gray-500 dark:text-slate-400">নির্ধারিত সতর্কতা সীমা:</div>
+              <div className="text-base font-extrabold text-gray-900 dark:text-slate-100 mt-0.5 font-mono">
+                {fmtMoney(lowCashThreshold)}
+              </div>
+            </div>
+            <div className="p-3 rounded-xl bg-white/90 dark:bg-slate-900/85 border border-rose-300 dark:border-rose-700/60 shadow-2xs">
+              <div className="text-[11px] text-gray-500 dark:text-slate-400">তহবিল ঘাটতি (Shortfall):</div>
+              <div className="text-base font-extrabold text-amber-700 dark:text-amber-400 mt-0.5 font-mono">
+                {fmtMoney(Math.max(0, lowCashThreshold - combinedCashBankBalance))}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* 0. LOW FEED STOCK WARNING BANNER */}
+      {lowFeedItems.length > 0 && (
+        <div
+          id="low-feed-stock-banner"
+          role="alert"
+          className="relative p-4 sm:p-5 rounded-2xl bg-amber-50/95 dark:bg-amber-950/40 border-2 border-amber-400 dark:border-amber-600 text-amber-950 dark:text-amber-100 shadow-sm space-y-3"
+        >
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="flex items-start gap-3.5">
+              <div className="w-10 h-10 rounded-xl bg-amber-200 dark:bg-amber-800/80 text-amber-900 dark:text-amber-200 flex items-center justify-center shrink-0 shadow-2xs">
+                <AlertTriangle className="w-5 h-5 text-amber-700 dark:text-amber-300" />
+              </div>
+              <div>
+                <h4 className="font-bold text-[15px] sm:text-base text-amber-950 dark:text-amber-100 leading-snug">
+                  ফিড স্টক কমতির সতর্কতা (Low Feed Stock Warning)
+                </h4>
+                <p className="text-xs sm:text-[13px] text-amber-800 dark:text-amber-200 mt-0.5 font-medium">
+                  {lowFeedItems.length}টি ফিড আইটেমের বর্তমান মজুদ নির্ধারিত সতর্কতার সীমার নিচে নেমে গেছে।
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 self-end sm:self-auto shrink-0">
+              <button
+                type="button"
+                id="btn-nav-to-commerce-inventory"
+                onClick={() => onNavigate('commerce')}
+                className="px-3.5 py-2 rounded-xl bg-[#1E5128] hover:bg-[#173F1F] text-white text-xs sm:text-[13px] font-bold transition-all shadow-xs cursor-pointer flex items-center gap-1.5 min-h-[38px]"
+              >
+                <span>ইনভেন্টরিতে স্টক যুক্ত করুন</span>
+                <ChevronRight className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5 pt-1">
+            {lowFeedItems.map(({ item, currentStock, threshold, unit, isCustomThreshold }) => (
+              <div
+                key={item.id}
+                className="p-3.5 rounded-xl bg-white/90 dark:bg-slate-900/85 border border-amber-300/80 dark:border-amber-700/60 flex flex-col justify-between gap-2.5 shadow-2xs"
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <div>
+                    <h5 className="font-bold text-[14px] text-gray-900 dark:text-slate-100">{item.nameBn}</h5>
+                    <span className="text-[11px] text-gray-500 font-mono">{item.code}</span>
+                  </div>
+                  <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-rose-100 text-rose-800 border border-rose-200 shrink-0">
+                    মজুদ কম
+                  </span>
+                </div>
+
+                <div className="flex items-end justify-between gap-2 pt-2 border-t border-gray-100 dark:border-slate-800 text-xs">
+                  <div>
+                    <div className="text-[11px] text-gray-500 dark:text-slate-400">বর্তমান স্টক:</div>
+                    <div className="text-base font-extrabold text-rose-600 dark:text-rose-400">
+                      {currentStock} {unit}
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <div className="text-[11px] text-gray-500 dark:text-slate-400">
+                      সতর্কতা সীমা:{' '}
+                      <strong className="text-gray-900 dark:text-slate-200 font-bold">
+                        {threshold} {unit}
+                      </strong>
+                      <span className="text-[10px] text-gray-400 block">
+                        {isCustomThreshold ? '(কাস্টম সীমা)' : '(রিস্টকের ২০%)'}
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditingThresholdItem(item);
+                        setEditThresholdValue(threshold.toString());
+                      }}
+                      className="text-[11px] font-bold text-[#1E5128] dark:text-emerald-400 hover:underline mt-1 inline-flex items-center gap-1 cursor-pointer"
+                    >
+                      <span>সীমা নির্ধারণ</span>
+                      <span>✏️</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* TASK 3: Dismissible Reminder Banner if > 5 days since sync or > 14 days since manual export */}
       {showBackupReminder && (
         <div
@@ -966,6 +1197,63 @@ export const Dashboard: React.FC<Props> = ({ role, onNavigate, regressionTestRes
                 className="px-4 py-2 rounded-xl bg-white border border-gray-300 hover:bg-gray-100 text-gray-700 text-xs sm:text-sm font-semibold transition-colors cursor-pointer min-h-[40px]"
               >
                 বন্ধ করুন
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Feed Stock Threshold Modal */}
+      {editingThresholdItem && (
+        <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-slate-900 rounded-2xl p-5 max-w-sm w-full space-y-4 shadow-xl border border-gray-200 dark:border-slate-800">
+            <div className="flex items-center justify-between">
+              <h4 className="font-bold text-gray-900 dark:text-slate-100 text-[15px]">
+                কম মজুদের সতর্কতা সীমা নির্ধারণ
+              </h4>
+              <button
+                type="button"
+                onClick={() => setEditingThresholdItem(null)}
+                className="text-gray-400 hover:text-gray-600 dark:hover:text-slate-300"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <p className="text-xs text-gray-600 dark:text-slate-400">
+              <strong>{editingThresholdItem.nameBn}</strong>-এর জন্য সতর্কতার সীমা পরিবর্তন করুন ({editingThresholdItem.unit}):
+            </p>
+            <div>
+              <input
+                type="number"
+                min="0"
+                step="0.1"
+                value={editThresholdValue}
+                onChange={(e) => setEditThresholdValue(e.target.value)}
+                className="w-full border border-gray-300 dark:border-slate-700 dark:bg-slate-800 rounded-lg p-2.5 text-sm text-gray-900 dark:text-slate-100 focus:ring-2 focus:ring-[#1E5128]"
+              />
+              <p className="text-[11px] text-gray-500 dark:text-slate-400 mt-1">
+                ডিফল্ট: শেষ রিস্টকের ২০% ({editingThresholdItem.lastRestockAmount ? Math.round(editingThresholdItem.lastRestockAmount * 0.2) : Math.round(editingThresholdItem.currentStock * 0.2)} {editingThresholdItem.unit})
+              </p>
+            </div>
+            <div className="flex justify-end gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => setEditingThresholdItem(null)}
+                className="px-3.5 py-2 text-xs font-semibold text-gray-700 dark:text-slate-300 bg-gray-100 dark:bg-slate-800 hover:bg-gray-200 rounded-lg cursor-pointer"
+              >
+                বাতিল
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const val = parseFloat(editThresholdValue);
+                  if (!isNaN(val) && val >= 0) {
+                    handleSaveThreshold(editingThresholdItem, val);
+                  }
+                }}
+                className="px-4 py-2 text-xs font-bold text-white bg-[#1E5128] hover:bg-[#173F1F] rounded-lg cursor-pointer"
+              >
+                সংরক্ষণ করুন
               </button>
             </div>
           </div>
