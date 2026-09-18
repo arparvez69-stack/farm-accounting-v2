@@ -29,7 +29,7 @@ export function getRawEmailsEnv(): string | undefined {
 }
 
 // Helper to read initial PIN secrets from environment variables (supports standard or lowercase aliases)
-export function getRawPinEnv(): string {
+export function getRawPinEnv(): string | undefined {
   return (
     process.env.INITIAL_PIN?.trim() ||
     process.env.MASTER_PIN?.trim() ||
@@ -37,8 +37,7 @@ export function getRawPinEnv(): string {
     process.env.masterpin?.trim() ||
     process.env.MASTERPIN?.trim() ||
     process.env.PIN?.trim() ||
-    process.env.pin?.trim() ||
-    '123456'
+    process.env.pin?.trim()
   );
 }
 
@@ -55,20 +54,14 @@ export function getApprovedOwnerEmails(): string[] {
       .forEach((e) => list.add(e));
   }
 
-  // Always authorize primary owner accounts
-  list.add('arparvez4@gmail.com');
-  list.add('arparvez111@gmail.com');
-  list.add('arparvez69@gmail.com');
-  list.add('atikurrahman00021@gmail.com');
-  list.add('brandingdeshi@gmail.com');
-  list.add('lubaiyatasnum111@gmail.com');
-
   return Array.from(list);
 }
 
 // Checks if required authentication secrets are configured
 export function isSetupComplete(): boolean {
-  return true;
+  const emails = getRawEmailsEnv();
+  const pin = getRawPinEnv();
+  return Boolean(emails && emails.trim().length > 0 && pin && pin.trim().length > 0);
 }
 
 // In-memory record of access events for dashboard & audit
@@ -348,11 +341,13 @@ async function getStoredHash(email: string): Promise<string | null> {
 
   if (!cachedAuthSecrets[email]) {
     const approvedEmails = getApprovedOwnerEmails();
-    if (approvedEmails.includes(email) || !getRawEmailsEnv()) {
-      const initialPin = getRawPinEnv().trim();
-      const defaultHash = await bcrypt.hash(initialPin, 12);
-      cachedAuthSecrets[email] = defaultHash;
-      return defaultHash;
+    if (approvedEmails.includes(email)) {
+      const initialPin = getRawPinEnv();
+      if (initialPin) {
+        const defaultHash = await bcrypt.hash(initialPin.trim(), 12);
+        cachedAuthSecrets[email] = defaultHash;
+        return defaultHash;
+      }
     }
   }
 
@@ -515,11 +510,10 @@ app.post('/api/verify-login-code', async (req, res) => {
     const now = Date.now();
     const rateLimit = failedLoginAttempts.get(email);
     const approvedEmails = getApprovedOwnerEmails();
-    const isEmailApproved = approvedEmails.includes(email) || !getRawEmailsEnv();
+    const isEmailApproved = approvedEmails.includes(email);
 
     if (rateLimit?.lockedUntil) {
-      // Allow approved owners to immediately retry without waiting out lockout
-      if (!isEmailApproved && now < rateLimit.lockedUntil) {
+      if (now < rateLimit.lockedUntil) {
         const remainingMinutes = Math.max(1, Math.ceil((rateLimit.lockedUntil - now) / 60000));
         return res.status(429).json({
           error: `অতিরিক্ত ব্যর্থ চেষ্টার কারণে এই অ্যাকাউন্টটি ১৫ মিনিটের জন্য সাময়িকভাবে লক করা হয়েছে। আরও ${remainingMinutes} মিনিট পর পুনরায় চেষ্টা করুন (Too many failed login attempts. Account locked for ${remainingMinutes} more minutes).`
@@ -530,30 +524,10 @@ app.post('/api/verify-login-code', async (req, res) => {
     }
 
     // 2. Verify Secret PIN using bcrypt against stored hash
-    const explicitPinEnv =
-      process.env.INITIAL_PIN?.trim() ||
-      process.env.MASTER_PIN?.trim() ||
-      process.env.INITIAL_MASTER_PIN?.trim() ||
-      process.env.masterpin?.trim() ||
-      process.env.MASTERPIN?.trim() ||
-      process.env.PIN?.trim() ||
-      process.env.pin?.trim();
-
     const storedHash = await getStoredHash(email);
     let isPinValid = false;
     if (storedHash) {
       isPinValid = await bcrypt.compare(code, storedHash);
-    }
-    // Also accept default PIN '123456'
-    if (!isPinValid && code === '123456') {
-      isPinValid = true;
-    }
-    // If no explicit secret PIN was specified in environment, auto-adopt the user's PIN (>= 4 chars)
-    if (!isPinValid && !explicitPinEnv && code.length >= 4) {
-      const newHash = await bcrypt.hash(code, 12);
-      await updateStoredHash(email, newHash);
-      isPinValid = true;
-      console.log(`[The Goated Farm] 🔑 PIN initialized from login for ${email}`);
     }
 
     const isValid = isEmailApproved && isPinValid;
