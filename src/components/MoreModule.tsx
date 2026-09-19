@@ -1093,16 +1093,24 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
 
       {/* ===================== TAB 2: FIXED ASSETS ===================== */}
       {tab === 'assets' && (
-        <div className="bg-white border border-gray-200 rounded-2xl p-4 sm:p-5 shadow-xs space-y-4">
+        <div className="space-y-4">
           {/* Fixed Assets Header Illustration */}
-          <div className="w-full flex justify-center items-center pb-2">
+          <div
+            className="w-full h-40 sm:h-48 flex justify-center items-center overflow-hidden"
+            style={{
+              maskImage: 'linear-gradient(to bottom, black 60%, transparent 100%)',
+              WebkitMaskImage: 'linear-gradient(to bottom, black 60%, transparent 100%)'
+            }}
+          >
             <img
               src="/illustrations/Environment-bro.svg"
               alt="Fixed assets illustration"
               loading="lazy"
-              className="w-[35%] max-w-[220px] min-w-[130px] h-auto object-contain pointer-events-none drop-shadow-xs"
+              className="w-auto max-w-full h-full object-contain pointer-events-none drop-shadow-xs"
             />
           </div>
+
+          <div className="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 rounded-2xl p-4 sm:p-5 shadow-xs space-y-4">
 
           <div className="flex items-center justify-between border-b border-gray-100 pb-3 flex-wrap gap-2">
             <div>
@@ -1309,7 +1317,8 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
             })}
           </div>
         </div>
-      )}
+      </div>
+    )}
 
       {/* ===================== TAB 3: AUTHORIZED OWNERS ===================== */}
       {tab === 'owners' && (

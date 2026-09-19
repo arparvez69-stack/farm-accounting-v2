@@ -165,6 +165,22 @@
     "/auditLogs/{logId}": {
       "schema": "auditLog",
       "description": "Security and business transaction audit logs"
+    },
+    "/sales/{saleId}": {
+      "schema": "journalEntry",
+      "description": "Sales invoice and voucher records"
+    },
+    "/purchases/{purchaseId}": {
+      "schema": "journalEntry",
+      "description": "Purchase bill and voucher records"
+    },
+    "/inventoryItems/{itemId}": {
+      "schema": "account",
+      "description": "Inventory stock and products"
+    },
+    "/reminders/{reminderId}": {
+      "schema": "auditLog",
+      "description": "Farm operation task reminders"
     }
   }
 }

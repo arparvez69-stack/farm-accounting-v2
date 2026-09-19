@@ -1116,16 +1116,24 @@ export const FarmOperationsModule: React.FC<Props> = ({
               role={role}
             />
           ) : (
-            <div className="bg-white border border-gray-200 rounded-2xl p-4 sm:p-5 shadow-xs space-y-4">
+            <div className="space-y-4">
               {/* Livestock Header Illustration */}
-              <div className="w-full flex justify-center items-center pb-2">
+              <div
+                className="w-full h-40 sm:h-48 flex justify-center items-center overflow-hidden"
+                style={{
+                  maskImage: 'linear-gradient(to bottom, black 60%, transparent 100%)',
+                  WebkitMaskImage: 'linear-gradient(to bottom, black 60%, transparent 100%)'
+                }}
+              >
                 <img
                   src="/illustrations/free_range_chicken_farm-pana.svg"
                   alt="Livestock section illustration"
                   loading="lazy"
-                  className="w-[40%] max-w-[240px] min-w-[140px] h-auto object-contain pointer-events-none drop-shadow-xs"
+                  className="w-auto max-w-full h-full object-contain pointer-events-none drop-shadow-xs"
                 />
               </div>
+
+              <div className="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 rounded-2xl p-4 sm:p-5 shadow-xs space-y-4">
 
           <div className="flex flex-col sm:flex-row sm:items-center justify-between border-b border-gray-100 pb-4 gap-3">
             <div>
@@ -1698,7 +1706,8 @@ export const FarmOperationsModule: React.FC<Props> = ({
             );
           })()}
             </div>
-          )}
+          </div>
+        )}
 
           {/* ================= MODAL 1: ADD ACTIVITY / EVENT (SINGLE & BULK MODE) ================= */}
           {isEventModalOpen && (
@@ -2646,16 +2655,24 @@ export const FarmOperationsModule: React.FC<Props> = ({
 
       {/* ===================== TAB 2: FISHERIES ===================== */}
       {tab === 'fisheries' && (
-        <div className="bg-white border border-gray-200 rounded-2xl p-4 sm:p-5 shadow-xs space-y-4">
+        <div className="space-y-4">
           {/* Fishery Header Illustration */}
-          <div className="w-full flex justify-center items-center pb-2">
+          <div
+            className="w-full h-40 sm:h-48 flex justify-center items-center overflow-hidden"
+            style={{
+              maskImage: 'linear-gradient(to bottom, black 60%, transparent 100%)',
+              WebkitMaskImage: 'linear-gradient(to bottom, black 60%, transparent 100%)'
+            }}
+          >
             <img
               src="/illustrations/fishing_with_net-rafiki.svg"
               alt="Fishery section illustration"
               loading="lazy"
-              className="w-[40%] max-w-[240px] min-w-[140px] h-auto object-contain pointer-events-none drop-shadow-xs"
+              className="w-auto max-w-full h-full object-contain pointer-events-none drop-shadow-xs"
             />
           </div>
+
+          <div className="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 rounded-2xl p-4 sm:p-5 shadow-xs space-y-4">
 
           <div className="flex items-center justify-between border-b border-gray-100 pb-3 flex-wrap gap-2">
             <div>
@@ -2774,20 +2791,29 @@ export const FarmOperationsModule: React.FC<Props> = ({
             ))}
           </div>
         </div>
-      )}
+      </div>
+    )}
 
       {/* ===================== TAB 3: CROPS & FODDER ===================== */}
       {tab === 'crops' && (
-        <div className="bg-white border border-gray-200 rounded-2xl p-4 sm:p-5 shadow-xs space-y-4">
+        <div className="space-y-4">
           {/* Crops Section Header Illustration */}
-          <div className="w-full flex justify-center items-center pb-2">
+          <div
+            className="w-full h-40 sm:h-48 flex justify-center items-center overflow-hidden"
+            style={{
+              maskImage: 'linear-gradient(to bottom, black 60%, transparent 100%)',
+              WebkitMaskImage: 'linear-gradient(to bottom, black 60%, transparent 100%)'
+            }}
+          >
             <img
               src="/illustrations/rice_field-cuate.svg"
               alt="Crops section header illustration"
               loading="lazy"
-              className="w-[45%] max-w-[260px] min-w-[150px] h-auto object-contain pointer-events-none drop-shadow-xs"
+              className="w-auto max-w-full h-full object-contain pointer-events-none drop-shadow-xs"
             />
           </div>
+
+          <div className="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 rounded-2xl p-4 sm:p-5 shadow-xs space-y-4">
 
           <div className="flex items-center justify-between border-b border-gray-100 pb-3 flex-wrap gap-2">
             <div>
@@ -2905,7 +2931,8 @@ export const FarmOperationsModule: React.FC<Props> = ({
             </div>
           )}
         </div>
-      )}
+      </div>
+    )}
 
       {/* ===================== TAB 4: INTERNAL FLOWS ===================== */}
       {tab === 'flows' && (

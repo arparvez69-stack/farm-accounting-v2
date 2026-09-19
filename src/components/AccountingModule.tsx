@@ -603,18 +603,24 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
 
   return (
     <div className="space-y-4 pb-6 max-w-5xl mx-auto rounded-3xl p-2 sm:p-4 bg-gradient-to-b from-blue-500/[0.08] via-sky-500/[0.03] to-transparent dark:from-blue-950/30 dark:via-blue-950/10 dark:to-transparent">
-      {/* Top Header & Subtabs */}
-      <div className="flex flex-col gap-3.5 p-4 sm:p-5 rounded-2xl bg-white border border-gray-200 shadow-xs">
-        {/* Module Header Illustration */}
-        <div className="w-full flex justify-center items-center pb-1">
-          <img
-            src="/illustrations/Payment_Information-bro.svg"
-            alt="Accounting Payment Information illustration"
-            loading="lazy"
-            className="w-[35%] max-w-[220px] min-w-[130px] h-auto object-contain pointer-events-none drop-shadow-xs"
-          />
-        </div>
+      {/* Module Header Illustration */}
+      <div
+        className="w-full h-40 sm:h-48 flex justify-center items-center overflow-hidden"
+        style={{
+          maskImage: 'linear-gradient(to bottom, black 60%, transparent 100%)',
+          WebkitMaskImage: 'linear-gradient(to bottom, black 60%, transparent 100%)'
+        }}
+      >
+        <img
+          src="/illustrations/Payment_Information-bro.svg"
+          alt="Accounting Payment Information illustration"
+          loading="lazy"
+          className="w-auto max-w-full h-full object-contain pointer-events-none drop-shadow-xs"
+        />
+      </div>
 
+      {/* Top Header & Subtabs */}
+      <div className="flex flex-col gap-3.5 p-4 sm:p-5 rounded-2xl bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 shadow-xs">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div>
             <h2 className="text-lg sm:text-xl font-bold text-gray-900 flex items-center gap-2">

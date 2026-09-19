@@ -1608,18 +1608,24 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
 
   return (
     <div className="space-y-4 pb-6 max-w-5xl mx-auto rounded-3xl p-2 sm:p-4 bg-gradient-to-b from-teal-500/[0.08] via-teal-500/[0.03] to-transparent dark:from-teal-950/30 dark:via-teal-950/10 dark:to-transparent">
-      {/* Header & Report Selectors */}
-      <div className="flex flex-col gap-3.5 p-4 sm:p-5 rounded-2xl bg-white border border-gray-200 shadow-xs">
-        {/* Module Header Illustration */}
-        <div className="w-full flex justify-center items-center pb-1">
-          <img
-            src="/illustrations/Revenue-bro.svg"
-            alt="Reports & Revenue illustration"
-            loading="lazy"
-            className="w-[35%] max-w-[220px] min-w-[130px] h-auto object-contain pointer-events-none drop-shadow-xs"
-          />
-        </div>
+      {/* Module Header Illustration */}
+      <div
+        className="w-full h-40 sm:h-48 flex justify-center items-center overflow-hidden"
+        style={{
+          maskImage: 'linear-gradient(to bottom, black 60%, transparent 100%)',
+          WebkitMaskImage: 'linear-gradient(to bottom, black 60%, transparent 100%)'
+        }}
+      >
+        <img
+          src="/illustrations/Revenue-bro.svg"
+          alt="Reports & Revenue illustration"
+          loading="lazy"
+          className="w-auto max-w-full h-full object-contain pointer-events-none drop-shadow-xs"
+        />
+      </div>
 
+      {/* Header & Report Selectors */}
+      <div className="flex flex-col gap-3.5 p-4 sm:p-5 rounded-2xl bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 shadow-xs">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div>
             <h2 className="text-lg sm:text-xl font-bold text-gray-900 flex items-center gap-2">
@@ -2827,17 +2833,24 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
       {/* ===================== REPORT: AGING REPORT (পাওনা-দেনার হিসাব) ===================== */}
       {activeReport === 'aging' && (
         <div className="space-y-5">
+          {/* Aging Report Header Illustration */}
+          <div
+            className="w-full h-40 sm:h-48 flex justify-center items-center overflow-hidden"
+            style={{
+              maskImage: 'linear-gradient(to bottom, black 60%, transparent 100%)',
+              WebkitMaskImage: 'linear-gradient(to bottom, black 60%, transparent 100%)'
+            }}
+          >
+            <img
+              src="/illustrations/Pie_chart-pana.svg"
+              alt="Aging report illustration"
+              loading="lazy"
+              className="w-auto max-w-full h-full object-contain pointer-events-none drop-shadow-xs"
+            />
+          </div>
+
           {/* Sub-tabs: Receivables & Payables */}
-          <div className="bg-white border border-gray-200 rounded-2xl p-4 sm:p-5 shadow-xs space-y-4">
-            {/* Aging Report Header Illustration */}
-            <div className="w-full flex justify-center items-center pb-2">
-              <img
-                src="/illustrations/Pie_chart-pana.svg"
-                alt="Aging report illustration"
-                loading="lazy"
-                className="w-[35%] max-w-[220px] min-w-[130px] h-auto object-contain pointer-events-none drop-shadow-xs"
-              />
-            </div>
+          <div className="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 rounded-2xl p-4 sm:p-5 shadow-xs space-y-4">
 
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-gray-100 pb-4">
               <div className="flex items-center gap-3">
@@ -4304,18 +4317,25 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
 
       {/* ===================== REPORT 11: HERD SUMMARY & OPERATIONAL KPIS ===================== */}
       {activeReport === 'herdSummary' && herdKpiData && (
-        <div className="bg-white border border-purple-200/80 rounded-2xl p-4 sm:p-6 space-y-6 shadow-xs">
+        <div className="space-y-4">
           {/* Herd Summary Header Illustration */}
-          <div className="w-full flex justify-center items-center pb-2">
+          <div
+            className="w-full h-40 sm:h-48 flex justify-center items-center overflow-hidden"
+            style={{
+              maskImage: 'linear-gradient(to bottom, black 60%, transparent 100%)',
+              WebkitMaskImage: 'linear-gradient(to bottom, black 60%, transparent 100%)'
+            }}
+          >
             <img
               src="/illustrations/Analysis-amico.svg"
               alt="Herd summary analysis illustration"
               loading="lazy"
-              className="w-[35%] max-w-[220px] min-w-[130px] h-auto object-contain pointer-events-none drop-shadow-xs"
+              className="w-auto max-w-full h-full object-contain pointer-events-none drop-shadow-xs"
             />
           </div>
 
-          {/* Header */}
+          <div className="bg-white dark:bg-slate-900 border border-purple-200/80 dark:border-purple-900/50 rounded-2xl p-4 sm:p-6 space-y-6 shadow-xs">
+            {/* Header */}
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-purple-100 pb-4">
             <div className="flex items-center gap-3">
               <IconTile icon={Activity} color="purple" size="md" rounded="xl" />
@@ -4641,7 +4661,8 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
             </div>
           )}
         </div>
-      )}
+      </div>
+    )}
     </div>
   );
 };

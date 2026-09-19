@@ -554,16 +554,24 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
 
       {/* ===================== TAB 1: INVENTORY ===================== */}
       {tab === 'inventory' && (
-        <div className="bg-white border border-gray-200 rounded-2xl p-4 sm:p-5 shadow-xs space-y-4">
+        <div className="space-y-4">
           {/* Stock Header Illustration */}
-          <div className="w-full flex justify-center items-center pb-2">
+          <div
+            className="w-full h-40 sm:h-48 flex justify-center items-center overflow-hidden"
+            style={{
+              maskImage: 'linear-gradient(to bottom, black 60%, transparent 100%)',
+              WebkitMaskImage: 'linear-gradient(to bottom, black 60%, transparent 100%)'
+            }}
+          >
             <img
               src="/illustrations/Nature-pana.svg"
               alt="Stock & Nature illustration"
               loading="lazy"
-              className="w-[40%] max-w-[240px] min-w-[140px] h-auto object-contain pointer-events-none drop-shadow-xs"
+              className="w-auto max-w-full h-full object-contain pointer-events-none drop-shadow-xs"
             />
           </div>
+
+          <div className="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 rounded-2xl p-4 sm:p-5 shadow-xs space-y-4">
 
           <div className="flex items-center justify-between border-b border-gray-100 pb-3 flex-wrap gap-2">
             <div>
@@ -969,20 +977,29 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
             </div>
           )}
         </div>
-      )}
+      </div>
+    )}
 
       {/* ===================== TAB 2: SALES ===================== */}
       {tab === 'sales' && (
-        <div className="bg-white border border-gray-200 rounded-2xl p-4 sm:p-5 shadow-xs space-y-4">
+        <div className="space-y-4">
           {/* Sales Invoices Header Illustration */}
-          <div className="w-full flex justify-center items-center pb-2">
+          <div
+            className="w-full h-40 sm:h-48 flex justify-center items-center overflow-hidden"
+            style={{
+              maskImage: 'linear-gradient(to bottom, black 60%, transparent 100%)',
+              WebkitMaskImage: 'linear-gradient(to bottom, black 60%, transparent 100%)'
+            }}
+          >
             <img
               src="/illustrations/Farmers_market-cuate.svg"
               alt="Sales invoices illustration"
               loading="lazy"
-              className="w-[35%] max-w-[220px] min-w-[130px] h-auto object-contain pointer-events-none drop-shadow-xs"
+              className="w-auto max-w-full h-full object-contain pointer-events-none drop-shadow-xs"
             />
           </div>
+
+          <div className="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 rounded-2xl p-4 sm:p-5 shadow-xs space-y-4">
 
           <div className="flex items-center justify-between border-b border-gray-100 pb-3 flex-wrap gap-2">
             <div>
@@ -1217,7 +1234,8 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
             </table>
           </div>
         </div>
-      )}
+      </div>
+    )}
 
       {/* ===================== TAB 3: PURCHASES ===================== */}
       {tab === 'purchases' && (
