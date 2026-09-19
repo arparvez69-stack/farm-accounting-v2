@@ -93,139 +93,146 @@ async function executeDepreciationInternal(currentUserId?: string): Promise<Depr
     const resultDetails: DepreciationRunResult['details'] = [];
 
     for (const asset of assets) {
-      const cost = Number(asset.originalCost || 0);
-      if (cost <= 0) continue;
+      try {
+        const cost = Number(asset.originalCost || 0);
+        if (cost <= 0) continue;
 
-      // Rate: annual % entered at purchase or derived from useful life years
-      const rate = Number(
-        asset.depreciationRatePercent ?? (asset.usefulLifeYears > 0 ? 100 / asset.usefulLifeYears : 10)
-      );
-      if (rate <= 0) continue;
-
-      // Monthly depreciation = (cost × depreciationRatePercent / 100) / 12
-      const monthlyDepr = Math.round(((cost * rate / 100) / 12) * 100) / 100;
-      if (monthlyDepr <= 0) continue;
-
-      let currentAccumulated = Number(asset.accumulatedDepreciation || 0);
-      const salvage = Number(asset.salvageValue || 0);
-      const maxDepreciableTotal = Math.max(0, cost - salvage);
-
-      if (currentAccumulated >= maxDepreciableTotal) {
-        // Already fully depreciated
-        continue;
-      }
-
-      // Starting point: lastDepreciationDate or purchaseDate or today
-      let cursorDate = asset.lastDepreciationDate || asset.purchaseDate || todayStr;
-      let monthsPostedForAsset = 0;
-      let totalAssetDepr = 0;
-
-      while (true) {
-        const nextDate = getNextMonthDate(cursorDate);
-        // Only post for full months elapsed up to today
-        if (nextDate > todayStr) {
-          break;
-        }
-
-        const remainingDepreciable = Math.max(0, maxDepreciableTotal - currentAccumulated);
-        if (remainingDepreciable <= 0) {
-          cursorDate = nextDate;
-          break;
-        }
-
-        const amountToPost = Math.round(Math.min(monthlyDepr, remainingDepreciable) * 100) / 100;
-        if (amountToPost <= 0) {
-          cursorDate = nextDate;
-          break;
-        }
-
-        // Auto-post balanced journal entry
-        const voucherNumber = generateTransactionNumber('ADJ');
-        const entryId = generateUniqueId('j_depr');
-
-        const lines: JournalLine[] = [
-          {
-            accountId: expenseAcc.id,
-            accountCode: deprAccounts.expenseCode,
-            accountName: expenseAcc.nameBn,
-            debit: amountToPost,
-            credit: 0,
-            memo: `${asset.name} মাসিক অবচয় খরচ`
-          },
-          {
-            accountId: accumAcc.id,
-            accountCode: deprAccounts.accumulatedCode,
-            accountName: accumAcc.nameBn,
-            debit: 0,
-            credit: amountToPost,
-            memo: `${asset.name} পুঞ্জীভূত অবচয়`
-          }
-        ];
-
-        await postJournalEntry(
-          {
-            id: entryId,
-            voucherNumber,
-            voucherType: 'ADJUSTMENT',
-            date: nextDate,
-            narration: `স্থায়ী সম্পদ স্বয়ংক্রিয় অবচয়: ${asset.name} (${asset.id}) - মাসিক কিস্তি (${nextDate})`,
-            reference: asset.id,
-            lines,
-            createdBy: currentUserId || 'AUTO_DEPRECIATION',
-            createdAt: new Date().toISOString()
-          },
-          { accounts }
+        // Rate: annual % entered at purchase or derived from useful life years
+        const rate = Number(
+          asset.depreciationRatePercent ?? (asset.usefulLifeYears > 0 ? 100 / asset.usefulLifeYears : 10)
         );
+        if (rate <= 0) continue;
 
-        currentAccumulated = Math.round((currentAccumulated + amountToPost) * 100) / 100;
-        cursorDate = nextDate;
-        monthsPostedForAsset += 1;
-        totalAssetDepr = Math.round((totalAssetDepr + amountToPost) * 100) / 100;
-      }
+        // Monthly depreciation = (cost × depreciationRatePercent / 100) / 12
+        const monthlyDepr = Math.round(((cost * rate / 100) / 12) * 100) / 100;
+        if (monthlyDepr <= 0) continue;
 
-      if (monthsPostedForAsset > 0) {
-        const newBookValue = Math.max(0, Math.round((cost - currentAccumulated) * 100) / 100);
+        let currentAccumulated = Number(asset.accumulatedDepreciation || 0);
+        const salvage = Number(asset.salvageValue || 0);
+        const maxDepreciableTotal = Math.max(0, cost - salvage);
 
-        await db.fixedAssets.update(asset.id, {
-          accumulatedDepreciation: currentAccumulated,
-          currentBookValue: newBookValue,
-          lastDepreciationDate: cursorDate,
-          synced: false
-        });
+        if (currentAccumulated >= maxDepreciableTotal) {
+          // Already fully depreciated
+          continue;
+        }
 
-        // Audit log
-        await safeInsert(db.auditLogs, {
-          id: generateUniqueId('audit'),
-          timestamp: new Date().toISOString(),
-          userId: currentUserId || 'SYSTEM_AUTO_DEPRECIATION',
-          role: 'OWNER',
-          action: 'UPDATE',
-          module: 'ACCOUNTING',
-          recordId: asset.id,
-          status: 'SUCCESS',
-          details: JSON.stringify({
-            action: 'AUTO_DEPRECIATION_POSTED',
+        // Starting point: lastDepreciationDate or purchaseDate or today
+        let cursorDate = asset.lastDepreciationDate || asset.purchaseDate || todayStr;
+        let monthsPostedForAsset = 0;
+        let totalAssetDepr = 0;
+
+        while (true) {
+          const nextDate = getNextMonthDate(cursorDate);
+          // Only post for full months elapsed up to today
+          if (nextDate > todayStr) {
+            break;
+          }
+
+          const remainingDepreciable = Math.max(0, maxDepreciableTotal - currentAccumulated);
+          if (remainingDepreciable <= 0) {
+            cursorDate = nextDate;
+            break;
+          }
+
+          const amountToPost = Math.round(Math.min(monthlyDepr, remainingDepreciable) * 100) / 100;
+          if (amountToPost <= 0) {
+            cursorDate = nextDate;
+            break;
+          }
+
+          // Auto-post balanced journal entry
+          const voucherNumber = generateTransactionNumber('ADJ');
+          const entryId = generateUniqueId('j_depr');
+
+          const lines: JournalLine[] = [
+            {
+              accountId: expenseAcc.id,
+              accountCode: deprAccounts.expenseCode,
+              accountName: expenseAcc.nameBn,
+              debit: amountToPost,
+              credit: 0,
+              memo: `${asset.name} মাসিক অবচয় খরচ`
+            },
+            {
+              accountId: accumAcc.id,
+              accountCode: deprAccounts.accumulatedCode,
+              accountName: accumAcc.nameBn,
+              debit: 0,
+              credit: amountToPost,
+              memo: `${asset.name} পুঞ্জীভূত অবচয়`
+            }
+          ];
+
+          await postJournalEntry(
+            {
+              id: entryId,
+              voucherNumber,
+              voucherType: 'ADJUSTMENT',
+              date: nextDate,
+              narration: `স্থায়ী সম্পদ স্বয়ংক্রিয় অবচয়: ${asset.name} (${asset.id}) - মাসিক কিস্তি (${nextDate})`,
+              reference: asset.id,
+              lines,
+              createdBy: currentUserId || 'AUTO_DEPRECIATION',
+              createdAt: new Date().toISOString()
+            },
+            { accounts }
+          );
+
+          currentAccumulated = Math.round((currentAccumulated + amountToPost) * 100) / 100;
+          cursorDate = nextDate;
+          monthsPostedForAsset += 1;
+          totalAssetDepr = Math.round((totalAssetDepr + amountToPost) * 100) / 100;
+        }
+
+        if (monthsPostedForAsset > 0) {
+          const newBookValue = Math.max(0, Math.round((cost - currentAccumulated) * 100) / 100);
+
+          await db.fixedAssets.update(asset.id, {
+            accumulatedDepreciation: currentAccumulated,
+            currentBookValue: newBookValue,
+            lastDepreciationDate: cursorDate,
+            synced: false
+          });
+
+          // Audit log
+          await safeInsert(db.auditLogs, {
+            id: generateUniqueId('audit'),
+            timestamp: new Date().toISOString(),
+            userId: currentUserId || 'SYSTEM_AUTO_DEPRECIATION',
+            role: 'OWNER',
+            action: 'UPDATE',
+            module: 'ACCOUNTING',
+            recordId: asset.id,
+            status: 'SUCCESS',
+            details: JSON.stringify({
+              action: 'AUTO_DEPRECIATION_POSTED',
+              assetId: asset.id,
+              assetName: asset.name,
+              monthsPosted: monthsPostedForAsset,
+              totalDepreciation: totalAssetDepr,
+              newAccumulatedDepreciation: currentAccumulated,
+              newBookValue,
+              lastDepreciationDate: cursorDate
+            }),
+            synced: false
+          });
+
+          totalEntriesPosted += monthsPostedForAsset;
+          grandTotalDepr = Math.round((grandTotalDepr + totalAssetDepr) * 100) / 100;
+
+          resultDetails.push({
             assetId: asset.id,
             assetName: asset.name,
             monthsPosted: monthsPostedForAsset,
-            totalDepreciation: totalAssetDepr,
-            newAccumulatedDepreciation: currentAccumulated,
-            newBookValue,
+            amount: totalAssetDepr,
             lastDepreciationDate: cursorDate
-          }),
-          synced: false
-        });
-
-        totalEntriesPosted += monthsPostedForAsset;
-        grandTotalDepr = Math.round((grandTotalDepr + totalAssetDepr) * 100) / 100;
-
-        resultDetails.push({
-          assetId: asset.id,
-          assetName: asset.name,
-          monthsPosted: monthsPostedForAsset,
-          amount: totalAssetDepr,
-          lastDepreciationDate: cursorDate
-        });
+          });
+        }
+      } catch (assetErr: any) {
+        console.error(
+          `[DepreciationService] Failed to post automated depreciation for asset "${asset.name}" (${asset.id}):`,
+          assetErr?.message || assetErr
+        );
       }
     }
 

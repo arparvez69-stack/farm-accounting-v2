@@ -81,6 +81,7 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
   // New Loan Modal
   const [showNewLoan, setShowNewLoan] = useState(false);
   const [loanLenderName, setLoanLenderName] = useState('');
+  const [loanType, setLoanType] = useState<'BANK' | 'NGO' | 'INDIVIDUAL'>('BANK');
   const [loanTerm, setLoanTerm] = useState<'SHORT_TERM' | 'LONG_TERM'>('SHORT_TERM');
   const [loanPrincipal, setLoanPrincipal] = useState('');
   const [annualInterestRatePercent, setAnnualInterestRatePercent] = useState('9');
@@ -227,6 +228,7 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
     try {
       const res = await executeLoanTransaction({
         lenderName: loanLenderName.trim(),
+        loanType,
         principal,
         annualInterestRatePercent: rate,
         interestRate: rate,
@@ -239,6 +241,7 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
 
       setShowNewLoan(false);
       setLoanLenderName('');
+      setLoanType('BANK');
       setLoanPrincipal('');
       setAnnualInterestRatePercent('9');
       setTermMonths('12');
@@ -834,7 +837,20 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
           {showNewLoan && (
             <form onSubmit={handleCreateLoan} className="p-4 bg-[#F8FAFC] border border-gray-300 rounded-xl space-y-3">
               <div className="font-bold text-[#1E5128] text-[15px]">নতুন ঋণ গ্রহণ ও হিসাবভুক্তকরণ</div>
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+              <div className="grid grid-cols-1 sm:grid-cols-4 gap-2.5">
+                <div>
+                  <label className="block text-[13px] font-medium text-gray-700 mb-1">ঋণের উৎস/প্রকার (Type)</label>
+                  <select
+                    id="loanTypeSelect"
+                    value={loanType}
+                    onChange={(e) => setLoanType(e.target.value as 'BANK' | 'NGO' | 'INDIVIDUAL')}
+                    className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900"
+                  >
+                    <option value="BANK">বাণিজ্যিক/কৃষি ব্যাংক (Bank)</option>
+                    <option value="NGO">এনজিও/সমিতি ঋণ (NGO)</option>
+                    <option value="INDIVIDUAL">ব্যক্তিগত/মহাজন ঋণ (Individual)</option>
+                  </select>
+                </div>
                 <div>
                   <label className="block text-[13px] font-medium text-gray-700 mb-1">ঋণদাতা ব্যাংক/মহাজন</label>
                   <input

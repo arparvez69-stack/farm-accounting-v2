@@ -458,6 +458,7 @@ export async function executeLoanTransaction(params: {
   annualInterestRatePercent?: number;
   termMonths?: number;
   startDate?: string;
+  loanType?: 'BANK' | 'NGO' | 'INDIVIDUAL';
 }): Promise<{ loan: Loan; journalEntryId: string }> {
   return await db.transaction(
     'rw',
@@ -479,7 +480,8 @@ export async function executeLoanTransaction(params: {
         currentUserId,
         annualInterestRatePercent,
         termMonths,
-        startDate
+        startDate,
+        loanType = 'BANK'
       } = params;
 
       if (principal <= 0) {
@@ -561,7 +563,7 @@ export async function executeLoanTransaction(params: {
         id: loanId,
         loanNumber: loanRef,
         lenderName: lenderName.trim(),
-        loanType: 'BANK',
+        loanType,
         principalAmount: principal,
         disbursedDate: dateStr,
         startDate: dateStr,
