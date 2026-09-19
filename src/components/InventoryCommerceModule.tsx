@@ -15,8 +15,17 @@ import {
   ChevronRight,
   CreditCard,
   Calendar,
-  FileText
+  FileText,
+  Receipt,
+  Download,
+  Share2,
+  Printer,
+  Check,
+  MessageCircle,
+  Copy
 } from 'lucide-react';
+import { jsPDF } from 'jspdf';
+import QRCode from 'qrcode';
 import { db } from '../db/indexedDb';
 import { executePurchaseTransaction, executeSaleTransaction } from '../services/transactionService';
 import { generateTransactionNumber, generateUniqueId, safeInsert } from '../utils/idGenerator';
@@ -47,6 +56,464 @@ const getInventoryOpeningAssetAccount = (category?: string): { code: string; nam
       return { code: '1056', name: 'অন্যান্য মজুদ পণ্য ও প্যাকেজিং (Other Inventory / Packaging)' };
   }
 };
+
+export interface ReceiptData {
+  type: 'SALE' | 'PURCHASE';
+  record: Sale | Purchase;
+}
+
+/**
+ * Transliterates and sanitizes text for safe, crisp ASCII rendering in jsPDF standard fonts
+ */
+function cleanPdfText(text: any, fallback = '-'): string {
+  if (text === undefined || text === null) return fallback;
+  const str = String(text).trim();
+  if (!str) return fallback;
+
+  const numMap: Record<string, string> = {
+    '০': '0', '১': '1', '২': '2', '৩': '3', '৪': '4',
+    '৫': '5', '৬': '6', '৭': '7', '৮': '8', '৯': '9'
+  };
+  let cleaned = str.replace(/[০-৯]/g, (w) => numMap[w] || w);
+
+  const translationMap: Record<string, string> = {
+    'বিক্রয়': 'Sale',
+    'ক্রয়': 'Purchase',
+    'চালান': 'Invoice',
+    'রশিদ': 'Receipt',
+    'ভাউচার': 'Voucher',
+    'নগদ': 'Cash',
+    'ব্যাংক': 'Bank',
+    'বাকি': 'Credit',
+    'পরিশোধিত': 'Paid',
+    'আংশিক বাকি': 'Partial Due',
+    'আংশিক': 'Partial',
+    'পরিশোধ': 'Paid',
+    'কেজি': 'kg',
+    'লিটার': 'L',
+    'বস্তা': 'Bag',
+    'পিস': 'Pcs',
+    'টন': 'Ton',
+    'গ্রাম': 'gm',
+    'ফিড': 'Feed',
+    'ঘাস': 'Grass',
+    'ভুট্টা': 'Corn',
+    'গম': 'Wheat',
+    'ভূষি': 'Bran',
+    'খৈল': 'Mustard Cake',
+    'দুধ': 'Milk',
+    'মাছ': 'Fish',
+    'পোনা': 'Fingerling',
+    'ছাগল': 'Goat',
+    'গরু': 'Cattle',
+    'গাভী': 'Cow',
+    'ভেড়া': 'Sheep',
+    'মহিষ': 'Buffalo',
+    'সার': 'Fertilizer',
+    'বীজ': 'Seed',
+    'ইউরিয়া': 'Urea',
+    'ডিএপি': 'DAP',
+    'পটাশ': 'Potash',
+    'ওষুধ': 'Medicine',
+    'টিকা': 'Vaccine',
+    'পরিবহন': 'Transport',
+    'খরচ': 'Cost',
+    'ক্রেতা': 'Customer',
+    'সরবরাহকারী': 'Supplier',
+    'হ্যাঁ': 'Yes',
+    'না': 'No'
+  };
+
+  for (const [bn, en] of Object.entries(translationMap)) {
+    cleaned = cleaned.split(bn).join(en);
+  }
+
+  const safeStr = cleaned.replace(/[^\x20-\x7E]/g, ' ').replace(/\s+/g, ' ').trim();
+  return safeStr || fallback;
+}
+
+/**
+ * Generates an elegant, professional, one-page PDF receipt for a Sale or Purchase
+ */
+async function generateReceiptPdf(
+  data: ReceiptData,
+  partiesList: Party[],
+  paymentsList: PaymentRecord[]
+): Promise<jsPDF> {
+  const isSale = data.type === 'SALE';
+  const rec = data.record;
+  const partyId = isSale ? (rec as Sale).customerId : (rec as Purchase).supplierId;
+  const rawPartyName = isSale ? (rec as Sale).customerName : (rec as Purchase).supplierName;
+  const party = partiesList.find(
+    (p) =>
+      p.id === partyId ||
+      (p.name && rawPartyName && p.name.trim().toLowerCase() === rawPartyName.trim().toLowerCase())
+  );
+  const partyName = party?.name || rawPartyName || (isSale ? 'Customer' : 'Supplier');
+  const partyPhone = party?.phone || '';
+  const partyAddress = party?.address || '';
+  const displayNumber = rec.displayNumber || rec.invoiceNumber || rec.id.slice(0, 8);
+  const dateStr = rec.date || new Date().toISOString().split('T')[0];
+
+  const total = Number(rec.grandTotal || rec.totalAmount || 0);
+  const paid = Number(rec.paidAmount || 0);
+  const due = Number(rec.dueAmount !== undefined ? rec.dueAmount : Math.max(0, total - paid));
+  const recordPayments = paymentsList.filter((pmt) => pmt.parentId === rec.id);
+
+  const doc = new jsPDF({
+    orientation: 'portrait',
+    unit: 'mm',
+    format: 'a4'
+  });
+
+  // 1. Top Header Banner (Forest Green #1E5128)
+  doc.setFillColor(30, 81, 40);
+  doc.rect(0, 0, 210, 24, 'F');
+
+  // Farm Title
+  doc.setTextColor(255, 255, 255);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(16);
+  doc.text('THE GOATED FARM', 14, 11);
+
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(8);
+  doc.setTextColor(220, 235, 220);
+  doc.text('Integrated Agro ERP & Sustainable Livestock Management', 14, 16.5);
+  doc.text('Dairy * Fisheries * Crops * Organic Feeds', 14, 20.5);
+
+  // Right Header Banner: Invoice Title & Number
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(11);
+  doc.setTextColor(255, 255, 255);
+  doc.text(isSale ? 'SALES INVOICE & RECEIPT' : 'PURCHASE VOUCHER & RECEIPT', 196, 10.5, { align: 'right' });
+
+  doc.setFontSize(9);
+  doc.setTextColor(255, 255, 255);
+  doc.text(`INVOICE #: ${cleanPdfText(displayNumber)}`, 196, 16, { align: 'right' });
+
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(8);
+  doc.setTextColor(220, 235, 220);
+  doc.text(`DATE: ${cleanPdfText(dateStr)}`, 196, 20.5, { align: 'right' });
+
+  // 2. Metadata Cards (Two-column info box)
+  // Left Box: Party Info
+  doc.setDrawColor(215, 225, 215);
+  doc.setFillColor(250, 253, 250);
+  doc.roundedRect(14, 29, 94, 33, 2, 2, 'FD');
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(8);
+  doc.setTextColor(30, 81, 40);
+  doc.text(isSale ? 'BILLED TO (CUSTOMER):' : 'SUPPLIER (PURCHASED FROM):', 18, 35);
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(10.5);
+  doc.setTextColor(30, 30, 30);
+  doc.text(cleanPdfText(partyName).slice(0, 38), 18, 41);
+
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(8);
+  doc.setTextColor(90, 90, 90);
+  if (partyPhone) {
+    doc.text(`Mobile: ${cleanPdfText(partyPhone)}`, 18, 46.5);
+  } else {
+    doc.text('Mobile: Not specified', 18, 46.5);
+  }
+
+  if (partyAddress) {
+    doc.text(`Address: ${cleanPdfText(partyAddress).slice(0, 42)}`, 18, 51.5);
+  } else {
+    doc.text(`Party ID: ${cleanPdfText(partyId || 'WALK-IN')}`, 18, 51.5);
+  }
+
+  doc.text(`Payment Mode: ${cleanPdfText(rec.paymentMethod || 'CASH')}`, 18, 56.5);
+
+  // Right Box: Invoice Summary Info
+  doc.roundedRect(112, 29, 84, 33, 2, 2, 'FD');
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(8);
+  doc.setTextColor(30, 81, 40);
+  doc.text('INVOICE STATUS & SUMMARY:', 116, 35);
+
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(8);
+  doc.setTextColor(80, 80, 80);
+  doc.text('Invoice Ref:', 116, 41);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(30, 30, 30);
+  doc.text(cleanPdfText(displayNumber), 150, 41);
+
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(80, 80, 80);
+  doc.text('Issue Date:', 116, 46.5);
+  doc.setTextColor(30, 30, 30);
+  doc.text(cleanPdfText(dateStr), 150, 46.5);
+
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(80, 80, 80);
+  doc.text('Payment Status:', 116, 52);
+
+  const statusLabel = due <= 0 ? 'FULLY PAID' : paid > 0 ? 'PARTIAL DUE' : 'UNPAID / DUE';
+  if (due <= 0) {
+    doc.setTextColor(21, 128, 61);
+  } else if (paid > 0) {
+    doc.setTextColor(202, 138, 4);
+  } else {
+    doc.setTextColor(185, 28, 28);
+  }
+  doc.setFont('helvetica', 'bold');
+  doc.text(statusLabel, 150, 52);
+
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(7.5);
+  doc.setTextColor(110, 110, 110);
+  doc.text('Recorded in Farm Ledger', 116, 57);
+
+  // 3. Line Items Table
+  let currentY = 68;
+
+  // Table Header
+  doc.setFillColor(235, 244, 235);
+  doc.rect(14, currentY, 182, 8, 'F');
+  doc.setDrawColor(200, 215, 200);
+  doc.rect(14, currentY, 182, 8, 'S');
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(8);
+  doc.setTextColor(30, 70, 35);
+  doc.text('#', 17, currentY + 5.5);
+  doc.text('ITEM / DESCRIPTION', 27, currentY + 5.5);
+  doc.text('QTY', 116, currentY + 5.5, { align: 'right' });
+  doc.text('UNIT PRICE (BDT)', 152, currentY + 5.5, { align: 'right' });
+  doc.text('TOTAL (BDT)', 192, currentY + 5.5, { align: 'right' });
+
+  currentY += 8;
+
+  const items = rec.items || [];
+  let rowIndex = 1;
+
+  items.forEach((item) => {
+    const itemName = cleanPdfText(item.itemName || 'Item');
+    const qtyStr = `${item.quantity || 1} ${cleanPdfText(item.unit || '')}`.trim();
+    const rate = Number(item.unitPrice || item.rate || 0);
+    const lineTotal = Number(item.lineTotal || item.total || (item.quantity || 1) * rate);
+
+    if (rowIndex % 2 === 0) {
+      doc.setFillColor(250, 252, 250);
+      doc.rect(14, currentY, 182, 7, 'F');
+    }
+
+    doc.setDrawColor(230, 235, 230);
+    doc.line(14, currentY + 7, 196, currentY + 7);
+
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(8);
+    doc.setTextColor(80, 80, 80);
+    doc.text(String(rowIndex), 17, currentY + 5);
+
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(30, 30, 30);
+    doc.text(itemName.slice(0, 48), 27, currentY + 5);
+
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(60, 60, 60);
+    doc.text(qtyStr, 116, currentY + 5, { align: 'right' });
+    doc.text(rate.toLocaleString('en-IN', { minimumFractionDigits: 2 }), 152, currentY + 5, { align: 'right' });
+
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(30, 30, 30);
+    doc.text(lineTotal.toLocaleString('en-IN', { minimumFractionDigits: 2 }), 192, currentY + 5, { align: 'right' });
+
+    currentY += 7;
+    rowIndex++;
+  });
+
+  // Transport Cost if purchase
+  const transport = Number((rec as Purchase).transportCost || 0);
+  if (transport > 0) {
+    doc.setFillColor(254, 252, 246);
+    doc.rect(14, currentY, 182, 7, 'F');
+    doc.setDrawColor(230, 235, 230);
+    doc.line(14, currentY + 7, 196, currentY + 7);
+
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(8);
+    doc.setTextColor(80, 80, 80);
+    doc.text(String(rowIndex), 17, currentY + 5);
+
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(120, 60, 20);
+    doc.text('Transport & Logistics Handling', 27, currentY + 5);
+
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(60, 60, 60);
+    doc.text('1 trip', 116, currentY + 5, { align: 'right' });
+    doc.text(transport.toLocaleString('en-IN', { minimumFractionDigits: 2 }), 152, currentY + 5, { align: 'right' });
+
+    doc.setFont('helvetica', 'bold');
+    doc.text(transport.toLocaleString('en-IN', { minimumFractionDigits: 2 }), 192, currentY + 5, { align: 'right' });
+
+    currentY += 7;
+  }
+
+  // Outer border of table
+  doc.setDrawColor(200, 215, 200);
+  doc.rect(14, 68, 182, currentY - 68, 'S');
+
+  currentY += 4;
+
+  // 4. Financial Summary Box (Right) & Installment History (Left)
+  const totalsBoxY = currentY;
+  const totalsBoxW = 84;
+  const totalsBoxX = 112;
+
+  doc.setDrawColor(210, 225, 210);
+  doc.setFillColor(252, 254, 252);
+  doc.roundedRect(totalsBoxX, totalsBoxY, totalsBoxW, 36, 1.5, 1.5, 'FD');
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(8.5);
+  doc.setTextColor(80, 80, 80);
+  doc.text('Subtotal:', totalsBoxX + 5, totalsBoxY + 7);
+  doc.text(`BDT ${total.toLocaleString('en-IN', { minimumFractionDigits: 2 })}`, totalsBoxX + totalsBoxW - 5, totalsBoxY + 7, { align: 'right' });
+
+  // Divider inside totals
+  doc.setDrawColor(220, 230, 220);
+  doc.line(totalsBoxX + 4, totalsBoxY + 11, totalsBoxX + totalsBoxW - 4, totalsBoxY + 11);
+
+  // Grand Total
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(10.5);
+  doc.setTextColor(30, 30, 30);
+  doc.text('Grand Total:', totalsBoxX + 5, totalsBoxY + 18);
+  doc.text(`BDT ${total.toLocaleString('en-IN', { minimumFractionDigits: 2 })}`, totalsBoxX + totalsBoxW - 5, totalsBoxY + 18, { align: 'right' });
+
+  // Paid Amount
+  doc.setFontSize(9.5);
+  doc.setTextColor(21, 128, 61);
+  doc.text('Paid Amount:', totalsBoxX + 5, totalsBoxY + 25);
+  doc.text(`BDT ${paid.toLocaleString('en-IN', { minimumFractionDigits: 2 })}`, totalsBoxX + totalsBoxW - 5, totalsBoxY + 25, { align: 'right' });
+
+  // Due Amount
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(10);
+  if (due > 0) {
+    doc.setTextColor(185, 28, 28);
+  } else {
+    doc.setTextColor(21, 128, 61);
+  }
+  doc.text('Amount Still Due:', totalsBoxX + 5, totalsBoxY + 32);
+  doc.text(`BDT ${due.toLocaleString('en-IN', { minimumFractionDigits: 2 })}`, totalsBoxX + totalsBoxW - 5, totalsBoxY + 32, { align: 'right' });
+
+  // Left side: Payment History or Terms
+  const leftBoxW = 94;
+  const leftBoxX = 14;
+  doc.setDrawColor(225, 230, 225);
+  doc.setFillColor(254, 255, 254);
+  doc.roundedRect(leftBoxX, totalsBoxY, leftBoxW, 36, 1.5, 1.5, 'FD');
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(8);
+  doc.setTextColor(30, 81, 40);
+  doc.text('PAYMENT & INSTALLMENT HISTORY:', leftBoxX + 4, totalsBoxY + 6.5);
+
+  if (recordPayments.length > 0) {
+    let pmtY = totalsBoxY + 12;
+    recordPayments.slice(0, 4).forEach((pmt, pIdx) => {
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(7.5);
+      doc.setTextColor(90, 90, 90);
+      doc.text(`${pIdx + 1}. Date: ${cleanPdfText(pmt.date)}`, leftBoxX + 4, pmtY);
+
+      doc.setFont('helvetica', 'bold');
+      doc.setTextColor(21, 128, 61);
+      doc.text(`BDT ${Number(pmt.amount || 0).toLocaleString('en-IN')}`, leftBoxX + leftBoxW - 5, pmtY, { align: 'right' });
+      pmtY += 5.5;
+    });
+    if (recordPayments.length > 4) {
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(7);
+      doc.setTextColor(120, 120, 120);
+      doc.text(`+ ${recordPayments.length - 4} more installment(s)...`, leftBoxX + 4, pmtY);
+    }
+  } else {
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(8);
+    doc.setTextColor(120, 120, 120);
+    if (due <= 0) {
+      doc.text('Payment settled in full upon transaction issue.', leftBoxX + 4, totalsBoxY + 16);
+      doc.text(`Method: ${cleanPdfText(rec.paymentMethod || 'CASH')}`, leftBoxX + 4, totalsBoxY + 22);
+    } else {
+      doc.text('Credit transaction. Pending installment clearance.', leftBoxX + 4, totalsBoxY + 16);
+      doc.text(`Outstanding Due: BDT ${due.toLocaleString('en-IN')}`, leftBoxX + 4, totalsBoxY + 22);
+    }
+  }
+
+  // 5. QR Code & Authenticity Section
+  const qrSectionY = totalsBoxY + 41;
+
+  // Generate QR Code
+  try {
+    const qrDataText = `The Goated Farm | ${isSale ? 'Sale' : 'Purchase'} | Inv: ${displayNumber} | Date: ${dateStr} | Total: BDT ${total} | Paid: BDT ${paid} | Due: BDT ${due}`;
+    const qrDataUrl = await QRCode.toDataURL(qrDataText, { margin: 1, width: 120 });
+    doc.addImage(qrDataUrl, 'PNG', 14, qrSectionY, 22, 22);
+    doc.setDrawColor(210, 225, 210);
+    doc.rect(14, qrSectionY, 22, 22, 'S');
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(7.5);
+    doc.setTextColor(30, 81, 40);
+    doc.text('OFFICIAL DIGITAL RECORD', 39, qrSectionY + 6);
+
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(7);
+    doc.setTextColor(100, 100, 100);
+    doc.text('Scan with any smartphone camera to verify', 39, qrSectionY + 11);
+    doc.text(`System ID: ${cleanPdfText(rec.id).slice(0, 32)}`, 39, qrSectionY + 15.5);
+    doc.text('Certified authentic entry in ERP general ledger', 39, qrSectionY + 20);
+  } catch (err) {
+    console.warn('QR Code embedding skipped:', err);
+  }
+
+  // Signatures
+  const sigY = qrSectionY + 16;
+  doc.setDrawColor(180, 190, 180);
+  doc.setLineDashPattern([1, 1], 0);
+
+  // Customer / Receiver Signature line
+  doc.line(110, sigY, 145, sigY);
+  // Authorized Manager Signature line
+  doc.line(160, sigY, 196, sigY);
+
+  doc.setLineDashPattern([], 0);
+
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(7);
+  doc.setTextColor(100, 100, 100);
+  doc.text('Customer / Received By', 127.5, sigY + 4, { align: 'center' });
+  doc.text('Authorized Signature', 178, sigY + 4, { align: 'center' });
+
+  // 6. Bottom Clean Footer (284mm to 297mm)
+  doc.setFillColor(242, 247, 242);
+  doc.rect(0, 285, 210, 12, 'F');
+  doc.setDrawColor(215, 230, 215);
+  doc.line(0, 285, 210, 285);
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(7.5);
+  doc.setTextColor(30, 81, 40);
+  doc.text('THE GOATED FARM * INTEGRATED AGRO COMMERCE & ERP', 105, 289.5, { align: 'center' });
+
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(7);
+  doc.setTextColor(110, 125, 110);
+  doc.text('For queries or support, please contact farm administration. All transactions are logged securely.', 105, 293.5, { align: 'center' });
+
+  return doc;
+}
 
 interface Props {
   role: UserRole;
@@ -172,6 +639,26 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
     amount: number;
     type: 'SALE' | 'PURCHASE';
   } | null>(null);
+
+  // Receipt Modal State
+  const [receiptModal, setReceiptModal] = useState<ReceiptData | null>(null);
+  const [isExportingPdf, setIsExportingPdf] = useState(false);
+  const [isSharing, setIsSharing] = useState(false);
+  const [receiptCopied, setReceiptCopied] = useState(false);
+  const [modalQrUrl, setModalQrUrl] = useState<string>('');
+
+  useEffect(() => {
+    if (!receiptModal) {
+      setModalQrUrl('');
+      return;
+    }
+    const rec = receiptModal.record;
+    const num = rec.displayNumber || rec.invoiceNumber || rec.id;
+    const qrData = `The Goated Farm | ${receiptModal.type} | #${num} | Date: ${rec.date} | Total: BDT ${rec.grandTotal || rec.totalAmount || 0} | Paid: BDT ${rec.paidAmount || 0}`;
+    QRCode.toDataURL(qrData, { margin: 1, width: 140 })
+      .then((url) => setModalQrUrl(url))
+      .catch((err) => console.warn('QR error:', err));
+  }, [receiptModal]);
 
   // Add Installment Modal State
   const [paymentModal, setPaymentModal] = useState<{
@@ -679,6 +1166,96 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
   };
 
   const fmt = (n: number) => `৳${Number(n || 0).toLocaleString('en-IN', { minimumFractionDigits: 0 })}`;
+
+  const handleDownloadReceiptPdf = async (data: ReceiptData) => {
+    setIsExportingPdf(true);
+    try {
+      const doc = await generateReceiptPdf(data, parties, payments);
+      const isSale = data.type === 'SALE';
+      const num = cleanPdfText(data.record.displayNumber || data.record.invoiceNumber || 'receipt');
+      doc.save(`Receipt-${isSale ? 'Sale' : 'Purchase'}-${num}.pdf`);
+      setMsg({ type: 'success', text: 'চালান রশিদ পিডিএফ সফলভাবে ডাউনলোড হয়েছে।' });
+    } catch (err) {
+      console.error('Failed to generate PDF:', err);
+      setMsg({ type: 'error', text: 'পিডিএফ রশিদ তৈরি করতে সমস্যা হয়েছে।' });
+    } finally {
+      setIsExportingPdf(false);
+    }
+  };
+
+  const handleShareReceipt = async (data: ReceiptData) => {
+    setIsSharing(true);
+    try {
+      const isSale = data.type === 'SALE';
+      const rec = data.record;
+      const num = rec.displayNumber || rec.invoiceNumber || rec.id.slice(0, 8);
+      const partyName = isSale ? (rec as Sale).customerName : (rec as Purchase).supplierName;
+      const total = Number(rec.grandTotal || rec.totalAmount || 0);
+      const paid = Number(rec.paidAmount || 0);
+      const due = Number(rec.dueAmount !== undefined ? rec.dueAmount : Math.max(0, total - paid));
+
+      const shareTitle = `The Goated Farm - ${isSale ? 'বিক্রয় চালান রশিদ' : 'ক্রয় ভাউচার রশিদ'} #${num}`;
+      const shareText = `The Goated Farm\n${isSale ? 'বিক্রয় রশিদ' : 'ক্রয় ভাউচার'} #${num}\nতারিখ: ${rec.date}\n${isSale ? 'ক্রেতা' : 'সরবরাহকারী'}: ${partyName}\nসর্বমোট: ৳${Number(total).toLocaleString('en-IN')}\nপরিশোধিত: ৳${Number(paid).toLocaleString('en-IN')}\nঅবশিষ্ট বাকি: ৳${Number(due).toLocaleString('en-IN')}\n\nThe Goated Farm ERP থেকে প্রস্তুতকৃত`;
+
+      const doc = await generateReceiptPdf(data, parties, payments);
+      const pdfBlob = doc.output('blob');
+      const fileName = `Receipt-${num}.pdf`;
+      const pdfFile = new File([pdfBlob], fileName, { type: 'application/pdf' });
+
+      if (typeof navigator !== 'undefined' && navigator.canShare && navigator.canShare({ files: [pdfFile] })) {
+        await navigator.share({
+          title: shareTitle,
+          text: shareText,
+          files: [pdfFile]
+        });
+      } else if (typeof navigator !== 'undefined' && typeof navigator.share === 'function') {
+        await navigator.share({
+          title: shareTitle,
+          text: shareText
+        });
+      } else {
+        const waUrl = `https://wa.me/?text=${encodeURIComponent(shareText)}`;
+        window.open(waUrl, '_blank');
+      }
+    } catch (err: any) {
+      if (err.name !== 'AbortError') {
+        console.warn('Native share error or cancelled:', err);
+      }
+    } finally {
+      setIsSharing(false);
+    }
+  };
+
+  const handlePrintReceipt = async (data: ReceiptData) => {
+    try {
+      const doc = await generateReceiptPdf(data, parties, payments);
+      const blobUrl = doc.output('bloburl');
+      const win = window.open(blobUrl, '_blank');
+      if (win) {
+        win.focus();
+      } else {
+        window.print();
+      }
+    } catch (err) {
+      console.warn('Print preview error, opening window.print():', err);
+      window.print();
+    }
+  };
+
+  const handleCopyReceiptText = (data: ReceiptData) => {
+    const isSale = data.type === 'SALE';
+    const rec = data.record;
+    const num = rec.displayNumber || rec.invoiceNumber || rec.id.slice(0, 8);
+    const partyName = isSale ? (rec as Sale).customerName : (rec as Purchase).supplierName;
+    const total = Number(rec.grandTotal || rec.totalAmount || 0);
+    const paid = Number(rec.paidAmount || 0);
+    const due = Number(rec.dueAmount !== undefined ? rec.dueAmount : Math.max(0, total - paid));
+
+    const text = `The Goated Farm\n${isSale ? 'বিক্রয় রশিদ' : 'ক্রয় ভাউচার'} #${num}\nতারিখ: ${rec.date}\n${isSale ? 'ক্রেতা' : 'সরবরাহকারী'}: ${partyName}\nসর্বমোট: ৳${Number(total).toLocaleString('en-IN')}\nপরিশোধিত: ৳${Number(paid).toLocaleString('en-IN')}\nঅবশিষ্ট বাকি: ৳${Number(due).toLocaleString('en-IN')}\n\nThe Goated Farm ERP`;
+    navigator.clipboard.writeText(text);
+    setReceiptCopied(true);
+    setTimeout(() => setReceiptCopied(false), 2500);
+  };
 
   return (
     <div className="space-y-4 pb-6 max-w-5xl mx-auto rounded-3xl p-2 sm:p-4 bg-gradient-to-b from-amber-500/[0.08] via-amber-500/[0.03] to-transparent dark:from-amber-950/30 dark:via-amber-950/10 dark:to-transparent">
@@ -1399,17 +1976,29 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                             </span>
                           </td>
                           <td className="p-3 text-right">
-                            {hasDue && (
+                            <div className="flex items-center justify-end gap-1.5 flex-wrap">
                               <button
                                 type="button"
-                                id={`btn-add-installment-sale-${s.id}`}
-                                onClick={() => openPaymentModal('SALE', s)}
-                                className="px-2.5 py-1.5 rounded-lg bg-amber-700 hover:bg-amber-800 text-white text-xs font-bold shadow-2xs transition-all cursor-pointer inline-flex items-center gap-1 whitespace-nowrap min-h-[36px]"
+                                id={`btn-view-receipt-sale-${s.id}`}
+                                onClick={() => setReceiptModal({ type: 'SALE', record: s })}
+                                className="px-2.5 py-1.5 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 text-xs font-bold shadow-2xs transition-all cursor-pointer inline-flex items-center gap-1 whitespace-nowrap min-h-[36px]"
+                                title="রশিদ দেখুন / ডাউনলোড / শেয়ার করুন"
                               >
-                                <PlusCircle className="w-3.5 h-3.5" />
-                                <span>কিস্তি যোগ করুন</span>
+                                <Receipt className="w-3.5 h-3.5 text-emerald-700" />
+                                <span>রশিদ দেখুন/শেয়ার করুন</span>
                               </button>
-                            )}
+                              {hasDue && (
+                                <button
+                                  type="button"
+                                  id={`btn-add-installment-sale-${s.id}`}
+                                  onClick={() => openPaymentModal('SALE', s)}
+                                  className="px-2.5 py-1.5 rounded-lg bg-amber-700 hover:bg-amber-800 text-white text-xs font-bold shadow-2xs transition-all cursor-pointer inline-flex items-center gap-1 whitespace-nowrap min-h-[36px]"
+                                >
+                                  <PlusCircle className="w-3.5 h-3.5" />
+                                  <span>কিস্তি যোগ করুন</span>
+                                </button>
+                              )}
+                            </div>
                           </td>
                         </tr>
                         {sPayments.length > 0 && (
@@ -1647,17 +2236,29 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                             </span>
                           </td>
                           <td className="p-3 text-right">
-                            {hasDue && (
+                            <div className="flex items-center justify-end gap-1.5 flex-wrap">
                               <button
                                 type="button"
-                                id={`btn-add-installment-purchase-${p.id}`}
-                                onClick={() => openPaymentModal('PURCHASE', p)}
-                                className="px-2.5 py-1.5 rounded-lg bg-amber-700 hover:bg-amber-800 text-white text-xs font-bold shadow-2xs transition-all cursor-pointer inline-flex items-center gap-1 whitespace-nowrap min-h-[36px]"
+                                id={`btn-view-receipt-purchase-${p.id}`}
+                                onClick={() => setReceiptModal({ type: 'PURCHASE', record: p })}
+                                className="px-2.5 py-1.5 rounded-lg bg-sky-50 hover:bg-sky-100 text-sky-800 border border-sky-300 text-xs font-bold shadow-2xs transition-all cursor-pointer inline-flex items-center gap-1 whitespace-nowrap min-h-[36px]"
+                                title="রশিদ দেখুন / ডাউনলোড / শেয়ার করুন"
                               >
-                                <PlusCircle className="w-3.5 h-3.5" />
-                                <span>কিস্তি যোগ করুন</span>
+                                <Receipt className="w-3.5 h-3.5 text-sky-700" />
+                                <span>রশিদ দেখুন/শেয়ার করুন</span>
                               </button>
-                            )}
+                              {hasDue && (
+                                <button
+                                  type="button"
+                                  id={`btn-add-installment-purchase-${p.id}`}
+                                  onClick={() => openPaymentModal('PURCHASE', p)}
+                                  className="px-2.5 py-1.5 rounded-lg bg-amber-700 hover:bg-amber-800 text-white text-xs font-bold shadow-2xs transition-all cursor-pointer inline-flex items-center gap-1 whitespace-nowrap min-h-[36px]"
+                                >
+                                  <PlusCircle className="w-3.5 h-3.5" />
+                                  <span>কিস্তি যোগ করুন</span>
+                                </button>
+                              )}
+                            </div>
                           </td>
                         </tr>
                         {pPayments.length > 0 && (
@@ -1879,18 +2480,30 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                                 </span>
                               </td>
                               <td className="p-3 text-center whitespace-nowrap">
-                                {inv.dueAmount > 0 ? (
+                                <div className="flex items-center justify-center gap-1.5 flex-wrap">
                                   <button
                                     type="button"
-                                    onClick={() => openPaymentModal(inv.type, inv.rawRecord)}
-                                    className="px-2.5 py-1 rounded-lg bg-amber-700 hover:bg-amber-800 text-white text-xs font-bold shadow-2xs transition-all cursor-pointer inline-flex items-center gap-1 min-h-[30px]"
+                                    id={`btn-view-receipt-party-${inv.id}`}
+                                    onClick={() => setReceiptModal({ type: inv.type, record: inv.rawRecord })}
+                                    className="px-2.5 py-1 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 text-xs font-bold shadow-2xs transition-all cursor-pointer inline-flex items-center gap-1 min-h-[30px]"
+                                    title="রশিদ দেখুন/শেয়ার করুন"
                                   >
-                                    <PlusCircle className="w-3.5 h-3.5" />
-                                    <span>কিস্তি পরিশোধ</span>
+                                    <Receipt className="w-3.5 h-3.5 text-emerald-700" />
+                                    <span>রশিদ দেখুন/শেয়ার করুন</span>
                                   </button>
-                                ) : (
-                                  <span className="text-xs text-gray-400 font-medium">সম্পূর্ণ পরিশোধিত</span>
-                                )}
+                                  {inv.dueAmount > 0 ? (
+                                    <button
+                                      type="button"
+                                      onClick={() => openPaymentModal(inv.type, inv.rawRecord)}
+                                      className="px-2.5 py-1 rounded-lg bg-amber-700 hover:bg-amber-800 text-white text-xs font-bold shadow-2xs transition-all cursor-pointer inline-flex items-center gap-1 min-h-[30px]"
+                                    >
+                                      <PlusCircle className="w-3.5 h-3.5" />
+                                      <span>কিস্তি পরিশোধ</span>
+                                    </button>
+                                  ) : (
+                                    <span className="text-xs text-gray-400 font-medium">সম্পূর্ণ পরিশোধিত</span>
+                                  )}
+                                </div>
                               </td>
                             </tr>
 
@@ -2213,6 +2826,377 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
           </div>
         </div>
       )}
+
+      {/* ===================== RECEIPT MODAL (VIEW / DOWNLOAD / SHARE) ===================== */}
+      {receiptModal && (() => {
+        const isSale = receiptModal.type === 'SALE';
+        const rec = receiptModal.record;
+        const partyId = isSale ? (rec as Sale).customerId : (rec as Purchase).supplierId;
+        const rawPartyName = isSale ? (rec as Sale).customerName : (rec as Purchase).supplierName;
+        const party = parties.find(
+          (p) =>
+            p.id === partyId ||
+            (p.name && rawPartyName && p.name.trim().toLowerCase() === rawPartyName.trim().toLowerCase())
+        );
+        const partyName = party?.name || rawPartyName || (isSale ? 'সাধারণ ক্রেতা (Walk-in Customer)' : 'সাধারণ সরবরাহকারী (Supplier)');
+        const partyPhone = party?.phone || '';
+        const partyAddress = party?.address || '';
+        const displayNumber = rec.displayNumber || rec.invoiceNumber || rec.id.slice(0, 8);
+        const dateStr = rec.date || new Date().toISOString().split('T')[0];
+
+        const total = Number(rec.grandTotal || rec.totalAmount || 0);
+        const paid = Number(rec.paidAmount || 0);
+        const due = Number(rec.dueAmount !== undefined ? rec.dueAmount : Math.max(0, total - paid));
+        const hasDue = due > 0;
+        const recPayments = payments.filter((pmt) => pmt.parentId === rec.id);
+        const transportCost = Number((rec as Purchase).transportCost || 0);
+
+        const shareSummaryText = `The Goated Farm - ${isSale ? 'বিক্রয় চালান রশিদ' : 'ক্রয় ভাউচার রশিদ'} #${displayNumber}\nতারিখ: ${dateStr}\n${isSale ? 'ক্রেতা' : 'সরবরাহকারী'}: ${partyName}\nসর্বমোট: ৳${total.toLocaleString('en-IN')}\nপরিশোধিত: ৳${paid.toLocaleString('en-IN')}\nঅবশিষ্ট বাকি: ৳${due.toLocaleString('en-IN')}\n\nThe Goated Farm ERP থেকে প্রস্তুতকৃত`;
+
+        const canShare = typeof navigator !== 'undefined' && typeof navigator.share === 'function';
+
+        return (
+          <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-3 sm:p-4 backdrop-blur-xs overflow-y-auto">
+            <div className="bg-white rounded-2xl max-w-2xl w-full my-6 shadow-2xl border border-gray-200 overflow-hidden flex flex-col max-h-[92vh]">
+              {/* Modal Top Bar */}
+              <div className="bg-gradient-to-r from-emerald-900 via-emerald-800 to-emerald-900 text-white p-4 sm:p-5 flex items-center justify-between shrink-0">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-10 h-10 rounded-xl bg-white/10 flex items-center justify-center backdrop-blur-xs border border-white/15 shadow-inner">
+                    <Receipt className="w-5 h-5 text-emerald-300" />
+                  </div>
+                  <div>
+                    <h3 className="text-base sm:text-lg font-bold text-white flex items-center gap-2">
+                      <span>{isSale ? 'বিক্রয় চালান ও মানি রশিদ' : 'ক্রয় ভাউচার ও ব্যয় রশিদ'}</span>
+                      <span className="text-[11px] font-mono font-semibold px-2 py-0.5 rounded-md bg-white/20 text-emerald-100">
+                        #{displayNumber}
+                      </span>
+                    </h3>
+                    <p className="text-xs text-emerald-200/90 mt-0.5">
+                      The Goated Farm • অফিসিয়াল ডিজিটাল চালানপত্র
+                    </p>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  id="btn-close-receipt-modal"
+                  onClick={() => setReceiptModal(null)}
+                  className="text-white/80 hover:text-white p-1.5 rounded-lg hover:bg-white/10 transition-colors cursor-pointer"
+                  title="বন্ধ করুন"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Action Toolbar */}
+              <div className="bg-emerald-50/70 border-b border-emerald-100 p-3 sm:px-5 flex items-center justify-between flex-wrap gap-2 shrink-0">
+                <div className="flex items-center gap-2 flex-wrap">
+                  {/* Download PDF Button */}
+                  <button
+                    type="button"
+                    id="btn-download-receipt-pdf"
+                    onClick={() => handleDownloadReceiptPdf(receiptModal)}
+                    disabled={isExportingPdf}
+                    className="px-3.5 py-2 rounded-xl bg-emerald-700 hover:bg-emerald-800 active:scale-98 text-white text-xs font-bold shadow-xs transition-all cursor-pointer inline-flex items-center gap-1.5 min-h-[38px] disabled:opacity-50"
+                  >
+                    <Download className="w-4 h-4" />
+                    <span>{isExportingPdf ? 'প্রস্তুত হচ্ছে...' : 'Download PDF (ডাউনলোড)'}</span>
+                  </button>
+
+                  {/* Native Web Share API Button */}
+                  {canShare && (
+                    <button
+                      type="button"
+                      id="btn-native-share-receipt"
+                      onClick={() => handleShareReceipt(receiptModal)}
+                      disabled={isSharing}
+                      className="px-3.5 py-2 rounded-xl bg-sky-700 hover:bg-sky-800 active:scale-98 text-white text-xs font-bold shadow-xs transition-all cursor-pointer inline-flex items-center gap-1.5 min-h-[38px] disabled:opacity-50"
+                    >
+                      <Share2 className="w-4 h-4" />
+                      <span>{isSharing ? 'শেয়ার হচ্ছে...' : 'Share (শেয়ার)'}</span>
+                    </button>
+                  )}
+
+                  {/* WhatsApp Direct Share Button */}
+                  <button
+                    type="button"
+                    id="btn-whatsapp-share-receipt"
+                    onClick={() => {
+                      const waUrl = `https://wa.me/?text=${encodeURIComponent(shareSummaryText)}`;
+                      window.open(waUrl, '_blank');
+                    }}
+                    className="px-3 py-2 rounded-xl bg-green-600 hover:bg-green-700 active:scale-98 text-white text-xs font-bold shadow-xs transition-all cursor-pointer inline-flex items-center gap-1.5 min-h-[38px]"
+                    title="WhatsApp এ পাঠান"
+                  >
+                    <MessageCircle className="w-4 h-4" />
+                    <span>হোয়াটসঅ্যাপ</span>
+                  </button>
+
+                  {/* SMS Share Button */}
+                  <button
+                    type="button"
+                    id="btn-sms-share-receipt"
+                    onClick={() => {
+                      window.location.href = `sms:?body=${encodeURIComponent(shareSummaryText)}`;
+                    }}
+                    className="px-3 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 active:scale-98 text-white text-xs font-bold shadow-xs transition-all cursor-pointer inline-flex items-center gap-1.5 min-h-[38px]"
+                    title="SMS পাঠান"
+                  >
+                    <Phone className="w-3.5 h-3.5" />
+                    <span>এসএমএস</span>
+                  </button>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  {/* Print Button */}
+                  <button
+                    type="button"
+                    id="btn-print-receipt"
+                    onClick={() => handlePrintReceipt(receiptModal)}
+                    className="px-3 py-2 rounded-xl bg-white hover:bg-gray-100 text-gray-700 border border-gray-300 text-xs font-bold shadow-2xs transition-all cursor-pointer inline-flex items-center gap-1.5 min-h-[38px]"
+                    title="প্রিন্ট করুন"
+                  >
+                    <Printer className="w-4 h-4 text-gray-600" />
+                    <span className="hidden sm:inline">প্রিন্ট</span>
+                  </button>
+
+                  {/* Copy Text Button */}
+                  <button
+                    type="button"
+                    id="btn-copy-receipt-text"
+                    onClick={() => handleCopyReceiptText(receiptModal)}
+                    className="px-3 py-2 rounded-xl bg-white hover:bg-gray-100 text-gray-700 border border-gray-300 text-xs font-bold shadow-2xs transition-all cursor-pointer inline-flex items-center gap-1.5 min-h-[38px]"
+                    title="রশিদ বিবরণ কপি করুন"
+                  >
+                    {receiptCopied ? <Check className="w-4 h-4 text-emerald-600" /> : <Copy className="w-4 h-4 text-gray-600" />}
+                    <span className="hidden sm:inline">{receiptCopied ? 'কপি হয়েছে' : 'কপি'}</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Scrollable Printable Receipt Card Preview */}
+              <div className="p-4 sm:p-6 overflow-y-auto space-y-4 bg-gray-50/50">
+                <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 sm:p-6 space-y-5 text-gray-800">
+                  {/* Farm & Header Banner */}
+                  <div className="flex items-start justify-between border-b border-gray-200 pb-4 gap-4 flex-wrap">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-xl font-black tracking-tight text-emerald-900">THE GOATED FARM</span>
+                        <span className="text-xs px-2 py-0.5 rounded-md bg-emerald-100 text-emerald-800 font-bold">
+                          {isSale ? 'বিক্রয় রশিদ' : 'ক্রয় ভাউচার'}
+                        </span>
+                      </div>
+                      <p className="text-xs text-gray-500 mt-1">
+                        সমন্বিত কৃষি, গবাদিপশু, মৎস্য ও শস্য খামার ইআরপি
+                      </p>
+                      <p className="text-[11px] text-gray-400">
+                        পরিবেশবান্ধব ও বৈজ্ঞানিক খামার ব্যবস্থাপনা
+                      </p>
+                    </div>
+
+                    <div className="text-right space-y-1 font-mono text-xs">
+                      <div>
+                        <span className="text-gray-500">চালান নম্বর: </span>
+                        <span className="font-bold text-gray-900 text-sm">#{displayNumber}</span>
+                      </div>
+                      <div>
+                        <span className="text-gray-500">তারিখ: </span>
+                        <span className="font-bold text-gray-800">{dateStr}</span>
+                      </div>
+                      <div>
+                        <span className="text-gray-500">পরিশোধ মাধ্যম: </span>
+                        <span className="font-semibold text-gray-800 font-sans">{rec.paymentMethod}</span>
+                      </div>
+                      <div>
+                        <span className={`inline-block px-2 py-0.5 rounded-full text-[11px] font-bold font-sans ${
+                          due <= 0
+                            ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                            : (paid > 0 ? 'bg-amber-100 text-amber-800 border border-amber-300' : 'bg-red-100 text-red-800 border border-red-300')
+                        }`}>
+                          {due <= 0 ? '✓ পরিশোধিত (PAID)' : (paid > 0 ? `⚠ আংশিক বাকি (৳${Number(due).toLocaleString('en-IN')})` : `⚠ বাকি (৳${Number(due).toLocaleString('en-IN')})`)}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Party Information Box */}
+                  <div className="bg-gray-50 rounded-xl p-3.5 border border-gray-100 grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                    <div>
+                      <div className="text-[11px] font-bold text-gray-500 uppercase tracking-wider">
+                        {isSale ? 'ক্রেতার তথ্য (Billed To)' : 'সরবরাহকারীর তথ্য (Purchased From)'}
+                      </div>
+                      <div className="font-bold text-sm text-gray-900 mt-0.5">{partyName}</div>
+                      {partyPhone && (
+                        <div className="text-gray-600 mt-0.5 flex items-center gap-1 font-mono">
+                          <Phone className="w-3 h-3 text-gray-400" />
+                          <span>{partyPhone}</span>
+                        </div>
+                      )}
+                      {partyAddress && (
+                        <div className="text-gray-500 mt-0.5 truncate max-w-xs">{partyAddress}</div>
+                      )}
+                    </div>
+
+                    <div className="sm:text-right space-y-1">
+                      <div className="text-[11px] font-bold text-gray-500 uppercase tracking-wider">লেনদেন তথ্য</div>
+                      <div className="text-gray-700">খাত: <span className="font-semibold">{isSale ? 'পণ্য বিক্রয়' : 'উপকরণ ক্রয়'}</span></div>
+                      <div className="text-gray-500 font-mono text-[11px]">আইডি: {rec.id.slice(0, 16)}...</div>
+                    </div>
+                  </div>
+
+                  {/* Line Items Table */}
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-xs text-left">
+                      <thead>
+                        <tr className="bg-emerald-50 text-emerald-950 font-bold border-y border-emerald-200">
+                          <th className="p-2.5 w-10 text-center">#</th>
+                          <th className="p-2.5">পণ্যের বিবরণ (Item Description)</th>
+                          <th className="p-2.5 text-right">পরিমাণ (Qty)</th>
+                          <th className="p-2.5 text-right">একক দর (Rate)</th>
+                          <th className="p-2.5 text-right">মোট মূল্য (Total)</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-100">
+                        {rec.items && rec.items.map((item, idx) => {
+                          const rate = Number(item.unitPrice || item.rate || 0);
+                          const lineTotal = Number(item.lineTotal || item.total || (item.quantity || 1) * rate);
+                          return (
+                            <tr key={idx} className="hover:bg-gray-50/60">
+                              <td className="p-2.5 text-center text-gray-500 font-mono">{idx + 1}</td>
+                              <td className="p-2.5 font-semibold text-gray-900">
+                                {item.itemName}
+                              </td>
+                              <td className="p-2.5 text-right text-gray-700 font-mono">
+                                {item.quantity} {item.unit || ''}
+                              </td>
+                              <td className="p-2.5 text-right text-gray-700 font-mono">
+                                ৳{rate.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                              </td>
+                              <td className="p-2.5 text-right font-bold text-gray-900 font-mono">
+                                ৳{lineTotal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                        {transportCost > 0 && (
+                          <tr className="bg-amber-50/50">
+                            <td className="p-2.5 text-center text-gray-500 font-mono">{(rec.items?.length || 0) + 1}</td>
+                            <td className="p-2.5 font-semibold text-amber-900">পরিবহন ও লোডিং খরচ (Transport Cost)</td>
+                            <td className="p-2.5 text-right text-gray-700 font-mono">১ ট্রিপ</td>
+                            <td className="p-2.5 text-right text-gray-700 font-mono">৳{transportCost.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+                            <td className="p-2.5 text-right font-bold text-amber-900 font-mono">৳{transportCost.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {/* Totals and Installment Summary */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 items-start pt-2 border-t border-gray-200">
+                    {/* Left: Installments & Verification */}
+                    <div className="space-y-3">
+                      {recPayments.length > 0 ? (
+                        <div className="bg-emerald-50/50 rounded-xl p-3 border border-emerald-100 space-y-1.5">
+                          <div className="text-xs font-bold text-emerald-900 flex items-center gap-1.5">
+                            <CreditCard className="w-3.5 h-3.5 text-emerald-700" />
+                            <span>পরিশোধের ইতিহাস ({recPayments.length}টি কিস্তি সম্পন্ন):</span>
+                          </div>
+                          <div className="space-y-1">
+                            {recPayments.map((pmt) => (
+                              <div key={pmt.id} className="flex items-center justify-between text-xs bg-white px-2.5 py-1 rounded-md border border-gray-100 font-mono">
+                                <span className="text-gray-500">{pmt.date}</span>
+                                <span className="font-bold text-emerald-800">৳{Number(pmt.amount).toLocaleString('en-IN')}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="text-xs text-gray-500 bg-gray-50 p-3 rounded-xl border border-gray-100">
+                          {due <= 0 ? 'চালান ইস্যুর সাথে সাথেই সম্পূর্ণ মূল্য পরিশোধ সম্পন্ন হয়েছে।' : 'বাকি লেনদেন। কিস্তি পরিশোধের পর সাথে সাথে রশিদ হালনাগাদ হবে।'}
+                        </div>
+                      )}
+
+                      {/* QR Code and System Verification */}
+                      <div className="flex items-center gap-3 bg-gray-50 p-2.5 rounded-xl border border-gray-200/80">
+                        {modalQrUrl ? (
+                          <img
+                            src={modalQrUrl}
+                            alt="Receipt Verification QR"
+                            className="w-14 h-14 rounded-lg border border-gray-200 bg-white p-0.5 shrink-0"
+                          />
+                        ) : (
+                          <div className="w-14 h-14 bg-gray-200 animate-pulse rounded-lg shrink-0" />
+                        )}
+                        <div className="text-[11px] text-gray-600">
+                          <div className="font-bold text-emerald-900">ডিজিটাল সত্যতা যাচাই QR</div>
+                          <div>স্মার্টফোন ক্যামেরা দিয়ে স্ক্যান করে চালানের ইলেকট্রনিক সত্যতা যাচাই করুন।</div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Right: Financial Totals Box */}
+                    <div className="bg-emerald-50/70 rounded-xl p-4 border border-emerald-200 space-y-2 text-xs">
+                      <div className="flex justify-between text-gray-600">
+                        <span>চালানের মোট মূল্য:</span>
+                        <span className="font-mono font-bold text-gray-900">৳{total.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
+                      </div>
+                      {transportCost > 0 && (
+                        <div className="flex justify-between text-gray-600">
+                          <span>পরিবহন খরচ:</span>
+                          <span className="font-mono text-gray-800">৳{transportCost.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
+                        </div>
+                      )}
+                      <div className="border-t border-emerald-200 pt-2 flex justify-between text-sm font-bold text-emerald-950">
+                        <span>সর্বমোট টাকা (Grand Total):</span>
+                        <span className="font-mono">৳{total.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
+                      </div>
+                      <div className="flex justify-between text-emerald-800 font-bold">
+                        <span>পরিশোধিত টাকা (Paid Amount):</span>
+                        <span className="font-mono">৳{paid.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
+                      </div>
+                      <div className={`flex justify-between pt-1 border-t border-emerald-200 font-bold text-sm ${
+                        due > 0 ? 'text-red-700' : 'text-emerald-800'
+                      }`}>
+                        <span>অবশিষ্ট বাকি (Due Amount):</span>
+                        <span className="font-mono">৳{due.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Signatures Area */}
+                  <div className="pt-8 grid grid-cols-2 gap-8 text-center text-xs text-gray-500">
+                    <div>
+                      <div className="border-t border-dashed border-gray-400 pt-1.5 font-medium">
+                        গ্রাহক / প্রাপকের স্বাক্ষর
+                      </div>
+                    </div>
+                    <div>
+                      <div className="border-t border-dashed border-gray-400 pt-1.5 font-medium">
+                        খামার কর্তৃপক্ষ / ব্যবস্থাপকের স্বাক্ষর
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Modal Footer */}
+              <div className="bg-gray-50 border-t border-gray-200 px-4 py-3 sm:px-6 flex items-center justify-between flex-wrap gap-2 shrink-0">
+                <span className="text-xs text-gray-500">
+                  এক পাতার অফিসিয়াল ডিজিটাল রশিদ • jsPDF দ্বারা প্রস্তুতকৃত
+                </span>
+                <button
+                  type="button"
+                  id="btn-close-receipt-bottom"
+                  onClick={() => setReceiptModal(null)}
+                  className="px-4 py-2 rounded-xl bg-gray-200 hover:bg-gray-300 text-gray-800 text-xs font-bold transition-colors cursor-pointer min-h-[38px]"
+                >
+                  বন্ধ করুন (Close)
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 };
