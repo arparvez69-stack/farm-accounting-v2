@@ -20,6 +20,7 @@ export const CANONICAL_ACCOUNTS = {
   BUILDINGS: '1520',
   POND_INFRASTRUCTURE: '1530',
   MACHINERY: '1550',
+  LIVESTOCK_ASSETS: '1580',
   ACCUMULATED_DEPRECIATION: '1590', // Contra-Asset (CREDIT normal balance)
 
   // 2000 Liabilities
@@ -71,7 +72,8 @@ export const CANONICAL_ACCOUNTS = {
   GOVERNMENT_SUBSIDY: '7010',
 
   // 8000 Other Expense
-  LOAN_INTEREST: '8010'
+  LOAN_INTEREST: '8010',
+  LIVESTOCK_WRITEOFF: '8020'
 } as const;
 
 /**

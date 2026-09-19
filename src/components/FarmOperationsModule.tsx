@@ -491,15 +491,115 @@ export const FarmOperationsModule: React.FC<Props> = ({
 
   const executeSaveAnimal = async (animalToSave: Animal) => {
     try {
-      await safeInsert(db.animals, animalToSave, { idPrefix: 'COW' });
+      const pCost = animalToSave.purchaseCost || 0;
+      const finalAnimal: Animal = { ...animalToSave };
+
+      if (pCost > 0) {
+        const todayStr = new Date().toISOString().split('T')[0];
+        const entryDate = finalAnimal.purchaseDate && finalAnimal.purchaseDate <= todayStr ? finalAnimal.purchaseDate : todayStr;
+        const method = paymentMethod;
+        let paymentCode: string = CANONICAL_ACCOUNTS.CASH;
+        let paymentAccountName = 'নগদ টাকা (Cash on Hand)';
+        let effectiveBankId: string | undefined = undefined;
+        let effectiveSupplierId: string | undefined = undefined;
+
+        if (method === 'BANK') {
+          paymentCode = CANONICAL_ACCOUNTS.BANK;
+          effectiveBankId = selectedBankAccountId || (bankAccountsList[0]?.id);
+          const bAcc = bankAccountsList.find(b => b.id === effectiveBankId);
+          paymentAccountName = bAcc ? `ব্যাংক হিসাব (${bAcc.name})` : 'ব্যাংক হিসাব (Bank Accounts)';
+        } else if (method === 'CREDIT') {
+          paymentCode = CANONICAL_ACCOUNTS.ACCOUNTS_PAYABLE;
+          effectiveSupplierId = selectedSupplierId || (suppliersList[0]?.id);
+          const sParty = suppliersList.find(s => s.id === effectiveSupplierId);
+          paymentAccountName = sParty ? `সরবরাহকারীর দেনা (${sParty.name})` : 'সরবরাহকারীর দেনা (Accounts Payable)';
+        }
+
+        const lines: JournalLine[] = [
+          {
+            accountId: '1580',
+            accountCode: '1580',
+            accountName: 'পশুসম্পদ (Livestock & Biological Assets)',
+            debit: pCost,
+            credit: 0,
+            memo: `পশু ক্রয়: ট্যাগ ${finalAnimal.id}`
+          },
+          {
+            accountId: paymentCode,
+            accountCode: paymentCode,
+            accountName: paymentAccountName,
+            debit: 0,
+            credit: pCost,
+            memo: method === 'CASH'
+              ? 'পশু ক্রয়ে নগদ পরিশোধ'
+              : method === 'BANK'
+              ? `পশু ক্রয়ে ব্যাংক পরিশোধ`
+              : `পশু ক্রয়ে সরবরাহকারীর নিকট দেনা`
+          }
+        ];
+
+        const voucherNumber = generateTransactionNumber(method === 'CREDIT' ? 'JV' : 'PAY');
+        const accounts = await db.accounts.toArray();
+        const jEntry = await postJournalEntry(
+          {
+            id: generateUniqueId('j_anm'),
+            voucherNumber,
+            voucherType: method === 'CREDIT' ? 'JOURNAL' : 'PAYMENT',
+            date: entryDate,
+            narration: `নতুন গবাদিপশু ক্রয়: ${finalAnimal.species === 'CATTLE' ? 'গরু' : finalAnimal.species === 'GOAT' ? 'ছাগল' : 'ভেড়া'} (ট্যাগ: ${finalAnimal.id}), ক্রয়মূল্য: ৳${pCost}`,
+            reference: finalAnimal.id,
+            lines,
+            createdBy: currentUserId,
+            createdAt: new Date().toISOString()
+          },
+          { accounts, skipDbPut: true }
+        );
+
+        await safeInsert(db.journalEntries, jEntry, { idPrefix: 'j' });
+
+        // Update Operational Cash/Bank balance or Supplier AP consistently with GL
+        if (method === 'CASH') {
+          const cashAcc = await db.cashBankAccounts.where('accountType').equals('CASH').first();
+          if (cashAcc) {
+            await db.cashBankAccounts.update(cashAcc.id, {
+              currentBalance: Math.round((cashAcc.currentBalance - pCost) * 100) / 100,
+              synced: false
+            });
+          }
+        } else if (method === 'BANK' && effectiveBankId) {
+          const bAcc = await db.cashBankAccounts.get(effectiveBankId);
+          if (bAcc) {
+            await db.cashBankAccounts.update(effectiveBankId, {
+              currentBalance: Math.round((bAcc.currentBalance - pCost) * 100) / 100,
+              synced: false
+            });
+          }
+        } else if (method === 'CREDIT' && effectiveSupplierId) {
+          const sParty = await db.parties.get(effectiveSupplierId);
+          if (sParty) {
+            await db.parties.update(effectiveSupplierId, {
+              balance: Math.round(((sParty.balance || 0) + pCost) * 100) / 100,
+              synced: false
+            });
+          }
+        }
+
+        finalAnimal.journalEntryId = jEntry.id;
+        finalAnimal.paymentMethod = method;
+        finalAnimal.bankAccountId = effectiveBankId;
+        finalAnimal.supplierId = effectiveSupplierId;
+      }
+
+      await safeInsert(db.animals, finalAnimal, { idPrefix: 'COW' });
       setShowAddAnimal(false);
       setDuplicateTagWarning(null);
       setTagId('');
       setAnimalPhotoUrl('');
       setAnimalBirthDate(new Date().toISOString().split('T')[0]);
       setAnimalPurchaseDate(new Date().toISOString().split('T')[0]);
-      setMsg({ type: 'success', text: `পশু ট্যাগ ${animalToSave.id} সফলভাবে যুক্ত হয়েছে!` });
-      triggerSuccessAnimation('পশু সফলভাবে নিবন্ধিত হয়েছে!', `ট্যাগ: ${animalToSave.id}`);
+      setPurchaseCost('0');
+      setMsg({ type: 'success', text: `পশু ট্যাগ ${finalAnimal.id} সফলভাবে যুক্ত হয়েছে${pCost > 0 ? ' এবং জাবেদা ভাউচার দাখিলা সম্পন্ন হয়েছে' : ''}!` });
+      triggerSuccessAnimation('পশু সফলভাবে নিবন্ধিত হয়েছে!', `ট্যাগ: ${finalAnimal.id}`);
       await loadOpsData();
     } catch (err: any) {
       setMsg({ type: 'error', text: err.message });
@@ -526,6 +626,15 @@ export const FarmOperationsModule: React.FC<Props> = ({
       }
 
       const pCost = parseFloat(purchaseCost) || 0;
+      if (pCost > 0) {
+        if (paymentMethod === 'BANK' && bankAccountsList.length > 0 && !selectedBankAccountId) {
+          setSelectedBankAccountId(bankAccountsList[0].id);
+        }
+        if (paymentMethod === 'CREDIT' && suppliersList.length > 0 && !selectedSupplierId) {
+          setSelectedSupplierId(suppliersList[0].id);
+        }
+      }
+
       const anId = tagId.trim() || generateTransactionNumber('COW');
       const animal: Animal = {
         id: anId,
@@ -590,6 +699,162 @@ export const FarmOperationsModule: React.FC<Props> = ({
 
     try {
       setSubmittingEdit(true);
+      const oldCost = editingAnimal.purchaseCost || 0;
+      const newCost = parseFloat(editPurchaseCost) || 0;
+      const diff = Math.round((newCost - oldCost) * 100) / 100;
+      const todayStr = new Date().toISOString().split('T')[0];
+
+      let newJournalEntryId = editingAnimal.journalEntryId;
+
+      if (diff !== 0) {
+        const accounts = await db.accounts.toArray();
+        const method = editingAnimal.paymentMethod || 'CASH';
+        let paymentCode: string = CANONICAL_ACCOUNTS.CASH;
+        let paymentAccountName = 'নগদ টাকা (Cash on Hand)';
+
+        if (method === 'BANK') {
+          paymentCode = CANONICAL_ACCOUNTS.BANK;
+          paymentAccountName = 'ব্যাংক হিসাব (Bank Accounts)';
+        } else if (method === 'CREDIT') {
+          paymentCode = CANONICAL_ACCOUNTS.ACCOUNTS_PAYABLE;
+          paymentAccountName = 'সরবরাহকারীর দেনা (Accounts Payable)';
+        }
+
+        if (editingAnimal.journalEntryId) {
+          // Adjusting entry for the difference
+          const absDiff = Math.abs(diff);
+          const lines: JournalLine[] = diff > 0
+            ? [
+                {
+                  accountId: '1580',
+                  accountCode: '1580',
+                  accountName: 'পশুসম্পদ (Livestock & Biological Assets)',
+                  debit: absDiff,
+                  credit: 0,
+                  memo: `পশু ${editingAnimal.id} ক্রয়মূল্য সমন্বয় বৃদ্ধি`
+                },
+                {
+                  accountId: paymentCode,
+                  accountCode: paymentCode,
+                  accountName: paymentAccountName,
+                  debit: 0,
+                  credit: absDiff,
+                  memo: `পশু ক্রয়মূল্য বৃদ্ধি সমন্বয়`
+                }
+              ]
+            : [
+                {
+                  accountId: paymentCode,
+                  accountCode: paymentCode,
+                  accountName: paymentAccountName,
+                  debit: absDiff,
+                  credit: 0,
+                  memo: `পশু ক্রয়মূল্য হ্রাস সমন্বয়`
+                },
+                {
+                  accountId: '1580',
+                  accountCode: '1580',
+                  accountName: 'পশুসম্পদ (Livestock & Biological Assets)',
+                  debit: 0,
+                  credit: absDiff,
+                  memo: `পশু ${editingAnimal.id} ক্রয়মূল্য সমন্বয় হ্রাস`
+                }
+              ];
+
+          const adjEntry = await postJournalEntry(
+            {
+              id: generateUniqueId('j_anm_adj'),
+              voucherNumber: generateTransactionNumber('JV'),
+              voucherType: 'JOURNAL',
+              date: todayStr,
+              narration: `পশু ${editingAnimal.id}-এর ক্রয়মূল্য সমন্বয় (${diff > 0 ? 'বৃদ্ধি' : 'হ্রাস'}: ৳${absDiff})`,
+              reference: editingAnimal.id,
+              lines,
+              createdBy: currentUserId,
+              createdAt: new Date().toISOString()
+            },
+            { accounts, skipDbPut: true }
+          );
+          await safeInsert(db.journalEntries, adjEntry, { idPrefix: 'j' });
+
+          // Adjust Cash / Bank / Supplier balance
+          if (method === 'CASH') {
+            const cashAcc = await db.cashBankAccounts.where('accountType').equals('CASH').first();
+            if (cashAcc) {
+              await db.cashBankAccounts.update(cashAcc.id, {
+                currentBalance: Math.round((cashAcc.currentBalance - diff) * 100) / 100,
+                synced: false
+              });
+            }
+          } else if (method === 'BANK' && editingAnimal.bankAccountId) {
+            const bAcc = await db.cashBankAccounts.get(editingAnimal.bankAccountId);
+            if (bAcc) {
+              await db.cashBankAccounts.update(editingAnimal.bankAccountId, {
+                currentBalance: Math.round((bAcc.currentBalance - diff) * 100) / 100,
+                synced: false
+              });
+            }
+          } else if (method === 'CREDIT' && editingAnimal.supplierId) {
+            const supp = await db.parties.get(editingAnimal.supplierId);
+            if (supp) {
+              await db.parties.update(editingAnimal.supplierId, {
+                balance: Math.round(((supp.balance || 0) + diff) * 100) / 100,
+                synced: false
+              });
+            }
+          }
+        } else if (newCost > 0) {
+          // Animal had no initial journal entry, post initial one now
+          const lines: JournalLine[] = [
+            {
+              accountId: '1580',
+              accountCode: '1580',
+              accountName: 'পশুসম্পদ (Livestock & Biological Assets)',
+              debit: newCost,
+              credit: 0,
+              memo: `পশু ক্রয়: ট্যাগ ${editingAnimal.id}`
+            },
+            {
+              accountId: paymentCode,
+              accountCode: paymentCode,
+              accountName: paymentAccountName,
+              debit: 0,
+              credit: newCost,
+              memo: `পশু ক্রয়ের জন্য পরিশোধ`
+            }
+          ];
+
+          const jEntry = await postJournalEntry(
+            {
+              id: generateUniqueId('j_anm'),
+              voucherNumber: generateTransactionNumber('PAY'),
+              voucherType: 'PAYMENT',
+              date: todayStr,
+              narration: `গবাদিপশু ক্রয়: (ট্যাগ: ${editingAnimal.id}), ক্রয়মূল্য: ৳${newCost}`,
+              reference: editingAnimal.id,
+              lines,
+              createdBy: currentUserId,
+              createdAt: new Date().toISOString()
+            },
+            { accounts, skipDbPut: true }
+          );
+          await safeInsert(db.journalEntries, jEntry, { idPrefix: 'j' });
+          newJournalEntryId = jEntry.id;
+
+          if (method === 'CASH') {
+            const cashAcc = await db.cashBankAccounts.where('accountType').equals('CASH').first();
+            if (cashAcc) {
+              await db.cashBankAccounts.update(cashAcc.id, {
+                currentBalance: Math.round((cashAcc.currentBalance - newCost) * 100) / 100,
+                synced: false
+              });
+            }
+          }
+        }
+      }
+
+      const newTotalCost = Math.max(0, Math.round(((editingAnimal.totalCost || 0) - oldCost + newCost) * 100) / 100);
+
       const updatedFields: Partial<Animal> = {
         tag: editTag.trim() || editingAnimal.id,
         species: editSpecies as any,
@@ -597,15 +862,17 @@ export const FarmOperationsModule: React.FC<Props> = ({
         gender: editGender,
         birthDate: editBirthDate,
         purchaseDate: editPurchaseDate,
-        purchaseCost: parseFloat(editPurchaseCost) || 0,
+        purchaseCost: newCost,
+        totalCost: newTotalCost,
         currentWeightKg: parseFloat(editCurrentWeight) || 0,
         location: editLocation.trim() || 'প্রধান শেড',
         photoUrl: editPhotoUrl.trim() ? editPhotoUrl : undefined,
+        journalEntryId: newJournalEntryId,
         synced: false
       };
 
       await db.animals.update(editingAnimal.id, updatedFields);
-      setMsg({ type: 'success', text: `পশু ${editingAnimal.id} এর তথ্য ও ছবি সফলভাবে হালনাগাদ করা হয়েছে!` });
+      setMsg({ type: 'success', text: `পশু ${editingAnimal.id} এর তথ্য ও ক্রয়মূল্য সফলভাবে হালনাগাদ করা হয়েছে!` });
       setEditingAnimal(null);
       await loadOpsData();
     } catch (err: any) {
@@ -1424,6 +1691,71 @@ export const FarmOperationsModule: React.FC<Props> = ({
                   />
                 </div>
               </div>
+
+              {parseFloat(purchaseCost) > 0 && (
+                <div className="p-3.5 bg-emerald-50/70 border border-emerald-300 rounded-xl space-y-2.5 animate-fade-slide-up">
+                  <div className="text-[13px] font-bold text-[#1E5128] flex items-center justify-between">
+                    <span>পরিশোধের উৎস (Payment Source / Double-Entry Posting) *</span>
+                    <span className="text-[11px] font-medium text-emerald-800 bg-emerald-100/80 px-2 py-0.5 rounded-md">ডেবিট: পশুসম্পদ (1580)</span>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                    <div>
+                      <label className="block text-[12px] font-medium text-gray-700 mb-1">পরিশোধের মাধ্যম *</label>
+                      <select
+                        value={paymentMethod}
+                        onChange={(e) => setPaymentMethod(e.target.value as any)}
+                        className="w-full bg-white border border-gray-300 rounded-lg p-2 text-[13px] text-gray-900"
+                      >
+                        <option value="CASH">নগদ টাকা (Cash - 1010)</option>
+                        <option value="BANK">ব্যাংক হিসাব (Bank - 1030)</option>
+                        <option value="CREDIT">বাকিতে / সরবরাহকারী (AP - 2010)</option>
+                      </select>
+                    </div>
+
+                    {paymentMethod === 'BANK' && (
+                      <div className="sm:col-span-2">
+                        <label className="block text-[12px] font-medium text-gray-700 mb-1">ব্যাংক হিসাব নির্বাচন করুন *</label>
+                        <select
+                          value={selectedBankAccountId}
+                          onChange={(e) => setSelectedBankAccountId(e.target.value)}
+                          className="w-full bg-white border border-gray-300 rounded-lg p-2 text-[13px] text-gray-900"
+                        >
+                          {bankAccountsList.length === 0 ? (
+                            <option value="">ডিফল্ট ব্যাংক হিসাব (1030)</option>
+                          ) : (
+                            bankAccountsList.map((b) => (
+                              <option key={b.id} value={b.id}>
+                                {b.name} {b.accountNumber ? `(${b.accountNumber})` : ''} - ব্যালেন্স: ৳{(b.currentBalance || 0).toLocaleString()}
+                              </option>
+                            ))
+                          )}
+                        </select>
+                      </div>
+                    )}
+
+                    {paymentMethod === 'CREDIT' && (
+                      <div className="sm:col-span-2">
+                        <label className="block text-[12px] font-medium text-gray-700 mb-1">সরবরাহকারী (Supplier) নির্বাচন করুন *</label>
+                        <select
+                          value={selectedSupplierId}
+                          onChange={(e) => setSelectedSupplierId(e.target.value)}
+                          className="w-full bg-white border border-gray-300 rounded-lg p-2 text-[13px] text-gray-900"
+                        >
+                          {suppliersList.length === 0 ? (
+                            <option value="">ডিফল্ট সরবরাহকারী প্রদেয় হিসাব (2010)</option>
+                          ) : (
+                            suppliersList.map((s) => (
+                              <option key={s.id} value={s.id}>
+                                {s.name} {s.phone ? `(${s.phone})` : ''} - দেনা: ৳{(s.balance || 0).toLocaleString()}
+                              </option>
+                            ))
+                          )}
+                        </select>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
 
               <div className="flex justify-end gap-2.5 pt-1">
                 <button
@@ -3187,6 +3519,149 @@ export const FarmOperationsModule: React.FC<Props> = ({
           </div>
         </div>
       )}
+      {/* Edit Animal Modal */}
+      {editingAnimal && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl max-w-lg w-full p-5 sm:p-6 shadow-xl border border-gray-200 space-y-4 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-start justify-between gap-3 border-b border-gray-100 pb-3">
+              <div className="flex items-center gap-2.5 text-[#1E5128]">
+                <Edit3 className="w-5 h-5 shrink-0" />
+                <h3 className="text-lg font-bold text-gray-900">পশুর তথ্য সম্পাদনা করুন (ট্যাগ: {editingAnimal.id})</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setEditingAnimal(null)}
+                className="text-gray-400 hover:text-gray-600 p-1 rounded-lg cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveEditAnimal} className="space-y-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                <div>
+                  <label className="block text-[12px] font-medium text-gray-700 mb-1">ট্যাগ নং</label>
+                  <input
+                    type="text"
+                    value={editTag}
+                    onChange={(e) => setEditTag(e.target.value)}
+                    className="w-full bg-white border border-gray-300 rounded-lg p-2 text-[13px] text-gray-900"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block text-[12px] font-medium text-gray-700 mb-1">পশুর প্রজাতি</label>
+                  <select
+                    value={editSpecies}
+                    onChange={(e) => setEditSpecies(e.target.value as any)}
+                    className="w-full bg-white border border-gray-300 rounded-lg p-2 text-[13px] text-gray-900"
+                  >
+                    <option value="CATTLE">গরু (Cattle)</option>
+                    <option value="GOAT">ছাগল (Goat)</option>
+                    <option value="SHEEP">ভেড়া (Sheep)</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                <div>
+                  <label className="block text-[12px] font-medium text-gray-700 mb-1">জাত (Breed)</label>
+                  <input
+                    type="text"
+                    value={editBreed}
+                    onChange={(e) => setEditBreed(e.target.value)}
+                    className="w-full bg-white border border-gray-300 rounded-lg p-2 text-[13px] text-gray-900"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[12px] font-medium text-gray-700 mb-1">লিঙ্গ</label>
+                  <select
+                    value={editGender}
+                    onChange={(e) => setEditGender(e.target.value as any)}
+                    className="w-full bg-white border border-gray-300 rounded-lg p-2 text-[13px] text-gray-900"
+                  >
+                    <option value="FEMALE">মাদি (Female)</option>
+                    <option value="MALE">মদ্দা (Male)</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                <div>
+                  <label className="block text-[12px] font-medium text-gray-700 mb-1">জন্ম তারিখ</label>
+                  <input
+                    type="date"
+                    value={editBirthDate}
+                    onChange={(e) => setEditBirthDate(e.target.value)}
+                    className="w-full bg-white border border-gray-300 rounded-lg p-2 text-[13px] text-gray-900"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[12px] font-medium text-gray-700 mb-1">ক্রয় তারিখ</label>
+                  <input
+                    type="date"
+                    value={editPurchaseDate}
+                    onChange={(e) => setEditPurchaseDate(e.target.value)}
+                    className="w-full bg-white border border-gray-300 rounded-lg p-2 text-[13px] text-gray-900"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                <div>
+                  <label className="block text-[12px] font-medium text-gray-700 mb-1">ক্রয়মূল্য (৳)</label>
+                  <input
+                    type="number"
+                    value={editPurchaseCost}
+                    onChange={(e) => setEditPurchaseCost(e.target.value)}
+                    className="w-full bg-white border border-gray-300 rounded-lg p-2 text-[13px] text-gray-900 font-bold"
+                  />
+                  <p className="text-[11px] text-gray-500 mt-1">
+                    * ক্রয়মূল্য পরিবর্তন হলে হিসাবের খাতায় স্বয়ংক্রিয় সমন্বয় জাবেদা দাখিলা হবে।
+                  </p>
+                </div>
+                <div>
+                  <label className="block text-[12px] font-medium text-gray-700 mb-1">বর্তমান ওজন (কেজি)</label>
+                  <input
+                    type="number"
+                    value={editCurrentWeight}
+                    onChange={(e) => setEditCurrentWeight(e.target.value)}
+                    className="w-full bg-white border border-gray-300 rounded-lg p-2 text-[13px] text-gray-900"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-[12px] font-medium text-gray-700 mb-1">অবস্থান / শেড</label>
+                <input
+                  type="text"
+                  value={editLocation}
+                  onChange={(e) => setEditLocation(e.target.value)}
+                  className="w-full bg-white border border-gray-300 rounded-lg p-2 text-[13px] text-gray-900"
+                />
+              </div>
+
+              <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-gray-100">
+                <button
+                  type="button"
+                  onClick={() => setEditingAnimal(null)}
+                  className="px-4 py-2 rounded-xl bg-gray-100 hover:bg-gray-200 text-gray-700 text-xs font-bold transition-colors cursor-pointer min-h-[38px]"
+                >
+                  বাতিল
+                </button>
+                <button
+                  type="submit"
+                  disabled={submittingEdit}
+                  className="px-5 py-2 rounded-xl bg-[#1E5128] hover:bg-[#173F1F] text-white text-xs font-bold transition-all cursor-pointer shadow-xs min-h-[38px] disabled:opacity-50"
+                >
+                  {submittingEdit ? 'সংরক্ষণ হচ্ছে...' : 'হালনাগাদ সংরক্ষণ করুন'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
       {/* Duplicate Animal Tag Confirmation Modal */}
       {duplicateTagWarning && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">

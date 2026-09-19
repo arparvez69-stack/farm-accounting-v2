@@ -15,10 +15,32 @@ import {
 import { db } from '../db/indexedDb';
 import { executePurchaseTransaction, executeSaleTransaction } from '../services/transactionService';
 import { generateTransactionNumber, generateUniqueId, safeInsert } from '../utils/idGenerator';
-import { InventoryItem, Party, PaymentRecord, Purchase, Sale, UserRole } from '../types';
+import { InventoryItem, Party, PaymentRecord, Purchase, Sale, UserRole, StockMovement, JournalLine } from '../types';
 import { HIGH_AMOUNT_CONFIRMATION_THRESHOLD } from '../constants/validation';
 import { notifyUndoableAction } from '../services/undoService';
 import { triggerSuccessAnimation } from './ui/SuccessAnimation';
+import { postJournalEntry } from '../accounting/accountingEngine';
+
+const getInventoryOpeningAssetAccount = (category?: string): { code: string; name: string } => {
+  switch (category) {
+    case 'FEED':
+    case 'FEED_STOCK':
+      return { code: '1051', name: 'মজুদ খাদ্য (Feed Inventory)' };
+    case 'MEDICINE':
+      return { code: '1052', name: 'মজুদ ওষুধ ও প্রতিষেধক (Medicine Inventory)' };
+    case 'FERTILIZER':
+      return { code: '1053', name: 'মজুদ সার ও পুষ্টি (Fertilizer Inventory)' };
+    case 'SEED':
+      return { code: '1054', name: 'মজুদ বীজ (Seeds Inventory)' };
+    case 'RAW_MATERIAL':
+      return { code: '1055', name: 'মজুদ কৃষি-রাসায়নিক ও কাঁচামাল (Agrochemicals / Raw Materials)' };
+    case 'PACKAGING':
+    case 'FARM_PRODUCT':
+    case 'PROCESSED':
+    default:
+      return { code: '1056', name: 'অন্যান্য মজুদ পণ্য ও প্যাকেজিং (Other Inventory / Packaging)' };
+  }
+};
 
 interface Props {
   role: UserRole;
@@ -144,9 +166,64 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
     try {
       const stockNum = parseFloat(itemStock) || 0;
       const reorderNum = parseFloat(itemReorder) || 10;
+      const costNum = parseFloat(itemCost) || 0;
+      const priceNum = parseFloat(itemPrice) || 0;
+      const effectiveUnitCost = costNum > 0 ? costNum : (priceNum > 0 ? priceNum : 0);
+      const totalOpeningValue = Math.round(stockNum * effectiveUnitCost * 100) / 100;
+
       const customThreshold = itemThreshold.trim() !== '' ? parseFloat(itemThreshold) : undefined;
       const defaultThreshold = Math.round((stockNum > 0 ? stockNum : reorderNum) * 0.20 * 100) / 100;
       const finalThreshold = customThreshold !== undefined && !isNaN(customThreshold) ? customThreshold : defaultThreshold;
+      const todayStr = new Date().toISOString().split('T')[0];
+
+      let postedJournalEntryId: string | undefined = undefined;
+
+      // When openingStock > 0 and unitCost > 0 (or buyPrice > 0):
+      // - debit the appropriate inventory asset account (1051 FEED, 1052 MEDICINE, 1053 FERTILIZER, 1054 SEEDS, 1055 AGROCHEMICALS, or 1056 OTHER)
+      // - credit 3050 (Retained Earnings / মালিকানা স্বত্ব ও প্রারম্ভিক মূলধন) as this is opening stock from prior periods, NOT a cash purchase today
+      if (stockNum > 0 && totalOpeningValue > 0) {
+        const invAccount = getInventoryOpeningAssetAccount(itemCategory);
+        const accounts = await db.accounts.toArray();
+        const existingInvAcc = accounts.find((a) => a.code === invAccount.code);
+        const invAccountName = existingInvAcc ? existingInvAcc.nameBn : invAccount.name;
+
+        const lines: JournalLine[] = [
+          {
+            accountId: invAccount.code,
+            accountCode: invAccount.code,
+            accountName: invAccountName,
+            debit: totalOpeningValue,
+            credit: 0,
+            memo: `প্রারম্ভিক মজুদ: ${itemNameBn.trim()} (${stockNum} ${itemUnit.trim() || 'কেজি'} @ ৳${effectiveUnitCost})`
+          },
+          {
+            accountId: '3050',
+            accountCode: '3050',
+            accountName: 'পুঞ্জীভূত লাভ/মুনাফা (Retained Earnings)',
+            debit: 0,
+            credit: totalOpeningValue,
+            memo: 'প্রারম্ভিক মজুদ সমন্বয় (মালিকানা স্বত্ব / পূর্ববর্তী মেয়াদের উদ্বৃত্ত)'
+          }
+        ];
+
+        const jEntry = await postJournalEntry(
+          {
+            id: generateUniqueId('j_inv_open'),
+            voucherNumber: generateTransactionNumber('JV'),
+            voucherType: 'JOURNAL',
+            date: todayStr,
+            narration: `প্রারম্ভিক মজুদ পণ্য দাখিলা: ${itemNameBn.trim()} (${stockNum} ${itemUnit.trim() || 'কেজি'} @ ৳${effectiveUnitCost})`,
+            reference: 'OPENING_STOCK',
+            lines,
+            createdBy: currentUserId || 'system',
+            createdAt: new Date().toISOString()
+          },
+          { accounts, skipDbPut: true }
+        );
+
+        await safeInsert(db.journalEntries, jEntry, { idPrefix: 'j' });
+        postedJournalEntryId = jEntry.id;
+      }
 
       const item: InventoryItem = {
         id: generateUniqueId('it'),
@@ -157,13 +234,32 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
         unit: itemUnit.trim() || 'কেজি',
         currentStock: stockNum,
         reorderLevel: reorderNum,
-        avgCostPrice: parseFloat(itemCost) || 0,
-        sellingPrice: parseFloat(itemPrice) || 0,
+        avgCostPrice: costNum,
+        sellingPrice: priceNum,
         lastRestockAmount: stockNum,
         lowStockThreshold: finalThreshold,
+        journalEntryId: postedJournalEntryId,
         synced: false
       };
       await safeInsert(db.inventoryItems, item, { idPrefix: 'it' });
+
+      // Create a StockMovement record of type 'OPENING' so the inventory sub-ledger matches the GL
+      if (stockNum > 0) {
+        const movement: StockMovement = {
+          id: generateUniqueId('sm'),
+          date: todayStr,
+          itemId: item.id,
+          movementType: 'OPENING',
+          quantity: stockNum,
+          unitCost: effectiveUnitCost,
+          totalValue: totalOpeningValue,
+          referenceId: postedJournalEntryId || item.id,
+          notes: `প্রারম্ভিক মজুদ (Opening Stock): ${item.nameBn}`,
+          synced: false
+        };
+        await safeInsert(db.stockMovements, movement, { idPrefix: 'sm' });
+      }
+
       setShowAddItem(false);
       setItemNameBn('');
       setItemStock('0');
@@ -171,9 +267,13 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
       setItemPrice('0');
       setItemReorder('10');
       setItemThreshold('');
-      setMsg({ type: 'success', text: `পণ্য ${item.nameBn} যুক্ত হয়েছে!` });
+      setMsg({
+        type: 'success',
+        text: `পণ্য ${item.nameBn} যুক্ত হয়েছে!${postedJournalEntryId ? ' (প্রারম্ভিক মজুদ জাবেদা দাখিলা সম্পন্ন হয়েছে)' : ''}`
+      });
       triggerSuccessAnimation('পণ্য সফলভাবে যুক্ত হয়েছে!', item.nameBn);
       window.dispatchEvent(new CustomEvent('goted_data_changed'));
+      window.dispatchEvent(new CustomEvent('accounting_entry_posted'));
       loadCommerceData();
     } catch (err: any) {
       setMsg({ type: 'error', text: err.message });
@@ -647,11 +747,12 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                     className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900"
                   >
                     <option value="FEED">ফিড স্টক (Feed Stock - 1051)</option>
-                    <option value="FERTILIZER">সার (Fertilizer - 1052)</option>
-                    <option value="SEED">বীজ (Seed - 1052)</option>
-                    <option value="RAW_MATERIAL">কাঁচামাল (Raw Material - 1053)</option>
+                    <option value="MEDICINE">ওষুধ ও স্বাস্থ্য উপকরণ (Medicine - 1052)</option>
+                    <option value="FERTILIZER">সার (Fertilizer - 1053)</option>
+                    <option value="SEED">বীজ (Seed - 1054)</option>
+                    <option value="RAW_MATERIAL">কাঁচামাল ও কৃষি-রাসায়নিক (Agrochemicals / Raw Material - 1055)</option>
                     <option value="FARM_PRODUCT">খামারের উৎপাদিত পণ্য (Product - 1055)</option>
-                    <option value="PACKAGING">প্যাকেজিং (Packaging - 1056)</option>
+                    <option value="PACKAGING">প্যাকেজিং ও অন্যান্য (Packaging / Other - 1056)</option>
                   </select>
                 </div>
                 <div>

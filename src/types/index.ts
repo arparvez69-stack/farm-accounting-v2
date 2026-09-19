@@ -291,6 +291,7 @@ export interface InventoryItem {
   lastRestockAmount?: number;
   lowStockThreshold?: number;
   photoUrl?: string;
+  journalEntryId?: string;
   synced?: boolean;
 }
 

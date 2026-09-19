@@ -42,11 +42,13 @@ import {
 import { useLanguage } from '../i18n/translations';
 import { db } from '../db/indexedDb';
 import { auth, initializeLocalDatabase } from '../firebase/firebaseClient';
-import { AuditLog, FixedAsset, SystemConfig, UserRole, AppAccessLog, VaccineTemplate } from '../types';
+import { AuditLog, FixedAsset, SystemConfig, UserRole, AppAccessLog, VaccineTemplate, JournalLine, CashBankAccount, Party } from '../types';
 import { getStoredAuthorizedEmails, getAppAccessLogs, logoutOwner } from '../services/authService';
-import { generateTransactionNumber, safeInsert } from '../utils/idGenerator';
+import { generateTransactionNumber, generateUniqueId, safeInsert } from '../utils/idGenerator';
 import { getLastSyncTime, formatBackupTimestamp } from '../services/exportService';
 import { runAutomatedDepreciation } from '../accounting/depreciationService';
+import { postJournalEntry } from '../accounting/accountingEngine';
+import { CANONICAL_ACCOUNTS } from '../accounting/accountMapping';
 import { getVaccineTemplates, saveVaccineTemplates, DEFAULT_VACCINE_TEMPLATES } from '../data/vaccineTemplates';
 import { IconTile } from './ui/IconTile';
 import { ActiveTab } from './MobileBottomNav';
@@ -253,6 +255,21 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
   const [assetLifeYears, setAssetLifeYears] = useState('5');
   const [assetSalvage, setAssetSalvage] = useState('15000');
   const [assetDepreciationRate, setAssetDepreciationRate] = useState('10');
+  const [assetPaymentMethod, setAssetPaymentMethod] = useState<'CASH' | 'BANK' | 'CREDIT'>('CASH');
+  const [assetSelectedBankAccountId, setAssetSelectedBankAccountId] = useState('');
+  const [assetSelectedSupplierId, setAssetSelectedSupplierId] = useState('');
+  const [bankAccountsList, setBankAccountsList] = useState<CashBankAccount[]>([]);
+  const [suppliersList, setSuppliersList] = useState<Party[]>([]);
+
+  // Edit Asset State
+  const [editingAsset, setEditingAsset] = useState<FixedAsset | null>(null);
+  const [editAssetName, setEditAssetName] = useState('');
+  const [editAssetCategory, setEditAssetCategory] = useState<FixedAsset['category']>('MACHINERY');
+  const [editAssetCost, setEditAssetCost] = useState('');
+  const [editAssetLifeYears, setEditAssetLifeYears] = useState('5');
+  const [editAssetSalvage, setEditAssetSalvage] = useState('0');
+  const [editAssetDepreciationRate, setEditAssetDepreciationRate] = useState('10');
+  const [submittingEditAsset, setSubmittingEditAsset] = useState(false);
   const [deprLoading, setDeprLoading] = useState(false);
   const [deprFeedback, setDeprFeedback] = useState<string | null>(null);
 
@@ -404,11 +421,34 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
       } else if (tab === 'assets') {
         const fList = await db.fixedAssets.toArray();
         setAssets(fList);
+        const bList = await db.cashBankAccounts.toArray();
+        setBankAccountsList(bList.filter((b) => b.isActive !== false));
+        const sList = await db.parties.where('partyType').equals('SUPPLIER').toArray();
+        setSuppliersList(sList.filter((s) => s.isActive !== false));
       }
     } catch (e) {
       console.error(e);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const getAssetAccountInfo = (category: string): { code: string; name: string } => {
+    switch (category) {
+      case 'LAND':
+        return { code: CANONICAL_ACCOUNTS.LAND, name: 'জমি ও প্লট (Land & Plots)' };
+      case 'BUILDINGS':
+      case 'BUILDING':
+        return { code: CANONICAL_ACCOUNTS.BUILDINGS, name: 'শেড ও ভবন (Sheds & Buildings)' };
+      case 'PONDS':
+      case 'POND':
+        return { code: CANONICAL_ACCOUNTS.POND_INFRASTRUCTURE, name: 'পুকুর অবকাঠামো (Pond Infrastructure)' };
+      case 'MACHINERY':
+      case 'EQUIPMENT':
+      case 'VEHICLES':
+      case 'VEHICLE':
+      default:
+        return { code: CANONICAL_ACCOUNTS.MACHINERY, name: 'যন্ত্রপাতি ও সরঞ্জাম (Machinery & Equipment)' };
     }
   };
 
@@ -420,11 +460,12 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
       const salvage = parseFloat(assetSalvage) || 0;
       const rate = parseFloat(assetDepreciationRate) || (life > 0 ? Number((100 / life).toFixed(2)) : 10);
       const purchaseDateStr = new Date().toISOString().split('T')[0];
+      const normCat = assetCategory === 'BUILDING' ? 'BUILDINGS' : assetCategory;
 
       const item: FixedAsset = {
         id: generateTransactionNumber('AST'),
         name: assetName.trim(),
-        category: assetCategory === 'BUILDING' ? 'BUILDINGS' : (assetCategory as any),
+        category: normCat as any,
         purchaseDate: purchaseDateStr,
         originalCost: cost,
         salvageValue: salvage,
@@ -435,14 +476,307 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
         lastDepreciationDate: purchaseDateStr,
         synced: false
       };
+
+      if (cost > 0) {
+        const assetAcc = getAssetAccountInfo(item.category);
+        const method = assetPaymentMethod;
+        let paymentCode: string = CANONICAL_ACCOUNTS.CASH;
+        let paymentAccountName = 'নগদ টাকা (Cash on Hand)';
+        let effectiveBankId: string | undefined = undefined;
+        let effectiveSupplierId: string | undefined = undefined;
+
+        if (method === 'BANK') {
+          paymentCode = CANONICAL_ACCOUNTS.BANK;
+          effectiveBankId = assetSelectedBankAccountId || (bankAccountsList[0]?.id);
+          const bAcc = bankAccountsList.find((b) => b.id === effectiveBankId);
+          paymentAccountName = bAcc ? `ব্যাংক হিসাব (${bAcc.name})` : 'ব্যাংক হিসাব (Bank Accounts)';
+        } else if (method === 'CREDIT') {
+          paymentCode = CANONICAL_ACCOUNTS.ACCOUNTS_PAYABLE;
+          effectiveSupplierId = assetSelectedSupplierId || (suppliersList[0]?.id);
+          const sParty = suppliersList.find((s) => s.id === effectiveSupplierId);
+          paymentAccountName = sParty ? `সরবরাহকারীর দেনা (${sParty.name})` : 'সরবরাহকারীর দেনা (Accounts Payable)';
+        }
+
+        const lines: JournalLine[] = [
+          {
+            accountId: assetAcc.code,
+            accountCode: assetAcc.code,
+            accountName: assetAcc.name,
+            debit: cost,
+            credit: 0,
+            memo: `স্থায়ী সম্পদ ক্রয়: ${item.name}`
+          },
+          {
+            accountId: paymentCode,
+            accountCode: paymentCode,
+            accountName: paymentAccountName,
+            debit: 0,
+            credit: cost,
+            memo: method === 'CASH'
+              ? 'সম্পদ ক্রয়ে নগদ পরিশোধ'
+              : method === 'BANK'
+              ? 'সম্পদ ক্রয়ে ব্যাংক পরিশোধ'
+              : 'সম্পদ ক্রয়ে সরবরাহকারীর নিকট দেনা'
+          }
+        ];
+
+        const voucherNumber = generateTransactionNumber(method === 'CREDIT' ? 'JV' : 'PAY');
+        const accounts = await db.accounts.toArray();
+        const jEntry = await postJournalEntry(
+          {
+            id: generateUniqueId('j_ast'),
+            voucherNumber,
+            voucherType: method === 'CREDIT' ? 'JOURNAL' : 'PAYMENT',
+            date: purchaseDateStr,
+            narration: `স্থায়ী সম্পদ ক্রয়: ${item.name} (${assetAcc.name}), ক্রয়মূল্য: ৳${cost}`,
+            reference: item.id,
+            lines,
+            createdBy: currentUserId,
+            createdAt: new Date().toISOString()
+          },
+          { accounts, skipDbPut: true }
+        );
+
+        await safeInsert(db.journalEntries, jEntry, { idPrefix: 'j' });
+
+        // Update Operational Cash/Bank balance or Supplier AP consistently
+        if (method === 'CASH') {
+          const cashAcc = await db.cashBankAccounts.where('accountType').equals('CASH').first();
+          if (cashAcc) {
+            await db.cashBankAccounts.update(cashAcc.id, {
+              currentBalance: Math.round((cashAcc.currentBalance - cost) * 100) / 100,
+              synced: false
+            });
+          }
+        } else if (method === 'BANK' && effectiveBankId) {
+          const bAcc = await db.cashBankAccounts.get(effectiveBankId);
+          if (bAcc) {
+            await db.cashBankAccounts.update(effectiveBankId, {
+              currentBalance: Math.round((bAcc.currentBalance - cost) * 100) / 100,
+              synced: false
+            });
+          }
+        } else if (method === 'CREDIT' && effectiveSupplierId) {
+          const sParty = await db.parties.get(effectiveSupplierId);
+          if (sParty) {
+            await db.parties.update(effectiveSupplierId, {
+              balance: Math.round(((sParty.balance || 0) + cost) * 100) / 100,
+              synced: false
+            });
+          }
+        }
+
+        item.journalEntryId = jEntry.id;
+        item.paymentMethod = method;
+        item.bankAccountId = effectiveBankId;
+        item.supplierId = effectiveSupplierId;
+      }
+
       await safeInsert(db.fixedAssets, item, { idPrefix: 'ast' });
       setShowAddAsset(false);
       setAssetName('');
+      setAssetCost('150000');
       setAssetDepreciationRate('10');
       triggerSuccessAnimation('স্থায়ী সম্পদ সংরক্ষিত হয়েছে!', item.name);
       loadData();
     } catch (err: any) {
       alert(err.message);
+    }
+  };
+
+  const handleOpenEditAsset = (ast: FixedAsset) => {
+    setEditingAsset(ast);
+    setEditAssetName(ast.name);
+    setEditAssetCategory(ast.category);
+    setEditAssetCost(String(ast.originalCost || 0));
+    setEditAssetLifeYears(String(ast.usefulLifeYears || 5));
+    setEditAssetSalvage(String(ast.salvageValue || 0));
+    setEditAssetDepreciationRate(String(ast.depreciationRatePercent || 10));
+  };
+
+  const handleSaveEditAsset = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingAsset) return;
+
+    try {
+      setSubmittingEditAsset(true);
+      const oldCost = editingAsset.originalCost || 0;
+      const newCost = parseFloat(editAssetCost) || 0;
+      const diff = Math.round((newCost - oldCost) * 100) / 100;
+      const todayStr = new Date().toISOString().split('T')[0];
+      const normCat = editAssetCategory === 'BUILDING' ? 'BUILDINGS' : editAssetCategory;
+      const assetAcc = getAssetAccountInfo(normCat);
+
+      let newJournalEntryId = editingAsset.journalEntryId;
+
+      if (diff !== 0) {
+        const accounts = await db.accounts.toArray();
+        const method = editingAsset.paymentMethod || 'CASH';
+        let paymentCode: string = CANONICAL_ACCOUNTS.CASH;
+        let paymentAccountName = 'নগদ টাকা (Cash on Hand)';
+
+        if (method === 'BANK') {
+          paymentCode = CANONICAL_ACCOUNTS.BANK;
+          paymentAccountName = 'ব্যাংক হিসাব (Bank Accounts)';
+        } else if (method === 'CREDIT') {
+          paymentCode = CANONICAL_ACCOUNTS.ACCOUNTS_PAYABLE;
+          paymentAccountName = 'সরবরাহকারীর দেনা (Accounts Payable)';
+        }
+
+        if (editingAsset.journalEntryId) {
+          const absDiff = Math.abs(diff);
+          const lines: JournalLine[] = diff > 0
+            ? [
+                {
+                  accountId: assetAcc.code,
+                  accountCode: assetAcc.code,
+                  accountName: assetAcc.name,
+                  debit: absDiff,
+                  credit: 0,
+                  memo: `সম্পদ ${editingAsset.name} ক্রয়মূল্য সমন্বয় বৃদ্ধি`
+                },
+                {
+                  accountId: paymentCode,
+                  accountCode: paymentCode,
+                  accountName: paymentAccountName,
+                  debit: 0,
+                  credit: absDiff,
+                  memo: `সম্পদ ক্রয়মূল্য সমন্বয় পরিশোধ বৃদ্ধি`
+                }
+              ]
+            : [
+                {
+                  accountId: paymentCode,
+                  accountCode: paymentCode,
+                  accountName: paymentAccountName,
+                  debit: absDiff,
+                  credit: 0,
+                  memo: `সম্পদ ক্রয়মূল্য সমন্বয় পরিশোধ হ্রাস`
+                },
+                {
+                  accountId: assetAcc.code,
+                  accountCode: assetAcc.code,
+                  accountName: assetAcc.name,
+                  debit: 0,
+                  credit: absDiff,
+                  memo: `সম্পদ ${editingAsset.name} ক্রয়মূল্য সমন্বয় হ্রাস`
+                }
+              ];
+
+          const adjEntry = await postJournalEntry(
+            {
+              id: generateUniqueId('j_ast_adj'),
+              voucherNumber: generateTransactionNumber('JV'),
+              voucherType: 'JOURNAL',
+              date: todayStr,
+              narration: `স্থায়ী সম্পদ ${editingAsset.name}-এর ক্রয়মূল্য সমন্বয় (${diff > 0 ? 'বৃদ্ধি' : 'হ্রাস'}: ৳${absDiff})`,
+              reference: editingAsset.id,
+              lines,
+              createdBy: currentUserId,
+              createdAt: new Date().toISOString()
+            },
+            { accounts, skipDbPut: true }
+          );
+          await safeInsert(db.journalEntries, adjEntry, { idPrefix: 'j' });
+
+          if (method === 'CASH') {
+            const cashAcc = await db.cashBankAccounts.where('accountType').equals('CASH').first();
+            if (cashAcc) {
+              await db.cashBankAccounts.update(cashAcc.id, {
+                currentBalance: Math.round((cashAcc.currentBalance - diff) * 100) / 100,
+                synced: false
+              });
+            }
+          } else if (method === 'BANK' && editingAsset.bankAccountId) {
+            const bAcc = await db.cashBankAccounts.get(editingAsset.bankAccountId);
+            if (bAcc) {
+              await db.cashBankAccounts.update(editingAsset.bankAccountId, {
+                currentBalance: Math.round((bAcc.currentBalance - diff) * 100) / 100,
+                synced: false
+              });
+            }
+          } else if (method === 'CREDIT' && editingAsset.supplierId) {
+            const supp = await db.parties.get(editingAsset.supplierId);
+            if (supp) {
+              await db.parties.update(editingAsset.supplierId, {
+                balance: Math.round(((supp.balance || 0) + diff) * 100) / 100,
+                synced: false
+              });
+            }
+          }
+        } else if (newCost > 0) {
+          const lines: JournalLine[] = [
+            {
+              accountId: assetAcc.code,
+              accountCode: assetAcc.code,
+              accountName: assetAcc.name,
+              debit: newCost,
+              credit: 0,
+              memo: `স্থায়ী সম্পদ ক্রয়: ${editingAsset.name}`
+            },
+            {
+              accountId: paymentCode,
+              accountCode: paymentCode,
+              accountName: paymentAccountName,
+              debit: 0,
+              credit: newCost,
+              memo: `স্থায়ী সম্পদ ক্রয় পরিশোধ`
+            }
+          ];
+
+          const jEntry = await postJournalEntry(
+            {
+              id: generateUniqueId('j_ast'),
+              voucherNumber: generateTransactionNumber('PAY'),
+              voucherType: 'PAYMENT',
+              date: todayStr,
+              narration: `স্থায়ী সম্পদ ক্রয়: ${editingAsset.name} (${assetAcc.name}), ক্রয়মূল্য: ৳${newCost}`,
+              reference: editingAsset.id,
+              lines,
+              createdBy: currentUserId,
+              createdAt: new Date().toISOString()
+            },
+            { accounts, skipDbPut: true }
+          );
+          await safeInsert(db.journalEntries, jEntry, { idPrefix: 'j' });
+          newJournalEntryId = jEntry.id;
+
+          if (method === 'CASH') {
+            const cashAcc = await db.cashBankAccounts.where('accountType').equals('CASH').first();
+            if (cashAcc) {
+              await db.cashBankAccounts.update(cashAcc.id, {
+                currentBalance: Math.round((cashAcc.currentBalance - newCost) * 100) / 100,
+                synced: false
+              });
+            }
+          }
+        }
+      }
+
+      const life = parseFloat(editAssetLifeYears) || 5;
+      const rate = parseFloat(editAssetDepreciationRate) || (life > 0 ? Number((100 / life).toFixed(2)) : 10);
+      const newBookValue = Math.max(0, Math.round((newCost - (editingAsset.accumulatedDepreciation || 0)) * 100) / 100);
+
+      const updatedFields: Partial<FixedAsset> = {
+        name: editAssetName.trim(),
+        category: normCat as any,
+        originalCost: newCost,
+        salvageValue: parseFloat(editAssetSalvage) || 0,
+        usefulLifeYears: life,
+        depreciationRatePercent: rate,
+        currentBookValue: newBookValue,
+        journalEntryId: newJournalEntryId,
+        synced: false
+      };
+
+      await db.fixedAssets.update(editingAsset.id, updatedFields);
+      setEditingAsset(null);
+      triggerSuccessAnimation('স্থায়ী সম্পদ সফলভাবে হালনাগাদ হয়েছে!', editAssetName);
+      await loadData();
+    } catch (err: any) {
+      alert(err.message || 'সম্পদ হালনাগাদ করতে ত্রুটি হয়েছে।');
+    } finally {
+      setSubmittingEditAsset(false);
     }
   };
 
@@ -1181,10 +1515,11 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
                     onChange={(e) => setAssetCategory(e.target.value as any)}
                     className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900"
                   >
-                    <option value="LAND">জমি ও ভূমি উন্নয়ন</option>
-                    <option value="BUILDINGS">শেড ও খামার ভবন</option>
-                    <option value="MACHINERY">যন্ত্রপাতি ও ইকুইপমেন্ট</option>
-                    <option value="VEHICLE">যানবাহন</option>
+                    <option value="LAND">জমি ও ভূমি উন্নয়ন (1510)</option>
+                    <option value="BUILDINGS">শেড ও খামার ভবন (1520)</option>
+                    <option value="PONDS">পুকুর অবকাঠামো (1530)</option>
+                    <option value="MACHINERY">যন্ত্রপাতি ও ইকুইপমেন্ট (1550)</option>
+                    <option value="VEHICLE">যানবাহন (1550)</option>
                   </select>
                 </div>
                 <div>
@@ -1230,6 +1565,103 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
                   />
                 </div>
               </div>
+
+              {/* Payment Source Selection (When cost > 0) */}
+              {parseFloat(assetCost) > 0 && (
+                <div className="p-3 bg-white dark:bg-slate-800/80 rounded-xl border border-gray-200 dark:border-slate-700 space-y-2">
+                  <div className="text-[13px] font-bold text-gray-800 dark:text-slate-200">
+                    পরিশোধের উৎস (Payment Source for Journal Entry)
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setAssetPaymentMethod('CASH')}
+                      className={`py-2 px-3 rounded-lg text-xs font-bold border transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
+                        assetPaymentMethod === 'CASH'
+                          ? 'bg-emerald-50 border-emerald-500 text-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-300 ring-2 ring-emerald-500/20'
+                          : 'bg-gray-50 dark:bg-slate-800 border-gray-200 dark:border-slate-700 text-gray-700 dark:text-slate-300'
+                      }`}
+                    >
+                      <Wallet className="w-4 h-4" />
+                      <span>নগদ তহবিল (Cash 1010)</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAssetPaymentMethod('BANK');
+                        if (bankAccountsList.length > 0 && !assetSelectedBankAccountId) {
+                          setAssetSelectedBankAccountId(bankAccountsList[0].id);
+                        }
+                      }}
+                      className={`py-2 px-3 rounded-lg text-xs font-bold border transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
+                        assetPaymentMethod === 'BANK'
+                          ? 'bg-blue-50 border-blue-500 text-blue-800 dark:bg-blue-950/50 dark:text-blue-300 ring-2 ring-blue-500/20'
+                          : 'bg-gray-50 dark:bg-slate-800 border-gray-200 dark:border-slate-700 text-gray-700 dark:text-slate-300'
+                      }`}
+                    >
+                      <Landmark className="w-4 h-4" />
+                      <span>ব্যাংক হিসাব (Bank 1030)</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAssetPaymentMethod('CREDIT');
+                        if (suppliersList.length > 0 && !assetSelectedSupplierId) {
+                          setAssetSelectedSupplierId(suppliersList[0].id);
+                        }
+                      }}
+                      className={`py-2 px-3 rounded-lg text-xs font-bold border transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
+                        assetPaymentMethod === 'CREDIT'
+                          ? 'bg-amber-50 border-amber-500 text-amber-800 dark:bg-amber-950/50 dark:text-amber-300 ring-2 ring-amber-500/20'
+                          : 'bg-gray-50 dark:bg-slate-800 border-gray-200 dark:border-slate-700 text-gray-700 dark:text-slate-300'
+                      }`}
+                    >
+                      <Users className="w-4 h-4" />
+                      <span>বাকি / দেনা (AP 2010)</span>
+                    </button>
+                  </div>
+
+                  {assetPaymentMethod === 'BANK' && (
+                    <div className="pt-1">
+                      <label className="block text-xs font-medium text-gray-700 dark:text-slate-300 mb-1">
+                        ব্যাংক অ্যাকাউন্ট নির্বাচন করুন
+                      </label>
+                      <select
+                        value={assetSelectedBankAccountId}
+                        onChange={(e) => setAssetSelectedBankAccountId(e.target.value)}
+                        className="w-full bg-white dark:bg-slate-900 border border-gray-300 dark:border-slate-700 rounded-lg p-2 text-xs text-gray-900 dark:text-slate-100"
+                      >
+                        {bankAccountsList.length === 0 && <option value="">কোনো সক্রিয় ব্যাংক অ্যাকাউন্ট পাওয়া যায়নি</option>}
+                        {bankAccountsList.map((b) => (
+                          <option key={b.id} value={b.id}>
+                            {b.name} ({b.accountNumber || 'সাধারণ'}) — বর্তমান স্থিতি: ৳{b.currentBalance?.toLocaleString() || 0}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+
+                  {assetPaymentMethod === 'CREDIT' && (
+                    <div className="pt-1">
+                      <label className="block text-xs font-medium text-gray-700 dark:text-slate-300 mb-1">
+                        সরবরাহকারী নির্বাচন করুন (Accounts Payable)
+                      </label>
+                      <select
+                        value={assetSelectedSupplierId}
+                        onChange={(e) => setAssetSelectedSupplierId(e.target.value)}
+                        className="w-full bg-white dark:bg-slate-900 border border-gray-300 dark:border-slate-700 rounded-lg p-2 text-xs text-gray-900 dark:text-slate-100"
+                      >
+                        {suppliersList.length === 0 && <option value="">কোনো সরবরাহকারী পাওয়া যায়নি (ডিফল্ট পাওনাদার ব্যবহার হবে)</option>}
+                        {suppliersList.map((s) => (
+                          <option key={s.id} value={s.id}>
+                            {s.name} ({s.phone || 'সরবরাহকারী'}) — পূর্ব দেনা: ৳{s.balance?.toLocaleString() || 0}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+                </div>
+              )}
 
               <div className="flex justify-end gap-2.5 pt-1">
                 <button
@@ -1287,6 +1719,14 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
                         <h4 className="font-bold text-gray-900 text-[15px]">{ast.name}</h4>
                         <span className="text-[12px] text-gray-500 font-mono">{ast.id} | {ast.category}</span>
                       </div>
+                      <button
+                        type="button"
+                        onClick={() => handleOpenEditAsset(ast)}
+                        className="p-1.5 rounded-lg bg-gray-50 hover:bg-gray-100 dark:bg-slate-800 dark:hover:bg-slate-700 text-gray-600 dark:text-slate-300 border border-gray-200 dark:border-slate-700 transition-all cursor-pointer"
+                        title="সম্পদ ও ক্রয়মূল্য সম্পাদনা করুন"
+                      >
+                        <Edit3 className="w-3.5 h-3.5" />
+                      </button>
                     </div>
                   </div>
 
@@ -1316,6 +1756,142 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
               );
             })}
           </div>
+
+          {/* Edit Asset Modal */}
+          {editingAsset && (
+            <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+              <div className="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 rounded-2xl w-full max-w-lg p-5 space-y-4 shadow-xl animate-fade-in">
+                <div className="flex justify-between items-center border-b border-gray-100 dark:border-slate-800 pb-3">
+                  <div>
+                    <h3 className="font-bold text-gray-900 dark:text-slate-100 text-base">
+                      স্থায়ী সম্পদ তথ্য ও ক্রয়মূল্য সমন্বয়
+                    </h3>
+                    <p className="text-xs text-gray-500 dark:text-slate-400">
+                      আইডি: {editingAsset.id} | পূর্ববর্তী মূল ক্রয়মূল্য: ৳{editingAsset.originalCost?.toLocaleString()}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setEditingAsset(null)}
+                    className="p-1 rounded-lg text-gray-400 hover:text-gray-600 dark:hover:text-slate-200 text-lg font-bold cursor-pointer"
+                  >
+                    ✕
+                  </button>
+                </div>
+
+                <form onSubmit={handleSaveEditAsset} className="space-y-3">
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-700 dark:text-slate-300 mb-1">
+                      সম্পদের নাম
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={editAssetName}
+                      onChange={(e) => setEditAssetName(e.target.value)}
+                      className="w-full bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-700 rounded-lg p-2.5 text-sm text-gray-900 dark:text-slate-100"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2.5">
+                    <div>
+                      <label className="block text-xs font-semibold text-gray-700 dark:text-slate-300 mb-1">
+                        ক্যাটাগরি
+                      </label>
+                      <select
+                        value={editAssetCategory}
+                        onChange={(e) => setEditAssetCategory(e.target.value as any)}
+                        className="w-full bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-700 rounded-lg p-2.5 text-xs text-gray-900 dark:text-slate-100"
+                      >
+                        <option value="LAND">জমি ও ভূমি উন্নয়ন (1510)</option>
+                        <option value="BUILDINGS">শেড ও খামার ভবন (1520)</option>
+                        <option value="PONDS">পুকুর অবকাঠামো (1530)</option>
+                        <option value="MACHINERY">যন্ত্রপাতি ও ইকুইপমেন্ট (1550)</option>
+                        <option value="VEHICLE">যানবাহন (1550)</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-semibold text-gray-700 dark:text-slate-300 mb-1">
+                        মূল ক্রয়মূল্য (৳)
+                      </label>
+                      <input
+                        type="number"
+                        required
+                        value={editAssetCost}
+                        onChange={(e) => setEditAssetCost(e.target.value)}
+                        className="w-full bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-700 rounded-lg p-2.5 text-sm font-mono text-gray-900 dark:text-slate-100"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-3 gap-2">
+                    <div>
+                      <label className="block text-xs font-semibold text-gray-700 dark:text-slate-300 mb-1">
+                        আয়ুষ্কাল (বছর)
+                      </label>
+                      <input
+                        type="number"
+                        value={editAssetLifeYears}
+                        onChange={(e) => {
+                          const l = parseFloat(e.target.value);
+                          setEditAssetLifeYears(e.target.value);
+                          if (l > 0) {
+                            setEditAssetDepreciationRate((100 / l).toFixed(1));
+                          }
+                        }}
+                        className="w-full bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-700 rounded-lg p-2 text-xs text-gray-900 dark:text-slate-100"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-gray-700 dark:text-slate-300 mb-1">
+                        ভগ্নাবশেষ মূল্য (৳)
+                      </label>
+                      <input
+                        type="number"
+                        value={editAssetSalvage}
+                        onChange={(e) => setEditAssetSalvage(e.target.value)}
+                        className="w-full bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-700 rounded-lg p-2 text-xs text-gray-900 dark:text-slate-100"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-gray-700 dark:text-slate-300 mb-1">
+                        অবচয় হার (%)
+                      </label>
+                      <input
+                        type="number"
+                        step="0.1"
+                        value={editAssetDepreciationRate}
+                        onChange={(e) => setEditAssetDepreciationRate(e.target.value)}
+                        className="w-full bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-700 rounded-lg p-2 text-xs text-gray-900 dark:text-slate-100"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="p-2.5 bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-900 rounded-xl text-xs text-blue-900 dark:text-blue-300">
+                    ℹ️ ক্রয়মূল্য পরিবর্তন করলে স্বয়ংক্রিয়ভাবে সমন্বয় জাবেদা (Adjusting Journal Entry) দাখিলা হবে এবং ব্যালেন্স শিট সমন্বয় হবে।
+                  </div>
+
+                  <div className="flex justify-end gap-2 pt-2 border-t border-gray-100 dark:border-slate-800">
+                    <button
+                      type="button"
+                      onClick={() => setEditingAsset(null)}
+                      className="px-4 py-2 rounded-lg bg-gray-100 hover:bg-gray-200 dark:bg-slate-800 text-gray-700 dark:text-slate-300 text-xs font-semibold cursor-pointer"
+                    >
+                      বাতিল
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={submittingEditAsset}
+                      className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow-xs cursor-pointer disabled:opacity-50"
+                    >
+                      {submittingEditAsset ? 'সংরক্ষণ হচ্ছে...' : 'হালনাগাদ সম্পন্ন করুন'}
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          )}
         </div>
       </div>
     )}

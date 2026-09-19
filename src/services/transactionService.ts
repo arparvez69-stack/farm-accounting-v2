@@ -11,6 +11,7 @@ import {
 import { postJournalEntry, validateBalancedLines } from '../accounting/accountingEngine';
 import { generateTransactionNumber, generateUniqueId, safeInsert } from '../utils/idGenerator';
 import {
+  Account,
   InventoryItem,
   Party,
   Sale,
@@ -1351,33 +1352,117 @@ export async function executeAnimalSaleOrRemovalTransaction(params: {
       }
 
       const cleanPrice = Math.round((salePrice || 0) * 100) / 100;
+      // Original purchase cost ONLY - do NOT include accumulated feed/med/labour costs
+      const costToDerecognize = Math.round((freshAnimal.purchaseCost || 0) * 100) / 100;
       let saleRecord: Sale | undefined;
       let journalEntryId: string | undefined;
 
-      // If SOLD and cleanPrice > 0, auto-post revenue using the same sales-posting pattern as InventoryCommerceModule
-      if (newStatus === 'SOLD' && cleanPrice > 0) {
+      const accounts = await db.accounts.toArray();
+
+      // Ensure livestock asset, COGS, and write-off accounts exist
+      let livestockAssetAcc = accounts.find((a) => a.code === CANONICAL_ACCOUNTS.LIVESTOCK_ASSETS);
+      if (!livestockAssetAcc) {
+        const newAcc: Account = {
+          id: 'acc_1580',
+          code: CANONICAL_ACCOUNTS.LIVESTOCK_ASSETS,
+          nameBn: 'পশুসম্পদ (Livestock & Biological Assets)',
+          nameEn: 'Livestock & Biological Assets',
+          accountClass: 'ASSET',
+          normalBalance: 'DEBIT',
+          isSystem: true,
+          isActive: true
+        };
+        await safeInsert(db.accounts, newAcc, { idPrefix: 'acc' });
+        accounts.push(newAcc);
+        livestockAssetAcc = newAcc;
+      }
+
+      let livestockCogsAcc = accounts.find((a) => a.code === CANONICAL_ACCOUNTS.LIVESTOCK_COGS);
+      if (!livestockCogsAcc) {
+        const newAcc: Account = {
+          id: 'acc_5020',
+          code: CANONICAL_ACCOUNTS.LIVESTOCK_COGS,
+          nameBn: 'বিক্রিত পশুর অধিগ্রহণ/উৎপাদন ব্যয় (Livestock COGS)',
+          nameEn: 'Livestock Cost of Goods Sold',
+          accountClass: 'COGS',
+          normalBalance: 'DEBIT',
+          isSystem: true,
+          isActive: true
+        };
+        await safeInsert(db.accounts, newAcc, { idPrefix: 'acc' });
+        accounts.push(newAcc);
+        livestockCogsAcc = newAcc;
+      }
+
+      let writeOffAcc = accounts.find((a) => a.code === CANONICAL_ACCOUNTS.LIVESTOCK_WRITEOFF);
+      if (!writeOffAcc) {
+        const newAcc: Account = {
+          id: 'acc_8020',
+          code: CANONICAL_ACCOUNTS.LIVESTOCK_WRITEOFF,
+          nameBn: 'পশুসম্পদ অবলোপন (Livestock Write-off)',
+          nameEn: 'Livestock Write-off',
+          accountClass: 'OTHER_EXPENSE',
+          normalBalance: 'DEBIT',
+          isSystem: true,
+          isActive: true
+        };
+        await safeInsert(db.accounts, newAcc, { idPrefix: 'acc' });
+        accounts.push(newAcc);
+        writeOffAcc = newAcc;
+      }
+
+      // If SOLD:
+      // 1. Revenue leg: Debit Cash/Bank, Credit Livestock Revenue (4020)
+      // 2. Cost leg: Debit Livestock COGS (5020), Credit Livestock Assets (1580) for original purchaseCost ONLY
+      if (newStatus === 'SOLD' && (cleanPrice > 0 || costToDerecognize > 0)) {
         const paymentCode = paymentMethod === 'BANK' ? CANONICAL_ACCOUNTS.BANK : CANONICAL_ACCOUNTS.CASH;
         const revenueCode = CANONICAL_ACCOUNTS.LIVESTOCK_REVENUE; // 4020
-        const accounts = await db.accounts.toArray();
 
-        const journalLines: JournalLine[] = [
-          {
-            accountId: paymentCode,
-            accountCode: paymentCode,
-            accountName: paymentMethod === 'BANK' ? 'ব্যাংক হিসাব (Bank Accounts)' : 'নগদ টাকা (Cash on Hand)',
-            debit: cleanPrice,
-            credit: 0,
-            memo: `পশু বিক্রয়: ${freshAnimal.id}`
-          },
-          {
-            accountId: revenueCode,
-            accountCode: revenueCode,
-            accountName: 'পশু বিক্রয় আয় (Livestock Sales Revenue)',
-            debit: 0,
-            credit: cleanPrice,
-            memo: `${freshAnimal.breed} (ট্যাগ: ${freshAnimal.id}) বিক্রয় রাজস্ব`
-          }
-        ];
+        const journalLines: JournalLine[] = [];
+
+        // Revenue recognition
+        if (cleanPrice > 0) {
+          journalLines.push(
+            {
+              accountId: paymentCode,
+              accountCode: paymentCode,
+              accountName: paymentMethod === 'BANK' ? 'ব্যাংক হিসাব (Bank Accounts)' : 'নগদ টাকা (Cash on Hand)',
+              debit: cleanPrice,
+              credit: 0,
+              memo: `পশু বিক্রয়: ${freshAnimal.id}`
+            },
+            {
+              accountId: revenueCode,
+              accountCode: revenueCode,
+              accountName: 'পশু বিক্রয় আয় (Livestock Sales Revenue)',
+              debit: 0,
+              credit: cleanPrice,
+              memo: `${freshAnimal.breed} (ট্যাগ: ${freshAnimal.id}) বিক্রয় রাজস্ব`
+            }
+          );
+        }
+
+        // COGS & Asset Derecognition (original purchaseCost only)
+        if (costToDerecognize > 0) {
+          journalLines.push(
+            {
+              accountId: CANONICAL_ACCOUNTS.LIVESTOCK_COGS,
+              accountCode: CANONICAL_ACCOUNTS.LIVESTOCK_COGS,
+              accountName: livestockCogsAcc?.nameBn || 'বিক্রিত পশুর অধিগ্রহণ/উৎপাদন ব্যয় (Livestock COGS)',
+              debit: costToDerecognize,
+              credit: 0,
+              memo: `${freshAnimal.breed} (ট্যাগ: ${freshAnimal.id}) মূল ক্রয়মূল্য খরচ (COGS)`
+            },
+            {
+              accountId: CANONICAL_ACCOUNTS.LIVESTOCK_ASSETS,
+              accountCode: CANONICAL_ACCOUNTS.LIVESTOCK_ASSETS,
+              accountName: livestockAssetAcc?.nameBn || 'পশুসম্পদ (Livestock & Biological Assets)',
+              debit: 0,
+              credit: costToDerecognize,
+              memo: `${freshAnimal.breed} (ট্যাগ: ${freshAnimal.id}) বিক্রয় বাবদ সম্পদ হিসাব সমন্বয়`
+            }
+          );
+        }
 
         // Double check balance
         const check = validateBalancedLines(journalLines, accounts);
@@ -1394,7 +1479,7 @@ export async function executeAnimalSaleOrRemovalTransaction(params: {
             voucherNumber,
             voucherType: 'SALES',
             date,
-            narration: `পশু বিক্রয় চালান: ${customerName || 'সাধারণ ক্রেতা'} এর নিকট ${freshAnimal.id} (${freshAnimal.breed}) বিক্রয়`,
+            narration: `পশু বিক্রয় চালান: ${customerName || 'সাধারণ ক্রেতা'} এর নিকট ${freshAnimal.id} (${freshAnimal.breed}) বিক্রয়${costToDerecognize > 0 ? ` (মূল ক্রয়মূল্য: ৳${costToDerecognize})` : ''}`,
             reference: invoiceNumber,
             lines: journalLines,
             createdBy: currentUserId,
@@ -1406,54 +1491,102 @@ export async function executeAnimalSaleOrRemovalTransaction(params: {
         journalEntryId = journalEntry.id;
 
         // Create Sale Record in sales table
-        const saleId = generateUniqueId('sal');
-        saleRecord = {
-          id: saleId,
-          invoiceNumber,
-          date,
-          customerId: 'pty_walkin',
-          customerName: customerName?.trim() || 'সাধারণ ক্রেতা (Walk-in Buyer)',
-          category: 'LIVESTOCK',
-          items: [
-            {
-              itemId: freshAnimal.id,
-              itemName: `${freshAnimal.breed} (ট্যাগ: ${freshAnimal.id})`,
-              quantity: 1,
-              unit: 'টি',
-              unitPrice: cleanPrice,
-              lineTotal: cleanPrice
-            }
-          ],
-          subtotal: cleanPrice,
-          totalAmount: cleanPrice,
-          grandTotal: cleanPrice,
-          paidAmount: cleanPrice,
-          dueAmount: 0,
-          paymentMethod,
-          bankAccountId,
-          journalEntryId: journalEntry.id,
-          status: 'PAID',
-          synced: false
-        };
-        await safeInsert(db.sales, saleRecord, { idPrefix: 'sal' });
+        if (cleanPrice > 0) {
+          const saleId = generateUniqueId('sal');
+          saleRecord = {
+            id: saleId,
+            invoiceNumber,
+            date,
+            customerId: 'pty_walkin',
+            customerName: customerName?.trim() || 'সাধারণ ক্রেতা (Walk-in Buyer)',
+            category: 'LIVESTOCK',
+            items: [
+              {
+                itemId: freshAnimal.id,
+                itemName: `${freshAnimal.breed} (ট্যাগ: ${freshAnimal.id})`,
+                quantity: 1,
+                unit: 'টি',
+                unitPrice: cleanPrice,
+                lineTotal: cleanPrice
+              }
+            ],
+            subtotal: cleanPrice,
+            totalAmount: cleanPrice,
+            grandTotal: cleanPrice,
+            paidAmount: cleanPrice,
+            dueAmount: 0,
+            paymentMethod,
+            bankAccountId,
+            journalEntryId: journalEntry.id,
+            status: 'PAID',
+            synced: false
+          };
+          await safeInsert(db.sales, saleRecord, { idPrefix: 'sal' });
 
-        // Update Cash/Bank account balance
-        if (paymentMethod === 'CASH') {
-          const cashAcc = await db.cashBankAccounts.where('accountType').equals('CASH').first();
-          if (cashAcc) {
-            await db.cashBankAccounts.update(cashAcc.id, {
-              currentBalance: Math.round((cashAcc.currentBalance + cleanPrice) * 100) / 100
-            });
+          // Update Cash/Bank account balance
+          if (paymentMethod === 'CASH') {
+            const cashAcc = await db.cashBankAccounts.where('accountType').equals('CASH').first();
+            if (cashAcc) {
+              await db.cashBankAccounts.update(cashAcc.id, {
+                currentBalance: Math.round((cashAcc.currentBalance + cleanPrice) * 100) / 100
+              });
+            }
+          } else if (paymentMethod === 'BANK') {
+            let bankAcc: CashBankAccount | undefined;
+            if (bankAccountId) bankAcc = await db.cashBankAccounts.get(bankAccountId);
+            if (!bankAcc) bankAcc = await db.cashBankAccounts.where('accountType').equals('BANK').first();
+            if (bankAcc) {
+              await db.cashBankAccounts.update(bankAcc.id, {
+                currentBalance: Math.round((bankAcc.currentBalance + cleanPrice) * 100) / 100
+              });
+            }
           }
-        } else if (paymentMethod === 'BANK') {
-          let bankAcc: CashBankAccount | undefined;
-          if (bankAccountId) bankAcc = await db.cashBankAccounts.get(bankAccountId);
-          if (!bankAcc) bankAcc = await db.cashBankAccounts.where('accountType').equals('BANK').first();
-          if (bankAcc) {
-            await db.cashBankAccounts.update(bankAcc.id, {
-              currentBalance: Math.round((bankAcc.currentBalance + cleanPrice) * 100) / 100
-            });
+        }
+      } else if (['DECEASED', 'STOLEN', 'TRANSFERRED'].includes(newStatus)) {
+        // If an animal is marked DECEASED, STOLEN, or TRANSFERRED (not sold):
+        // Debit 'পশুসম্পদ অবলোপন (Livestock Write-off)' (8020), Credit Livestock Assets (1580), for its purchaseCost ONLY
+        if (costToDerecognize > 0) {
+          const writeOffLines: JournalLine[] = [
+            {
+              accountId: CANONICAL_ACCOUNTS.LIVESTOCK_WRITEOFF,
+              accountCode: CANONICAL_ACCOUNTS.LIVESTOCK_WRITEOFF,
+              accountName: writeOffAcc?.nameBn || 'পশুসম্পদ অবলোপন (Livestock Write-off)',
+              debit: costToDerecognize,
+              credit: 0,
+              memo: `পশু অবলোপন (${newStatus}): ${freshAnimal.id} (${freshAnimal.breed}) মূল ক্রয়মূল্য`
+            },
+            {
+              accountId: CANONICAL_ACCOUNTS.LIVESTOCK_ASSETS,
+              accountCode: CANONICAL_ACCOUNTS.LIVESTOCK_ASSETS,
+              accountName: livestockAssetAcc?.nameBn || 'পশুসম্পদ (Livestock & Biological Assets)',
+              debit: 0,
+              credit: costToDerecognize,
+              memo: `${freshAnimal.id} অপসারণ (${newStatus}) বাবদ সম্পদ বহির্গমন`
+            }
+          ];
+
+          const check = validateBalancedLines(writeOffLines, accounts);
+          if (!check.isBalanced) {
+            throw new Error('অবলোপন জাবেদা ভারসাম্যহীন! কার্যক্রম বাতিল করা হলো।');
           }
+
+          const voucherNumber = generateTransactionNumber('ADJ');
+          const writeOffEntry = await postJournalEntry(
+            {
+              id: generateUniqueId('j_writeoff'),
+              voucherNumber,
+              voucherType: 'ADJUSTMENT',
+              date,
+              narration: `পশুসম্পদ অবলোপন দাখিলা (${newStatus}): ${freshAnimal.id} (${freshAnimal.breed}) খামার থেকে অপসারণ বাবদ অবলোপন${notes ? ` [${notes}]` : ''}`,
+              reference: freshAnimal.id,
+              lines: writeOffLines,
+              createdBy: currentUserId,
+              createdAt: new Date().toISOString()
+            },
+            { accounts, skipDbPut: true }
+          );
+          await safeInsert(db.journalEntries, writeOffEntry, { idPrefix: 'j' });
+          journalEntryId = writeOffEntry.id;
         }
       }
 
@@ -1467,6 +1600,7 @@ export async function executeAnimalSaleOrRemovalTransaction(params: {
         salePrice: newStatus === 'SOLD' ? cleanPrice : freshAnimal.salePrice,
         saleDate: date,
         notes: combinedNotes,
+        journalEntryId: journalEntryId || freshAnimal.journalEntryId,
         synced: false
       };
       await db.animals.put(updatedAnimal);
