@@ -1182,100 +1182,180 @@ export async function executeAnimalEventTransaction(params: {
         throw new Error(`কার্যক্রমের তারিখ (${event.date}) পশুর জন্ম তারিখের (${animal.birthDate}) পূর্ববর্তী হতে পারে না।`);
       }
 
-      const cost = Math.round((event.cost || 0) * 100) / 100;
+      // Determine inventory item consumption for FEED event with inventory item linked + quantity
+      const feedItemId = (event as any).inventoryItemId || event.feedItemId;
+      const feedQuantityUsed = (event as any).quantity ?? event.feedQuantityUsed;
+      const isInventoryFeed = event.eventType === 'FEED' && !!feedItemId && typeof feedQuantityUsed === 'number' && feedQuantityUsed > 0;
+
+      let feedItem: InventoryItem | undefined;
+      let effectiveCost = Math.round((event.cost || 0) * 100) / 100;
+
+      if (isInventoryFeed) {
+        feedItem = await db.inventoryItems.get(feedItemId);
+        if (feedItem) {
+          effectiveCost = Math.round(feedQuantityUsed * (feedItem.avgCostPrice || 0) * 100) / 100;
+        }
+      }
+
+      const cost = effectiveCost;
       let journalEntryId: string | undefined;
 
-      // If cost > 0, auto-post the expense using existing feed/medicine expense accounts
+      // If cost > 0, auto-post the expense:
+      // - For FEED with real inventory item link + quantity: Dr Feed Expense (6010), Cr Feed Inventory (1051) [do NOT credit Cash/Bank]
+      // - For others (or FEED/VACCINE/TREATMENT without inventory link): Dr Expense, Cr Cash/Bank
       if (cost > 0) {
-        let expenseCode: string = CANONICAL_ACCOUNTS.MISCELLANEOUS_EXPENSE;
-        let expenseName = 'বিবিধ পরিচালন ব্যয় (Miscellaneous Expense)';
-
-        if (event.eventType === 'FEED') {
-          expenseCode = CANONICAL_ACCOUNTS.FEED_EXPENSE; // 6010
-          expenseName = 'খাদ্য ক্রয় খরচ (Feed Expense)';
-        } else if (event.eventType === 'VACCINE') {
-          expenseCode = CANONICAL_ACCOUNTS.VACCINATION; // 6050
-          expenseName = 'টিকা প্রদান খরচ (Vaccination Expense)';
-        } else if (event.eventType === 'TREATMENT') {
-          expenseCode = CANONICAL_ACCOUNTS.VET_MEDICINE; // 6040
-          expenseName = 'চিকিৎসা ও ওষুধ (Veterinary & Medicine)';
-        }
-
-        const paymentCode = paymentMethod === 'BANK' ? CANONICAL_ACCOUNTS.BANK : CANONICAL_ACCOUNTS.CASH;
-        const paymentName = paymentMethod === 'BANK' ? 'ব্যাংক হিসাব (Bank Accounts)' : 'নগদ টাকা (Cash on Hand)';
-
         const accounts = await db.accounts.toArray();
-        const expenseAcc = accounts.find((a) => a.code === expenseCode) || {
-          id: `acc_${expenseCode}`,
-          code: expenseCode,
-          nameBn: expenseName
-        };
-        const paymentAcc = accounts.find((a) => a.code === paymentCode) || {
-          id: `acc_${paymentCode}`,
-          code: paymentCode,
-          nameBn: paymentName
-        };
 
-        const journalLines: JournalLine[] = [
-          {
-            accountId: expenseAcc.id,
-            accountCode: expenseCode,
-            accountName: expenseAcc.nameBn || expenseName,
-            debit: cost,
-            credit: 0,
-            memo: `${animal.id} (${animal.breed}) - ${event.eventType} ব্যয়`
-          },
-          {
-            accountId: paymentAcc.id,
-            accountCode: paymentCode,
-            accountName: paymentAcc.nameBn || paymentName,
-            debit: 0,
-            credit: cost,
-            memo: 'কার্যক্রম ব্যয় পরিশোধ'
+        if (isInventoryFeed && feedItem) {
+          const expenseCode = CANONICAL_ACCOUNTS.FEED_EXPENSE; // 6010
+          const expenseName = 'খাদ্য ক্রয় খরচ (Feed Expense)';
+          const inventoryCode = CANONICAL_ACCOUNTS.FEED_INVENTORY; // 1051
+          const inventoryName = 'মজুদ খাদ্য (Feed Inventory)';
+
+          const expenseAcc = accounts.find((a) => a.code === expenseCode) || {
+            id: `acc_${expenseCode}`,
+            code: expenseCode,
+            nameBn: expenseName
+          };
+          const inventoryAcc = accounts.find((a) => a.code === inventoryCode) || {
+            id: `acc_${inventoryCode}`,
+            code: inventoryCode,
+            nameBn: inventoryName
+          };
+
+          const journalLines: JournalLine[] = [
+            {
+              accountId: expenseAcc.id,
+              accountCode: expenseCode,
+              accountName: expenseAcc.nameBn || expenseName,
+              debit: cost,
+              credit: 0,
+              memo: `${animal.id} (${animal.breed}) - খাদ্য খরচ (ইনভেন্টরি ব্যবহার: ${feedQuantityUsed} ${feedItem.unit})`
+            },
+            {
+              accountId: inventoryAcc.id,
+              accountCode: inventoryCode,
+              accountName: inventoryAcc.nameBn || inventoryName,
+              debit: 0,
+              credit: cost,
+              memo: `${feedItem.nameEn || feedItem.nameBn}: খাদ্য মজুদ থেকে ব্যবহার`
+            }
+          ];
+
+          const check = validateBalancedLines(journalLines, accounts);
+          if (!check.isBalanced) {
+            throw new Error('জাবেদা দাখিলা ভারসাম্যহীন! কার্যক্রম সংরক্ষণ বাতিল করা হলো।');
           }
-        ];
 
-        // Explicit double-entry validation: Do not let this event save if unbalanced
-        const check = validateBalancedLines(journalLines, accounts);
-        if (!check.isBalanced) {
-          throw new Error('জাবেদা দাখিলা ভারসাম্যহীন! কার্যক্রম সংরক্ষণ বাতিল করা হলো।');
-        }
+          const voucherNumber = generateTransactionNumber('EVV');
+          const journalEntry = await postJournalEntry(
+            {
+              id: generateUniqueId('j_evt'),
+              voucherNumber,
+              voucherType: 'JOURNAL',
+              date: event.date,
+              narration: `গবাদিপশু ${animal.id}: খাদ্য মজুদ থেকে ব্যবহার (${feedQuantityUsed} ${feedItem.unit})`,
+              reference: animal.id,
+              lines: journalLines,
+              createdBy: currentUserId,
+              createdAt: new Date().toISOString()
+            },
+            { accounts, skipDbPut: true }
+          );
 
-        const voucherNumber = generateTransactionNumber('EVV');
-        const journalEntry = await postJournalEntry(
-          {
-            id: generateUniqueId('j_evt'),
-            voucherNumber,
-            voucherType: 'PAYMENT',
-            date: event.date,
-            narration: `গবাদিপশু ${animal.id}: ${event.eventType}${event.vaccineName ? ` (${event.vaccineName})` : ''} কার্যক্রম ব্যয়`,
-            reference: animal.id,
-            lines: journalLines,
-            createdBy: currentUserId,
-            createdAt: new Date().toISOString()
-          },
-          { accounts, skipDbPut: true }
-        );
+          await safeInsert(db.journalEntries, journalEntry, { idPrefix: 'j' });
+          journalEntryId = journalEntry.id;
+        } else {
+          // Standard cash/bank expense posting
+          let expenseCode: string = CANONICAL_ACCOUNTS.MISCELLANEOUS_EXPENSE;
+          let expenseName = 'বিবিধ পরিচালন ব্যয় (Miscellaneous Expense)';
 
-        await safeInsert(db.journalEntries, journalEntry, { idPrefix: 'j' });
-        journalEntryId = journalEntry.id;
-
-        // Update operational Cash / Bank balance consistently with GL
-        if (paymentMethod === 'CASH') {
-          const cashAcc = await db.cashBankAccounts.where('accountType').equals('CASH').first();
-          if (cashAcc) {
-            await db.cashBankAccounts.update(cashAcc.id, {
-              currentBalance: Math.round((cashAcc.currentBalance - cost) * 100) / 100
-            });
+          if (event.eventType === 'FEED') {
+            expenseCode = CANONICAL_ACCOUNTS.FEED_EXPENSE; // 6010
+            expenseName = 'খাদ্য ক্রয় খরচ (Feed Expense)';
+          } else if (event.eventType === 'VACCINE') {
+            expenseCode = CANONICAL_ACCOUNTS.VACCINATION; // 6050
+            expenseName = 'টিকা প্রদান খরচ (Vaccination Expense)';
+          } else if (event.eventType === 'TREATMENT') {
+            expenseCode = CANONICAL_ACCOUNTS.VET_MEDICINE; // 6040
+            expenseName = 'চিকিৎসা ও ওষুধ (Veterinary & Medicine)';
           }
-        } else if (paymentMethod === 'BANK') {
-          let bankAcc: CashBankAccount | undefined;
-          if (bankAccountId) bankAcc = await db.cashBankAccounts.get(bankAccountId);
-          if (!bankAcc) bankAcc = await db.cashBankAccounts.where('accountType').equals('BANK').first();
-          if (bankAcc) {
-            await db.cashBankAccounts.update(bankAcc.id, {
-              currentBalance: Math.round((bankAcc.currentBalance - cost) * 100) / 100
-            });
+
+          const paymentCode = paymentMethod === 'BANK' ? CANONICAL_ACCOUNTS.BANK : CANONICAL_ACCOUNTS.CASH;
+          const paymentName = paymentMethod === 'BANK' ? 'ব্যাংক হিসাব (Bank Accounts)' : 'নগদ টাকা (Cash on Hand)';
+
+          const expenseAcc = accounts.find((a) => a.code === expenseCode) || {
+            id: `acc_${expenseCode}`,
+            code: expenseCode,
+            nameBn: expenseName
+          };
+          const paymentAcc = accounts.find((a) => a.code === paymentCode) || {
+            id: `acc_${paymentCode}`,
+            code: paymentCode,
+            nameBn: paymentName
+          };
+
+          const journalLines: JournalLine[] = [
+            {
+              accountId: expenseAcc.id,
+              accountCode: expenseCode,
+              accountName: expenseAcc.nameBn || expenseName,
+              debit: cost,
+              credit: 0,
+              memo: `${animal.id} (${animal.breed}) - ${event.eventType} ব্যয়`
+            },
+            {
+              accountId: paymentAcc.id,
+              accountCode: paymentCode,
+              accountName: paymentAcc.nameBn || paymentName,
+              debit: 0,
+              credit: cost,
+              memo: 'কার্যক্রম ব্যয় পরিশোধ'
+            }
+          ];
+
+          // Explicit double-entry validation: Do not let this event save if unbalanced
+          const check = validateBalancedLines(journalLines, accounts);
+          if (!check.isBalanced) {
+            throw new Error('জাবেদা দাখিলা ভারসাম্যহীন! কার্যক্রম সংরক্ষণ বাতিল করা হলো।');
+          }
+
+          const voucherNumber = generateTransactionNumber('EVV');
+          const journalEntry = await postJournalEntry(
+            {
+              id: generateUniqueId('j_evt'),
+              voucherNumber,
+              voucherType: 'PAYMENT',
+              date: event.date,
+              narration: `গবাদিপশু ${animal.id}: ${event.eventType}${event.vaccineName ? ` (${event.vaccineName})` : ''} কার্যক্রম ব্যয়`,
+              reference: animal.id,
+              lines: journalLines,
+              createdBy: currentUserId,
+              createdAt: new Date().toISOString()
+            },
+            { accounts, skipDbPut: true }
+          );
+
+          await safeInsert(db.journalEntries, journalEntry, { idPrefix: 'j' });
+          journalEntryId = journalEntry.id;
+
+          // Update operational Cash / Bank balance consistently with GL
+          if (paymentMethod === 'CASH') {
+            const cashAcc = await db.cashBankAccounts.where('accountType').equals('CASH').first();
+            if (cashAcc) {
+              await db.cashBankAccounts.update(cashAcc.id, {
+                currentBalance: Math.round((cashAcc.currentBalance - cost) * 100) / 100
+              });
+            }
+          } else if (paymentMethod === 'BANK') {
+            let bankAcc: CashBankAccount | undefined;
+            if (bankAccountId) bankAcc = await db.cashBankAccounts.get(bankAccountId);
+            if (!bankAcc) bankAcc = await db.cashBankAccounts.where('accountType').equals('BANK').first();
+            if (bankAcc) {
+              await db.cashBankAccounts.update(bankAcc.id, {
+                currentBalance: Math.round((bankAcc.currentBalance - cost) * 100) / 100
+              });
+            }
           }
         }
       }
@@ -1284,6 +1364,8 @@ export async function executeAnimalEventTransaction(params: {
       const eventId = generateUniqueId('evt');
       const eventRecord: AnimalEvent = {
         ...event,
+        feedItemId: feedItemId || event.feedItemId,
+        feedQuantityUsed: feedQuantityUsed ?? event.feedQuantityUsed,
         id: eventId,
         cost,
         journalEntryId,
@@ -1317,11 +1399,11 @@ export async function executeAnimalEventTransaction(params: {
       await db.animals.update(freshAnimal.id, animalUpdates);
 
       // Deduct feed stock from matching InventoryItem if feedItemId and feedQuantityUsed provided
-      if (event.eventType === 'FEED' && event.feedItemId && event.feedQuantityUsed && event.feedQuantityUsed > 0) {
-        const feedItem = await db.inventoryItems.get(event.feedItemId);
-        if (feedItem) {
-          const newStock = Math.max(0, Math.round((feedItem.currentStock - event.feedQuantityUsed) * 100) / 100);
-          await db.inventoryItems.update(feedItem.id, {
+      if (isInventoryFeed) {
+        const itemToDeduct = feedItem || (feedItemId ? await db.inventoryItems.get(feedItemId) : undefined);
+        if (itemToDeduct && feedQuantityUsed && feedQuantityUsed > 0) {
+          const newStock = Math.max(0, Math.round((itemToDeduct.currentStock - feedQuantityUsed) * 100) / 100);
+          await db.inventoryItems.update(itemToDeduct.id, {
             currentStock: newStock,
             synced: false
           });
@@ -1331,13 +1413,13 @@ export async function executeAnimalEventTransaction(params: {
             {
               id: generateUniqueId('stkm'),
               date: event.date,
-              itemId: feedItem.id,
+              itemId: itemToDeduct.id,
               movementType: 'CONSUMPTION',
-              quantity: event.feedQuantityUsed,
-              unitCost: feedItem.avgCostPrice,
-              totalValue: Math.round(event.feedQuantityUsed * feedItem.avgCostPrice * 100) / 100,
+              quantity: feedQuantityUsed,
+              unitCost: itemToDeduct.avgCostPrice,
+              totalValue: Math.round(feedQuantityUsed * itemToDeduct.avgCostPrice * 100) / 100,
               referenceId: eventId,
-              notes: `পশু ${animal.tag || animal.id}: খাদ্য ব্যবহার (${event.feedQuantityUsed} ${feedItem.unit})`,
+              notes: `পশু ${animal.tag || animal.id}: খাদ্য ব্যবহার (${feedQuantityUsed} ${itemToDeduct.unit})`,
               synced: false
             },
             { idPrefix: 'stkm' }

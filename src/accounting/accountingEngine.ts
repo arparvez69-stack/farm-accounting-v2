@@ -677,16 +677,16 @@ export async function generateBalanceSheet(dateRange?: DateRangeFilter): Promise
   const rawAccounts = await db.accounts.toArray();
   let entries = await db.journalEntries.toArray();
 
-  if (dateRange?.startDate || dateRange?.endDate) {
+  // Balance Sheet is cumulative as of the selected end date (date <= endDate) without any startDate filtering
+  if (dateRange?.endDate) {
     entries = entries.filter((e) => {
       if (!e.date) return false;
-      if (dateRange.startDate && e.date < dateRange.startDate) return false;
-      if (dateRange.endDate && e.date > dateRange.endDate) return false;
+      if (e.date > dateRange.endDate!) return false;
       return true;
     });
   }
 
-  const pl = await generateProfitLoss(dateRange);
+  const pl = await generateProfitLoss(dateRange?.endDate ? { endDate: dateRange.endDate } : undefined);
 
   // Deduplicate accounts by code
   const accountsByCode = new Map<string, Account>();
@@ -944,6 +944,27 @@ export async function previewYearEndClosing(closingDate: string): Promise<YearEn
     throw new Error('সমাপ্তি তারিখ নির্বাচন করুন (Closing date is required).');
   }
 
+  // Check if this exact fiscal year-end date or an overlapping/prior date is already closed
+  const existingExact = await db.closedPeriods.where('endDate').equals(closingDate).first();
+  if (existingExact) {
+    return {
+      closingDate,
+      previousClosingDate: existingExact.endDate,
+      totalRevenue: 0,
+      totalCogs: 0,
+      grossProfit: 0,
+      totalOperatingExpenses: 0,
+      operatingProfit: 0,
+      totalOtherIncome: 0,
+      totalOtherExpenses: 0,
+      netProfit: 0,
+      previousTransferred: 0,
+      netProfitToTransfer: 0,
+      canClose: false,
+      blockReason: `হিসাবকাল সমাপ্তি ত্রুটি: এই অর্থবছর সমাপ্তির তারিখ (${closingDate}) ইতোমধ্যে বন্ধ (Closed) করা হয়েছে। একই তারিখে পুনরায় সমাপ্তি সম্ভব নয়।`
+    };
+  }
+
   const latestClosed = await getLatestClosedPeriod();
   if (latestClosed && closingDate <= latestClosed.endDate) {
     return {
@@ -992,11 +1013,12 @@ export async function previewYearEndClosing(closingDate: string): Promise<YearEn
 
 /**
  * Executes Year-End Closing:
- * 1. Validates that closingDate is strictly after any previously closed period.
- * 2. Reuses existing Profit & Loss logic from the beginning up to the chosen date.
- * 3. Never deletes or alters existing journal entries.
- * 4. Posts ONE summary journal entry transferring the net profit into Retained Earnings (acc_3050).
- * 5. Records the closed period in db.closedPeriods.
+ * 1. Validates that closingDate is not already closed in ClosedPeriod, and strictly after any previously closed period.
+ * 2. Closes all Revenue and Expense (COGS, Operating Expense, Other Expense/Income) account balances into Income Summary (3060).
+ * 3. Transfers the net profit/loss from Income Summary (3060) to Retained Earnings (3050).
+ * 4. After closing, all Revenue and Expense accounts have a zero balance.
+ * 5. Balanced closing entry: Assets = Liabilities + Equity maintained.
+ * 6. Records the closed period in db.closedPeriods.
  */
 export async function executeYearEndClosing(params: {
   closingDate: string;
@@ -1011,6 +1033,14 @@ export async function executeYearEndClosing(params: {
 
   if (!closingDate) {
     throw new Error('সমাপ্তি তারিখ প্রদান করা বাধ্যতামূলক।');
+  }
+
+  // Check ClosedPeriod for the exact fiscal year-end date
+  const existingExactClosed = await db.closedPeriods.where('endDate').equals(closingDate).first();
+  if (existingExactClosed) {
+    throw new Error(
+      `হিসাবকাল সমাপ্তি ত্রুটি: এই অর্থবছর সমাপ্তির তারিখ (${closingDate}) ইতোমধ্যে বন্ধ (Closed) করা হয়েছে। একই তারিখে পুনরায় বছর সমাপ্তি করা যাবে না (Fiscal year-end date already closed).`
+    );
   }
 
   const latestClosed = await getLatestClosedPeriod();
@@ -1051,84 +1081,160 @@ export async function executeYearEndClosing(params: {
     await safeInsert(db.accounts, isAcc);
   }
 
-  const accounts = await db.accounts.toArray();
+  const rawAccounts = await db.accounts.toArray();
+  const accountsByCode = new Map<string, Account>();
+  for (const acc of rawAccounts) {
+    if (!accountsByCode.has(acc.code)) {
+      accountsByCode.set(acc.code, acc);
+    }
+  }
 
-  // 1. Calculate P&L from the beginning to the chosen date
-  const pl = await generateProfitLoss({ endDate: closingDate });
-  const allClosed = await getClosedPeriods();
-  const previousTransferred = Math.round(
-    allClosed.reduce((sum, p) => sum + (Number(p.netProfitTransferred) || 0), 0) * 100
-  ) / 100;
-  const netProfitToTransfer = Math.round((pl.netProfit - previousTransferred) * 100) / 100;
+  // Read all journal entries up to closingDate
+  const allJournalEntries = await db.journalEntries.toArray();
+  const periodEntries = allJournalEntries.filter((e) => e.date && e.date <= closingDate);
+
+  // Compute cumulative balances for all accounts up to closingDate
+  const accountBalances: Record<string, number> = {};
+  for (const entry of periodEntries) {
+    for (const line of entry.lines) {
+      const code = line.accountCode?.trim();
+      if (!code) continue;
+
+      if (accountBalances[code] === undefined) accountBalances[code] = 0;
+      const acc = resolveAccountMetadata(code, accountsByCode);
+      if (acc.normalBalance === 'CREDIT') {
+        accountBalances[code] += (Number(line.credit || 0) - Number(line.debit || 0));
+      } else {
+        accountBalances[code] += (Number(line.debit || 0) - Number(line.credit || 0));
+      }
+    }
+  }
+
+  // Identify all Revenue, COGS, Expense, Other Income, and Other Expense accounts that have non-zero balances
+  const closingLines: JournalLine[] = [];
+  let totalRevenueCreditsToClose = 0;
+  let totalExpenseDebitsToClose = 0;
+
+  for (const acc of accountsByCode.values()) {
+    const bal = Math.round((accountBalances[acc.code] || 0) * 100) / 100;
+    if (bal === 0) continue;
+
+    const isRevenueClass = acc.accountClass === 'REVENUE' || acc.accountClass === 'OTHER_INCOME';
+    const isExpenseClass = acc.accountClass === 'EXPENSE' || acc.accountClass === 'COGS' || acc.accountClass === 'OTHER_EXPENSE';
+
+    if (isRevenueClass) {
+      if (bal > 0) {
+        // Normal CREDIT balance: debit to zero out
+        closingLines.push({
+          accountId: acc.id,
+          accountCode: acc.code,
+          accountName: acc.nameBn,
+          debit: bal,
+          credit: 0,
+          memo: `বছর সমাপ্তি: আয় হিসাব বন্ধ (${acc.nameBn})`
+        });
+        totalRevenueCreditsToClose += bal;
+      } else {
+        // Negative balance (DEBIT excess): credit to zero out
+        const absBal = Math.abs(bal);
+        closingLines.push({
+          accountId: acc.id,
+          accountCode: acc.code,
+          accountName: acc.nameBn,
+          debit: 0,
+          credit: absBal,
+          memo: `বছর সমাপ্তি: বিপরীত আয় হিসাব বন্ধ (${acc.nameBn})`
+        });
+        totalRevenueCreditsToClose -= absBal;
+      }
+    } else if (isExpenseClass) {
+      if (bal > 0) {
+        // Normal DEBIT balance: credit to zero out
+        closingLines.push({
+          accountId: acc.id,
+          accountCode: acc.code,
+          accountName: acc.nameBn,
+          debit: 0,
+          credit: bal,
+          memo: `বছর সমাপ্তি: ব্যয় হিসাব বন্ধ (${acc.nameBn})`
+        });
+        totalExpenseDebitsToClose += bal;
+      } else {
+        // Negative balance (CREDIT excess): debit to zero out
+        const absBal = Math.abs(bal);
+        closingLines.push({
+          accountId: acc.id,
+          accountCode: acc.code,
+          accountName: acc.nameBn,
+          debit: absBal,
+          credit: 0,
+          memo: `বছর সমাপ্তি: বিপরীত ব্যয় হিসাব বন্ধ (${acc.nameBn})`
+        });
+        totalExpenseDebitsToClose -= absBal;
+      }
+    }
+  }
+
+  // Net profit is total revenues closed minus total expenses closed
+  const calculatedNetProfit = Math.round((totalRevenueCreditsToClose - totalExpenseDebitsToClose) * 100) / 100;
+
+  // Transfer the net amount directly to Retained Earnings (3050)
+  // If net profit > 0 (Revenues > Expenses): Dr Revenues (done), Cr Expenses (done), Cr Retained Earnings
+  // Total Debits in closingLines = totalRevenueCreditsToClose + [any negative expense debits]
+  // Total Credits in closingLines = totalExpenseDebitsToClose + [any negative revenue credits]
+  // Net difference = totalRevenueCreditsToClose - totalExpenseDebitsToClose = calculatedNetProfit
+  if (calculatedNetProfit > 0) {
+    // Credit Retained Earnings 3050 by calculatedNetProfit to balance
+    closingLines.push({
+      accountId: reAcc.id,
+      accountCode: '3050',
+      accountName: reAcc.nameBn,
+      debit: 0,
+      credit: calculatedNetProfit,
+      memo: `বছর সমাপ্তি: পুঞ্জীভূত লাভে নিট লাভ স্থানান্তর (${closingDate})`
+    });
+  } else if (calculatedNetProfit < 0) {
+    // Debit Retained Earnings 3050 by abs(calculatedNetProfit) to balance
+    const absLoss = Math.abs(calculatedNetProfit);
+    closingLines.push({
+      accountId: reAcc.id,
+      accountCode: '3050',
+      accountName: reAcc.nameBn,
+      debit: absLoss,
+      credit: 0,
+      memo: `বছর সমাপ্তি: পুঞ্জীভূত লাভে নিট ক্ষতি সমন্বয় (${closingDate})`
+    });
+  }
 
   const voucherNum = generateTransactionNumber('YEC');
   const entryId = generateUniqueId('j');
   let postedEntry: JournalEntry | undefined;
 
-  // 2. Post ONE summary journal entry transferring net profit into Retained Earnings
-  if (netProfitToTransfer !== 0) {
-    const amount = Math.abs(netProfitToTransfer);
-    const lines: JournalLine[] =
-      netProfitToTransfer > 0
-        ? [
-            {
-              accountId: isAcc.id,
-              accountCode: '3060',
-              accountName: isAcc.nameBn,
-              debit: amount,
-              credit: 0,
-              memo: `বছর সমাপ্তি আয় সারাংশ (${closingDate})`
-            },
-            {
-              accountId: reAcc.id,
-              accountCode: '3050',
-              accountName: reAcc.nameBn,
-              debit: 0,
-              credit: amount,
-              memo: `পুঞ্জীভূত লাভে নিট লাভ স্থানান্তর (${closingDate})`
-            }
-          ]
-        : [
-            {
-              accountId: reAcc.id,
-              accountCode: '3050',
-              accountName: reAcc.nameBn,
-              debit: amount,
-              credit: 0,
-              memo: `পুঞ্জীভূত লাভে নিট ক্ষতি সমন্বয় (${closingDate})`
-            },
-            {
-              accountId: isAcc.id,
-              accountCode: '3060',
-              accountName: isAcc.nameBn,
-              debit: 0,
-              credit: amount,
-              memo: `বছর সমাপ্তি আয় সারাংশ (${closingDate})`
-            }
-          ];
-
+  // Post the closing journal entry if there are any balances to close
+  if (closingLines.length > 0) {
+    const allAccountsList = Array.from(accountsByCode.values());
     postedEntry = await postJournalEntry(
       {
         id: entryId,
         voucherNumber: voucherNum,
         voucherType: 'ADJUSTMENT',
         date: closingDate,
-        narration: `বছর সমাপ্তি সমন্বয় দাখিলা (${closingDate}) - পুঞ্জীভূত লাভে নিট মুনাফা/ক্ষতি স্থানান্তর (Year-End Closing Transfer)`,
+        narration: `বছর সমাপ্তি সমাপনী দাখিলা (${closingDate}) - সকল আয় ও ব্যয় হিসাব শূন্যকরণ ও পুঞ্জীভূত লাভে নিট লাভ/ক্ষতি স্থানান্তর (Year-End Closing)`,
         reference: `YEC-${closingDate}`,
-        lines,
+        lines: closingLines,
         createdBy: currentUserId,
         createdAt: new Date().toISOString()
       },
-      { accounts, isClosingEntry: true }
+      { accounts: allAccountsList, isClosingEntry: true }
     );
   }
 
-  // 3. Record closing in closedPeriods list
+  // Record closing in closedPeriods list
   const closedPeriod: ClosedPeriod = {
     id: generateUniqueId('cp'),
     endDate: closingDate,
     startDate: latestClosed ? latestClosed.endDate : undefined,
-    netProfitTransferred: netProfitToTransfer,
+    netProfitTransferred: calculatedNetProfit,
     closedAt: new Date().toISOString(),
     closedBy: currentUserId,
     journalEntryId: postedEntry ? entryId : undefined,
@@ -1139,7 +1245,7 @@ export async function executeYearEndClosing(params: {
 
   await safeInsert(db.closedPeriods, closedPeriod);
 
-  // 4. Audit log entry
+  // Audit log entry
   await safeInsert(db.auditLogs, {
     id: generateUniqueId('audit'),
     timestamp: new Date().toISOString(),
@@ -1149,12 +1255,12 @@ export async function executeYearEndClosing(params: {
     module: 'ACCOUNTING',
     recordId: closedPeriod.id,
     status: 'SUCCESS',
-    details: `বছর সমাপ্তি সম্পন্ন (${closingDate}): পুঞ্জীভূত লাভে স্থানান্তরিত ৳${netProfitToTransfer}${postedEntry ? ` (ভাউচার: ${voucherNum})` : ''}`
+    details: `বছর সমাপ্তি সম্পন্ন (${closingDate}): সকল আয় ও ব্যয় হিসাব শূন্য করা হয়েছে এবং পুঞ্জীভূত লাভে স্থানান্তরিত ৳${calculatedNetProfit}${postedEntry ? ` (ভাউচার: ${voucherNum})` : ''}`
   });
 
   return {
     closedPeriod,
     journalEntry: postedEntry,
-    netProfitTransferred: netProfitToTransfer
+    netProfitTransferred: calculatedNetProfit
   };
 }

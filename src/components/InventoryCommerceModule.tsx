@@ -29,12 +29,21 @@ import QRCode from 'qrcode';
 import { db } from '../db/indexedDb';
 import { executePurchaseTransaction, executeSaleTransaction } from '../services/transactionService';
 import { generateTransactionNumber, generateUniqueId, safeInsert } from '../utils/idGenerator';
-import { InventoryItem, Party, PaymentRecord, Purchase, Sale, UserRole, StockMovement, JournalLine } from '../types';
+import { InventoryItem, Party, PaymentRecord, Purchase, Sale, UserRole, StockMovement, JournalLine, CashBankAccount } from '../types';
 import { HIGH_AMOUNT_CONFIRMATION_THRESHOLD } from '../constants/validation';
 import { notifyUndoableAction } from '../services/undoService';
 import { triggerSuccessAnimation } from './ui/SuccessAnimation';
-import { postJournalEntry } from '../accounting/accountingEngine';
+import { postJournalEntry, validateBalancedLines } from '../accounting/accountingEngine';
+import { CANONICAL_ACCOUNTS } from '../accounting/accountMapping';
 import { SearchableSelect, SearchableOption } from './ui';
+
+declare module '../types' {
+  interface PaymentRecord {
+    paymentMethod?: 'CASH' | 'BANK';
+    bankAccountId?: string;
+    journalEntryId?: string;
+  }
+}
 
 const getInventoryOpeningAssetAccount = (category?: string): { code: string; name: string } => {
   switch (category) {
@@ -701,6 +710,9 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
   const [paymentAmount, setPaymentAmount] = useState<string>('');
   const [paymentDate, setPaymentDate] = useState<string>(() => new Date().toISOString().split('T')[0]);
   const [paymentNote, setPaymentNote] = useState<string>('');
+  const [paymentMethod, setPaymentMethod] = useState<'CASH' | 'BANK'>('CASH');
+  const [paymentBankAccountId, setPaymentBankAccountId] = useState<string>('');
+  const [cashBankAccounts, setCashBankAccounts] = useState<CashBankAccount[]>([]);
 
   // Add Item Modal
   const [showAddItem, setShowAddItem] = useState(false);
@@ -770,6 +782,9 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
 
       const pmtList = await db.payments.toArray();
       setPayments(pmtList);
+
+      const bankList = await db.cashBankAccounts.toArray();
+      setCashBankAccounts(bankList);
 
       if (tab === 'sales' || tab === 'parties') {
         const sList = await db.sales.orderBy('date').reverse().toArray();
@@ -1181,6 +1196,8 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
     setPaymentAmount(due > 0 ? due.toString() : '');
     setPaymentDate(new Date().toISOString().split('T')[0]);
     setPaymentNote('');
+    setPaymentMethod('CASH');
+    setPaymentBankAccountId('');
   };
 
   const handleSavePayment = async (e: React.FormEvent) => {
@@ -1193,41 +1210,214 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
       return;
     }
 
+    if (amt > paymentModal.dueAmount + 0.001) {
+      setMsg({ type: 'error', text: `পরিশোধের পরিমাণ বর্তমান বকেয়া (৳${paymentModal.dueAmount}) এর চেয়ে বেশি হতে পারে না।` });
+      return;
+    }
+
+    // Require Cash/Bank source
+    const method: 'CASH' | 'BANK' = paymentMethod || 'CASH';
+    if (method !== 'CASH' && method !== 'BANK') {
+      setMsg({ type: 'error', text: 'পরিশোধের মাধ্যম হিসেবে অবশ্যই নগদ (Cash) বা ব্যাংক (Bank) নির্বাচন করতে হবে।' });
+      return;
+    }
+
+    const todayStr = new Date().toISOString().split('T')[0];
+    const dateStr = paymentDate || todayStr;
+    if (dateStr > todayStr) {
+      setMsg({ type: 'error', text: `পরিশোধের তারিখ ভবিষ্যতের হতে পারে না (${todayStr} বা তার পূর্বের তারিখ নির্বাচন করুন)।` });
+      return;
+    }
+
+    const isSale = paymentModal.parentType === 'SALE';
+    const cashBankAccountCode = method === 'BANK' ? CANONICAL_ACCOUNTS.BANK : CANONICAL_ACCOUNTS.CASH;
+    const cashBankAccountName = method === 'BANK' ? 'ব্যাংক হিসাব (Bank Accounts)' : 'নগদ টাকা (Cash on Hand)';
+    const arCode = CANONICAL_ACCOUNTS.ACCOUNTS_RECEIVABLE;
+    const arName = 'গ্রাহকের নিকট পাওনা (Accounts Receivable)';
+    const apCode = CANONICAL_ACCOUNTS.ACCOUNTS_PAYABLE;
+    const apName = 'সরবরাহকারীর দেনা (Accounts Payable)';
+
+    let journalLines: JournalLine[];
+
+    if (isSale) {
+      // SALE payment: require Cash/Bank source → Dr Cash/Bank, Cr Accounts Receivable
+      journalLines = [
+        {
+          accountId: cashBankAccountCode,
+          accountCode: cashBankAccountCode,
+          accountName: cashBankAccountName,
+          debit: amt,
+          credit: 0,
+          memo: `বিক্রয় চালান ${paymentModal.invoiceNumber}-এর কিস্তি গ্রহণ: ${paymentModal.partyName}`
+        },
+        {
+          accountId: arCode,
+          accountCode: arCode,
+          accountName: arName,
+          debit: 0,
+          credit: amt,
+          memo: `গ্রাহকের দেনা সমন্বয়: ${paymentModal.partyName} (চালান: ${paymentModal.invoiceNumber})`
+        }
+      ];
+    } else {
+      // PURCHASE payment: Dr Accounts Payable, Cr Cash/Bank
+      journalLines = [
+        {
+          accountId: apCode,
+          accountCode: apCode,
+          accountName: apName,
+          debit: amt,
+          credit: 0,
+          memo: `সরবরাহকারী দেনা পরিশোধ: ${paymentModal.partyName} (চালান: ${paymentModal.invoiceNumber})`
+        },
+        {
+          accountId: cashBankAccountCode,
+          accountCode: cashBankAccountCode,
+          accountName: cashBankAccountName,
+          debit: 0,
+          credit: amt,
+          memo: `ক্রয় চালান ${paymentModal.invoiceNumber}-এর কিস্তি পরিশোধ: ${paymentModal.partyName}`
+        }
+      ];
+    }
+
     try {
-      const paymentRecord: PaymentRecord = {
-        id: generateUniqueId('pmt'),
-        parentType: paymentModal.parentType,
-        parentId: paymentModal.parentId,
-        amount: amt,
-        date: paymentDate || new Date().toISOString().split('T')[0],
-        note: paymentNote.trim() || undefined,
-        synced: false
-      };
+      // Wrap PaymentRecord insert + Sale/Purchase update + journal posting in one atomic Dexie transaction
+      await db.transaction(
+        'rw',
+        [
+          db.payments,
+          db.sales,
+          db.purchases,
+          db.journalEntries,
+          db.accounts,
+          db.closedPeriods,
+          db.cashBankAccounts,
+          db.parties
+        ],
+        async () => {
+          // 1. Validate balanced lines using validateBalancedLines pattern
+          const accounts = await db.accounts.toArray();
+          const check = validateBalancedLines(journalLines, accounts);
+          if (!check.isBalanced) {
+            throw new Error(`জাবেদা ভারসাম্যহীন! মোট ডেবিট: ৳${check.totalDebit}, মোট ক্রেডিট: ৳${check.totalCredit}`);
+          }
 
-      await safeInsert(db.payments, paymentRecord, { idPrefix: 'pmt' });
+          // 2. Post journal entry using existing postJournalEntry pattern
+          const voucherNumber = generateTransactionNumber(isSale ? 'RV' : 'PV');
+          const journalEntry = await postJournalEntry(
+            {
+              id: generateUniqueId('j_pmt'),
+              voucherNumber,
+              voucherType: isSale ? 'RECEIPT' : 'PAYMENT',
+              date: dateStr,
+              narration: isSale
+                ? `বিক্রয় চালান ${paymentModal.invoiceNumber}-এর কিস্তি আদায় (${paymentModal.partyName}) - ৳${amt}`
+                : `ক্রয় চালান ${paymentModal.invoiceNumber}-এর কিস্তি পরিশোধ (${paymentModal.partyName}) - ৳${amt}`,
+              reference: paymentModal.invoiceNumber,
+              lines: journalLines,
+              createdBy: currentUserId || 'system',
+              createdAt: new Date().toISOString()
+            },
+            { accounts }
+          );
 
-      // Recalculate that sale/purchase's paidAmount as the sum of all its PaymentRecords, and dueAmount = total − paidAmount
-      const allPaymentsForParent = await db.payments.where('parentId').equals(paymentModal.parentId).toArray();
-      const totalPaid = allPaymentsForParent.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
-      const invoiceTotal = paymentModal.totalAmount;
-      const newDue = Math.max(0, invoiceTotal - totalPaid);
-      const newStatus = newDue <= 0 ? 'PAID' : (totalPaid > 0 ? 'PARTIAL' : 'DUE');
+          // 3. Save returned journalEntryId into PaymentRecord
+          const paymentRecord: PaymentRecord = {
+            id: generateUniqueId('pmt'),
+            parentType: paymentModal.parentType,
+            parentId: paymentModal.parentId,
+            amount: amt,
+            date: dateStr,
+            note: paymentNote.trim() || undefined,
+            paymentMethod: method,
+            bankAccountId: paymentBankAccountId || undefined,
+            journalEntryId: journalEntry.id,
+            synced: false
+          };
 
-      if (paymentModal.parentType === 'SALE') {
-        await db.sales.update(paymentModal.parentId, {
-          paidAmount: totalPaid,
-          dueAmount: newDue,
-          status: newStatus,
-          synced: false
-        });
-      } else {
-        await db.purchases.update(paymentModal.parentId, {
-          paidAmount: totalPaid,
-          dueAmount: newDue,
-          status: newStatus,
-          synced: false
-        });
-      }
+          await safeInsert(db.payments, paymentRecord, { idPrefix: 'pmt' });
+
+          // 4. Update Sale or Purchase invoice
+          const allPaymentsForParent = await db.payments.where('parentId').equals(paymentModal.parentId).toArray();
+          const totalPaid = allPaymentsForParent.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+          const invoiceTotal = paymentModal.totalAmount;
+          const newDue = Math.max(0, invoiceTotal - totalPaid);
+          const newStatus = newDue <= 0 ? 'PAID' : (totalPaid > 0 ? 'PARTIAL' : 'DUE');
+
+          if (paymentModal.parentType === 'SALE') {
+            await db.sales.update(paymentModal.parentId, {
+              paidAmount: totalPaid,
+              dueAmount: newDue,
+              status: newStatus,
+              synced: false
+            });
+          } else {
+            await db.purchases.update(paymentModal.parentId, {
+              paidAmount: totalPaid,
+              dueAmount: newDue,
+              status: newStatus,
+              synced: false
+            });
+          }
+
+          // 5. Update operational Cash / Bank account balance consistently
+          if (method === 'CASH') {
+            const cashAcc = await db.cashBankAccounts.where('accountType').equals('CASH').first();
+            if (cashAcc) {
+              const newBal = isSale
+                ? cashAcc.currentBalance + amt
+                : cashAcc.currentBalance - amt;
+              await db.cashBankAccounts.update(cashAcc.id, {
+                currentBalance: Math.round(newBal * 100) / 100,
+                synced: false
+              });
+            }
+          } else if (method === 'BANK') {
+            let bankAcc: CashBankAccount | undefined;
+            if (paymentBankAccountId) {
+              bankAcc = await db.cashBankAccounts.get(paymentBankAccountId);
+            }
+            if (!bankAcc) {
+              bankAcc = await db.cashBankAccounts.where('accountType').equals('BANK').first();
+            }
+            if (bankAcc) {
+              const newBal = isSale
+                ? bankAcc.currentBalance + amt
+                : bankAcc.currentBalance - amt;
+              await db.cashBankAccounts.update(bankAcc.id, {
+                currentBalance: Math.round(newBal * 100) / 100,
+                synced: false
+              });
+            }
+          }
+
+          // 6. Update Customer AR / Supplier AP party balance
+          if (paymentModal.parentType === 'SALE') {
+            const saleRec = await db.sales.get(paymentModal.parentId);
+            if (saleRec?.customerId) {
+              const customerParty = await db.parties.get(saleRec.customerId);
+              if (customerParty) {
+                await db.parties.update(customerParty.id, {
+                  balance: Math.round(((customerParty.balance || 0) - amt) * 100) / 100,
+                  synced: false
+                });
+              }
+            }
+          } else {
+            const purchRec = await db.purchases.get(paymentModal.parentId);
+            if (purchRec?.supplierId) {
+              const supplierParty = await db.parties.get(purchRec.supplierId);
+              if (supplierParty) {
+                await db.parties.update(supplierParty.id, {
+                  balance: Math.round(((supplierParty.balance || 0) - amt) * 100) / 100,
+                  synced: false
+                });
+              }
+            }
+          }
+        }
+      );
 
       setPaymentModal(null);
       setMsg({ type: 'success', text: `৳${amt.toLocaleString()} কিস্তি সফলভাবে সংরক্ষিত হয়েছে!` });
@@ -2873,6 +3063,44 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
             </div>
 
             <form onSubmit={handleSavePayment} className="space-y-3.5">
+              <div>
+                <label className="block text-xs font-semibold text-gray-700 mb-1">
+                  পরিশোধের মাধ্যম (উৎস) <span className="text-red-500">*</span>
+                </label>
+                <select
+                  id="select-installment-method"
+                  value={paymentMethod}
+                  onChange={(e) => setPaymentMethod(e.target.value as 'CASH' | 'BANK')}
+                  className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-base text-gray-900 focus:outline-hidden focus:ring-1 focus:ring-amber-500"
+                >
+                  <option value="CASH">নগদ (Cash on Hand - 1010)</option>
+                  <option value="BANK">ব্যাংক স্থানান্তর (Bank Account - 1030)</option>
+                </select>
+              </div>
+
+              {paymentMethod === 'BANK' && cashBankAccounts.filter((b) => b.accountType === 'BANK' || b.accountType === 'MOBILE_BANKING').length > 0 && (
+                <div>
+                  <label className="block text-xs font-semibold text-gray-700 mb-1">
+                    ব্যাংক হিসাব নির্বাচন করুন
+                  </label>
+                  <select
+                    id="select-installment-bank-account"
+                    value={paymentBankAccountId}
+                    onChange={(e) => setPaymentBankAccountId(e.target.value)}
+                    className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-base text-gray-900 focus:outline-hidden focus:ring-1 focus:ring-amber-500"
+                  >
+                    <option value="">-- ব্যাংক হিসাব নির্বাচন করুন --</option>
+                    {cashBankAccounts
+                      .filter((b) => b.accountType === 'BANK' || b.accountType === 'MOBILE_BANKING')
+                      .map((b) => (
+                        <option key={b.id} value={b.id}>
+                          {b.name} {b.accountNumber ? `(${b.accountNumber})` : ''} - ব্যালেন্স: ৳{b.currentBalance.toLocaleString()}
+                        </option>
+                      ))}
+                  </select>
+                </div>
+              )}
+
               <div>
                 <label className="block text-xs font-semibold text-gray-700 mb-1">
                   কিস্তির পরিমাণ (৳) <span className="text-red-500">*</span>
