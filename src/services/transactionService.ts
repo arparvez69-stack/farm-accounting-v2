@@ -25,7 +25,8 @@ import {
   AnimalEvent,
   AnimalStatus,
   FishBatch,
-  CropCycle
+  CropCycle,
+  StockMovement
 } from '../types';
 import { generateAmortizationSchedule } from '../accounting/amortizationService';
 
@@ -2032,10 +2033,517 @@ export async function executeOwnerDrawingTransaction(params: {
 }
 
 /**
+ * Fish Batch Cost Breakdown & Accumulation
+ */
+export interface FishCostBreakdown {
+  fingerlingCost: number;
+  feedCost: number;
+  medicineCost: number;
+  labourCost: number;
+  electricityCost: number;
+  waterTreatmentCost: number;
+  otherCost: number;
+  totalRecordedCost: number;
+}
+
+export function calculateFishBatchRecordedCosts(batch: FishBatch): FishCostBreakdown {
+  const fingerlingCost = Math.max(0, Number(batch.fingerlingCost) || 0);
+  const feedCost = Math.max(0, Number(batch.totalFeedCost) || 0);
+  const medicineCost = Math.max(0, Number(batch.medicineCost) || 0);
+  const labourCost = Math.max(0, Number(batch.labourCost) || 0);
+  const electricityCost = Math.max(0, Number(batch.electricityCost) || 0);
+  const waterTreatmentCost = Math.max(0, Number(batch.waterTreatmentCost) || 0);
+  const otherCost = Math.max(0, Number(batch.otherCost ?? (batch as any).otherCosts) || 0);
+
+  const totalRecordedCost = Math.round(
+    (fingerlingCost + feedCost + medicineCost + labourCost + electricityCost + waterTreatmentCost + otherCost) * 100
+  ) / 100;
+
+  return {
+    fingerlingCost,
+    feedCost,
+    medicineCost,
+    labourCost,
+    electricityCost,
+    waterTreatmentCost,
+    otherCost,
+    totalRecordedCost
+  };
+}
+
+/**
+ * Atomic Execution of Fish Stocking Transaction
+ * - Creates FishBatch record
+ * - If fingerlingCost > 0: Capitalizes cost to Biological Assets (1580), Credits Cash/Bank/Payable
+ * - Stores journalEntryId on the FishBatch
+ */
+export interface FishStockingParams {
+  pondName: string;
+  species: string;
+  fingerlingQty: number;
+  fingerlingCost: number;
+  paymentMethod?: 'CASH' | 'BANK' | 'CREDIT';
+  bankAccountId?: string;
+  supplierId?: string;
+  stockingDate?: string;
+  notes?: string;
+  currentUserId: string;
+}
+
+export async function executeFishStockingTransaction(
+  params: FishStockingParams
+): Promise<{ batch: FishBatch; journalEntryId?: string; voucherNumber?: string }> {
+  return await db.transaction(
+    'rw',
+    [
+      db.fishBatches,
+      db.journalEntries,
+      db.cashBankAccounts,
+      db.accounts,
+      db.auditLogs,
+      db.closedPeriods
+    ],
+    async () => {
+      const {
+        pondName,
+        species,
+        fingerlingQty,
+        fingerlingCost,
+        paymentMethod = 'CASH',
+        bankAccountId,
+        supplierId,
+        stockingDate,
+        notes,
+        currentUserId
+      } = params;
+
+      const todayStr = new Date().toISOString().split('T')[0];
+      const dateStr = stockingDate || todayStr;
+      if (dateStr > todayStr) {
+        throw new Error(`মজুদের তারিখ ভবিষ্যতের হতে পারে না (${todayStr} বা তার পূর্বের তারিখ নির্বাচন করুন)।`);
+      }
+
+      const closedPeriod = await db.closedPeriods
+        .filter((p) => (p.startDate ? p.startDate <= dateStr : true) && p.endDate >= dateStr)
+        .first();
+      if (closedPeriod) {
+        throw new Error(`হিসাবকাল বন্ধ রয়েছে (${closedPeriod.notes || closedPeriod.endDate})। এই তারিখে নতুন লেনদেন পোস্টিং অনুমোদিত নয়।`);
+      }
+
+      const cleanCost = Math.max(0, Math.round((Number(fingerlingCost) || 0) * 100) / 100);
+      const cleanQty = Math.max(1, parseInt(String(fingerlingQty)) || 1000);
+
+      // Validate bank account if paymentMethod is BANK
+      let bankAcc: CashBankAccount | undefined;
+      if (paymentMethod === 'BANK' && cleanCost > 0) {
+        if (!bankAccountId) {
+          throw new Error('ব্যাংক মাধ্যমে পোনা ক্রয়ের জন্য ব্যাংক হিসাব নির্বাচন করা আবশ্যক।');
+        }
+        bankAcc = await db.cashBankAccounts.get(bankAccountId);
+        if (!bankAcc) {
+          throw new Error('নির্বাচিত ব্যাংক হিসাবটি ডাটাবেজে পাওয়া যায়নি।');
+        }
+      }
+
+      const batchId = generateTransactionNumber('FISH');
+      let journalEntryId: string | undefined;
+      let voucherNumber: string | undefined;
+
+      if (cleanCost > 0) {
+        const accounts = await db.accounts.toArray();
+        let assetAcc = accounts.find((a) => a.code === CANONICAL_ACCOUNTS.LIVESTOCK_ASSETS);
+        if (!assetAcc) {
+          const newAcc: Account = {
+            id: 'acc_1580',
+            code: CANONICAL_ACCOUNTS.LIVESTOCK_ASSETS,
+            nameBn: 'পশুসম্পদ ও জৈবিক সম্পদ (Livestock & Biological Assets)',
+            nameEn: 'Livestock & Biological Assets',
+            accountClass: 'ASSET',
+            normalBalance: 'DEBIT',
+            isSystem: true,
+            isActive: true
+          };
+          await safeInsert(db.accounts, newAcc, { idPrefix: 'acc' });
+          accounts.push(newAcc);
+          assetAcc = newAcc;
+        }
+
+        const creditAccCode = getPaymentAccount(paymentMethod, 'PURCHASE');
+        const paymentAcc = accounts.find((a) => a.code === creditAccCode);
+
+        const journalLines: JournalLine[] = [
+          {
+            accountId: CANONICAL_ACCOUNTS.LIVESTOCK_ASSETS,
+            accountCode: CANONICAL_ACCOUNTS.LIVESTOCK_ASSETS,
+            accountName: assetAcc.nameBn || 'পশুসম্পদ ও জৈবিক সম্পদ (Livestock & Biological Assets)',
+            debit: cleanCost,
+            credit: 0,
+            memo: `পোনা মজুদ: ${species} (${pondName}) - ${cleanQty} টি পোনা ক্রয়`
+          },
+          {
+            accountId: creditAccCode,
+            accountCode: creditAccCode,
+            accountName: paymentAcc?.nameBn || (paymentMethod === 'CASH' ? 'নগদ টাকা (Cash on Hand)' : paymentMethod === 'BANK' ? 'ব্যাংক হিসাব (Bank Accounts)' : 'সরবরাহকারীর নিকট দেনা (Accounts Payable)'),
+            debit: 0,
+            credit: cleanCost,
+            memo: `পোনা ক্রয়ের পরিশোধ (${paymentMethod})`
+          }
+        ];
+
+        const check = validateBalancedLines(journalLines, accounts);
+        if (!check.isBalanced) {
+          throw new Error('পোনা মজুদের জাবেদা ভারসাম্যহীন! কার্যক্রম বাতিল করা হলো।');
+        }
+
+        voucherNumber = generateTransactionNumber('PAY');
+        const jEntry = await postJournalEntry(
+          {
+            id: generateUniqueId('j_fish_stock'),
+            voucherNumber,
+            voucherType: 'PAYMENT',
+            date: dateStr,
+            narration: `মাছের নতুন ব্যাচ মজুদ ও পোনা ক্রয়: ${species} (${pondName}) - ${cleanQty} টি, খরচ: ৳${cleanCost}`,
+            reference: batchId,
+            lines: journalLines,
+            createdBy: currentUserId,
+            createdAt: new Date().toISOString()
+          },
+          { accounts, skipDbPut: true }
+        );
+        await safeInsert(db.journalEntries, jEntry, { idPrefix: 'j' });
+        journalEntryId = jEntry.id;
+
+        // Update Cash/Bank account balance
+        if (paymentMethod === 'BANK' && bankAcc) {
+          await db.cashBankAccounts.update(bankAcc.id, {
+            currentBalance: Math.round((bankAcc.currentBalance - cleanCost) * 100) / 100,
+            synced: false
+          });
+        } else if (paymentMethod === 'CASH') {
+          const cashAcc = await db.cashBankAccounts.where('accountType').equals('CASH').first();
+          if (cashAcc) {
+            await db.cashBankAccounts.update(cashAcc.id, {
+              currentBalance: Math.round((cashAcc.currentBalance - cleanCost) * 100) / 100,
+              synced: false
+            });
+          }
+        }
+      }
+
+      const batch: FishBatch = {
+        id: batchId,
+        pondId: generateUniqueId('pond'),
+        pondName: pondName.trim(),
+        species: species.trim(),
+        stockingDate: dateStr,
+        fingerlingQty: cleanQty,
+        fingerlingCost: cleanCost,
+        totalFeedKg: 0,
+        totalFeedCost: 0,
+        medicineCost: 0,
+        labourCost: 0,
+        electricityCost: 0,
+        waterTreatmentCost: 0,
+        otherCost: 0,
+        mortalityCount: 0,
+        currentEstimatedWeightKg: 0,
+        status: 'ACTIVE',
+        notes: notes ? notes.trim() : undefined,
+        journalEntryId,
+        synced: false
+      };
+
+      await safeInsert(db.fishBatches, batch, { idPrefix: 'FISH' });
+
+      await safeInsert(
+        db.auditLogs,
+        {
+          id: generateUniqueId('aud'),
+          timestamp: new Date().toISOString(),
+          userId: currentUserId,
+          role: 'OWNER',
+          action: 'CREATE',
+          module: 'PRODUCTION',
+          recordId: batch.id,
+          status: 'SUCCESS',
+          details: `নতুন মাছের ব্যাচ মজুদ: ${batch.species} (${batch.pondName}), পোনা খরচ: ৳${cleanCost}, ভাউচার: ${voucherNumber || 'N/A'}`
+        },
+        { idPrefix: 'aud' }
+      );
+
+      return { batch, journalEntryId, voucherNumber };
+    }
+  );
+}
+
+/**
+ * Atomic Execution of Fish Production Cost Transaction
+ * - Directly capitalizes production cost (Feed, Medicine, Labour, Electricity, Water Treatment, Other) into Biological Assets (1580)
+ * - Credits Cash / Bank / Accounts Payable / Feed Inventory
+ * - Updates FishBatch operational metrics
+ */
+export interface FishProductionCostParams {
+  batchId: string;
+  costType: 'FINGERLING' | 'FEED' | 'MEDICINE' | 'LABOUR' | 'ELECTRICITY' | 'WATER_TREATMENT' | 'OTHER';
+  amount: number;
+  quantity?: number;
+  date?: string;
+  paymentMethod?: 'CASH' | 'BANK' | 'CREDIT' | 'INVENTORY';
+  bankAccountId?: string;
+  supplierId?: string;
+  feedItemId?: string;
+  notes?: string;
+  currentUserId: string;
+}
+
+export async function executeFishProductionCostTransaction(
+  params: FishProductionCostParams
+): Promise<{ updatedBatch: FishBatch; journalEntryId: string; voucherNumber: string }> {
+  return await db.transaction(
+    'rw',
+    [
+      db.fishBatches,
+      db.journalEntries,
+      db.cashBankAccounts,
+      db.inventoryItems,
+      db.stockMovements,
+      db.accounts,
+      db.auditLogs,
+      db.closedPeriods
+    ],
+    async () => {
+      const {
+        batchId,
+        costType,
+        amount,
+        quantity,
+        date,
+        paymentMethod = 'CASH',
+        bankAccountId,
+        supplierId,
+        feedItemId,
+        notes,
+        currentUserId
+      } = params;
+
+      const todayStr = new Date().toISOString().split('T')[0];
+      const dateStr = date || todayStr;
+      if (dateStr > todayStr) {
+        throw new Error(`খরচের তারিখ ভবিষ্যতের হতে পারে না (${todayStr} বা তার পূর্বের তারিখ নির্বাচন করুন)।`);
+      }
+
+      const closedPeriod = await db.closedPeriods
+        .filter((p) => (p.startDate ? p.startDate <= dateStr : true) && p.endDate >= dateStr)
+        .first();
+      if (closedPeriod) {
+        throw new Error(`হিসাবকাল বন্ধ রয়েছে (${closedPeriod.notes || closedPeriod.endDate})। এই তারিখে নতুন লেনদেন পোস্টিং অনুমোদিত নয়।`);
+      }
+
+      const freshBatch = await db.fishBatches.get(batchId);
+      if (!freshBatch) {
+        throw new Error(`মাছের ব্যাচ পাওয়া যায়নি (ID: ${batchId})।`);
+      }
+      if (freshBatch.status !== 'ACTIVE') {
+        throw new Error(`শুধুমাত্র সক্রিয় (ACTIVE) মাছের ব্যাচে উৎপাদন খরচ যোগ করা যাবে।`);
+      }
+
+      const cleanAmount = Math.max(0, Math.round((Number(amount) || 0) * 100) / 100);
+      if (cleanAmount <= 0) {
+        throw new Error('খরচের পরিমাণ শূন্যের চেয়ে বেশি হতে হবে।');
+      }
+
+      const cleanQty = quantity ? Math.max(0, Number(quantity) || 0) : 0;
+
+      const accounts = await db.accounts.toArray();
+      let assetAcc = accounts.find((a) => a.code === CANONICAL_ACCOUNTS.LIVESTOCK_ASSETS);
+      if (!assetAcc) {
+        const newAcc: Account = {
+          id: 'acc_1580',
+          code: CANONICAL_ACCOUNTS.LIVESTOCK_ASSETS,
+          nameBn: 'পশুসম্পদ ও জৈবিক সম্পদ (Livestock & Biological Assets)',
+          nameEn: 'Livestock & Biological Assets',
+          accountClass: 'ASSET',
+          normalBalance: 'DEBIT',
+          isSystem: true,
+          isActive: true
+        };
+        await safeInsert(db.accounts, newAcc, { idPrefix: 'acc' });
+        accounts.push(newAcc);
+        assetAcc = newAcc;
+      }
+
+      const costLabels: Record<string, string> = {
+        FINGERLING: 'অতিরিক্ত পোনা ক্রয়',
+        FEED: 'মাছের খাদ্য (Feed)',
+        MEDICINE: 'ওষুধ ও চিকিৎসা',
+        LABOUR: 'শ্রমিক ও মজুরি',
+        ELECTRICITY: 'বিদ্যুৎ ও পাম্পিং',
+        WATER_TREATMENT: 'পানি শোধন ও পরিচর্যা',
+        OTHER: 'অন্যান্য উৎপাদন খরচ'
+      };
+      const costLabel = costLabels[costType] || 'উৎপাদন খরচ';
+
+      let creditAccCode: string = CANONICAL_ACCOUNTS.CASH;
+      let creditAccName = 'নগদ টাকা (Cash on Hand)';
+
+      if (paymentMethod === 'INVENTORY') {
+        if (!feedItemId) {
+          throw new Error('ইনভেন্টরি থেকে খাদ্য ব্যবহারের জন্য খাদ্য আইটেম নির্বাচন আবশ্যক।');
+        }
+        const invItem = await db.inventoryItems.get(feedItemId);
+        if (!invItem) {
+          throw new Error('নির্বাচিত খাদ্য আইটেমটি ইনভেন্টরিতে পাওয়া যায়নি।');
+        }
+        if (cleanQty > 0 && invItem.currentStock < cleanQty) {
+          throw new Error(`ইনভেন্টরিতে পর্যাপ্ত খাদ্য মজুদ নেই (মজুদ: ${invItem.currentStock} ${invItem.unit}, প্রয়োজন: ${cleanQty} ${invItem.unit})।`);
+        }
+
+        creditAccCode = CANONICAL_ACCOUNTS.FEED_INVENTORY;
+        creditAccName = 'খাদ্য মজুদ (Feed Inventory)';
+
+        if (cleanQty > 0) {
+          await db.inventoryItems.update(invItem.id, {
+            currentStock: Math.max(0, invItem.currentStock - cleanQty),
+            synced: false
+          });
+
+          await safeInsert(
+            db.stockMovements,
+            {
+              id: generateUniqueId('stk'),
+              itemId: invItem.id,
+              date: dateStr,
+              movementType: 'CONSUMPTION',
+              quantity: cleanQty,
+              unitCost: invItem.avgCostPrice || 0,
+              totalValue: cleanAmount,
+              referenceType: 'PRODUCTION',
+              referenceId: freshBatch.id,
+              notes: `মাছের ব্যাচ ${freshBatch.id}: খাদ্য প্রয়োগ (${cleanQty} ${invItem.unit})`,
+              synced: false
+            } as StockMovement,
+            { idPrefix: 'stk' }
+          );
+        }
+      } else if (paymentMethod === 'BANK') {
+        if (!bankAccountId) {
+          throw new Error('ব্যাংক মাধ্যমে পরিশোধের জন্য ব্যাংক হিসাব নির্বাচন করা আবশ্যক।');
+        }
+        const bankAcc = await db.cashBankAccounts.get(bankAccountId);
+        if (!bankAcc) {
+          throw new Error('নির্বাচিত ব্যাংক হিসাবটি ডাটাবেজে পাওয়া যায়নি।');
+        }
+        creditAccCode = CANONICAL_ACCOUNTS.BANK;
+        creditAccName = 'ব্যাংক হিসাব (Bank Accounts)';
+        await db.cashBankAccounts.update(bankAcc.id, {
+          currentBalance: Math.round((bankAcc.currentBalance - cleanAmount) * 100) / 100,
+          synced: false
+        });
+      } else if (paymentMethod === 'CREDIT') {
+        creditAccCode = CANONICAL_ACCOUNTS.ACCOUNTS_PAYABLE;
+        creditAccName = 'সরবরাহকারীর নিকট দেনা (Accounts Payable)';
+      } else {
+        // CASH
+        const cashAcc = await db.cashBankAccounts.where('accountType').equals('CASH').first();
+        if (cashAcc) {
+          await db.cashBankAccounts.update(cashAcc.id, {
+            currentBalance: Math.round((cashAcc.currentBalance - cleanAmount) * 100) / 100,
+            synced: false
+          });
+        }
+      }
+
+      const journalLines: JournalLine[] = [
+        {
+          accountId: CANONICAL_ACCOUNTS.LIVESTOCK_ASSETS,
+          accountCode: CANONICAL_ACCOUNTS.LIVESTOCK_ASSETS,
+          accountName: assetAcc.nameBn || 'পশুসম্পদ ও জৈবিক সম্পদ (Livestock & Biological Assets)',
+          debit: cleanAmount,
+          credit: 0,
+          memo: `মাছের ব্যাচ ${freshBatch.id}: ${costLabel} (WIP Accumulation)`
+        },
+        {
+          accountId: creditAccCode,
+          accountCode: creditAccCode,
+          accountName: creditAccName,
+          debit: 0,
+          credit: cleanAmount,
+          memo: `${costLabel} পরিশোধ (${paymentMethod})`
+        }
+      ];
+
+      const check = validateBalancedLines(journalLines, accounts);
+      if (!check.isBalanced) {
+        throw new Error('মাছের উৎপাদন খরচের জাবেদা ভারসাম্যহীন! কার্যক্রম বাতিল করা হলো।');
+      }
+
+      const voucherNumber = generateTransactionNumber('PAY');
+      const jEntry = await postJournalEntry(
+        {
+          id: generateUniqueId('j_fish_cost'),
+          voucherNumber,
+          voucherType: 'PAYMENT',
+          date: dateStr,
+          narration: `মাছের উৎপাদন খরচ: ব্যাচ ${freshBatch.id} (${freshBatch.species} - ${freshBatch.pondName}) - ${costLabel}: ৳${cleanAmount}`,
+          reference: freshBatch.id,
+          lines: journalLines,
+          createdBy: currentUserId,
+          createdAt: new Date().toISOString()
+        },
+        { accounts, skipDbPut: true }
+      );
+      await safeInsert(db.journalEntries, jEntry, { idPrefix: 'j' });
+
+      // Update operational cost tracking on FishBatch
+      if (costType === 'FINGERLING') {
+        freshBatch.fingerlingCost = Math.round(((freshBatch.fingerlingCost || 0) + cleanAmount) * 100) / 100;
+        if (cleanQty > 0) freshBatch.fingerlingQty = (freshBatch.fingerlingQty || 0) + cleanQty;
+      } else if (costType === 'FEED') {
+        freshBatch.totalFeedCost = Math.round(((freshBatch.totalFeedCost || 0) + cleanAmount) * 100) / 100;
+        if (cleanQty > 0) freshBatch.totalFeedKg = (freshBatch.totalFeedKg || 0) + cleanQty;
+      } else if (costType === 'MEDICINE') {
+        freshBatch.medicineCost = Math.round(((freshBatch.medicineCost || 0) + cleanAmount) * 100) / 100;
+      } else if (costType === 'LABOUR') {
+        freshBatch.labourCost = Math.round(((freshBatch.labourCost || 0) + cleanAmount) * 100) / 100;
+      } else if (costType === 'ELECTRICITY') {
+        freshBatch.electricityCost = Math.round(((freshBatch.electricityCost || 0) + cleanAmount) * 100) / 100;
+      } else if (costType === 'WATER_TREATMENT') {
+        freshBatch.waterTreatmentCost = Math.round(((freshBatch.waterTreatmentCost || 0) + cleanAmount) * 100) / 100;
+      } else {
+        freshBatch.otherCost = Math.round(((freshBatch.otherCost || 0) + cleanAmount) * 100) / 100;
+      }
+
+      freshBatch.synced = false;
+      await db.fishBatches.put(freshBatch);
+
+      await safeInsert(
+        db.auditLogs,
+        {
+          id: generateUniqueId('aud'),
+          timestamp: new Date().toISOString(),
+          userId: currentUserId,
+          role: 'OWNER',
+          action: 'UPDATE',
+          module: 'PRODUCTION',
+          recordId: freshBatch.id,
+          status: 'SUCCESS',
+          details: `মাছের উৎপাদন খরচ সংযোজন: ব্যাচ ${freshBatch.id} - ${costLabel}: ৳${cleanAmount}, ভাউচার: ${voucherNumber}`
+        },
+        { idPrefix: 'aud' }
+      );
+
+      return { updatedBatch: freshBatch, journalEntryId: jEntry.id, voucherNumber };
+    }
+  );
+}
+
+/**
  * Atomic Execution of Fish Batch Harvest and Sale
  * - Records harvest weight and mortality count
+ * - Validates all accumulated costs across Fingerlings, Feed, Medicine, Labour, Electricity, Water Treatment, Other
+ * - Ensures pre-harvest biological asset (1580) accumulation is synchronized to avoid orphaned credits
  * - Posts Revenue leg: Debit Cash/Bank/Receivable, Credit Fish Sales Revenue (4010)
- * - Posts Cost leg: Debit Fish COGS (5010), Credit Biological Assets (1580) for accumulated costs (fingerlingCost + totalFeedCost)
+ * - Posts Cost leg: Debit Fish COGS (5010), Debit Fish Mortality Loss (8030), Credit Biological Assets (1580) for accumulated costs
  * - Marks FishBatch status as HARVESTED
  */
 export interface FishHarvestSaleParams {
@@ -2053,7 +2561,14 @@ export interface FishHarvestSaleParams {
 
 export async function executeFishHarvestAndSaleTransaction(
   params: FishHarvestSaleParams
-): Promise<{ updatedBatch: FishBatch; sale?: Sale; journalEntryId?: string; voucherNumber?: string }> {
+): Promise<{
+  updatedBatch: FishBatch;
+  sale?: Sale;
+  journalEntryId?: string;
+  voucherNumber?: string;
+  cogsJournalEntryId?: string;
+  cogsVoucherNumber?: string;
+}> {
   return await db.transaction(
     'rw',
     [
@@ -2118,7 +2633,7 @@ export async function executeFishHarvestAndSaleTransaction(
 
       const accounts = await db.accounts.toArray();
 
-      // Ensure accounts exist
+      // Ensure canonical accounts exist
       let fishRevAcc = accounts.find((a) => a.code === CANONICAL_ACCOUNTS.FISH_REVENUE);
       if (!fishRevAcc) {
         const newAcc: Account = {
@@ -2187,159 +2702,298 @@ export async function executeFishHarvestAndSaleTransaction(
         assetAcc = newAcc;
       }
 
-      const accumulatedCost = Math.round(((freshBatch.fingerlingCost || 0) + (freshBatch.totalFeedCost || 0)) * 100) / 100;
-      const totalStock = (freshBatch.fingerlingQty && freshBatch.fingerlingQty > 0)
-        ? freshBatch.fingerlingQty
-        : (cleanMortality > 0 ? cleanMortality : 1);
-      const mortalityRatio = Math.min(1, Math.max(0, cleanMortality / totalStock));
-      const mortalityCost = cleanMortality > 0 ? Math.round(accumulatedCost * mortalityRatio * 100) / 100 : 0;
-      const harvestedCogs = Math.max(0, Math.round((accumulatedCost - mortalityCost) * 100) / 100);
-      const paymentCode = getPaymentAccount(paymentMethod, 'SALE');
-
-      let journalEntryId: string | undefined;
-      let voucherNumber: string | undefined;
+      // Step 1: Revenue Recognition Leg (Separate from Production Cost)
+      // Follows payment method: Dr Cash/Bank/AR, Cr Fish Sales Revenue (4010)
+      let revenueJournalEntryId: string | undefined;
+      let revenueVoucherNumber: string | undefined;
       let saleRecord: Sale | undefined;
 
-      if (cleanPrice > 0 || accumulatedCost > 0) {
-        const journalLines: JournalLine[] = [];
+      if (cleanPrice > 0) {
+        const paymentCode = getPaymentAccount(paymentMethod, 'SALE');
+        const paymentAcc = accounts.find((a) => a.code === paymentCode);
 
-        // 1. Revenue recognition leg: Dr Cash/Bank/Receivable, Cr Fish Sales Revenue (4010)
-        if (cleanPrice > 0) {
-          journalLines.push(
-            {
-              accountId: paymentCode,
-              accountCode: paymentCode,
-              accountName:
-                paymentMethod === 'CASH'
-                  ? 'নগদ টাকা (Cash on Hand)'
-                  : paymentMethod === 'BANK'
-                  ? 'ব্যাংক হিসাব (Bank Accounts)'
-                  : 'গ্রাহকের নিকট পাওনা (Accounts Receivable)',
-              debit: cleanPrice,
-              credit: 0,
-              memo: `মাছ বিক্রয়: ${freshBatch.species} (${freshBatch.pondName})`
-            },
-            {
-              accountId: CANONICAL_ACCOUNTS.FISH_REVENUE,
-              accountCode: CANONICAL_ACCOUNTS.FISH_REVENUE,
-              accountName: fishRevAcc.nameBn || 'মাছ বিক্রয় আয় (Fish Sales Revenue)',
-              debit: 0,
-              credit: cleanPrice,
-              memo: `মাছ বিক্রয় রাজস্ব: ব্যাচ ${freshBatch.id} (${cleanWeight} কেজি)`
-            }
-          );
-        }
-
-        // 2. COGS & Mortality Loss & Biological Asset derecognition leg
-        if (accumulatedCost > 0) {
-          if (harvestedCogs > 0) {
-            journalLines.push({
-              accountId: CANONICAL_ACCOUNTS.FISH_COGS,
-              accountCode: CANONICAL_ACCOUNTS.FISH_COGS,
-              accountName: fishCogsAcc.nameBn || 'বিক্রিত মাছের উৎপাদন ব্যয় (Fish COGS)',
-              debit: harvestedCogs,
-              credit: 0,
-              memo: `মাছের ব্যাচ ${freshBatch.id} আহরিত মাছের উৎপাদন ব্যয় (COGS)`
-            });
-          }
-
-          if (mortalityCost > 0) {
-            journalLines.push({
-              accountId: CANONICAL_ACCOUNTS.FISH_MORTALITY_LOSS,
-              accountCode: CANONICAL_ACCOUNTS.FISH_MORTALITY_LOSS,
-              accountName: fishMortalityAcc.nameBn || 'মাছের মৃত্যুজনিত ক্ষতি (Fish Mortality Loss)',
-              debit: mortalityCost,
-              credit: 0,
-              memo: `মাছের ব্যাচ ${freshBatch.id} মৃত মাছ অবলোপন (${cleanMortality} টি)`
-            });
-          }
-
-          journalLines.push({
-            accountId: CANONICAL_ACCOUNTS.LIVESTOCK_ASSETS,
-            accountCode: CANONICAL_ACCOUNTS.LIVESTOCK_ASSETS,
-            accountName: assetAcc.nameBn || 'পশুসম্পদ ও জৈবিক সম্পদ (Livestock & Biological Assets)',
+        const revenueLines: JournalLine[] = [
+          {
+            accountId: paymentCode,
+            accountCode: paymentCode,
+            accountName:
+              paymentAcc?.nameBn ||
+              (paymentMethod === 'CASH'
+                ? 'নগদ টাকা (Cash on Hand)'
+                : paymentMethod === 'BANK'
+                ? 'ব্যাংক হিসাব (Bank Accounts)'
+                : 'গ্রাহকের নিকট পাওনা (Accounts Receivable)'),
+            debit: cleanPrice,
+            credit: 0,
+            memo: `মাছ বিক্রয় আদায় (${paymentMethod}): ${freshBatch.species} (${freshBatch.pondName})`
+          },
+          {
+            accountId: CANONICAL_ACCOUNTS.FISH_REVENUE,
+            accountCode: CANONICAL_ACCOUNTS.FISH_REVENUE,
+            accountName: fishRevAcc.nameBn || 'মাছ বিক্রয় আয় (Fish Sales Revenue)',
             debit: 0,
-            credit: accumulatedCost,
-            memo: `মাছের ব্যাচ ${freshBatch.id} আহরণ ও অবলোপন বাবদ পুঞ্জীভূত উৎপাদন খরচ হিসাব সমন্বয়`
-          });
+            credit: cleanPrice,
+            memo: `মাছ বিক্রয় রাজস্ব: ব্যাচ ${freshBatch.id} (${cleanWeight} কেজি)`
+          }
+        ];
+
+        const revCheck = validateBalancedLines(revenueLines, accounts);
+        if (!revCheck.isBalanced) {
+          throw new Error('মাছ বিক্রয় আয়ের জাবেদা ভারসাম্যহীন! কার্যক্রম বাতিল করা হলো।');
         }
 
-        const check = validateBalancedLines(journalLines, accounts);
-        if (!check.isBalanced) {
-          throw new Error('মাছ আহরণ ও বিক্রয় জাবেদা ভারসাম্যহীন! কার্যক্রম বাতিল করা হলো।');
-        }
-
-        voucherNumber = generateTransactionNumber('SLF');
-        const journalEntry = await postJournalEntry(
+        revenueVoucherNumber = generateTransactionNumber('SLF');
+        const revJournalEntry = await postJournalEntry(
           {
             id: generateUniqueId('j_fish_sale'),
-            voucherNumber,
+            voucherNumber: revenueVoucherNumber,
             voucherType: 'SALES',
             date: dateStr,
-            narration: `মাছ আহরণ ও বিক্রয়: ${freshBatch.species} (${freshBatch.pondName}) - ওজন: ${cleanWeight} কেজি, বিক্রয়মূল্য: ৳${cleanPrice}, পুঞ্জীভূত খরচ: ৳${accumulatedCost}`,
+            narration: `মাছ বিক্রয় রাজস্ব: ব্যাচ ${freshBatch.id} (${freshBatch.species} - ${freshBatch.pondName}) - ওজন: ${cleanWeight} কেজি, বিক্রয়মূল্য: ৳${cleanPrice}`,
             reference: freshBatch.id,
-            lines: journalLines,
+            lines: revenueLines,
             createdBy: currentUserId,
             createdAt: new Date().toISOString()
           },
           { accounts, skipDbPut: true }
         );
-        await safeInsert(db.journalEntries, journalEntry, { idPrefix: 'j' });
-        journalEntryId = journalEntry.id;
+        await safeInsert(db.journalEntries, revJournalEntry, { idPrefix: 'j' });
+        revenueJournalEntryId = revJournalEntry.id;
 
-        // Cash/Bank ledger update
-        if (cleanPrice > 0) {
-          if (paymentMethod === 'BANK' && bankAcc) {
-            await db.cashBankAccounts.update(bankAcc.id, {
-              currentBalance: Math.round((bankAcc.currentBalance + cleanPrice) * 100) / 100,
+        // Update Cash/Bank account balance
+        if (paymentMethod === 'BANK' && bankAcc) {
+          await db.cashBankAccounts.update(bankAcc.id, {
+            currentBalance: Math.round((bankAcc.currentBalance + cleanPrice) * 100) / 100,
+            synced: false
+          });
+        } else if (paymentMethod === 'CASH') {
+          const cashAcc = await db.cashBankAccounts.where('accountType').equals('CASH').first();
+          if (cashAcc) {
+            await db.cashBankAccounts.update(cashAcc.id, {
+              currentBalance: Math.round((cashAcc.currentBalance + cleanPrice) * 100) / 100,
               synced: false
             });
-          } else if (paymentMethod === 'CASH') {
-            const cashAcc = await db.cashBankAccounts.where('accountType').equals('CASH').first();
-            if (cashAcc) {
-              await db.cashBankAccounts.update(cashAcc.id, {
-                currentBalance: Math.round((cashAcc.currentBalance + cleanPrice) * 100) / 100,
-                synced: false
-              });
-            }
           }
+        }
 
-          const fishDisplayNumber = await generateDisplayNumber('SAL', dateStr);
-          saleRecord = {
-            id: generateUniqueId('sal'),
-            invoiceNumber: generateTransactionNumber('SAL'),
-            displayNumber: fishDisplayNumber,
-            date: dateStr,
-            customerId: 'WALK_IN_CUSTOMER',
-            customerName: customerName?.trim() || 'সাধারণ ক্রেতা (Local Buyer)',
-            category: 'FISH',
-            items: [
-              {
-                itemId: freshBatch.id,
-                itemName: `মাছ বিক্রয়: ${freshBatch.species} (${freshBatch.pondName})`,
-                quantity: cleanWeight,
-                unit: 'কেজি',
-                unitPrice: cleanWeight > 0 ? Math.round((cleanPrice / cleanWeight) * 100) / 100 : cleanPrice,
-                lineTotal: cleanPrice,
-                cogsAmount: harvestedCogs
-              }
-            ],
-            subtotal: cleanPrice,
-            totalAmount: cleanPrice,
-            grandTotal: cleanPrice,
-            paidAmount: paymentMethod === 'CREDIT' ? 0 : cleanPrice,
-            dueAmount: paymentMethod === 'CREDIT' ? cleanPrice : 0,
-            paymentMethod,
-            bankAccountId: paymentMethod === 'BANK' ? bankAccountId : undefined,
-            journalEntryId,
-            status: paymentMethod === 'CREDIT' ? 'DUE' : 'PAID',
-            synced: false
-          };
-          await safeInsert(db.sales, saleRecord, { idPrefix: 'sal' });
+        // Create Sale record
+        const fishDisplayNumber = await generateDisplayNumber('SAL', dateStr);
+        saleRecord = {
+          id: generateUniqueId('sal'),
+          invoiceNumber: generateTransactionNumber('SAL'),
+          displayNumber: fishDisplayNumber,
+          date: dateStr,
+          customerId: 'WALK_IN_CUSTOMER',
+          customerName: customerName?.trim() || 'সাধারণ ক্রেতা (Local Buyer)',
+          category: 'FISH',
+          items: [
+            {
+              itemId: freshBatch.id,
+              itemName: `মাছ বিক্রয়: ${freshBatch.species} (${freshBatch.pondName})`,
+              quantity: cleanWeight,
+              unit: 'কেজি',
+              unitPrice: cleanWeight > 0 ? Math.round((cleanPrice / cleanWeight) * 100) / 100 : cleanPrice,
+              lineTotal: cleanPrice,
+              cogsAmount: 0
+            }
+          ],
+          subtotal: cleanPrice,
+          totalAmount: cleanPrice,
+          grandTotal: cleanPrice,
+          paidAmount: paymentMethod === 'CREDIT' ? 0 : cleanPrice,
+          dueAmount: paymentMethod === 'CREDIT' ? cleanPrice : 0,
+          paymentMethod,
+          bankAccountId: paymentMethod === 'BANK' ? bankAccountId : undefined,
+          journalEntryId: revenueJournalEntryId,
+          status: paymentMethod === 'CREDIT' ? 'DUE' : 'PAID',
+          synced: false
+        };
+        await safeInsert(db.sales, saleRecord, { idPrefix: 'sal' });
+      }
+
+      // Step 2: Production Cost, COGS & Mortality Accounting
+      // Requirement 3: Fish COGS must use actual accumulated production cost
+      const recordedCosts = calculateFishBatchRecordedCosts(freshBatch);
+      const totalRecordedCost = recordedCosts.totalRecordedCost;
+
+      // Inspect existing journal entries referencing this fish batch
+      const existingEntries = await db.journalEntries
+        .filter((j) => j.reference === freshBatch.id || (j.lines && j.lines.some((l) => l.memo && l.memo.includes(freshBatch.id))))
+        .toArray();
+
+      // Requirement 6: Do NOT create a second COGS entry for costs already transferred
+      let alreadyTransferredCogs = 0;
+      let alreadyTransferredMortality = 0;
+      let assetDebits1580 = 0;
+      let assetCredits1580 = 0;
+      let assetDebits1054 = 0;
+      let assetCredits1054 = 0;
+      let expensedDebit = 0;
+
+      for (const entry of existingEntries) {
+        for (const line of entry.lines) {
+          if (line.accountCode === CANONICAL_ACCOUNTS.FISH_COGS) {
+            alreadyTransferredCogs += (line.debit || 0) - (line.credit || 0);
+          } else if (line.accountCode === CANONICAL_ACCOUNTS.FISH_MORTALITY_LOSS) {
+            alreadyTransferredMortality += (line.debit || 0) - (line.credit || 0);
+          } else if (line.accountCode === CANONICAL_ACCOUNTS.LIVESTOCK_ASSETS) {
+            assetDebits1580 += (line.debit || 0);
+            assetCredits1580 += (line.credit || 0);
+          } else if (line.accountCode === CANONICAL_ACCOUNTS.WIP) {
+            assetDebits1054 += (line.debit || 0);
+            assetCredits1054 += (line.credit || 0);
+          } else if (
+            line.accountCode === CANONICAL_ACCOUNTS.FEED_EXPENSE ||
+            line.accountCode === CANONICAL_ACCOUNTS.FARM_LABOUR_WAGES ||
+            line.accountCode === CANONICAL_ACCOUNTS.VET_MEDICINE ||
+            line.accountCode === CANONICAL_ACCOUNTS.ELECTRICITY ||
+            line.accountCode === CANONICAL_ACCOUNTS.IRRIGATION ||
+            line.accountCode === CANONICAL_ACCOUNTS.MISCELLANEOUS_EXPENSE
+          ) {
+            expensedDebit += ((line.debit || 0) - (line.credit || 0));
+          }
         }
       }
 
-      // Update FishBatch record
+      const totalAlreadyTransferred = Math.max(0, Math.round((alreadyTransferredCogs + alreadyTransferredMortality) * 100) / 100);
+      const remainingCostToTransfer = Math.max(0, Math.round((totalRecordedCost - totalAlreadyTransferred) * 100) / 100);
+
+      // Determine target asset account (1580 Livestock Assets or 1054 WIP)
+      const net1580 = Math.max(0, Math.round((assetDebits1580 - assetCredits1580) * 100) / 100);
+      const net1054 = Math.max(0, Math.round((assetDebits1054 - assetCredits1054) * 100) / 100);
+      const targetAssetCode = net1054 > net1580 ? CANONICAL_ACCOUNTS.WIP : CANONICAL_ACCOUNTS.LIVESTOCK_ASSETS;
+      let currentAssetBalance = targetAssetCode === CANONICAL_ACCOUNTS.WIP ? net1054 : net1580;
+      const targetAssetAcc = accounts.find((a) => a.code === targetAssetCode) || assetAcc;
+
+      // If costs were posted to period operating expenses in GL, reclassify to biological asset
+      if (remainingCostToTransfer > currentAssetBalance && expensedDebit > 0) {
+        const reclassNeeded = Math.round((remainingCostToTransfer - currentAssetBalance) * 100) / 100;
+        const reclassAmount = Math.min(reclassNeeded, Math.max(0, Math.round(expensedDebit * 100) / 100));
+
+        if (reclassAmount > 0) {
+          const reclassLines: JournalLine[] = [
+            {
+              accountId: targetAssetCode,
+              accountCode: targetAssetCode,
+              accountName: targetAssetAcc.nameBn || 'পশুসম্পদ ও জৈবিক সম্পদ (Livestock & Biological Assets)',
+              debit: reclassAmount,
+              credit: 0,
+              memo: `মাছের ব্যাচ ${freshBatch.id}: অপারেটিং খরচকে জৈবিক সম্পদে স্থানান্তর`
+            },
+            {
+              accountId: CANONICAL_ACCOUNTS.FEED_EXPENSE,
+              accountCode: CANONICAL_ACCOUNTS.FEED_EXPENSE,
+              accountName: 'খাদ্য ও পুষ্টি খরচ (Feed & Nutrition Expense)',
+              debit: 0,
+              credit: reclassAmount,
+              memo: `মাছের ব্যাচ ${freshBatch.id}: উৎপাদন ব্যয়ের পুনর্বিন্যাস`
+            }
+          ];
+
+          const reclassCheck = validateBalancedLines(reclassLines, accounts);
+          if (reclassCheck.isBalanced) {
+            const reclassEntry = await postJournalEntry(
+              {
+                id: generateUniqueId('j_fish_reclass'),
+                voucherNumber: generateTransactionNumber('ADJ'),
+                voucherType: 'ADJUSTMENT',
+                date: dateStr,
+                narration: `মাছের ব্যাচ ${freshBatch.id}: উৎপাদনকালীন খরচকে জৈবিক সম্পদে স্থানান্তর (Reclassification): ৳${reclassAmount}`,
+                reference: freshBatch.id,
+                lines: reclassLines,
+                createdBy: currentUserId,
+                createdAt: new Date().toISOString()
+              },
+              { accounts, skipDbPut: true }
+            );
+            await safeInsert(db.journalEntries, reclassEntry, { idPrefix: 'j' });
+            currentAssetBalance = Math.round((currentAssetBalance + reclassAmount) * 100) / 100;
+          }
+        }
+      }
+
+      // Requirement 9: Do not reduce an asset account that never received the corresponding production cost.
+      // Transfer cost is bounded by the actual balance residing in the asset account and remaining cost to transfer.
+      const costToTransfer = Math.min(currentAssetBalance, remainingCostToTransfer);
+
+      let cogsJournalEntryId: string | undefined;
+      let cogsVoucherNumber: string | undefined;
+      let harvestedCogs = 0;
+      let mortalityCost = 0;
+
+      if (costToTransfer > 0) {
+        // Requirements 7 & 8: Defensible accumulated-cost mortality basis
+        const totalStock = Math.max(1, freshBatch.fingerlingQty || 0);
+        const mortalityRatio = Math.min(1, Math.max(0, cleanMortality / totalStock));
+        mortalityCost = cleanMortality > 0 ? Math.round(costToTransfer * mortalityRatio * 100) / 100 : 0;
+        harvestedCogs = Math.max(0, Math.round((costToTransfer - mortalityCost) * 100) / 100);
+
+        // Requirement 4: Transfer from actual Fish production/WIP/biological asset account
+        // Dr Fish COGS (5010), Dr Fish Mortality Loss (8030), Cr Biological Asset / WIP
+        const cogsLines: JournalLine[] = [];
+
+        if (harvestedCogs > 0) {
+          cogsLines.push({
+            accountId: CANONICAL_ACCOUNTS.FISH_COGS,
+            accountCode: CANONICAL_ACCOUNTS.FISH_COGS,
+            accountName: fishCogsAcc.nameBn || 'বিক্রিত মাছের উৎপাদন ব্যয় (Fish COGS)',
+            debit: harvestedCogs,
+            credit: 0,
+            memo: `মাছের ব্যাচ ${freshBatch.id}: আহরিত মাছের উৎপাদন ব্যয় (COGS)`
+          });
+        }
+
+        if (mortalityCost > 0) {
+          cogsLines.push({
+            accountId: CANONICAL_ACCOUNTS.FISH_MORTALITY_LOSS,
+            accountCode: CANONICAL_ACCOUNTS.FISH_MORTALITY_LOSS,
+            accountName: fishMortalityAcc.nameBn || 'মাছের মৃত্যুজনিত ক্ষতি (Fish Mortality Loss)',
+            debit: mortalityCost,
+            credit: 0,
+            memo: `মাছের ব্যাচ ${freshBatch.id}: মৃত মাছ অবলোপন (${cleanMortality} টি)`
+          });
+        }
+
+        cogsLines.push({
+          accountId: targetAssetCode,
+          accountCode: targetAssetCode,
+          accountName: targetAssetAcc.nameBn || 'পশুসম্পদ ও জৈবিক সম্পদ (Livestock & Biological Assets)',
+          debit: 0,
+          credit: costToTransfer,
+          memo: `মাছের ব্যাচ ${freshBatch.id}: আহরণ ও অবলোপন বাবদ পুঞ্জীভূত উৎপাদন খরচ সমন্বয়`
+        });
+
+        const cogsCheck = validateBalancedLines(cogsLines, accounts);
+        if (!cogsCheck.isBalanced) {
+          throw new Error('মাছ উৎপাদন ব্যয় ও অবলোপন জাবেদা ভারসাম্যহীন! কার্যক্রম বাতিল করা হলো।');
+        }
+
+        cogsVoucherNumber = generateTransactionNumber('COGS');
+        const cogsEntry = await postJournalEntry(
+          {
+            id: generateUniqueId('j_fish_cogs'),
+            voucherNumber: cogsVoucherNumber,
+            voucherType: 'JOURNAL',
+            date: dateStr,
+            narration: `মাছ আহরণকালীন ব্যয় স্থানান্তর: ব্যাচ ${freshBatch.id} - COGS: ৳${harvestedCogs}${mortalityCost > 0 ? `, মৃত্যুজনিত ক্ষতি: ৳${mortalityCost}` : ''}, মোট খালাস: ৳${costToTransfer}`,
+            reference: freshBatch.id,
+            lines: cogsLines,
+            createdBy: currentUserId,
+            createdAt: new Date().toISOString()
+          },
+          { accounts, skipDbPut: true }
+        );
+        await safeInsert(db.journalEntries, cogsEntry, { idPrefix: 'j' });
+        cogsJournalEntryId = cogsEntry.id;
+
+        // If a sale record was created, update its cogsAmount
+        if (saleRecord && saleRecord.items && saleRecord.items.length > 0) {
+          saleRecord.items[0].cogsAmount = harvestedCogs;
+          await db.sales.put(saleRecord);
+        }
+      }
+
+      // Step 3: Requirements 10 & 11 - Mark batch as HARVESTED only after accounting operations succeed
       freshBatch.harvestWeightKg = cleanWeight;
       freshBatch.mortalityCount = cleanMortality;
       freshBatch.harvestRevenue = cleanPrice;
@@ -2363,7 +3017,7 @@ export async function executeFishHarvestAndSaleTransaction(
           module: 'PRODUCTION',
           recordId: freshBatch.id,
           status: 'SUCCESS',
-          details: `মাছ আহরণ ও বিক্রয় সম্পন্ন: ব্যাচ ${freshBatch.id}, ওজন ${cleanWeight} কেজি, বিক্রয় ৳${cleanPrice}, COGS ৳${harvestedCogs}${mortalityCost > 0 ? `, মৃত্যুজনিত ক্ষতি ৳${mortalityCost}` : ''}`
+          details: `মাছ আহরণ ও বিক্রয় সম্পন্ন: ব্যাচ ${freshBatch.id}, ওজন ${cleanWeight} কেজি, বিক্রয় ৳${cleanPrice}, COGS ৳${harvestedCogs}${mortalityCost > 0 ? `, ক্ষতি ৳${mortalityCost}` : ''}`
         },
         { idPrefix: 'aud' }
       );
@@ -2371,8 +3025,10 @@ export async function executeFishHarvestAndSaleTransaction(
       return {
         updatedBatch: freshBatch,
         sale: saleRecord,
-        journalEntryId,
-        voucherNumber
+        journalEntryId: revenueJournalEntryId || cogsJournalEntryId,
+        voucherNumber: revenueVoucherNumber || cogsVoucherNumber,
+        cogsJournalEntryId,
+        cogsVoucherNumber
       };
     }
   );

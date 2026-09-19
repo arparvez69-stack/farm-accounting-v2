@@ -1,8 +1,9 @@
 import { validateBalancedLines } from '../accounting/accountingEngine';
 import { DEFAULT_CHART_OF_ACCOUNTS } from '../accounting/defaultAccounts';
-import { getInventoryAssetAccount, getPaymentAccount } from '../accounting/accountMapping';
+import { getInventoryAssetAccount, getPaymentAccount, CANONICAL_ACCOUNTS } from '../accounting/accountMapping';
 import { generateTransactionNumber, generateUniqueId } from '../utils/idGenerator';
-import { JournalLine, Animal, AnimalEvent, InventoryItem, Party, Sale, Purchase } from '../types';
+import { JournalLine, Animal, AnimalEvent, InventoryItem, Party, Sale, Purchase, FishBatch } from '../types';
+import { calculateFishBatchRecordedCosts } from '../services/transactionService';
 
 export interface TestResult {
   success: boolean;
@@ -327,6 +328,88 @@ async function runRegressionTestsInternal(): Promise<TestResult> {
     // ----------------------------------------------------
     const systemAccounts = accounts.filter((a) => a.isSystem);
     assert(systemAccounts.length >= 30, 'System Chart of Accounts must contain all standard canonical accounts.');
+
+    // ----------------------------------------------------
+    // TEST 13: Fish Production Cost Accounting & Integration
+    // ----------------------------------------------------
+    const mockFishBatch: FishBatch = {
+      id: 'FISH-TEST-001',
+      pondId: 'pond_1',
+      pondName: 'North Pond 1',
+      species: 'Rui',
+      stockingDate: '2026-01-01',
+      fingerlingQty: 1000,
+      fingerlingCost: 15000,
+      totalFeedKg: 500,
+      totalFeedCost: 25000,
+      medicineCost: 2500,
+      labourCost: 6000,
+      electricityCost: 3500,
+      waterTreatmentCost: 1200,
+      otherCost: 800,
+      mortalityCount: 100,
+      currentEstimatedWeightKg: 450,
+      status: 'ACTIVE',
+      synced: false
+    };
+
+    const recordedCosts = calculateFishBatchRecordedCosts(mockFishBatch);
+    assert(
+      recordedCosts.fingerlingCost === 15000 &&
+      recordedCosts.feedCost === 25000 &&
+      recordedCosts.medicineCost === 2500 &&
+      recordedCosts.labourCost === 6000 &&
+      recordedCosts.electricityCost === 3500 &&
+      recordedCosts.waterTreatmentCost === 1200 &&
+      recordedCosts.otherCost === 800,
+      'Fish batch recorded cost breakdown must preserve each distinct production cost component.'
+    );
+    assert(
+      recordedCosts.totalRecordedCost === 54000,
+      'Total accumulated fish production cost must accurately sum fingerlings, feed, medicine, labour, electricity, water treatment, and other costs.'
+    );
+
+    // ----------------------------------------------------
+    // TEST 14: Fish Harvest Accounting & Cost Derecognition
+    // ----------------------------------------------------
+    const bioAssetAcc = accounts.find((a) => a.code === CANONICAL_ACCOUNTS.LIVESTOCK_ASSETS);
+    assert(!!bioAssetAcc, 'Account 1580 Livestock & Biological Assets must exist in chart of accounts.');
+
+    const fishCogsAcc = accounts.find((a) => a.code === CANONICAL_ACCOUNTS.FISH_COGS);
+    assert(!!fishCogsAcc, 'Account 5010 Fish COGS must exist in chart of accounts.');
+
+    const fishMortalityAcc = accounts.find((a) => a.code === CANONICAL_ACCOUNTS.FISH_MORTALITY_LOSS);
+    assert(!!fishMortalityAcc, 'Account 8030 Fish Mortality Loss must exist in chart of accounts.');
+
+    const fishRevenueAcc = accounts.find((a) => a.code === CANONICAL_ACCOUNTS.FISH_REVENUE);
+    assert(!!fishRevenueAcc, 'Account 4010 Fish Sales Revenue must exist in chart of accounts.');
+
+    // Calculate harvest cost distribution for 10% mortality (100 dead / 1000 stocked)
+    const totalStock = mockFishBatch.fingerlingQty;
+    const mortalityRatio = mockFishBatch.mortalityCount / totalStock;
+    const expectedMortalityCost = Math.round(recordedCosts.totalRecordedCost * mortalityRatio * 100) / 100;
+    const expectedCogs = Math.round((recordedCosts.totalRecordedCost - expectedMortalityCost) * 100) / 100;
+
+    assert(expectedMortalityCost === 5400, 'Mortality loss (10%) of ৳54,000 must equal exactly ৳5,400.');
+    assert(expectedCogs === 48600, 'Harvested Fish COGS must equal remaining ৳48,600.');
+    assert(expectedMortalityCost + expectedCogs === recordedCosts.totalRecordedCost, 'Sum of COGS and Mortality Loss must equal total accumulated WIP (৳54,000).');
+
+    // Verify harvest journal balance with separate Revenue and COGS vouchers (Requirement 1 & 2)
+    const saleRevenue = 95000;
+    const mockRevenueLines: JournalLine[] = [
+      { accountId: '1010', accountCode: '1010', accountName: 'Cash', debit: saleRevenue, credit: 0 },
+      { accountId: CANONICAL_ACCOUNTS.FISH_REVENUE, accountCode: CANONICAL_ACCOUNTS.FISH_REVENUE, accountName: 'Fish Revenue', debit: 0, credit: saleRevenue }
+    ];
+    const revenueCheck = validateBalancedLines(mockRevenueLines, accounts);
+    assert(revenueCheck.isBalanced, 'Fish harvest revenue journal entry must strictly balance (Dr Cash, Cr Fish Revenue).');
+
+    const mockCogsLines: JournalLine[] = [
+      { accountId: CANONICAL_ACCOUNTS.FISH_COGS, accountCode: CANONICAL_ACCOUNTS.FISH_COGS, accountName: 'Fish COGS', debit: expectedCogs, credit: 0 },
+      { accountId: CANONICAL_ACCOUNTS.FISH_MORTALITY_LOSS, accountCode: CANONICAL_ACCOUNTS.FISH_MORTALITY_LOSS, accountName: 'Fish Mortality Loss', debit: expectedMortalityCost, credit: 0 },
+      { accountId: CANONICAL_ACCOUNTS.LIVESTOCK_ASSETS, accountCode: CANONICAL_ACCOUNTS.LIVESTOCK_ASSETS, accountName: 'Biological Assets', debit: 0, credit: recordedCosts.totalRecordedCost }
+    ];
+    const cogsCheck = validateBalancedLines(mockCogsLines, accounts);
+    assert(cogsCheck.isBalanced, 'Fish COGS and biological asset derecognition journal entry must strictly balance (Dr COGS/Mortality, Cr 1580).');
 
   } catch (error: any) {
     failures.push(`CRITICAL RUNTIME ERROR: ${error.message}`);

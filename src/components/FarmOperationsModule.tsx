@@ -54,8 +54,10 @@ import { CANONICAL_ACCOUNTS, getCashBankAccountGLCode } from '../accounting/acco
 import {
   executeAnimalEventTransaction,
   executeAnimalSaleOrRemovalTransaction,
+  executeFishStockingTransaction,
   executeFishHarvestAndSaleTransaction,
-  executeCropHarvestAndSaleTransaction
+  executeCropHarvestAndSaleTransaction,
+  calculateFishBatchRecordedCosts
 } from '../services/transactionService';
 import { AnimalDetailView } from './AnimalDetailView';
 import { notifyUndoableAction } from '../services/undoService';
@@ -1090,24 +1092,17 @@ export const FarmOperationsModule: React.FC<Props> = ({
     e.preventDefault();
     try {
       const fCost = parseFloat(fingerlingCost) || 0;
-      const batch: FishBatch = {
-        id: generateTransactionNumber('FISH'),
-        pondId: generateUniqueId('pond'),
+      const res = await executeFishStockingTransaction({
         pondName: pondName.trim(),
         species: fishSpecies.trim(),
-        stockingDate: new Date().toISOString().split('T')[0],
         fingerlingQty: parseInt(fingerlingQty) || 1000,
         fingerlingCost: fCost,
-        totalFeedKg: 0,
-        totalFeedCost: 0,
-        mortalityCount: 0,
-        currentEstimatedWeightKg: 0,
-        status: 'ACTIVE',
-        synced: false
-      };
-      await safeInsert(db.fishBatches, batch, { idPrefix: 'FISH' });
+        paymentMethod: 'CASH',
+        stockingDate: new Date().toISOString().split('T')[0],
+        currentUserId
+      });
       setShowAddFish(false);
-      setMsg({ type: 'success', text: `মাছের ব্যাচ ${batch.id} যুক্ত হয়েছে!` });
+      setMsg({ type: 'success', text: `মাছের ব্যাচ ${res.batch.id} যুক্ত হয়েছে!${res.voucherNumber ? ` (ভাউচার: ${res.voucherNumber})` : ''}` });
       loadOpsData();
     } catch (err: any) {
       setMsg({ type: 'error', text: err.message });
@@ -3169,7 +3164,8 @@ export const FarmOperationsModule: React.FC<Props> = ({
               {fishBatches
                 .filter((b) => fishFilter === 'ACTIVE' ? b.status === 'ACTIVE' : (b.status === 'HARVESTED' || b.status === 'CLOSED'))
                 .map((b, idx) => {
-                  const totalCost = (b.fingerlingCost || 0) + (b.totalFeedCost || 0);
+                  const costs = calculateFishBatchRecordedCosts(b);
+                  const totalCost = costs.totalRecordedCost;
                   const netProfit = (b.harvestRevenue || 0) - totalCost;
                   const isHarvested = b.status === 'HARVESTED' || b.status === 'CLOSED';
 
@@ -3208,6 +3204,36 @@ export const FarmOperationsModule: React.FC<Props> = ({
                             <span className="text-gray-600">মোট ফিড প্রয়োগ:</span>
                             <span className="font-semibold text-amber-700">{b.totalFeedKg} কেজি ({fmt(b.totalFeedCost)})</span>
                           </div>
+                          {costs.medicineCost > 0 && (
+                            <div className="flex justify-between">
+                              <span className="text-gray-600">ওষুধ ও চিকিৎসা:</span>
+                              <span className="font-semibold text-gray-900">{fmt(costs.medicineCost)}</span>
+                            </div>
+                          )}
+                          {costs.labourCost > 0 && (
+                            <div className="flex justify-between">
+                              <span className="text-gray-600">শ্রমিক ও মজুরি:</span>
+                              <span className="font-semibold text-gray-900">{fmt(costs.labourCost)}</span>
+                            </div>
+                          )}
+                          {costs.electricityCost > 0 && (
+                            <div className="flex justify-between">
+                              <span className="text-gray-600">বিদ্যুৎ ও পাম্পিং:</span>
+                              <span className="font-semibold text-gray-900">{fmt(costs.electricityCost)}</span>
+                            </div>
+                          )}
+                          {costs.waterTreatmentCost > 0 && (
+                            <div className="flex justify-between">
+                              <span className="text-gray-600">পানি শোধন ও পরিচর্যা:</span>
+                              <span className="font-semibold text-gray-900">{fmt(costs.waterTreatmentCost)}</span>
+                            </div>
+                          )}
+                          {costs.otherCost > 0 && (
+                            <div className="flex justify-between">
+                              <span className="text-gray-600">অন্যান্য খরচ:</span>
+                              <span className="font-semibold text-gray-900">{fmt(costs.otherCost)}</span>
+                            </div>
+                          )}
                           <div className="flex justify-between">
                             <span className="text-gray-600">মোট পুঞ্জীভূত খরচ (COGS):</span>
                             <span className="font-bold text-gray-900">{fmt(totalCost)}</span>
@@ -3948,17 +3974,29 @@ export const FarmOperationsModule: React.FC<Props> = ({
             {/* Batch Cost & Stock Information */}
             <div className="p-3.5 bg-sky-50/70 dark:bg-sky-950/30 rounded-xl border border-sky-100 dark:border-sky-900/50 text-xs space-y-1.5">
               <div className="font-semibold text-sky-900 dark:text-sky-300">ব্যাচের পুঞ্জীভূত মজুদ ও বিনিয়োগ তথ্য:</div>
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-gray-700 dark:text-slate-300">
-                <div>মজুদ পোনা: <span className="font-bold">{harvestFishBatch.fingerlingQty} টি</span></div>
-                <div>পোনা খরচ: <span className="font-bold">{fmt(harvestFishBatch.fingerlingCost || 0)}</span></div>
-                <div>ফিড খরচ: <span className="font-bold">{fmt(harvestFishBatch.totalFeedCost || 0)}</span></div>
-              </div>
-              <div className="pt-1.5 border-t border-sky-200/60 dark:border-sky-800/60 flex justify-between items-center">
-                <span className="text-sky-800 dark:text-sky-300 font-medium">বিক্রয়কালে স্থানান্তরিত মোট COGS (হিসাব ৫০১০):</span>
-                <span className="font-bold text-sky-950 dark:text-sky-200 text-sm">
-                  {fmt((harvestFishBatch.fingerlingCost || 0) + (harvestFishBatch.totalFeedCost || 0))}
-                </span>
-              </div>
+              {(() => {
+                const costs = calculateFishBatchRecordedCosts(harvestFishBatch);
+                return (
+                  <>
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-gray-700 dark:text-slate-300">
+                      <div>মজুদ পোনা: <span className="font-bold">{harvestFishBatch.fingerlingQty} টি</span></div>
+                      <div>পোনা খরচ: <span className="font-bold">{fmt(costs.fingerlingCost)}</span></div>
+                      <div>ফিড খরচ: <span className="font-bold">{fmt(costs.feedCost)}</span></div>
+                      {costs.medicineCost > 0 && <div>ওষুধ খরচ: <span className="font-bold">{fmt(costs.medicineCost)}</span></div>}
+                      {costs.labourCost > 0 && <div>শ্রমিক মজুরি: <span className="font-bold">{fmt(costs.labourCost)}</span></div>}
+                      {costs.electricityCost > 0 && <div>বিদ্যুৎ খরচ: <span className="font-bold">{fmt(costs.electricityCost)}</span></div>}
+                      {costs.waterTreatmentCost > 0 && <div>পানি শোধন: <span className="font-bold">{fmt(costs.waterTreatmentCost)}</span></div>}
+                      {costs.otherCost > 0 && <div>অন্যান্য খরচ: <span className="font-bold">{fmt(costs.otherCost)}</span></div>}
+                    </div>
+                    <div className="pt-1.5 border-t border-sky-200/60 dark:border-sky-800/60 flex justify-between items-center">
+                      <span className="text-sky-800 dark:text-sky-300 font-medium">বিক্রয়কালে স্থানান্তরিত মোট COGS (হিসাব ৫০১০):</span>
+                      <span className="font-bold text-sky-950 dark:text-sky-200 text-sm">
+                        {fmt(costs.totalRecordedCost)}
+                      </span>
+                    </div>
+                  </>
+                );
+              })()}
             </div>
 
             <form onSubmit={handleFishHarvestSubmit} className="space-y-3.5 text-xs">
@@ -4090,7 +4128,7 @@ export const FarmOperationsModule: React.FC<Props> = ({
 
               {/* Real-time Profit/Loss Preview */}
               {(() => {
-                const totalCost = (harvestFishBatch.fingerlingCost || 0) + (harvestFishBatch.totalFeedCost || 0);
+                const totalCost = calculateFishBatchRecordedCosts(harvestFishBatch).totalRecordedCost;
                 const mort = parseInt(harvestFishMortality) || 0;
                 const totalStock = (harvestFishBatch.fingerlingQty && harvestFishBatch.fingerlingQty > 0)
                   ? harvestFishBatch.fingerlingQty

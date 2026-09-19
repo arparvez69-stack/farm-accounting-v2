@@ -651,8 +651,12 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
     for (const b of allBatches) {
       const fingerlingCost = Number(b.fingerlingCost) || 0;
       const feedCost = Number(b.totalFeedCost) || 0;
-      const otherCost = Number((b as any).otherCost || (b as any).otherCosts) || 0;
-      const totalCost = fingerlingCost + feedCost + otherCost;
+      const medicineCost = Number(b.medicineCost) || 0;
+      const labourCost = Number(b.labourCost) || 0;
+      const electricityCost = Number(b.electricityCost) || 0;
+      const waterTreatmentCost = Number(b.waterTreatmentCost) || 0;
+      const otherCost = Number(b.otherCost ?? (b as any).otherCosts) || 0;
+      const totalCost = fingerlingCost + feedCost + medicineCost + labourCost + electricityCost + waterTreatmentCost + otherCost;
 
       // Check direct harvest revenue
       let totalRevenue = Number(b.harvestRevenue) || 0;

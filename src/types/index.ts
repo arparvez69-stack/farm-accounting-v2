@@ -196,6 +196,13 @@ export interface FishBatch {
   fingerlingCost: number;
   totalFeedKg: number;
   totalFeedCost: number;
+  medicineCost?: number;
+  labourCost?: number;
+  electricityCost?: number;
+  waterTreatmentCost?: number;
+  otherCost?: number;
+  otherCosts?: number;
+  journalEntryId?: string;
   mortalityCount: number;
   currentEstimatedWeightKg: number;
   harvestWeightKg?: number;
