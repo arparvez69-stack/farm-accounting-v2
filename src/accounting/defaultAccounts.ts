@@ -401,6 +401,16 @@ export const DEFAULT_CHART_OF_ACCOUNTS: Account[] = [
     isSystem: true,
     isActive: true
   },
+  {
+    id: 'acc_5090',
+    code: '5090',
+    nameBn: 'বিবিধ উৎপাদন ব্যয় (Other COGS)',
+    nameEn: 'Other Cost of Goods Sold',
+    accountClass: 'COGS',
+    normalBalance: 'DEBIT',
+    isSystem: true,
+    isActive: true
+  },
 
   // 6000 Operating Expenses
   {

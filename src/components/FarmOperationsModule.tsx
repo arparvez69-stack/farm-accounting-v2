@@ -620,7 +620,8 @@ export const FarmOperationsModule: React.FC<Props> = ({
         finalAnimal.supplierId = effectiveSupplierId;
       }
 
-      await safeInsert(db.animals, finalAnimal, { idPrefix: 'COW' });
+      const speciesPrefix = finalAnimal.species === 'GOAT' ? 'GOT' : finalAnimal.species === 'SHEEP' ? 'SHP' : 'COW';
+      await safeInsert(db.animals, finalAnimal, { idPrefix: speciesPrefix });
       setShowAddAnimal(false);
       setDuplicateTagWarning(null);
       setTagId('');
@@ -665,7 +666,8 @@ export const FarmOperationsModule: React.FC<Props> = ({
         }
       }
 
-      const anId = tagId.trim() || generateTransactionNumber('COW');
+      const speciesPrefix = species === 'GOAT' ? 'GOT' : species === 'SHEEP' ? 'SHP' : 'COW';
+      const anId = tagId.trim() || generateTransactionNumber(speciesPrefix);
       const animal: Animal = {
         id: anId,
         tag: anId,
@@ -2048,7 +2050,11 @@ export const FarmOperationsModule: React.FC<Props> = ({
                           {/* Species & Weight Badge overlaid on photo */}
                           <div className="absolute top-2.5 right-2.5 flex items-center gap-1.5">
                             <span className="px-2.5 py-1 rounded-full bg-white/95 dark:bg-slate-900/90 backdrop-blur-xs border border-gray-200/80 dark:border-slate-700 text-xs text-gray-800 dark:text-slate-200 font-bold shadow-xs">
-                              {a.gender === 'FEMALE' ? 'গাভী' : 'ষাঁড়'} ({a.currentWeightKg} কেজি)
+                              {a.species === 'GOAT'
+                                ? (a.gender === 'FEMALE' ? 'ছাগী' : 'খাসি/পাঁঠা')
+                                : a.species === 'SHEEP'
+                                ? (a.gender === 'FEMALE' ? 'ভেড়ী' : 'ভেড়া')
+                                : (a.gender === 'FEMALE' ? 'গাভী' : 'ষাঁড়')} ({a.currentWeightKg} কেজি)
                             </span>
                           </div>
                         </div>

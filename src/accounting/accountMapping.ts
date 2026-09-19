@@ -51,6 +51,7 @@ export const CANONICAL_ACCOUNTS = {
   LIVESTOCK_COGS: '5020',
   CROP_COGS: '5030',
   PROCESSED_COGS: '5040',
+  OTHER_COGS: '5090',
 
   // 6000 Operating Expenses
   FEED_EXPENSE: '6010',
@@ -202,7 +203,7 @@ export function getRevenueAndCogsAccounts(item: { nameBn?: string; nameEn?: stri
 
   return {
     revenueCode: CANONICAL_ACCOUNTS.OTHER_REVENUE, // 4090
-    cogsCode: CANONICAL_ACCOUNTS.PROCESSED_COGS // 5040
+    cogsCode: CANONICAL_ACCOUNTS.OTHER_COGS // 5090
   };
 }
 
