@@ -370,50 +370,78 @@ async function generateReceiptPdf(
   const totalsBoxW = 84;
   const totalsBoxX = 112;
 
+  const recSubtotal = Number((rec as any).subtotal || (rec as any).grandTotal || total);
+  const recDiscount = Number((rec as any).discount || 0);
+  const boxHeight = recDiscount > 0 ? 42 : 36;
+
   doc.setDrawColor(210, 225, 210);
   doc.setFillColor(252, 254, 252);
-  doc.roundedRect(totalsBoxX, totalsBoxY, totalsBoxW, 36, 1.5, 1.5, 'FD');
+  doc.roundedRect(totalsBoxX, totalsBoxY, totalsBoxW, boxHeight, 1.5, 1.5, 'FD');
 
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(8.5);
-  doc.setTextColor(80, 80, 80);
-  doc.text('Subtotal:', totalsBoxX + 5, totalsBoxY + 7);
-  doc.text(`BDT ${total.toLocaleString('en-IN', { minimumFractionDigits: 2 })}`, totalsBoxX + totalsBoxW - 5, totalsBoxY + 7, { align: 'right' });
+  let curLineY = totalsBoxY + 6.5;
 
-  // Divider inside totals
-  doc.setDrawColor(220, 230, 220);
-  doc.line(totalsBoxX + 4, totalsBoxY + 11, totalsBoxX + totalsBoxW - 4, totalsBoxY + 11);
+  if (recDiscount > 0) {
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(8);
+    doc.setTextColor(80, 80, 80);
+    doc.text('Subtotal:', totalsBoxX + 5, curLineY);
+    doc.text(`BDT ${recSubtotal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}`, totalsBoxX + totalsBoxW - 5, curLineY, { align: 'right' });
+
+    curLineY += 5;
+    doc.setTextColor(185, 28, 28);
+    doc.text('Discount:', totalsBoxX + 5, curLineY);
+    doc.text(`- BDT ${recDiscount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}`, totalsBoxX + totalsBoxW - 5, curLineY, { align: 'right' });
+
+    curLineY += 2;
+    doc.setDrawColor(220, 230, 220);
+    doc.line(totalsBoxX + 4, curLineY, totalsBoxX + totalsBoxW - 4, curLineY);
+    curLineY += 5;
+  } else {
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(8.5);
+    doc.setTextColor(80, 80, 80);
+    doc.text('Subtotal:', totalsBoxX + 5, curLineY);
+    doc.text(`BDT ${total.toLocaleString('en-IN', { minimumFractionDigits: 2 })}`, totalsBoxX + totalsBoxW - 5, curLineY, { align: 'right' });
+
+    curLineY += 4;
+    // Divider inside totals
+    doc.setDrawColor(220, 230, 220);
+    doc.line(totalsBoxX + 4, curLineY, totalsBoxX + totalsBoxW - 4, curLineY);
+    curLineY += 6;
+  }
 
   // Grand Total
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(10.5);
+  doc.setFontSize(10);
   doc.setTextColor(30, 30, 30);
-  doc.text('Grand Total:', totalsBoxX + 5, totalsBoxY + 18);
-  doc.text(`BDT ${total.toLocaleString('en-IN', { minimumFractionDigits: 2 })}`, totalsBoxX + totalsBoxW - 5, totalsBoxY + 18, { align: 'right' });
+  doc.text('Grand Total:', totalsBoxX + 5, curLineY);
+  doc.text(`BDT ${total.toLocaleString('en-IN', { minimumFractionDigits: 2 })}`, totalsBoxX + totalsBoxW - 5, curLineY, { align: 'right' });
 
   // Paid Amount
-  doc.setFontSize(9.5);
+  curLineY += 7;
+  doc.setFontSize(9);
   doc.setTextColor(21, 128, 61);
-  doc.text('Paid Amount:', totalsBoxX + 5, totalsBoxY + 25);
-  doc.text(`BDT ${paid.toLocaleString('en-IN', { minimumFractionDigits: 2 })}`, totalsBoxX + totalsBoxW - 5, totalsBoxY + 25, { align: 'right' });
+  doc.text('Paid Amount:', totalsBoxX + 5, curLineY);
+  doc.text(`BDT ${paid.toLocaleString('en-IN', { minimumFractionDigits: 2 })}`, totalsBoxX + totalsBoxW - 5, curLineY, { align: 'right' });
 
   // Due Amount
+  curLineY += 7;
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(10);
+  doc.setFontSize(9.5);
   if (due > 0) {
     doc.setTextColor(185, 28, 28);
   } else {
     doc.setTextColor(21, 128, 61);
   }
-  doc.text('Amount Still Due:', totalsBoxX + 5, totalsBoxY + 32);
-  doc.text(`BDT ${due.toLocaleString('en-IN', { minimumFractionDigits: 2 })}`, totalsBoxX + totalsBoxW - 5, totalsBoxY + 32, { align: 'right' });
+  doc.text('Amount Still Due:', totalsBoxX + 5, curLineY);
+  doc.text(`BDT ${due.toLocaleString('en-IN', { minimumFractionDigits: 2 })}`, totalsBoxX + totalsBoxW - 5, curLineY, { align: 'right' });
 
   // Left side: Payment History or Terms
   const leftBoxW = 94;
   const leftBoxX = 14;
   doc.setDrawColor(225, 230, 225);
   doc.setFillColor(254, 255, 254);
-  doc.roundedRect(leftBoxX, totalsBoxY, leftBoxW, 36, 1.5, 1.5, 'FD');
+  doc.roundedRect(leftBoxX, totalsBoxY, leftBoxW, boxHeight, 1.5, 1.5, 'FD');
 
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(8);
@@ -694,6 +722,8 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
   const [saleItemId, setSaleItemId] = useState('');
   const [saleQty, setSaleQty] = useState('1');
   const [saleUnitPrice, setSaleUnitPrice] = useState('');
+  const [saleDiscount, setSaleDiscount] = useState('');
+  const [saleDiscountType, setSaleDiscountType] = useState<'FIXED' | 'PERCENT'>('FIXED');
   const [salePaymentMethod, setSalePaymentMethod] = useState<'CASH' | 'BANK' | 'CREDIT'>('CASH');
 
   // New Purchase Form
@@ -704,6 +734,8 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
   const [purchQty, setPurchQty] = useState('1');
   const [purchUnitPrice, setPurchUnitPrice] = useState('');
   const [purchTransportCost, setPurchTransportCost] = useState('0');
+  const [purchDiscount, setPurchDiscount] = useState('');
+  const [purchDiscountType, setPurchDiscountType] = useState<'FIXED' | 'PERCENT'>('FIXED');
   const [purchPaymentMethod, setPurchPaymentMethod] = useState<'CASH' | 'BANK' | 'CREDIT'>('CASH');
 
   // Add Party Modal
@@ -918,6 +950,25 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
     }
   };
 
+  // Discount calculation helpers
+  const calcSaleDiscountAmount = (subtotal: number, discVal: string, discType: 'FIXED' | 'PERCENT') => {
+    const val = parseFloat(discVal) || 0;
+    if (val <= 0) return 0;
+    if (discType === 'PERCENT') {
+      return Math.round(subtotal * (val / 100) * 100) / 100;
+    }
+    return Math.round(val * 100) / 100;
+  };
+
+  const calcPurchDiscountAmount = (subtotal: number, discVal: string, discType: 'FIXED' | 'PERCENT') => {
+    const val = parseFloat(discVal) || 0;
+    if (val <= 0) return 0;
+    if (discType === 'PERCENT') {
+      return Math.round(subtotal * (val / 100) * 100) / 100;
+    }
+    return Math.round(val * 100) / 100;
+  };
+
   // EXECUTE SALE WITH ATOMIC TRANSACTION & CANONICAL MAPPINGS
   const executeSaveSale = async () => {
     const item = items.find((i) => i.id === saleItemId);
@@ -926,6 +977,8 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
 
     const qty = parseFloat(saleQty) || 0;
     const price = parseFloat(saleUnitPrice) || item.sellingPrice || 0;
+    const subtotal = Math.round(qty * price * 100) / 100;
+    const discountAmount = Math.min(subtotal, Math.max(0, calcSaleDiscountAmount(subtotal, saleDiscount, saleDiscountType)));
 
     try {
       const res = await executeSaleTransaction({
@@ -933,6 +986,7 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
         item,
         quantity: qty,
         unitPrice: price,
+        discount: discountAmount,
         paymentMethod: salePaymentMethod,
         currentUserId,
         date: saleDate
@@ -941,6 +995,8 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
       setShowNewSale(false);
       setSaleQty('1');
       setSaleUnitPrice('');
+      setSaleDiscount('');
+      setSaleDiscountType('FIXED');
       setSaleDate(new Date().toISOString().split('T')[0]);
       setMsg({
         type: 'success',
@@ -992,7 +1048,15 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
       return;
     }
 
-    const totalAmount = Math.round(qty * price * 100) / 100;
+    const subtotal = Math.round(qty * price * 100) / 100;
+    const discountAmount = Math.min(subtotal, Math.max(0, calcSaleDiscountAmount(subtotal, saleDiscount, saleDiscountType)));
+    const totalAmount = Math.max(0, Math.round((subtotal - discountAmount) * 100) / 100);
+
+    if (totalAmount <= 0) {
+      setMsg({ type: 'error', text: 'মূল্যছাড়ের পর চালানের সর্বমোট মূল্য ০ এর বেশি হতে হবে।' });
+      return;
+    }
+
     if (totalAmount > HIGH_AMOUNT_CONFIRMATION_THRESHOLD) {
       setConfirmHighAmountCommerce({ amount: totalAmount, type: 'SALE' });
       return;
@@ -1010,6 +1074,8 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
     const qty = parseFloat(purchQty) || 0;
     const price = parseFloat(purchUnitPrice) || item.avgCostPrice || 0;
     const transport = parseFloat(purchTransportCost) || 0;
+    const itemsTotal = Math.round(qty * price * 100) / 100;
+    const discountAmount = Math.min(itemsTotal + transport, Math.max(0, calcPurchDiscountAmount(itemsTotal, purchDiscount, purchDiscountType)));
 
     try {
       const res = await executePurchaseTransaction({
@@ -1018,6 +1084,7 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
         quantity: qty,
         unitPrice: price,
         transportCost: transport,
+        discount: discountAmount,
         paymentMethod: purchPaymentMethod,
         currentUserId,
         date: purchDate
@@ -1027,6 +1094,8 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
       setPurchQty('1');
       setPurchUnitPrice('');
       setPurchTransportCost('0');
+      setPurchDiscount('');
+      setPurchDiscountType('FIXED');
       setPurchDate(new Date().toISOString().split('T')[0]);
       setMsg({
         type: 'success',
@@ -1079,7 +1148,15 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
       return;
     }
 
-    const grandTotal = Math.round((qty * price + transport) * 100) / 100;
+    const itemsTotal = Math.round(qty * price * 100) / 100;
+    const discountAmount = Math.min(itemsTotal + transport, Math.max(0, calcPurchDiscountAmount(itemsTotal, purchDiscount, purchDiscountType)));
+    const grandTotal = Math.max(0, Math.round((itemsTotal + transport - discountAmount) * 100) / 100);
+
+    if (grandTotal <= 0) {
+      setMsg({ type: 'error', text: 'মূল্যছাড়ের পর চালানের সর্বমোট মূল্য ০ এর বেশি হতে হবে।' });
+      return;
+    }
+
     if (grandTotal > HIGH_AMOUNT_CONFIRMATION_THRESHOLD) {
       setConfirmHighAmountCommerce({ amount: grandTotal, type: 'PURCHASE' });
       return;
@@ -1875,7 +1952,7 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
                 <div>
                   <label className="block text-[13px] font-medium text-gray-700 mb-1">পরিমাণ</label>
                   <input
@@ -1895,7 +1972,45 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                     className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900"
                   />
                 </div>
+                <div>
+                  <label className="block text-[13px] font-medium text-gray-700 mb-1">মূল্যছাড় / Discount (ঐচ্ছিক)</label>
+                  <div className="flex gap-1.5">
+                    <input
+                      type="number"
+                      placeholder="ছাড়"
+                      value={saleDiscount}
+                      onChange={(e) => setSaleDiscount(e.target.value)}
+                      className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900"
+                    />
+                    <select
+                      value={saleDiscountType}
+                      onChange={(e) => setSaleDiscountType(e.target.value as 'FIXED' | 'PERCENT')}
+                      className="bg-white border border-gray-300 rounded-lg px-2 text-[13px] font-medium text-gray-700 shrink-0"
+                    >
+                      <option value="FIXED">৳ (টাকা)</option>
+                      <option value="PERCENT">% (শতাংশ)</option>
+                    </select>
+                  </div>
+                </div>
               </div>
+
+              {/* Dynamic Sale Preview Summary */}
+              {(() => {
+                const sQty = parseFloat(saleQty) || 0;
+                const sPrice = parseFloat(saleUnitPrice) || 0;
+                const sub = Math.round(sQty * sPrice * 100) / 100;
+                const disc = Math.min(sub, Math.max(0, calcSaleDiscountAmount(sub, saleDiscount, saleDiscountType)));
+                const net = Math.max(0, Math.round((sub - disc) * 100) / 100);
+                return (
+                  <div className="bg-amber-50 border border-amber-200 rounded-lg p-2.5 flex flex-wrap items-center justify-between gap-2 text-[13px]">
+                    <span className="text-gray-700">উপমোট: <strong className="text-gray-900 font-mono">৳{sub.toLocaleString('en-IN')}</strong></span>
+                    {disc > 0 && (
+                      <span className="text-rose-700">ছাড় ({saleDiscountType === 'PERCENT' ? `${saleDiscount}%` : 'নির্দিষ্ট'}): <strong className="font-mono">-৳{disc.toLocaleString('en-IN')}</strong></span>
+                    )}
+                    <span className="text-amber-900 font-semibold">চালানের নেট মোট: <strong className="text-amber-950 font-mono text-[14px]">৳{net.toLocaleString('en-IN')}</strong></span>
+                  </div>
+                );
+              })()}
 
               <div className="flex justify-end gap-2.5 pt-1">
                 <button
@@ -1959,6 +2074,11 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                           </td>
                           <td className="p-3 font-mono">
                             <div className="text-amber-800 font-bold">{fmt(total)}</div>
+                            {Boolean(s.discount && s.discount > 0) && (
+                              <div className="text-[11px] text-rose-600 font-sans font-medium">
+                                ছাড়: ৳{fmt(s.discount)}
+                              </div>
+                            )}
                             {(s.paymentMethod === 'CREDIT' || paid > 0 || due > 0) && (
                               <div className="text-xs text-gray-500 font-sans">
                                 পরিশোধ: ৳{fmt(paid)} | বাকি: <span className={due > 0 ? "text-amber-700 font-bold" : "text-emerald-700"}>৳{fmt(due)}</span>
@@ -2123,7 +2243,7 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+              <div className="grid grid-cols-1 sm:grid-cols-4 gap-2.5">
                 <div>
                   <label className="block text-[13px] font-medium text-gray-700 mb-1">পরিমাণ</label>
                   <input
@@ -2153,7 +2273,49 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                     className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900"
                   />
                 </div>
+                <div>
+                  <label className="block text-[13px] font-medium text-gray-700 mb-1">মূল্যছাড় / Discount (ঐচ্ছিক)</label>
+                  <div className="flex gap-1.5">
+                    <input
+                      type="number"
+                      placeholder="ছাড়"
+                      value={purchDiscount}
+                      onChange={(e) => setPurchDiscount(e.target.value)}
+                      className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900"
+                    />
+                    <select
+                      value={purchDiscountType}
+                      onChange={(e) => setPurchDiscountType(e.target.value as 'FIXED' | 'PERCENT')}
+                      className="bg-white border border-gray-300 rounded-lg px-2 text-[13px] font-medium text-gray-700 shrink-0"
+                    >
+                      <option value="FIXED">৳ (টাকা)</option>
+                      <option value="PERCENT">% (শতাংশ)</option>
+                    </select>
+                  </div>
+                </div>
               </div>
+
+              {/* Dynamic Purchase Preview Summary */}
+              {(() => {
+                const pQty = parseFloat(purchQty) || 0;
+                const pPrice = parseFloat(purchUnitPrice) || 0;
+                const pTrans = parseFloat(purchTransportCost) || 0;
+                const itemsTotal = Math.round(pQty * pPrice * 100) / 100;
+                const disc = Math.min(itemsTotal + pTrans, Math.max(0, calcPurchDiscountAmount(itemsTotal, purchDiscount, purchDiscountType)));
+                const grand = Math.max(0, Math.round((itemsTotal + pTrans - disc) * 100) / 100);
+                return (
+                  <div className="bg-amber-50 border border-amber-200 rounded-lg p-2.5 flex flex-wrap items-center justify-between gap-2 text-[13px]">
+                    <span className="text-gray-700">পণ্যের মোট: <strong className="text-gray-900 font-mono">৳{itemsTotal.toLocaleString('en-IN')}</strong></span>
+                    {pTrans > 0 && (
+                      <span className="text-amber-800">পরিবহন: <strong className="font-mono">+৳{pTrans.toLocaleString('en-IN')}</strong></span>
+                    )}
+                    {disc > 0 && (
+                      <span className="text-rose-700">ছাড় ({purchDiscountType === 'PERCENT' ? `${purchDiscount}%` : 'নির্দিষ্ট'}): <strong className="font-mono">-৳{disc.toLocaleString('en-IN')}</strong></span>
+                    )}
+                    <span className="text-amber-900 font-semibold">ক্রয়ের নেট সর্বমোট: <strong className="text-amber-950 font-mono text-[14px]">৳{grand.toLocaleString('en-IN')}</strong></span>
+                  </div>
+                );
+              })()}
 
               <div className="flex justify-end gap-2.5 pt-1">
                 <button
@@ -2219,6 +2381,11 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                           <td className="p-3 text-amber-700 font-medium">{fmt(p.transportCost || 0)}</td>
                           <td className="p-3 font-mono">
                             <div className="text-red-600 font-bold">{fmt(total)}</div>
+                            {Boolean(p.discount && p.discount > 0) && (
+                              <div className="text-[11px] text-emerald-700 font-sans font-medium">
+                                ছাড়: ৳{fmt(p.discount)}
+                              </div>
+                            )}
                             {(p.paymentMethod === 'CREDIT' || paid > 0 || due > 0) && (
                               <div className="text-xs text-gray-500 font-sans">
                                 পরিশোধ: ৳{fmt(paid)} | বাকি: <span className={due > 0 ? "text-amber-700 font-bold" : "text-emerald-700"}>৳{fmt(due)}</span>

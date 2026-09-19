@@ -37,6 +37,7 @@ export async function executeSaleTransaction(params: {
   item: InventoryItem;
   quantity: number;
   unitPrice: number;
+  discount?: number;
   paymentMethod: 'CASH' | 'BANK' | 'CREDIT';
   bankAccountId?: string;
   currentUserId: string;
@@ -55,7 +56,7 @@ export async function executeSaleTransaction(params: {
       db.closedPeriods
     ],
     async () => {
-      const { customer, item, quantity, unitPrice, paymentMethod, bankAccountId, currentUserId, date } = params;
+      const { customer, item, quantity, unitPrice, discount = 0, paymentMethod, bankAccountId, currentUserId, date } = params;
 
       const todayStr = new Date().toISOString().split('T')[0];
       const dateStr = date || todayStr;
@@ -75,7 +76,9 @@ export async function executeSaleTransaction(params: {
         );
       }
 
-      const totalAmount = Math.round(quantity * unitPrice * 100) / 100;
+      const subtotal = Math.round(quantity * unitPrice * 100) / 100;
+      const validDiscount = Math.min(subtotal, Math.max(0, Math.round((discount || 0) * 100) / 100));
+      const totalAmount = Math.max(0, Math.round((subtotal - validDiscount) * 100) / 100);
       const totalCogs = Math.round(quantity * (freshItem.avgCostPrice || 0) * 100) / 100;
 
       if (totalAmount <= 0) {
@@ -115,7 +118,7 @@ export async function executeSaleTransaction(params: {
           accountName: 'পণ্য বিক্রয় রাজস্ব (Sales Revenue)',
           debit: 0,
           credit: totalAmount,
-          memo: `${freshItem.nameBn} বিক্রয়`
+          memo: `${freshItem.nameBn} বিক্রয়${validDiscount > 0 ? ` (মূল্যছাড়: ৳${validDiscount})` : ''}`
         }
       ];
 
@@ -148,7 +151,7 @@ export async function executeSaleTransaction(params: {
           voucherNumber,
           voucherType: 'SALES',
           date: dateStr,
-          narration: `বিক্রয় চালান: ${customer.name} কে ${quantity} ${freshItem.unit} ${freshItem.nameBn} বিক্রয়`,
+          narration: `বিক্রয় চালান: ${customer.name} কে ${quantity} ${freshItem.unit} ${freshItem.nameBn} বিক্রয়${validDiscount > 0 ? ` (ছাড়: ৳${validDiscount})` : ''}`,
           reference: invoiceNumber,
           lines: journalLines,
           createdBy: currentUserId,
@@ -174,12 +177,12 @@ export async function executeSaleTransaction(params: {
             itemName: freshItem.nameBn,
             quantity,
             unitPrice,
-            lineTotal: totalAmount,
+            lineTotal: subtotal,
             cogsAmount: totalCogs
           }
         ],
-        subtotal: totalAmount,
-        discount: 0,
+        subtotal: subtotal,
+        discount: validDiscount,
         vatTax: 0,
         totalAmount,
         grandTotal: totalAmount,
@@ -259,6 +262,7 @@ export async function executePurchaseTransaction(params: {
   quantity: number;
   unitPrice: number;
   transportCost?: number;
+  discount?: number;
   paymentMethod: 'CASH' | 'BANK' | 'CREDIT';
   bankAccountId?: string;
   currentUserId: string;
@@ -277,7 +281,7 @@ export async function executePurchaseTransaction(params: {
       db.closedPeriods
     ],
     async () => {
-      const { supplier, item, quantity, unitPrice, transportCost = 0, paymentMethod, bankAccountId, currentUserId, date } = params;
+      const { supplier, item, quantity, unitPrice, transportCost = 0, discount = 0, paymentMethod, bankAccountId, currentUserId, date } = params;
 
       const todayStr = new Date().toISOString().split('T')[0];
       const dateStr = date || todayStr;
@@ -291,7 +295,8 @@ export async function executePurchaseTransaction(params: {
       }
 
       const itemsTotal = Math.round(quantity * unitPrice * 100) / 100;
-      const grandTotal = Math.round((itemsTotal + transportCost) * 100) / 100;
+      const validDiscount = Math.min(itemsTotal + transportCost, Math.max(0, Math.round((discount || 0) * 100) / 100));
+      const grandTotal = Math.max(0, Math.round((itemsTotal + transportCost - validDiscount) * 100) / 100);
 
       if (grandTotal <= 0) {
         throw new Error('Purchase total amount must be strictly greater than 0.');
@@ -319,7 +324,7 @@ export async function executePurchaseTransaction(params: {
               : 'মজুদ কাঁচামাল/পণ্য (Inventory Asset)',
           debit: grandTotal,
           credit: 0,
-          memo: `ক্রয় চালান ${invoiceNumber} (পরিবহন ব্যয়সহ মূল্যায়ন)`
+          memo: `ক্রয় চালান ${invoiceNumber} (পরিবহন ব্যয়${validDiscount > 0 ? ` ও মূল্যছাড় ৳${validDiscount}` : ''} সমন্বিত মূল্যায়ন)`
         },
         {
           accountId: paymentAccountCode,
@@ -343,7 +348,7 @@ export async function executePurchaseTransaction(params: {
           voucherNumber,
           voucherType: 'PURCHASE',
           date: dateStr,
-          narration: `ক্রয় চালান: ${supplier.name} এর নিকট থেকে ${quantity} ${freshItem.unit} ${freshItem.nameBn} ক্রয়`,
+          narration: `ক্রয় চালান: ${supplier.name} এর নিকট থেকে ${quantity} ${freshItem.unit} ${freshItem.nameBn} ক্রয়${validDiscount > 0 ? ` (ছাড়: ৳${validDiscount})` : ''}`,
           reference: invoiceNumber,
           lines: journalLines,
           createdBy: currentUserId,
@@ -374,6 +379,7 @@ export async function executePurchaseTransaction(params: {
         ],
         subtotal: itemsTotal,
         transportCost,
+        discount: validDiscount,
         grandTotal,
         totalAmount: grandTotal,
         paidAmount: paymentMethod === 'CREDIT' ? 0 : grandTotal,
