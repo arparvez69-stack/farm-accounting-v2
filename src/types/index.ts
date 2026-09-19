@@ -344,6 +344,7 @@ export interface PurchaseItem {
 export interface Purchase {
   id: string;
   invoiceNumber: string;
+  displayNumber?: string;
   supplierId: string;
   supplierName: string;
   date: string;
@@ -380,6 +381,7 @@ export interface SaleItem {
 export interface Sale {
   id: string;
   invoiceNumber: string;
+  displayNumber?: string;
   customerId: string;
   customerName: string;
   date: string;

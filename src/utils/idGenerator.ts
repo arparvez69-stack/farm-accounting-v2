@@ -1,4 +1,5 @@
 import type { Table } from 'dexie';
+import { db } from '../db/indexedDb';
 
 /**
  * Reliable Collision-Resistant ID and Transaction Reference Generator
@@ -59,6 +60,70 @@ export function generateTransactionNumber(prefix: string): string {
   const seqPart = counter.toString().padStart(4, '0');
   const randPart = getRandomSuffix(4);
   return `${prefix}-${datePart}-${seqPart}-${randPart}`;
+}
+
+/**
+ * Generates a short, human-facing sequential number per document type per calendar year
+ * e.g. SAL-2026-0001, PUR-2026-0001
+ * Resets to 0001 at the start of each new calendar year.
+ */
+export async function generateDisplayNumber(
+  docType: 'SAL' | 'PUR',
+  dateStr?: string
+): Promise<string> {
+  const targetYear = dateStr ? dateStr.slice(0, 4) : String(new Date().getFullYear());
+  const prefix = docType;
+
+  let maxSeq = 0;
+  try {
+    if (docType === 'SAL') {
+      const allSales = await db.sales.toArray();
+      let legacyCountInYear = 0;
+      for (const s of allSales) {
+        if (s.displayNumber) {
+          const match = s.displayNumber.match(new RegExp(`^${prefix}-${targetYear}-(\\d+)$`));
+          if (match) {
+            const num = parseInt(match[1], 10);
+            if (!isNaN(num) && num > maxSeq) {
+              maxSeq = num;
+            }
+          }
+        } else {
+          const sYear = s.date ? s.date.slice(0, 4) : '';
+          if (sYear === targetYear) {
+            legacyCountInYear++;
+          }
+        }
+      }
+      maxSeq = Math.max(maxSeq, legacyCountInYear);
+    } else {
+      const allPurchases = await db.purchases.toArray();
+      let legacyCountInYear = 0;
+      for (const p of allPurchases) {
+        if (p.displayNumber) {
+          const match = p.displayNumber.match(new RegExp(`^${prefix}-${targetYear}-(\\d+)$`));
+          if (match) {
+            const num = parseInt(match[1], 10);
+            if (!isNaN(num) && num > maxSeq) {
+              maxSeq = num;
+            }
+          }
+        } else {
+          const pYear = p.date ? p.date.slice(0, 4) : '';
+          if (pYear === targetYear) {
+            legacyCountInYear++;
+          }
+        }
+      }
+      maxSeq = Math.max(maxSeq, legacyCountInYear);
+    }
+  } catch (err) {
+    console.warn('Error querying existing records in generateDisplayNumber:', err);
+  }
+
+  const nextSeq = maxSeq + 1;
+  const seqStr = String(nextSeq).padStart(4, '0');
+  return `${prefix}-${targetYear}-${seqStr}`;
 }
 
 /**
