@@ -263,7 +263,7 @@ export const FarmOperationsModule: React.FC<Props> = ({
   // Add Animal
   const [showAddAnimal, setShowAddAnimal] = useState(false);
   const [tagId, setTagId] = useState('');
-  const [species, setSpecies] = useState<'CATTLE' | 'GOAT' | 'SHEEP'>('CATTLE');
+  const [species, setSpecies] = useState<'CATTLE' | 'GOAT' | 'SHEEP' | 'POULTRY'>('CATTLE');
   const [breed, setBreed] = useState('দেশি ও ফ্রিজিয়ান ক্রস');
   const [gender, setGender] = useState<'MALE' | 'FEMALE'>('FEMALE');
   const [purchaseCost, setPurchaseCost] = useState('65000');
@@ -339,7 +339,7 @@ export const FarmOperationsModule: React.FC<Props> = ({
   // Edit Animal Modal state
   const [editingAnimal, setEditingAnimal] = useState<Animal | null>(null);
   const [editTag, setEditTag] = useState('');
-  const [editSpecies, setEditSpecies] = useState<'CATTLE' | 'GOAT' | 'SHEEP'>('CATTLE');
+  const [editSpecies, setEditSpecies] = useState<'CATTLE' | 'GOAT' | 'SHEEP' | 'POULTRY'>('CATTLE');
   const [editBreed, setEditBreed] = useState('');
   const [editGender, setEditGender] = useState<'MALE' | 'FEMALE'>('FEMALE');
   const [editBirthDate, setEditBirthDate] = useState('');
@@ -576,7 +576,7 @@ export const FarmOperationsModule: React.FC<Props> = ({
             voucherNumber,
             voucherType: method === 'CREDIT' ? 'JOURNAL' : 'PAYMENT',
             date: entryDate,
-            narration: `নতুন গবাদিপশু ক্রয়: ${finalAnimal.species === 'CATTLE' ? 'গরু' : finalAnimal.species === 'GOAT' ? 'ছাগল' : 'ভেড়া'} (ট্যাগ: ${finalAnimal.id}), ক্রয়মূল্য: ৳${pCost}`,
+            narration: `নতুন গবাদিপশু/হাঁস-মুরগি ক্রয়: ${finalAnimal.species === 'CATTLE' ? 'গরু' : finalAnimal.species === 'GOAT' ? 'ছাগল' : finalAnimal.species === 'SHEEP' ? 'ভেড়া' : finalAnimal.species === 'POULTRY' ? 'হাঁস-মুরগি' : 'পশু'} (ট্যাগ: ${finalAnimal.id}), ক্রয়মূল্য: ৳${pCost}`,
             reference: finalAnimal.id,
             lines,
             createdBy: currentUserId,
@@ -620,7 +620,7 @@ export const FarmOperationsModule: React.FC<Props> = ({
         finalAnimal.supplierId = effectiveSupplierId;
       }
 
-      const speciesPrefix = finalAnimal.species === 'GOAT' ? 'GOT' : finalAnimal.species === 'SHEEP' ? 'SHP' : 'COW';
+      const speciesPrefix = finalAnimal.species === 'GOAT' ? 'GOT' : finalAnimal.species === 'SHEEP' ? 'SHP' : finalAnimal.species === 'POULTRY' ? 'PLT' : 'COW';
       await safeInsert(db.animals, finalAnimal, { idPrefix: speciesPrefix });
       setShowAddAnimal(false);
       setDuplicateTagWarning(null);
@@ -666,7 +666,7 @@ export const FarmOperationsModule: React.FC<Props> = ({
         }
       }
 
-      const speciesPrefix = species === 'GOAT' ? 'GOT' : species === 'SHEEP' ? 'SHP' : 'COW';
+      const speciesPrefix = species === 'GOAT' ? 'GOT' : species === 'SHEEP' ? 'SHP' : species === 'POULTRY' ? 'PLT' : 'COW';
       const anId = tagId.trim() || generateTransactionNumber(speciesPrefix);
       const animal: Animal = {
         id: anId,
@@ -1763,6 +1763,7 @@ export const FarmOperationsModule: React.FC<Props> = ({
                   <option value="CATTLE">গরু (Cattle)</option>
                   <option value="GOAT">ছাগল (Goat)</option>
                   <option value="SHEEP">ভেড়া (Sheep)</option>
+                  <option value="POULTRY">হাঁস-মুরগি (Poultry - Chicken/Duck)</option>
                 </select>
                 <input
                   type="text"
@@ -2054,6 +2055,8 @@ export const FarmOperationsModule: React.FC<Props> = ({
                                 ? (a.gender === 'FEMALE' ? 'ছাগী' : 'খাসি/পাঁঠা')
                                 : a.species === 'SHEEP'
                                 ? (a.gender === 'FEMALE' ? 'ভেড়ী' : 'ভেড়া')
+                                : a.species === 'POULTRY'
+                                ? (a.gender === 'FEMALE' ? 'মুরগি/হাঁসি' : 'মোরগ/হাঁস')
                                 : (a.gender === 'FEMALE' ? 'গাভী' : 'ষাঁড়')} ({a.currentWeightKg} কেজি)
                             </span>
                           </div>
@@ -2359,7 +2362,7 @@ export const FarmOperationsModule: React.FC<Props> = ({
                                       )}
                                     </div>
                                     <div className="text-[11px] text-gray-500">
-                                      {animal.species === 'CATTLE' ? 'গরু' : animal.species === 'GOAT' ? 'ছাগল' : animal.species}
+                                      {animal.species === 'CATTLE' ? 'গরু' : animal.species === 'GOAT' ? 'ছাগল' : animal.species === 'SHEEP' ? 'ভেড়া' : animal.species === 'POULTRY' ? 'হাঁস-মুরগি' : animal.species}
                                       {animal.breed ? ` • ${animal.breed}` : ''}
                                     </div>
                                   </div>
@@ -2404,7 +2407,7 @@ export const FarmOperationsModule: React.FC<Props> = ({
                           <option value="">-- যে পশুর জন্য কার্যক্রম তা নির্বাচন করুন --</option>
                           {activeAnimals.map((a) => (
                             <option key={a.id} value={a.id}>
-                              {a.id} {a.tag ? `(ট্যাগ: ${a.tag})` : ''} - {a.species === 'CATTLE' ? 'গরু' : a.species === 'GOAT' ? 'ছাগল' : a.species} {a.breed ? `[${a.breed}]` : ''}
+                              {a.id} {a.tag ? `(ট্যাগ: ${a.tag})` : ''} - {a.species === 'CATTLE' ? 'গরু' : a.species === 'GOAT' ? 'ছাগল' : a.species === 'SHEEP' ? 'ভেড়া' : a.species === 'POULTRY' ? 'হাঁস-মুরগি' : a.species} {a.breed ? `[${a.breed}]` : ''}
                             </option>
                           ))}
                         </select>
@@ -3900,6 +3903,7 @@ export const FarmOperationsModule: React.FC<Props> = ({
                     <option value="CATTLE">গরু (Cattle)</option>
                     <option value="GOAT">ছাগল (Goat)</option>
                     <option value="SHEEP">ভেড়া (Sheep)</option>
+                    <option value="POULTRY">হাঁস-মুরগি (Poultry - Chicken/Duck)</option>
                   </select>
                 </div>
               </div>

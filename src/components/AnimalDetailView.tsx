@@ -993,7 +993,7 @@ export const AnimalDetailView: React.FC<AnimalDetailViewProps> = ({
         <div className="p-3 bg-gray-50/80 rounded-xl border border-gray-100">
           <span className="text-gray-500 block text-[12px]">প্রজাতি ও লিঙ্গ</span>
           <span className="font-bold text-gray-900 text-[14px]">
-            {animal.species === 'CATTLE' ? 'গরু (Cattle)' : animal.species === 'GOAT' ? 'ছাগল (Goat)' : animal.species}
+            {animal.species === 'CATTLE' ? 'গরু (Cattle)' : animal.species === 'GOAT' ? 'ছাগল (Goat)' : animal.species === 'SHEEP' ? 'ভেড়া (Sheep)' : animal.species === 'POULTRY' ? 'হাঁস-মুরগি (Poultry)' : animal.species}
             {' • '}
             {animal.gender === 'FEMALE' ? 'মাদি (Female)' : 'মদ্দা (Male)'}
           </span>

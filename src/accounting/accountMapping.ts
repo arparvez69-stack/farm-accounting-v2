@@ -173,7 +173,37 @@ export function getRevenueAndCogsAccounts(item: { nameBn?: string; nameEn?: stri
     };
   }
 
-  if (name.includes('পশু') || name.includes('গরু') || name.includes('ছাগল') || name.includes('cattle') || name.includes('goat') || name.includes('livestock')) {
+  if (
+    item.category === 'LIVESTOCK' ||
+    item.category === 'POULTRY' ||
+    name.includes('পশু') ||
+    name.includes('গরু') ||
+    name.includes('ছাগল') ||
+    name.includes('ভেড়া') ||
+    name.includes('মহিষ') ||
+    name.includes('হাঁস') ||
+    name.includes('মুরগি') ||
+    name.includes('মুরগী') ||
+    name.includes('পোল্ট্রি') ||
+    name.includes('টার্কি') ||
+    name.includes('কোয়েল') ||
+    name.includes('ডিম') ||
+    name.includes('cattle') ||
+    name.includes('goat') ||
+    name.includes('sheep') ||
+    name.includes('livestock') ||
+    name.includes('poultry') ||
+    name.includes('chicken') ||
+    name.includes('duck') ||
+    name.includes('hen') ||
+    name.includes('rooster') ||
+    name.includes('broiler') ||
+    name.includes('layer') ||
+    name.includes('bird') ||
+    name.includes('turkey') ||
+    name.includes('quail') ||
+    name.includes('egg')
+  ) {
     return {
       revenueCode: CANONICAL_ACCOUNTS.LIVESTOCK_REVENUE, // 4020
       cogsCode: CANONICAL_ACCOUNTS.LIVESTOCK_COGS // 5020

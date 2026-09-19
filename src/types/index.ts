@@ -115,7 +115,7 @@ export interface ClosedPeriod {
   synced?: boolean;
 }
 
-export type AnimalSpecies = 'CATTLE' | 'GOAT' | 'SHEEP' | 'OTHER';
+export type AnimalSpecies = 'CATTLE' | 'GOAT' | 'SHEEP' | 'POULTRY' | 'OTHER';
 export type AnimalStatus = 'ACTIVE' | 'SOLD' | 'DECEASED' | 'TRANSFERRED' | 'STOLEN';
 
 export interface Animal {
