@@ -38,6 +38,7 @@ export interface LedgerEntry {
   reversedBy?: string;
   reversalOf?: string;
   correctionOf?: string;
+  relatedPerson?: string;
 }
 
 export interface ProfitLossReport {
@@ -313,6 +314,7 @@ export async function reverseJournalEntry(
     lines: reversedLines,
     reference: original.id,
     reversalOf: original.id,
+    relatedPerson: original.relatedPerson,
     createdBy: currentUserId || 'system',
     createdAt: new Date().toISOString()
   };
@@ -900,7 +902,8 @@ export async function getGeneralLedger(accountCode: string): Promise<{ account?:
           runningBalance: Math.round(running * 100) / 100,
           reversedBy: entry.reversedBy,
           reversalOf: entry.reversalOf,
-          correctionOf: entry.correctionOf
+          correctionOf: entry.correctionOf,
+          relatedPerson: entry.relatedPerson
         });
       }
     }

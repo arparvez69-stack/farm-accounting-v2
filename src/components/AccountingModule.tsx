@@ -18,7 +18,8 @@ import {
   Repeat,
   Edit2,
   Clock,
-  Scale
+  Scale,
+  User
 } from 'lucide-react';
 import { db } from '../db/indexedDb';
 import {
@@ -40,7 +41,7 @@ import { Account, ClosedPeriod, JournalEntry, JournalLine, RecurringExpenseTempl
 import { generateTransactionNumber, generateUniqueId, safeInsert } from '../utils/idGenerator';
 import { HIGH_AMOUNT_CONFIRMATION_THRESHOLD } from '../constants/validation';
 import { notifyUndoableAction } from '../services/undoService';
-import { StatusBadge, Card } from './ui';
+import { StatusBadge, Card, SearchableSelect, SearchableOption } from './ui';
 
 interface Props {
   role: UserRole;
@@ -125,6 +126,17 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
   const [deprRunning, setDeprRunning] = useState(false);
   const [confirmHighAmountVoucher, setConfirmHighAmountVoucher] = useState<{ amount: number } | null>(null);
 
+  // Memoized account options for SearchableSelect
+  const accountOptions = React.useMemo<SearchableOption[]>(() => {
+    return accounts.map((acc) => ({
+      value: acc.code,
+      label: acc.nameBn,
+      code: acc.code,
+      secondaryLabel: acc.accountClass,
+      subtitle: acc.nameEn
+    }));
+  }, [accounts]);
+
   // Recurring Expense Templates State
   const [recurringTemplates, setRecurringTemplates] = useState<RecurringExpenseTemplate[]>([]);
   const [showRecurringModal, setShowRecurringModal] = useState(false);
@@ -149,6 +161,11 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
   const [closingExecuting, setClosingExecuting] = useState(false);
 
   // New Voucher Form State
+  const [voucherMode, setVoucherMode] = useState<'SIMPLE' | 'ADVANCED'>('SIMPLE');
+  const [simpleFromAccount, setSimpleFromAccount] = useState<string>(''); // Money going OUT of (credited)
+  const [simpleToAccount, setSimpleToAccount] = useState<string>(''); // Money coming INTO (debited)
+  const [simpleAmount, setSimpleAmount] = useState<string>('');
+  const [relatedPerson, setRelatedPerson] = useState<string>('');
   const [voucherType, setVoucherType] = useState<VoucherType>('JOURNAL');
   const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
   const [narration, setNarration] = useState('');
@@ -426,27 +443,130 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
     setLines(lines.filter((_, i) => i !== index));
   };
 
-  let balanceCheck = { isBalanced: false, totalDebit: 0, totalCredit: 0, difference: 0 };
-  try {
-    balanceCheck = validateBalancedLines(lines, accounts);
-  } catch (e) {
-    let tDebit = 0;
-    let tCredit = 0;
-    for (const l of lines) {
-      tDebit += Number(l.debit || 0);
-      tCredit += Number(l.credit || 0);
+  const resetVoucherForm = () => {
+    setVoucherMode('SIMPLE');
+    setSimpleFromAccount('');
+    setSimpleToAccount('');
+    setSimpleAmount('');
+    setRelatedPerson('');
+    setNarration('');
+    setReference('');
+    setCorrectionOf(null);
+    setCorrectingOriginal(null);
+    setLines([
+      { accountId: '', accountCode: '', accountName: '', debit: 0, credit: 0, memo: '' },
+      { accountId: '', accountCode: '', accountName: '', debit: 0, credit: 0, memo: '' }
+    ]);
+  };
+
+  const getEffectiveLines = (): JournalLine[] => {
+    if (voucherMode === 'SIMPLE') {
+      const fromAcc = accounts.find((a) => a.code === simpleFromAccount);
+      const toAcc = accounts.find((a) => a.code === simpleToAccount);
+      const amt = parseFloat(simpleAmount) || 0;
+      return [
+        {
+          accountId: toAcc?.id || '',
+          accountCode: toAcc?.code || simpleToAccount,
+          accountName: toAcc?.nameBn || '',
+          debit: amt,
+          credit: 0,
+          memo: ''
+        },
+        {
+          accountId: fromAcc?.id || '',
+          accountCode: fromAcc?.code || simpleFromAccount,
+          accountName: fromAcc?.nameBn || '',
+          debit: 0,
+          credit: amt,
+          memo: ''
+        }
+      ];
     }
+    return lines;
+  };
+
+  const handleSwitchMode = (targetMode: 'SIMPLE' | 'ADVANCED') => {
+    if (targetMode === voucherMode) return;
+    if (targetMode === 'ADVANCED') {
+      const amt = parseFloat(simpleAmount) || 0;
+      if (simpleFromAccount || simpleToAccount || amt > 0) {
+        const from = accounts.find((a) => a.code === simpleFromAccount);
+        const to = accounts.find((a) => a.code === simpleToAccount);
+        setLines([
+          {
+            accountId: to?.id || '',
+            accountCode: to?.code || simpleToAccount,
+            accountName: to?.nameBn || '',
+            debit: amt,
+            credit: 0,
+            memo: ''
+          },
+          {
+            accountId: from?.id || '',
+            accountCode: from?.code || simpleFromAccount,
+            accountName: from?.nameBn || '',
+            debit: 0,
+            credit: amt,
+            memo: ''
+          }
+        ]);
+      }
+    } else {
+      // Switching from ADVANCED to SIMPLE: check if exactly 1 debit and 1 credit line
+      const debitLine = lines.find((l) => Number(l.debit) > 0 && Number(l.credit) === 0);
+      const creditLine = lines.find((l) => Number(l.credit) > 0 && Number(l.debit) === 0);
+      if (lines.length === 2 && debitLine && creditLine) {
+        setSimpleToAccount(debitLine.accountCode);
+        setSimpleFromAccount(creditLine.accountCode);
+        setSimpleAmount(String(debitLine.debit));
+      }
+    }
+    setVoucherMode(targetMode);
+  };
+
+  let balanceCheck = { isBalanced: false, totalDebit: 0, totalCredit: 0, difference: 0 };
+  if (voucherMode === 'SIMPLE') {
+    const fromAcc = accounts.find((a) => a.code === simpleFromAccount);
+    const toAcc = accounts.find((a) => a.code === simpleToAccount);
+    const amt = parseFloat(simpleAmount) || 0;
+    const isBalanced = Boolean(
+      fromAcc &&
+      toAcc &&
+      simpleFromAccount &&
+      simpleToAccount &&
+      simpleFromAccount !== simpleToAccount &&
+      amt > 0
+    );
     balanceCheck = {
-      isBalanced: Math.abs(tDebit - tCredit) < 0.01 && tDebit > 0,
-      totalDebit: tDebit,
-      totalCredit: tCredit,
-      difference: Math.abs(tDebit - tCredit)
+      isBalanced,
+      totalDebit: amt > 0 ? amt : 0,
+      totalCredit: amt > 0 ? amt : 0,
+      difference: 0
     };
+  } else {
+    try {
+      balanceCheck = validateBalancedLines(lines, accounts);
+    } catch (e) {
+      let tDebit = 0;
+      let tCredit = 0;
+      for (const l of lines) {
+        tDebit += Number(l.debit || 0);
+        tCredit += Number(l.credit || 0);
+      }
+      balanceCheck = {
+        isBalanced: Math.abs(tDebit - tCredit) < 0.01 && tDebit > 0,
+        totalDebit: tDebit,
+        totalCredit: tCredit,
+        difference: Math.abs(tDebit - tCredit)
+      };
+    }
   }
 
   const executeSaveVoucher = async () => {
     try {
-      validateBalancedLines(lines, accounts);
+      const linesToSave = getEffectiveLines();
+      validateBalancedLines(linesToSave, accounts);
 
       const voucherPrefix = voucherType.substring(0, 3).toUpperCase();
       const voucherNum = generateTransactionNumber(voucherPrefix);
@@ -459,8 +579,9 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
         date,
         narration: narration.trim() || 'হিসাবরক্ষণ জাবেদা ভাউচার',
         reference: reference.trim(),
-        lines,
+        lines: linesToSave,
         correctionOf: correctionOf || undefined,
+        relatedPerson: relatedPerson.trim() || undefined,
         createdBy: currentUserId,
         createdAt: new Date().toISOString()
       });
@@ -476,8 +597,8 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
         recordId: entryId,
         status: 'SUCCESS',
         details: correctionOf
-          ? `সংশোধিত ভাউচার পোস্ট করা হয়েছে: ${voucherNum} (রিভার্সাল ভাউচার ID: ${correctionOf}, পরিমাণ: ৳${balanceCheck.totalDebit})`
-          : `ভাউচার পোস্ট করা হয়েছে: ${voucherNum} (৳${balanceCheck.totalDebit})`
+          ? `সংশোধিত ভাউচার পোস্ট করা হয়েছে: ${voucherNum} (রিভার্সাল ভাউচার ID: ${correctionOf}, পরিমাণ: ৳${balanceCheck.totalDebit}${relatedPerson.trim() ? `, সংশ্লিষ্ট ব্যক্তি: ${relatedPerson.trim()}` : ''})`
+          : `ভাউচার পোস্ট করা হয়েছে: ${voucherNum} (৳${balanceCheck.totalDebit}${relatedPerson.trim() ? `, সংশ্লিষ্ট ব্যক্তি: ${relatedPerson.trim()}` : ''})`
       });
 
       setMsg({
@@ -493,14 +614,7 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
         currentUserId
       });
       // Reset form
-      setNarration('');
-      setReference('');
-      setCorrectionOf(null);
-      setCorrectingOriginal(null);
-      setLines([
-        { accountId: '', accountCode: '', accountName: '', debit: 0, credit: 0, memo: '' },
-        { accountId: '', accountCode: '', accountName: '', debit: 0, credit: 0, memo: '' }
-      ]);
+      resetVoucherForm();
       setSubTab('daybook');
     } catch (err: any) {
       setMsg({ type: 'error', text: err.message || 'ভাউচার সংরক্ষণ করতে ব্যর্থ হয়েছে।' });
@@ -533,9 +647,30 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
       return;
     }
 
+    if (voucherMode === 'SIMPLE') {
+      if (!simpleFromAccount) {
+        setMsg({ type: 'error', text: 'কোন হিসাব থেকে টাকা যাচ্ছে (From Account) তা নির্বাচন করুন।' });
+        return;
+      }
+      if (!simpleToAccount) {
+        setMsg({ type: 'error', text: 'কোন হিসাবে টাকা আসছে (To Account) তা নির্বাচন করুন।' });
+        return;
+      }
+      if (simpleFromAccount === simpleToAccount) {
+        setMsg({ type: 'error', text: 'টাকা যাওয়ার হিসাব ও টাকা আসার হিসাব একই হতে পারে না।' });
+        return;
+      }
+      const amt = parseFloat(simpleAmount);
+      if (!amt || isNaN(amt) || amt <= 0) {
+        setMsg({ type: 'error', text: 'টাকার পরিমাণ শূণ্যের চেয়ে বেশি হতে হবে।' });
+        return;
+      }
+    }
+
     try {
+      const linesToValidate = getEffectiveLines();
       // Validate lines strictly against accounts list
-      validateBalancedLines(lines, accounts);
+      validateBalancedLines(linesToValidate, accounts);
 
       if (balanceCheck.totalDebit > HIGH_AMOUNT_CONFIRMATION_THRESHOLD) {
         setConfirmHighAmountVoucher({ amount: balanceCheck.totalDebit });
@@ -579,6 +714,7 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
       setDate(new Date().toISOString().split('T')[0]);
       setNarration(`মূল এন্ট্রি #${originalEntry.id}-এর সংশোধিত সঠিক দাখিলা`);
       setReference(`সংশোধনী: #${result.reversal.voucherNumber}`);
+      setRelatedPerson(originalEntry.relatedPerson || '');
       setLines(
         originalEntry.lines.map((l) => ({
           accountId: l.accountId,
@@ -589,6 +725,22 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
           memo: l.memo ? `সংশোধনী: ${l.memo}` : ''
         }))
       );
+
+      // Default to Simple mode; automatically switch to Advanced mode when editing or reversing a voucher that already has more than 2 lines.
+      if (originalEntry.lines.length > 2) {
+        setVoucherMode('ADVANCED');
+      } else {
+        const debitLine = originalEntry.lines.find((l) => Number(l.debit) > 0 && Number(l.credit) === 0);
+        const creditLine = originalEntry.lines.find((l) => Number(l.credit) > 0 && Number(l.debit) === 0);
+        if (originalEntry.lines.length === 2 && debitLine && creditLine) {
+          setVoucherMode('SIMPLE');
+          setSimpleToAccount(debitLine.accountCode);
+          setSimpleFromAccount(creditLine.accountCode);
+          setSimpleAmount(String(debitLine.debit));
+        } else {
+          setVoucherMode('ADVANCED');
+        }
+      }
 
       // Open the voucher form immediately
       setSubTab('vouchers');
@@ -875,14 +1027,7 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
               <button
                 type="button"
                 onClick={() => {
-                  setCorrectionOf(null);
-                  setCorrectingOriginal(null);
-                  setNarration('');
-                  setReference('');
-                  setLines([
-                    { accountId: '', accountCode: '', accountName: '', debit: 0, credit: 0, memo: '' },
-                    { accountId: '', accountCode: '', accountName: '', debit: 0, credit: 0, memo: '' }
-                  ]);
+                  resetVoucherForm();
                 }}
                 className="text-xs text-amber-800 underline hover:text-amber-950 font-bold cursor-pointer"
               >
@@ -892,7 +1037,45 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
           )}
 
           <form onSubmit={handleSubmitVoucher} className="space-y-4">
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
+            {/* Mode Toggle: Simple vs Advanced */}
+            <div className="flex items-center justify-between border-b border-gray-100 pb-3 flex-wrap gap-2.5">
+              <div className="inline-flex p-1 bg-gray-100 rounded-xl border border-gray-200">
+                <button
+                  type="button"
+                  id="btn-voucher-mode-simple"
+                  onClick={() => handleSwitchMode('SIMPLE')}
+                  className={`px-3.5 py-2 rounded-lg text-xs sm:text-[13px] font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                    voucherMode === 'SIMPLE'
+                      ? 'bg-white text-blue-700 shadow-xs'
+                      : 'text-gray-600 hover:text-gray-900'
+                  }`}
+                >
+                  <span>সহজ (Simple)</span>
+                </button>
+                <button
+                  type="button"
+                  id="btn-voucher-mode-advanced"
+                  onClick={() => handleSwitchMode('ADVANCED')}
+                  className={`px-3.5 py-2 rounded-lg text-xs sm:text-[13px] font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                    voucherMode === 'ADVANCED'
+                      ? 'bg-white text-blue-700 shadow-xs'
+                      : 'text-gray-600 hover:text-gray-900'
+                  }`}
+                >
+                  <span>উন্নত/একাধিক লাইন (Advanced/Multi-line)</span>
+                </button>
+              </div>
+
+              <div className="text-xs text-gray-500 font-medium">
+                {voucherMode === 'SIMPLE' ? (
+                  <span>সাধারণ লেনদেন: একটি টাকা বহির্গমন ও একটি আগমন হিসাব</span>
+                ) : (
+                  <span>জটিল লেনদেন: ইচ্ছামত একাধিক ডেবিট/ক্রেডিট লাইন যোগ করুন</span>
+                )}
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
               <div>
                 <label className="block text-[14px] font-bold text-gray-800 mb-1.5">
                   ভাউচারের ধরন (Voucher Type)
@@ -947,6 +1130,20 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
                   className="w-full bg-[#F8FAFC] border border-gray-300 rounded-xl px-3.5 py-2.5 text-[15px] text-gray-900 focus:outline-none focus:border-blue-600 focus:ring-2 focus:ring-blue-600/20 min-h-[44px]"
                 />
               </div>
+
+              <div>
+                <label className="block text-[14px] font-bold text-gray-800 mb-1.5">
+                  <span>সংশ্লিষ্ট ব্যক্তি (Related Person)</span>
+                  <span className="text-xs font-normal text-gray-500 ml-1">(ঐচ্ছিক)</span>
+                </label>
+                <input
+                  type="text"
+                  value={relatedPerson}
+                  onChange={(e) => setRelatedPerson(e.target.value)}
+                  placeholder="যেমন: মো: করিম / আকাশ ট্রেডার্স"
+                  className="w-full bg-[#F8FAFC] border border-gray-300 rounded-xl px-3.5 py-2.5 text-[15px] text-gray-900 focus:outline-none focus:border-blue-600 focus:ring-2 focus:ring-blue-600/20 min-h-[44px]"
+                />
+              </div>
             </div>
 
             <div>
@@ -963,88 +1160,176 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
               />
             </div>
 
-            {/* Debit / Credit Lines */}
-            <div className="pt-3 border-t border-gray-200 space-y-2.5">
-              <div className="flex items-center justify-between">
-                <span className="text-[14px] font-bold text-gray-800">হিসাব লাইনসমূহ (Debit & Credit Lines)</span>
-                <button
-                  type="button"
-                  onClick={addLine}
-                  className="text-[13px] text-blue-700 hover:underline flex items-center gap-1 font-bold cursor-pointer py-1 px-2"
-                >
-                  <PlusCircle className="w-4 h-4" />
-                  <span>+ লাইন যোগ করুন</span>
-                </button>
-              </div>
-
-              <div className="space-y-2.5">
-                {lines.map((line, idx) => (
-                  <div
-                    key={idx}
-                    className="grid grid-cols-12 gap-2 items-center bg-[#F8FAFC] p-2.5 sm:p-3 rounded-xl border border-gray-200"
-                  >
-                    <div className="col-span-12 sm:col-span-6">
-                      <select
-                        value={line.accountCode}
-                        onChange={(e) => handleLineAccountChange(idx, e.target.value)}
-                        className="w-full bg-white border border-gray-300 rounded-lg px-3 py-2 text-[14px] text-gray-900 focus:outline-none focus:border-blue-600 min-h-[40px]"
-                      >
-                        <option value="">-- হিসাব নির্বাচন করুন (Select Account) --</option>
-                        {accounts.map((acc) => (
-                          <option key={acc.id} value={acc.code}>
-                            {acc.nameBn} ({acc.code} • {acc.accountClass})
-                          </option>
-                        ))}
-                      </select>
+            {/* SIMPLE MODE: 2 Account Pickers + 1 Amount */}
+            {voucherMode === 'SIMPLE' && (
+              <div className="pt-3 border-t border-gray-200 space-y-3.5">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
+                  {/* From Account: Money going OUT of (Credit) */}
+                  <div className="bg-[#FEF2F2]/60 p-3.5 sm:p-4 rounded-xl border border-rose-200 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <label className="block text-[14px] font-bold text-gray-900">
+                        কোন হিসাব থেকে টাকা যাচ্ছে (Money going OUT of)
+                      </label>
+                      <span className="text-[11px] font-semibold text-rose-700 bg-rose-100 px-2 py-0.5 rounded">
+                        ক্রেডিট (Cr)
+                      </span>
                     </div>
+                    <SearchableSelect
+                      options={accountOptions}
+                      value={simpleFromAccount}
+                      onChange={(val) => setSimpleFromAccount(val)}
+                      placeholder="-- যে হিসাব থেকে টাকা যাচ্ছে তা নির্বাচন করুন --"
+                      allowClear
+                    />
+                    <p className="text-[11px] text-gray-500">
+                      যেমন: নগদ তহবিল (১০১০), ব্যাংক হিসাব, বা দেনাদার/সরবরাহকারী
+                    </p>
+                  </div>
 
-                    <div className="col-span-5 sm:col-span-2">
-                      <input
-                        type="number"
-                        step="0.01"
-                        min="0"
-                        value={line.debit || ''}
-                        onChange={(e) => handleLineAmountChange(idx, 'debit', e.target.value)}
-                        placeholder="ডেবিট ৳"
-                        className="w-full bg-white border border-gray-300 rounded-lg px-3 py-2 text-[14px] text-[#15803D] font-bold focus:outline-none focus:border-blue-600 min-h-[40px]"
-                      />
+                  {/* To Account: Money coming INTO (Debit) */}
+                  <div className="bg-[#F0FDF4]/60 p-3.5 sm:p-4 rounded-xl border border-emerald-200 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <label className="block text-[14px] font-bold text-gray-900">
+                        কোন হিসাবে টাকা আসছে (Money coming INTO)
+                      </label>
+                      <span className="text-[11px] font-semibold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded">
+                        ডেবিট (Dr)
+                      </span>
                     </div>
+                    <SearchableSelect
+                      options={accountOptions}
+                      value={simpleToAccount}
+                      onChange={(val) => setSimpleToAccount(val)}
+                      placeholder="-- যে হিসাবে টাকা আসছে তা নির্বাচন করুন --"
+                      allowClear
+                    />
+                    <p className="text-[11px] text-gray-500">
+                      যেমন: ফিড ক্রয় খরচ (৫১১০), বেতন ও পারিশ্রমিক (৬১১০), বা ব্যাংক তহবিল
+                    </p>
+                  </div>
+                </div>
 
-                    <div className="col-span-5 sm:col-span-2">
-                      <input
-                        type="number"
-                        step="0.01"
-                        min="0"
-                        value={line.credit || ''}
-                        onChange={(e) => handleLineAmountChange(idx, 'credit', e.target.value)}
-                        placeholder="ক্রেডিট ৳"
-                        className="w-full bg-white border border-gray-300 rounded-lg px-3 py-2 text-[14px] text-sky-700 font-bold focus:outline-none focus:border-blue-600 min-h-[40px]"
-                      />
-                    </div>
+                {/* Amount Field */}
+                <div className="bg-[#F8FAFC] p-3.5 sm:p-4 rounded-xl border border-gray-200">
+                  <label className="block text-[14px] font-bold text-gray-900 mb-1.5">
+                    টাকার পরিমাণ (Amount ৳)
+                  </label>
+                  <div className="relative max-w-xs">
+                    <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-500 font-bold text-base">
+                      ৳
+                    </span>
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0.01"
+                      required
+                      value={simpleAmount}
+                      onChange={(e) => setSimpleAmount(e.target.value)}
+                      placeholder="0.00"
+                      className="w-full pl-8 pr-3.5 py-2.5 bg-white border border-gray-300 rounded-xl text-[16px] font-bold text-gray-900 focus:outline-none focus:border-blue-600 focus:ring-2 focus:ring-blue-600/20 min-h-[44px]"
+                    />
+                  </div>
+                </div>
 
-                    <div className="col-span-2 sm:col-span-2 flex items-center justify-end">
-                      <button
-                        type="button"
-                        onClick={() => removeLine(idx)}
-                        disabled={lines.length <= 2}
-                        className="p-2 text-gray-400 hover:text-red-600 disabled:opacity-30 cursor-pointer min-h-[40px] min-w-[40px] flex items-center justify-center"
-                      >
-                        <Trash2 className="w-5 h-5" />
-                      </button>
+                {simpleFromAccount && simpleToAccount && simpleFromAccount === simpleToAccount && (
+                  <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-xs text-red-700 font-semibold flex items-center gap-1.5">
+                    <AlertCircle className="w-4 h-4 shrink-0" />
+                    <span>সতর্কতা: টাকা যাওয়ার হিসাব এবং টাকা আসার হিসাব একই হতে পারে না।</span>
+                  </div>
+                )}
+
+                {/* Simple Mode Summary */}
+                {balanceCheck.totalDebit > 0 && (
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between p-3.5 rounded-xl bg-[#F8FAFC] text-[14px] font-bold text-gray-900 border border-gray-200 gap-2">
+                    <span>দাখিলা সংক্ষেপ (Entry Summary):</span>
+                    <div className="flex gap-4">
+                      <span className="text-[#15803D]">মোট ডেবিট: ৳{balanceCheck.totalDebit.toFixed(2)}</span>
+                      <span className="text-sky-700">মোট ক্রেডিট: ৳{balanceCheck.totalCredit.toFixed(2)}</span>
                     </div>
                   </div>
-                ))}
+                )}
               </div>
+            )}
 
-              {/* Totals Summary Footer */}
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between p-3.5 rounded-xl bg-[#F8FAFC] text-[14px] font-bold text-gray-900 border border-gray-200 gap-2">
-                <span>মোট যোগফল:</span>
-                <div className="flex gap-4">
-                  <span className="text-[#15803D]">মোট ডেবিট: ৳{balanceCheck.totalDebit.toFixed(2)}</span>
-                  <span className="text-sky-700">মোট ক্রেডিট: ৳{balanceCheck.totalCredit.toFixed(2)}</span>
+            {/* ADVANCED MODE: Multi-line Debit & Credit Lines Grid */}
+            {voucherMode === 'ADVANCED' && (
+              <div className="pt-3 border-t border-gray-200 space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-[14px] font-bold text-gray-800">হিসাব লাইনসমূহ (Debit & Credit Lines)</span>
+                  <button
+                    type="button"
+                    onClick={addLine}
+                    className="text-[13px] text-blue-700 hover:underline flex items-center gap-1 font-bold cursor-pointer py-1 px-2"
+                  >
+                    <PlusCircle className="w-4 h-4" />
+                    <span>+ লাইন যোগ করুন</span>
+                  </button>
+                </div>
+
+                <div className="space-y-2.5">
+                  {lines.map((line, idx) => (
+                    <div
+                      key={idx}
+                      className="grid grid-cols-12 gap-2 items-center bg-[#F8FAFC] p-2.5 sm:p-3 rounded-xl border border-gray-200"
+                    >
+                      <div className="col-span-12 sm:col-span-6">
+                        <SearchableSelect
+                          options={accountOptions}
+                          value={line.accountCode}
+                          onChange={(val) => handleLineAccountChange(idx, val)}
+                          placeholder="-- হিসাব নির্বাচন বা সন্ধান করুন --"
+                          allowClear
+                        />
+                      </div>
+
+                      <div className="col-span-5 sm:col-span-2">
+                        <input
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          value={line.debit || ''}
+                          onChange={(e) => handleLineAmountChange(idx, 'debit', e.target.value)}
+                          placeholder="ডেবিট ৳"
+                          className="w-full bg-white border border-gray-300 rounded-lg px-3 py-2 text-[14px] text-[#15803D] font-bold focus:outline-none focus:border-blue-600 min-h-[40px]"
+                        />
+                      </div>
+
+                      <div className="col-span-5 sm:col-span-2">
+                        <input
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          value={line.credit || ''}
+                          onChange={(e) => handleLineAmountChange(idx, 'credit', e.target.value)}
+                          placeholder="ক্রেডিট ৳"
+                          className="w-full bg-white border border-gray-300 rounded-lg px-3 py-2 text-[14px] text-sky-700 font-bold focus:outline-none focus:border-blue-600 min-h-[40px]"
+                        />
+                      </div>
+
+                      <div className="col-span-2 sm:col-span-2 flex items-center justify-end">
+                        <button
+                          type="button"
+                          onClick={() => removeLine(idx)}
+                          disabled={lines.length <= 2}
+                          className="p-2 text-gray-400 hover:text-red-600 disabled:opacity-30 cursor-pointer min-h-[40px] min-w-[40px] flex items-center justify-center"
+                        >
+                          <Trash2 className="w-5 h-5" />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Totals Summary Footer */}
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between p-3.5 rounded-xl bg-[#F8FAFC] text-[14px] font-bold text-gray-900 border border-gray-200 gap-2">
+                  <span>মোট যোগফল:</span>
+                  <div className="flex gap-4">
+                    <span className="text-[#15803D]">মোট ডেবিট: ৳{balanceCheck.totalDebit.toFixed(2)}</span>
+                    <span className="text-sky-700">মোট ক্রেডিট: ৳{balanceCheck.totalCredit.toFixed(2)}</span>
+                  </div>
                 </div>
               </div>
-            </div>
+            )}
 
             <button
               type="submit"
@@ -1069,8 +1354,7 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
             </h3>
             <button
               onClick={() => {
-                setCorrectionOf(null);
-                setCorrectingOriginal(null);
+                resetVoucherForm();
                 setSubTab('vouchers');
               }}
               className="text-[13px] text-blue-700 hover:underline font-bold cursor-pointer py-1 px-2"
@@ -1123,8 +1407,9 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
                     (j.reversedBy && ('সংশোধিত'.includes(q) || 'corrected'.includes(q))) ||
                     (j.reversalOf && ('রিভার্সাল'.includes(q) || 'reversal'.includes(q))) ||
                     (j.correctionOf && ('নতুন সংশোধিত'.includes(q) || 'correction'.includes(q)));
+                  const personMatch = Boolean(j.relatedPerson && j.relatedPerson.toLowerCase().includes(q));
 
-                  return descMatch || amountMatch || dateMatch || voucherMatch || idMatch || accountMatch || badgeMatch;
+                  return descMatch || amountMatch || dateMatch || voucherMatch || idMatch || accountMatch || badgeMatch || personMatch;
                 }).length;
 
                 return (
@@ -1186,8 +1471,9 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
                   (j.reversedBy && ('সংশোধিত'.includes(q) || 'corrected'.includes(q))) ||
                   (j.reversalOf && ('রিভার্সাল'.includes(q) || 'reversal'.includes(q))) ||
                   (j.correctionOf && ('নতুন সংশোধিত'.includes(q) || 'correction'.includes(q)));
+                const personMatch = Boolean(j.relatedPerson && j.relatedPerson.toLowerCase().includes(q));
 
-                return descMatch || amountMatch || dateMatch || voucherMatch || idMatch || accountMatch || badgeMatch;
+                return descMatch || amountMatch || dateMatch || voucherMatch || idMatch || accountMatch || badgeMatch || personMatch;
               });
 
               if (filtered.length === 0) {
@@ -1251,8 +1537,16 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
                           </div>
 
                           {/* Date and description in smaller gray text below it */}
-                          <div className="text-xs text-gray-500 dark:text-slate-400">
-                            {j.date} • {j.narration || 'কোনো বিবরণ নেই'}
+                          <div className="text-xs text-gray-500 dark:text-slate-400 flex flex-wrap items-center gap-x-2 gap-y-1">
+                            <span>{j.date}</span>
+                            <span>•</span>
+                            <span>{j.narration || 'কোনো বিবরণ নেই'}</span>
+                            {j.relatedPerson && (
+                              <span className="inline-flex items-center gap-1 font-semibold text-blue-800 dark:text-blue-300 bg-blue-50 dark:bg-blue-950/60 border border-blue-200 dark:border-blue-800 px-2 py-0.5 rounded text-[11px]">
+                                <User className="w-3 h-3 text-blue-600 dark:text-blue-400 shrink-0" />
+                                <span>সংশ্লিষ্ট: {j.relatedPerson}</span>
+                              </span>
+                            )}
                           </div>
                         </div>
 
@@ -1340,17 +1634,12 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
 
             {/* Account Selector */}
             <div className="w-full sm:w-80">
-              <select
+              <SearchableSelect
+                options={accountOptions}
                 value={selectedLedgerCode}
-                onChange={(e) => loadLedger(e.target.value)}
-                className="w-full bg-[#F8FAFC] border border-gray-300 rounded-xl px-3.5 py-2.5 text-[14px] text-gray-900 focus:outline-none focus:border-blue-600 min-h-[44px]"
-              >
-                {accounts.map((a) => (
-                  <option key={a.id} value={a.code}>
-                    {a.nameBn} ({a.code} • {a.accountClass})
-                  </option>
-                ))}
-              </select>
+                onChange={(code) => loadLedger(code)}
+                placeholder="হিসাব খুঁজুন বা নির্বাচন করুন..."
+              />
             </div>
           </div>
 
@@ -1416,7 +1705,8 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
                     row.runningBalance.toLocaleString().includes(q);
                   const dateMatch = row.date && row.date.includes(q);
                   const voucherMatch = row.voucherNumber && row.voucherNumber.toLowerCase().includes(q);
-                  return descMatch || amountMatch || dateMatch || voucherMatch;
+                  const personMatch = Boolean(row.relatedPerson && row.relatedPerson.toLowerCase().includes(q));
+                  return descMatch || amountMatch || dateMatch || voucherMatch || personMatch;
                 }).length;
                 return (
                   <span>
@@ -1443,7 +1733,8 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
                 row.runningBalance.toLocaleString().includes(q);
               const dateMatch = row.date && row.date.includes(q);
               const voucherMatch = row.voucherNumber && row.voucherNumber.toLowerCase().includes(q);
-              return descMatch || amountMatch || dateMatch || voucherMatch;
+              const personMatch = Boolean(row.relatedPerson && row.relatedPerson.toLowerCase().includes(q));
+              return descMatch || amountMatch || dateMatch || voucherMatch || personMatch;
             });
 
             const visibleRows = filtered.slice(0, ledgerVisibleCount);
@@ -1506,8 +1797,16 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
                             </div>
 
                             {/* Date and description in smaller gray text below it */}
-                            <div className="text-xs text-gray-500 dark:text-slate-400">
-                              {row.date} • {row.narration || 'কোনো বিবরণ নেই'}
+                            <div className="text-xs text-gray-500 dark:text-slate-400 flex flex-wrap items-center gap-x-2 gap-y-1">
+                              <span>{row.date}</span>
+                              <span>•</span>
+                              <span>{row.narration || 'কোনো বিবরণ নেই'}</span>
+                              {row.relatedPerson && (
+                                <span className="inline-flex items-center gap-1 font-semibold text-blue-800 dark:text-blue-300 bg-blue-50 dark:bg-blue-950/60 border border-blue-200 dark:border-blue-800 px-2 py-0.5 rounded text-[11px]">
+                                  <User className="w-3 h-3 text-blue-600 dark:text-blue-400 shrink-0" />
+                                  <span>সংশ্লিষ্ট: {row.relatedPerson}</span>
+                                </span>
+                              )}
                             </div>
                           </div>
 
@@ -2030,30 +2329,12 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
                 <label className="block text-[13px] font-bold text-gray-700 mb-1">
                   খরচ হিসাব খাত (Expense Account) <span className="text-rose-500">*</span>
                 </label>
-                <select
+                <SearchableSelect
+                  options={accountOptions}
                   value={recAccountCode}
-                  onChange={(e) => setRecAccountCode(e.target.value)}
-                  className="w-full bg-white border border-gray-300 rounded-xl p-3 text-[14px] text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-600"
-                >
-                  <optgroup label="ব্যয় হিসাবসমূহ (Expense Accounts)">
-                    {accounts
-                      .filter((a) => a.accountClass === 'EXPENSE' || a.accountClass === 'COGS')
-                      .map((acc) => (
-                        <option key={acc.code} value={acc.code}>
-                          {acc.nameBn} ({acc.code} • {acc.nameEn})
-                        </option>
-                      ))}
-                  </optgroup>
-                  <optgroup label="অন্যান্য সকল হিসাব (Other Accounts)">
-                    {accounts
-                      .filter((a) => a.accountClass !== 'EXPENSE' && a.accountClass !== 'COGS')
-                      .map((acc) => (
-                        <option key={acc.code} value={acc.code}>
-                          {acc.nameBn} ({acc.code})
-                        </option>
-                      ))}
-                  </optgroup>
-                </select>
+                  onChange={(code) => setRecAccountCode(code)}
+                  placeholder="খরচ হিসাব খাত নির্বাচন করুন..."
+                />
               </div>
 
               <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-xl border border-gray-200">
@@ -2361,6 +2642,12 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
                 <span className="text-gray-500 font-sans">বিবরণ:</span>
                 <span className="text-gray-800 truncate max-w-xs">{reversingEntry.narration}</span>
               </div>
+              {reversingEntry.relatedPerson && (
+                <div className="flex justify-between">
+                  <span className="text-gray-500 font-sans">সংশ্লিষ্ট ব্যক্তি:</span>
+                  <span className="text-gray-900 font-sans font-bold">{reversingEntry.relatedPerson}</span>
+                </div>
+              )}
               <div className="flex justify-between pt-1 border-t border-gray-200">
                 <span className="text-gray-500 font-sans">মোট পরিমাণ:</span>
                 <span className="font-bold text-emerald-800 font-sans text-[14px]">৳{reversingEntry.totalDebit.toLocaleString('en-IN')}</span>

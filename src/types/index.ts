@@ -100,6 +100,7 @@ export interface JournalEntry {
   reversedBy?: string;
   reversalOf?: string;
   correctionOf?: string;
+  relatedPerson?: string;
 }
 
 export interface ClosedPeriod {

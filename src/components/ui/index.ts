@@ -14,3 +14,6 @@ export { PatternBackground } from './PatternBackground';
 
 export { SuccessAnimationToast, triggerSuccessAnimation } from './SuccessAnimation';
 export type { SuccessToastData } from './SuccessAnimation';
+
+export { SearchableSelect } from './SearchableSelect';
+export type { SearchableSelectProps, SearchableOption } from './SearchableSelect';

@@ -1254,6 +1254,11 @@ export const Dashboard: React.FC<Props> = ({ role, onNavigate, regressionTestRes
                       </span>
                     )}
                     <span className="text-gray-500 dark:text-slate-400 text-[13px]">{tx.date}</span>
+                    {tx.relatedPerson && (
+                      <span className="text-xs text-blue-700 dark:text-blue-400 font-medium">
+                        • {tx.relatedPerson}
+                      </span>
+                    )}
                   </div>
                   <p className="text-gray-800 dark:text-slate-200 text-[14px] truncate mt-1">
                     {tx.narration || t('dashboard.noNarration')}

@@ -20,6 +20,7 @@ import { HIGH_AMOUNT_CONFIRMATION_THRESHOLD } from '../constants/validation';
 import { notifyUndoableAction } from '../services/undoService';
 import { triggerSuccessAnimation } from './ui/SuccessAnimation';
 import { postJournalEntry } from '../accounting/accountingEngine';
+import { SearchableSelect, SearchableOption } from './ui';
 
 const getInventoryOpeningAssetAccount = (category?: string): { code: string; name: string } => {
   switch (category) {
@@ -60,6 +61,29 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
   const [sales, setSales] = useState<Sale[]>([]);
   const [purchases, setPurchases] = useState<Purchase[]>([]);
   const [payments, setPayments] = useState<PaymentRecord[]>([]);
+
+  // Memoized options for customers and suppliers
+  const customerOptions = React.useMemo<SearchableOption[]>(() => {
+    return parties
+      .filter((p) => p.type === 'CUSTOMER')
+      .map((c) => ({
+        value: c.id,
+        label: c.name,
+        code: c.phone || undefined,
+        secondaryLabel: c.address || 'ক্রেতা'
+      }));
+  }, [parties]);
+
+  const supplierOptions = React.useMemo<SearchableOption[]>(() => {
+    return parties
+      .filter((p) => p.type === 'SUPPLIER')
+      .map((s) => ({
+        value: s.id,
+        label: s.name,
+        code: s.phone || undefined,
+        secondaryLabel: s.address || 'সরবরাহকারী'
+      }));
+  }, [parties]);
 
   // High amount transaction confirmation modal state
   const [confirmHighAmountCommerce, setConfirmHighAmountCommerce] = useState<{
@@ -1148,16 +1172,13 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
 
                 <div>
                   <label className="block text-[13px] font-medium text-gray-700 mb-1">ক্রেতা নির্বাচন</label>
-                  <select
+                  <SearchableSelect
+                    options={customerOptions}
                     value={saleCustomerId}
-                    onChange={(e) => setSaleCustomerId(e.target.value)}
-                    className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900"
-                  >
-                    <option value="">-- ক্রেতা নির্বাচন --</option>
-                    {parties.filter((p) => p.type === 'CUSTOMER').map((c) => (
-                      <option key={c.id} value={c.id}>{c.name} ({c.phone})</option>
-                    ))}
-                  </select>
+                    onChange={(val) => setSaleCustomerId(val)}
+                    placeholder="-- ক্রেতা সন্ধান বা নির্বাচন --"
+                    allowClear
+                  />
                 </div>
 
                 <div>
@@ -1387,16 +1408,13 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
 
                 <div>
                   <label className="block text-[13px] font-medium text-gray-700 mb-1">সরবরাহকারী নির্বাচন</label>
-                  <select
+                  <SearchableSelect
+                    options={supplierOptions}
                     value={purchSupplierId}
-                    onChange={(e) => setPurchSupplierId(e.target.value)}
-                    className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900"
-                  >
-                    <option value="">-- সরবরাহকারী নির্বাচন --</option>
-                    {parties.filter((p) => p.type === 'SUPPLIER').map((s) => (
-                      <option key={s.id} value={s.id}>{s.name} ({s.phone})</option>
-                    ))}
-                  </select>
+                    onChange={(val) => setPurchSupplierId(val)}
+                    placeholder="-- সরবরাহকারী সন্ধান বা নির্বাচন --"
+                    allowClear
+                  />
                 </div>
 
                 <div>

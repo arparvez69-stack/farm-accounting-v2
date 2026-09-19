@@ -65,6 +65,7 @@ import { Card } from './ui/Card';
 import { StatusBadge } from './ui/StatusBadge';
 import { EmptyState } from './ui/EmptyState';
 import { triggerSuccessAnimation } from './ui/SuccessAnimation';
+import { SearchableSelect, SearchableOption } from './ui';
 
 /**
  * Compresses an image file client-side to a max width of 800px preserving aspect ratio,
@@ -917,6 +918,23 @@ export const FarmOperationsModule: React.FC<Props> = ({
   const activeAnimals = useMemo(() => {
     return animals.filter((a) => a.status === 'ACTIVE');
   }, [animals]);
+
+  const animalSelectOptions = useMemo<SearchableOption[]>(() => {
+    return activeAnimals.map((a) => {
+      const speciesBn =
+        a.species === 'CATTLE' ? 'গরু' :
+        a.species === 'GOAT' ? 'ছাগল' :
+        a.species === 'SHEEP' ? 'ভেড়া' :
+        a.species === 'POULTRY' ? 'হাঁস-মুরগি' : a.species;
+      return {
+        value: a.id,
+        label: `${speciesBn} #${a.id}`,
+        code: a.tag || a.id,
+        secondaryLabel: a.breed || speciesBn,
+        subtitle: a.currentWeightKg ? `${a.currentWeightKg} কেজি` : undefined
+      };
+    });
+  }, [activeAnimals]);
 
   const handleCloseEventModal = () => {
     setIsEventModalOpen(false);
@@ -2394,25 +2412,19 @@ export const FarmOperationsModule: React.FC<Props> = ({
                             {activeAnimals.length}টি সক্রিয় পশু উপলব্ধ
                           </span>
                         </label>
-                        <select
+                        <SearchableSelect
                           id="select-event-target-animal"
-                          value=""
-                          onChange={(e) => {
-                            const found = activeAnimals.find((a) => a.id === e.target.value);
+                          options={animalSelectOptions}
+                          value={eventModalAnimal?.id || ''}
+                          onChange={(val) => {
+                            const found = activeAnimals.find((a) => a.id === val);
                             if (found) setEventModalAnimal(found);
                           }}
-                          className="w-full px-3 py-2.5 bg-white border border-gray-300 rounded-xl text-sm font-medium text-gray-900 focus:ring-2 focus:ring-[#1E5128]"
-                          required
-                        >
-                          <option value="">-- যে পশুর জন্য কার্যক্রম তা নির্বাচন করুন --</option>
-                          {activeAnimals.map((a) => (
-                            <option key={a.id} value={a.id}>
-                              {a.id} {a.tag ? `(ট্যাগ: ${a.tag})` : ''} - {a.species === 'CATTLE' ? 'গরু' : a.species === 'GOAT' ? 'ছাগল' : a.species === 'SHEEP' ? 'ভেড়া' : a.species === 'POULTRY' ? 'হাঁস-মুরগি' : a.species} {a.breed ? `[${a.breed}]` : ''}
-                            </option>
-                          ))}
-                        </select>
+                          placeholder="-- পশু নির্বাচন বা ট্যাগ/আইডি দিয়ে সন্ধান করুন --"
+                          allowClear
+                        />
                         <p className="text-[11px] text-gray-500">
-                          কার্যক্রম যুক্ত করতে অনুগ্রহ করে প্রথমে পশুটি বাছাই করুন।
+                          কার্যক্রম যুক্ত করতে অনুগ্রহ করে প্রথমে পশুটি বাছাই বা সন্ধান করুন।
                         </p>
                       </div>
                     ) : (
