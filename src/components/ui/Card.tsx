@@ -75,8 +75,8 @@ export const Card: React.FC<CardProps> = ({
   const paddingClass = PADDING_MAP[padding];
 
   const variantClasses = isInteractive
-    ? 'bg-white dark:bg-slate-800 rounded-xl border border-gray-200/90 dark:border-slate-700 shadow-xs hover:shadow-md active:scale-[0.99] active:shadow-xs cursor-pointer transition-all duration-150 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[#1E5128]'
-    : 'bg-white/70 dark:bg-slate-900/70 backdrop-blur-sm rounded-xl border border-gray-200/80 dark:border-slate-800/80 shadow-none cursor-default text-gray-900 dark:text-slate-100';
+    ? 'bg-white dark:bg-slate-850 rounded-xl border border-gray-200/90 dark:border-slate-700 shadow-xs hover:shadow-md active:scale-[0.99] active:shadow-xs cursor-pointer transition-all duration-150 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[#1E5128]'
+    : 'bg-white/70 dark:bg-slate-900/70 backdrop-blur-sm rounded-xl border border-gray-200/80 dark:border-slate-800/80 shadow-none cursor-default text-gray-900 dark:text-slate-100 font-normal [text-shadow:0_0_1px_rgba(255,255,255,0.2)] dark:[text-shadow:0_0_1px_rgba(0,0,0,0.5)]';
 
   const disabledClasses = disabled
     ? 'opacity-50 pointer-events-none cursor-not-allowed'

@@ -901,7 +901,7 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
         pctChange = 100;
       }
       return {
-        category: `${item.code} - ${item.nameBn}`,
+        category: `${item.nameBn} (${item.code})`,
         thisYear: item.thisYear,
         lastYear: item.lastYear,
         diff,
@@ -1923,8 +1923,11 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
                 <span>{fmt(pl.totalRevenue)}</span>
               </div>
               {pl.revenues.map((r) => (
-                <div key={r.code} className="flex justify-between text-gray-700 pl-4 py-1 border-b border-gray-50">
-                  <span className="font-sans">{r.code} - {r.nameBn}</span>
+                <div key={r.code} className="flex justify-between items-baseline text-gray-700 pl-4 py-1 border-b border-gray-50">
+                  <span className="font-sans flex items-baseline gap-1.5">
+                    <span className="font-bold text-gray-900 text-[14px]">{r.nameBn}</span>
+                    <span className="text-xs text-gray-400 font-mono font-normal">({r.code})</span>
+                  </span>
                   <span className="font-semibold text-gray-900">{fmt(r.amount)}</span>
                 </div>
               ))}
@@ -1937,8 +1940,11 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
                 <span>({fmt(pl.totalCogs)})</span>
               </div>
               {pl.cogs.map((c) => (
-                <div key={c.code} className="flex justify-between text-gray-700 pl-4 py-1 border-b border-gray-50">
-                  <span className="font-sans">{c.code} - {c.nameBn}</span>
+                <div key={c.code} className="flex justify-between items-baseline text-gray-700 pl-4 py-1 border-b border-gray-50">
+                  <span className="font-sans flex items-baseline gap-1.5">
+                    <span className="font-bold text-gray-900 text-[14px]">{c.nameBn}</span>
+                    <span className="text-xs text-gray-400 font-mono font-normal">({c.code})</span>
+                  </span>
                   <span className="font-semibold text-gray-900">{fmt(c.amount)}</span>
                 </div>
               ))}
@@ -1959,8 +1965,11 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
                 <span>({fmt(pl.totalOperatingExpenses)})</span>
               </div>
               {pl.operatingExpenses.map((e) => (
-                <div key={e.code} className="flex justify-between text-gray-700 pl-4 py-1 border-b border-gray-50">
-                  <span className="font-sans">{e.code} - {e.nameBn}</span>
+                <div key={e.code} className="flex justify-between items-baseline text-gray-700 pl-4 py-1 border-b border-gray-50">
+                  <span className="font-sans flex items-baseline gap-1.5">
+                    <span className="font-bold text-gray-900 text-[14px]">{e.nameBn}</span>
+                    <span className="text-xs text-gray-400 font-mono font-normal">({e.code})</span>
+                  </span>
                   <span className="font-semibold text-gray-900">{fmt(e.amount)}</span>
                 </div>
               ))}
@@ -1974,8 +1983,11 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
                   <span>({fmt(pl.totalOtherExpenses)})</span>
                 </div>
                 {pl.otherExpenses.map((o) => (
-                  <div key={o.code} className="flex justify-between text-gray-700 pl-4 py-1 border-b border-gray-50">
-                    <span className="font-sans">{o.code} - {o.nameBn}</span>
+                  <div key={o.code} className="flex justify-between items-baseline text-gray-700 pl-4 py-1 border-b border-gray-50">
+                    <span className="font-sans flex items-baseline gap-1.5">
+                      <span className="font-bold text-gray-900 text-[14px]">{o.nameBn}</span>
+                      <span className="text-xs text-gray-400 font-mono font-normal">({o.code})</span>
+                    </span>
                     <span className="font-semibold text-gray-900">{fmt(o.amount)}</span>
                   </div>
                 ))}
@@ -2050,8 +2062,11 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
 
               <div className="space-y-2">
                 {bs.assets.map((a) => (
-                  <div key={a.code} className="flex justify-between text-gray-700 py-0.5">
-                    <span className="font-sans">{a.code} - {a.nameBn}</span>
+                  <div key={a.code} className="flex justify-between items-baseline text-gray-700 py-0.5">
+                    <span className="font-sans flex items-baseline gap-1.5">
+                      <span className="font-bold text-gray-900 text-[14px]">{a.nameBn}</span>
+                      <span className="text-xs text-gray-400 font-mono font-normal">({a.code})</span>
+                    </span>
                     <span className={`font-semibold ${a.isContra ? 'text-red-600' : 'text-gray-900'}`}>
                       {a.isContra ? `(${fmt(a.amount)})` : fmt(a.amount)}
                     </span>
@@ -2075,8 +2090,11 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
                 </div>
                 <div className="space-y-1.5">
                   {bs.liabilities.map((l) => (
-                    <div key={l.code} className="flex justify-between text-gray-700 py-0.5">
-                      <span className="font-sans">{l.code} - {l.nameBn}</span>
+                    <div key={l.code} className="flex justify-between items-baseline text-gray-700 py-0.5">
+                      <span className="font-sans flex items-baseline gap-1.5">
+                        <span className="font-bold text-gray-900 text-[14px]">{l.nameBn}</span>
+                        <span className="text-xs text-gray-400 font-mono font-normal">({l.code})</span>
+                      </span>
                       <span className="font-semibold text-gray-900">{fmt(l.amount)}</span>
                     </div>
                   ))}
@@ -2091,8 +2109,11 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
                 </div>
                 <div className="space-y-1.5">
                   {bs.equity.map((eq) => (
-                    <div key={eq.code} className="flex justify-between text-gray-700 py-0.5">
-                      <span className="font-sans">{eq.code} - {eq.nameBn}</span>
+                    <div key={eq.code} className="flex justify-between items-baseline text-gray-700 py-0.5">
+                      <span className="font-sans flex items-baseline gap-1.5">
+                        <span className="font-bold text-gray-900 text-[14px]">{eq.nameBn}</span>
+                        <span className="text-xs text-gray-400 font-mono font-normal">({eq.code})</span>
+                      </span>
                       <span className={`font-semibold ${eq.isContra ? 'text-red-600' : 'text-gray-900'}`}>
                         {eq.isContra ? `(${fmt(eq.amount)})` : fmt(eq.amount)}
                       </span>
@@ -2153,15 +2174,17 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
                   r.isOrphan ? 'border-red-300 bg-red-50/50 dark:bg-red-950/20' : 'hover:border-teal-300'
                 }`}
               >
-                <div className="flex items-center justify-between gap-2">
-                  <span className="font-bold text-teal-700 dark:text-teal-400 font-mono text-sm underline underline-offset-2">
-                    {r.code}
-                  </span>
-                  <span className="text-xs px-2 py-0.5 rounded bg-gray-100 dark:bg-slate-800 text-gray-600 dark:text-slate-300">
+                <div className="flex items-start justify-between gap-2">
+                  <div>
+                    <div className="text-base font-bold text-gray-900 dark:text-slate-100 font-sans">{r.nameBn}</div>
+                    <span className="text-xs text-teal-700 dark:text-teal-400 font-mono underline underline-offset-2">
+                      ({r.code})
+                    </span>
+                  </div>
+                  <span className="text-xs px-2 py-0.5 rounded bg-gray-100 dark:bg-slate-800 text-gray-600 dark:text-slate-300 shrink-0">
                     {r.accountClass}
                   </span>
                 </div>
-                <div className="text-sm font-semibold text-gray-900 dark:text-slate-100 font-sans">{r.nameBn}</div>
                 <div className="grid grid-cols-2 gap-2 pt-1 text-xs border-t border-gray-100 dark:border-slate-800 font-mono">
                   <div className="text-[#15803D] dark:text-emerald-400 font-bold">
                     ডেবিট: {r.debit > 0 ? fmt(r.debit) : '-'}
@@ -2186,8 +2209,8 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
             <table className="w-full text-left text-[14px] text-gray-800 dark:text-slate-200">
               <thead className="bg-[#F8FAFC] dark:bg-slate-800/80 text-gray-600 dark:text-slate-400 font-semibold border-b border-gray-200 dark:border-slate-700 text-[13px]">
                 <tr>
-                  <th className="p-3">কোড</th>
                   <th className="p-3">হিসাবের নাম</th>
+                  <th className="p-3">কোড</th>
                   <th className="p-3">শ্রেণী</th>
                   <th className="p-3 text-right">ডেবিট স্থিতি (৳)</th>
                   <th className="p-3 text-right">ক্রেডিট স্থিতি (৳)</th>
@@ -2205,8 +2228,8 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
                     className={`${r.isOrphan ? 'bg-red-50/50 dark:bg-red-950/20' : 'hover:bg-gray-50/80 dark:hover:bg-slate-800/40'} cursor-pointer transition-colors`}
                     title="এই হিসাবের খতিয়ান দেখতে ক্লিক করুন"
                   >
-                    <td className="p-3 font-bold text-teal-700 dark:text-teal-400 underline underline-offset-2">{r.code}</td>
-                    <td className="p-3 font-sans text-gray-900 dark:text-slate-100 font-medium">{r.nameBn}</td>
+                    <td className="p-3 font-sans text-gray-900 dark:text-slate-100 font-bold text-[14px]">{r.nameBn}</td>
+                    <td className="p-3 text-xs text-gray-400 dark:text-slate-500 font-mono font-normal">({r.code})</td>
                     <td className="p-3 text-gray-500 dark:text-slate-400 text-[12px]">{r.accountClass}</td>
                     <td className="p-3 text-right text-[#15803D] dark:text-emerald-400 font-bold">{r.debit > 0 ? fmt(r.debit) : '-'}</td>
                     <td className="p-3 text-right text-blue-700 dark:text-blue-400 font-bold">{r.credit > 0 ? fmt(r.credit) : '-'}</td>
@@ -2256,7 +2279,7 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
               >
                 {reportAccounts.map((acc) => (
                   <option key={acc.code} value={acc.code}>
-                    {acc.code} - {acc.nameBn} ({acc.accountClass})
+                    {acc.nameBn} ({acc.code} • {acc.accountClass})
                   </option>
                 ))}
               </select>
@@ -2268,8 +2291,9 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 bg-[#F8FAFC] p-4 rounded-xl border border-gray-200">
               <div>
                 <span className="text-[11px] text-gray-500 font-medium block">হিসাবের নাম ও কোড</span>
-                <span className="text-[14px] font-bold text-gray-900">
-                  {reportLedgerAccount.code} - {reportLedgerAccount.nameBn}
+                <span className="text-[15px] font-bold text-gray-900 flex items-baseline gap-1.5">
+                  <span>{reportLedgerAccount.nameBn}</span>
+                  <span className="text-xs text-gray-400 font-mono font-normal">({reportLedgerAccount.code})</span>
                 </span>
               </div>
               <div>

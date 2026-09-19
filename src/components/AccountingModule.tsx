@@ -49,6 +49,73 @@ interface Props {
 
 type AccountingSubTab = 'vouchers' | 'daybook' | 'ledger' | 'trialBalance' | 'chart' | 'recurring';
 
+// Helper: auto-generate the next available code based on the selected account class
+export const getNextAccountCode = (
+  accountClass: Account['accountClass'],
+  existingAccounts: Account[]
+): string => {
+  const classRange: Record<Account['accountClass'], { min: number; max: number; defaultStart: number }> = {
+    ASSET: { min: 1000, max: 1999, defaultStart: 1010 },
+    LIABILITY: { min: 2000, max: 2999, defaultStart: 2010 },
+    EQUITY: { min: 3000, max: 3999, defaultStart: 3010 },
+    REVENUE: { min: 4000, max: 4999, defaultStart: 4010 },
+    COGS: { min: 5000, max: 5999, defaultStart: 5010 },
+    EXPENSE: { min: 6000, max: 6999, defaultStart: 6010 },
+    OTHER_INCOME: { min: 4000, max: 4999, defaultStart: 4090 },
+    OTHER_EXPENSE: { min: 6000, max: 6999, defaultStart: 6090 }
+  };
+
+  const config = classRange[accountClass] || { min: 6000, max: 6999, defaultStart: 6010 };
+  const usedCodes = new Set(existingAccounts.map((a) => a.code.trim()));
+
+  const numericCodes = existingAccounts
+    .map((a) => parseInt(a.code.trim(), 10))
+    .filter((n) => !isNaN(n) && n >= config.min && n <= config.max);
+
+  if (numericCodes.length === 0) {
+    return String(config.defaultStart);
+  }
+
+  const maxCode = Math.max(...numericCodes);
+  let candidate = (Math.floor(maxCode / 10) + 1) * 10;
+  if (candidate <= config.max && !usedCodes.has(String(candidate)) && candidate !== 1050) {
+    return String(candidate);
+  }
+
+  // Scan for any unused multiple of 10 in the range
+  for (let c = config.min + 10; c <= config.max; c += 10) {
+    if (c === 1050) continue;
+    if (!usedCodes.has(String(c))) {
+      return String(c);
+    }
+  }
+
+  // Fallback to sequential numeric
+  for (let c = config.min + 1; c <= config.max; c++) {
+    if (c === 1050) continue;
+    if (!usedCodes.has(String(c))) {
+      return String(c);
+    }
+  }
+
+  return String(maxCode + 1);
+};
+
+// Helper: infer normal balance automatically from account class
+export const inferNormalBalance = (
+  accountClass: Account['accountClass']
+): 'DEBIT' | 'CREDIT' => {
+  if (
+    accountClass === 'ASSET' ||
+    accountClass === 'EXPENSE' ||
+    accountClass === 'COGS' ||
+    accountClass === 'OTHER_EXPENSE'
+  ) {
+    return 'DEBIT';
+  }
+  return 'CREDIT';
+};
+
 export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
   const [subTab, setSubTab] = useState<AccountingSubTab>('daybook');
   const [accounts, setAccounts] = useState<Account[]>([]);
@@ -120,7 +187,6 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
   const [newAccNameBn, setNewAccNameBn] = useState('');
   const [newAccNameEn, setNewAccNameEn] = useState('');
   const [newAccClass, setNewAccClass] = useState<Account['accountClass']>('EXPENSE');
-  const [newAccNormalBalance, setNewAccNormalBalance] = useState<Account['normalBalance']>('DEBIT');
 
   useEffect(() => {
     loadBaseData();
@@ -534,6 +600,20 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
     }
   };
 
+  const handleOpenAddAccount = () => {
+    const initialClass: Account['accountClass'] = 'EXPENSE';
+    setNewAccClass(initialClass);
+    setNewAccCode(getNextAccountCode(initialClass, accounts));
+    setNewAccNameBn('');
+    setNewAccNameEn('');
+    setShowAddAccount(true);
+  };
+
+  const handleAccountClassChange = (selectedClass: Account['accountClass']) => {
+    setNewAccClass(selectedClass);
+    setNewAccCode(getNextAccountCode(selectedClass, accounts));
+  };
+
   const handleCreateAccount = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newAccCode || !newAccNameBn) return;
@@ -556,7 +636,7 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
         nameBn: newAccNameBn.trim(),
         nameEn: newAccNameEn.trim() || newAccNameBn.trim(),
         accountClass: newAccClass,
-        normalBalance: newAccNormalBalance,
+        normalBalance: inferNormalBalance(newAccClass),
         isSystem: false,
         isActive: true
       };
@@ -909,7 +989,7 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
                         <option value="">-- হিসাব নির্বাচন করুন (Select Account) --</option>
                         {accounts.map((acc) => (
                           <option key={acc.id} value={acc.code}>
-                            {acc.code} - {acc.nameBn} ({acc.accountClass})
+                            {acc.nameBn} ({acc.code} • {acc.accountClass})
                           </option>
                         ))}
                       </select>
@@ -1202,8 +1282,9 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
                       <div className="space-y-1.5 text-[13px] bg-gray-50/60 dark:bg-slate-800/40 p-2.5 rounded-lg border border-gray-100 dark:border-slate-800">
                         {j.lines.map((line, lIdx) => (
                           <div key={lIdx} className="flex items-center justify-between text-gray-700 dark:text-slate-300">
-                            <span className="truncate pr-2 font-medium">
-                              {line.accountCode} - {line.accountName}
+                            <span className="truncate pr-2 flex items-baseline gap-1.5">
+                              <span className="font-bold text-gray-900 dark:text-slate-100 text-[14px]">{line.accountName}</span>
+                              <span className="text-[11px] text-gray-400 dark:text-slate-500 font-mono font-normal">({line.accountCode})</span>
                             </span>
                             <div className="flex gap-3 shrink-0 font-bold">
                               {line.debit > 0 && (
@@ -1263,7 +1344,7 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
               >
                 {accounts.map((a) => (
                   <option key={a.id} value={a.code}>
-                    {a.code} - {a.nameBn} ({a.accountClass})
+                    {a.nameBn} ({a.code} • {a.accountClass})
                   </option>
                 ))}
               </select>
@@ -1274,9 +1355,14 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
           {ledgerAccount && (
             <div className="p-4 rounded-xl bg-[#F8FAFC] border border-gray-200 flex items-center justify-between text-[14px]">
               <div>
-                <span className="font-bold text-gray-900 text-base">
-                  {ledgerAccount.code} — {ledgerAccount.nameBn}
-                </span>
+                <div className="flex items-baseline gap-2">
+                  <span className="font-bold text-gray-900 text-lg">
+                    {ledgerAccount.nameBn}
+                  </span>
+                  <span className="text-xs text-gray-400 font-mono font-normal">
+                    ({ledgerAccount.code})
+                  </span>
+                </div>
                 <div className="text-gray-600 text-[13px] mt-0.5">
                   শ্রেণী: {ledgerAccount.accountClass} | স্বাভাবিক স্থিতি: {ledgerAccount.normalBalance}
                 </div>
@@ -1527,13 +1613,15 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
                   r.isOrphan ? 'border-red-300 bg-red-50/50 dark:bg-red-950/20' : ''
                 }`}
               >
-                <div className="flex items-center justify-between gap-2">
-                  <span className="text-blue-700 dark:text-blue-400 font-bold font-mono text-sm">{r.code}</span>
-                  <span className="text-xs px-2 py-0.5 rounded bg-gray-100 dark:bg-slate-800 text-gray-600 dark:text-slate-300">
+                <div className="flex items-start justify-between gap-2">
+                  <div>
+                    <div className="text-base font-bold text-gray-900 dark:text-slate-100">{r.nameBn}</div>
+                    <span className="text-xs text-gray-400 dark:text-slate-500 font-mono font-normal">({r.code})</span>
+                  </div>
+                  <span className="text-xs px-2 py-0.5 rounded bg-gray-100 dark:bg-slate-800 text-gray-600 dark:text-slate-300 shrink-0">
                     {r.accountClass}
                   </span>
                 </div>
-                <div className="text-sm font-semibold text-gray-900 dark:text-slate-100">{r.nameBn}</div>
                 <div className="grid grid-cols-2 gap-2 pt-1 text-xs border-t border-gray-100 dark:border-slate-800">
                   <div className="text-[#15803D] dark:text-emerald-400 font-bold">
                     ডেবিট: {r.debit > 0 ? fmt(r.debit) : '-'}
@@ -1558,8 +1646,8 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
             <table className="w-full text-left text-[13px] text-gray-800 dark:text-slate-200">
               <thead className="bg-gray-100 dark:bg-slate-800/80 text-gray-600 dark:text-slate-400 uppercase text-[11px] font-bold">
                 <tr>
-                  <th className="p-3">কোড</th>
                   <th className="p-3">হিসাবের নাম</th>
+                  <th className="p-3">কোড</th>
                   <th className="p-3">শ্রেণী</th>
                   <th className="p-3 text-right">ডেবিট ব্যালেন্স (৳)</th>
                   <th className="p-3 text-right">ক্রেডিট ব্যালেন্স (৳)</th>
@@ -1568,8 +1656,8 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
               <tbody className="divide-y divide-gray-200 dark:divide-slate-800">
                 {tbRows.map((r) => (
                   <tr key={r.code} className={`hover:bg-gray-50 dark:hover:bg-slate-800/40 ${r.isOrphan ? 'bg-red-50 dark:bg-red-950/20' : ''}`}>
-                    <td className="p-3 text-blue-700 dark:text-blue-400 font-bold font-mono">{r.code}</td>
-                    <td className="p-3 text-gray-900 dark:text-slate-100 font-medium">{r.nameBn}</td>
+                    <td className="p-3 text-gray-900 dark:text-slate-100 font-bold text-[14px]">{r.nameBn}</td>
+                    <td className="p-3 text-xs text-gray-400 dark:text-slate-500 font-mono font-normal">({r.code})</td>
                     <td className="p-3 text-gray-600 dark:text-slate-400 text-xs">{r.accountClass}</td>
                     <td className="p-3 text-right font-semibold text-[#15803D] dark:text-emerald-400">{r.debit > 0 ? fmt(r.debit) : '-'}</td>
                     <td className="p-3 text-right font-semibold text-sky-700 dark:text-sky-400">{r.credit > 0 ? fmt(r.credit) : '-'}</td>
@@ -1602,7 +1690,7 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
 
             {role === 'OWNER' && (
               <button
-                onClick={() => setShowAddAccount(true)}
+                onClick={handleOpenAddAccount}
                 className="px-3.5 py-2 rounded-xl bg-blue-700 hover:bg-blue-800 text-white text-[13px] font-bold shadow-xs transition-all cursor-pointer min-h-[40px]"
               >
                 + নতুন হিসাব কোড যোগ করুন
@@ -1612,44 +1700,56 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
 
           {showAddAccount && (
             <form onSubmit={handleCreateAccount} className="p-4 bg-blue-50/40 border border-blue-200 rounded-xl space-y-3">
-              <h4 className="text-[14px] font-bold text-blue-800">নতুন হিসাব তৈরি (Add Account)</h4>
-              <div className="grid grid-cols-1 sm:grid-cols-4 gap-2.5">
-                <input
-                  type="text"
-                  required
-                  placeholder="কোড (যেমন: 6160)"
-                  value={newAccCode}
-                  onChange={(e) => setNewAccCode(e.target.value)}
-                  className="bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900"
-                />
-                <input
-                  type="text"
-                  required
-                  placeholder="বাংলা নাম"
-                  value={newAccNameBn}
-                  onChange={(e) => setNewAccNameBn(e.target.value)}
-                  className="bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900"
-                />
-                <select
-                  value={newAccClass}
-                  onChange={(e) => setNewAccClass(e.target.value as any)}
-                  className="bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900"
-                >
-                  <option value="ASSET">ASSET (সম্পদ)</option>
-                  <option value="LIABILITY">LIABILITY (দায়)</option>
-                  <option value="EQUITY">EQUITY (মূলধন)</option>
-                  <option value="REVENUE">REVENUE (আয়)</option>
-                  <option value="COGS">COGS (বিক্রিত পণ্যের ব্যয়)</option>
-                  <option value="EXPENSE">EXPENSE (পরিচালন ব্যয়)</option>
-                </select>
-                <select
-                  value={newAccNormalBalance}
-                  onChange={(e) => setNewAccNormalBalance(e.target.value as any)}
-                  className="bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900"
-                >
-                  <option value="DEBIT">স্বাভাবিক ব্যালেন্স: DEBIT</option>
-                  <option value="CREDIT">স্বাভাবিক ব্যালেন্স: CREDIT</option>
-                </select>
+              <div className="flex items-center justify-between flex-wrap gap-2">
+                <h4 className="text-[14px] font-bold text-blue-800">নতুন হিসাব তৈরি (Add Account)</h4>
+                <div className="text-[12px] font-medium text-gray-600 bg-white px-2.5 py-1 rounded-full border border-gray-200">
+                  স্বাভাবিক ব্যালেন্স: <span className="text-blue-700 font-bold">{inferNormalBalance(newAccClass)}</span> (স্বয়ংক্রিয় নির্ধারিত)
+                </div>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                <div>
+                  <label className="block text-[12px] font-semibold text-gray-700 mb-1">
+                    হিসাবের শ্রেণী (Account Class)
+                  </label>
+                  <select
+                    value={newAccClass}
+                    onChange={(e) => handleAccountClassChange(e.target.value as any)}
+                    className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900"
+                  >
+                    <option value="ASSET">ASSET (১০xx সম্পদ)</option>
+                    <option value="LIABILITY">LIABILITY (২০xx দায়)</option>
+                    <option value="EQUITY">EQUITY (৩০xx মূলধন)</option>
+                    <option value="REVENUE">REVENUE (৪০xx আয়)</option>
+                    <option value="COGS">COGS (৫০xx বিক্রিত পণ্যের ব্যয়)</option>
+                    <option value="EXPENSE">EXPENSE (৬০xx পরিচালন ব্যয়)</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-[12px] font-semibold text-gray-700 mb-1">
+                    হিসাবের বাংলা নাম
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="যেমন: খামার পরিবহন ব্যয়"
+                    value={newAccNameBn}
+                    onChange={(e) => setNewAccNameBn(e.target.value)}
+                    className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[12px] font-semibold text-gray-700 mb-1">
+                    হিসাব কোড (স্বয়ংক্রিয় প্রিভিউ / পরিবর্তনযোগ্য)
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="কোড"
+                    value={newAccCode}
+                    onChange={(e) => setNewAccCode(e.target.value)}
+                    className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900 font-mono font-bold"
+                  />
+                </div>
               </div>
               <div className="flex gap-2.5 justify-end">
                 <button
@@ -1675,14 +1775,18 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
                 key={acc.id}
                 className="p-3.5 rounded-xl bg-[#F8FAFC] border border-gray-200 hover:border-gray-300 transition-colors text-[13px] space-y-1.5"
               >
-                <div className="flex items-center justify-between">
-                  <span className="font-mono font-bold text-blue-700 text-[14px]">{acc.code}</span>
-                  <span className="text-[11px] px-2 py-0.5 rounded bg-white border border-gray-200 text-gray-700 font-semibold">
+                <div className="flex items-start justify-between gap-2">
+                  <div>
+                    <h4 className="font-bold text-gray-900 text-base leading-snug">{acc.nameBn}</h4>
+                    <span className="text-xs text-gray-400 font-mono font-medium">({acc.code})</span>
+                  </div>
+                  <span className="text-[11px] px-2 py-0.5 rounded bg-white border border-gray-200 text-gray-700 font-semibold shrink-0">
                     {acc.accountClass}
                   </span>
                 </div>
-                <div className="font-bold text-gray-900 text-[14px]">{acc.nameBn}</div>
-                <div className="text-[12px] text-gray-500 italic">{acc.nameEn}</div>
+                {acc.nameEn && acc.nameEn !== acc.nameBn && (
+                  <div className="text-[12px] text-gray-500 italic">{acc.nameEn}</div>
+                )}
                 <div className="text-[12px] text-gray-600 pt-1.5 border-t border-gray-200 flex justify-between font-medium">
                   <span>ব্যালেন্স ধরন: {acc.normalBalance}</span>
                   <span>{acc.isSystem ? 'সিস্টেম' : 'কাস্টম'}</span>
@@ -1784,11 +1888,10 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
                             {template.active ? 'সক্রিয় (Active)' : 'নিষ্ক্রিয় (Paused)'}
                           </span>
                         </div>
-                        <p className="text-[12px] text-gray-500 mt-1 flex items-center gap-1.5">
-                          <span className="font-mono font-semibold text-blue-700">{template.accountCode}</span>
-                          <span>•</span>
-                          <span>{acc ? acc.nameBn : 'হিসাব কোড'}</span>
-                        </p>
+                        <div className="text-[13px] mt-1 flex items-baseline gap-1.5">
+                          <span className="font-bold text-gray-900">{acc ? acc.nameBn : 'হিসাব খাত'}</span>
+                          <span className="text-[11px] font-mono text-gray-400 font-medium">({template.accountCode})</span>
+                        </div>
                       </div>
 
                       <div className="text-right">
@@ -1934,7 +2037,7 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
                       .filter((a) => a.accountClass === 'EXPENSE' || a.accountClass === 'COGS')
                       .map((acc) => (
                         <option key={acc.code} value={acc.code}>
-                          {acc.code} - {acc.nameBn} ({acc.nameEn})
+                          {acc.nameBn} ({acc.code} • {acc.nameEn})
                         </option>
                       ))}
                   </optgroup>
@@ -1943,7 +2046,7 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
                       .filter((a) => a.accountClass !== 'EXPENSE' && a.accountClass !== 'COGS')
                       .map((acc) => (
                         <option key={acc.code} value={acc.code}>
-                          {acc.code} - {acc.nameBn}
+                          {acc.nameBn} ({acc.code})
                         </option>
                       ))}
                   </optgroup>
