@@ -154,6 +154,16 @@ export const DEFAULT_CHART_OF_ACCOUNTS: Account[] = [
     isActive: true
   },
   {
+    id: 'acc_1580',
+    code: '1580',
+    nameBn: 'পশুসম্পদ (Livestock & Biological Assets)',
+    nameEn: 'Livestock & Biological Assets',
+    accountClass: 'ASSET',
+    normalBalance: 'DEBIT',
+    isSystem: true,
+    isActive: true
+  },
+  {
     id: 'acc_1590',
     code: '1590',
     nameBn: 'পুঞ্জীভূত অবচয় (Accumulated Depreciation)',

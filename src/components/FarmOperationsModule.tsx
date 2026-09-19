@@ -42,9 +42,14 @@ import {
   ProcessingRun,
   Reminder,
   UserRole,
-  InventoryItem
+  InventoryItem,
+  Party,
+  CashBankAccount,
+  JournalLine
 } from '../types';
 import { generateTransactionNumber, generateUniqueId, safeInsert } from '../utils/idGenerator';
+import { postJournalEntry } from '../accounting/accountingEngine';
+import { CANONICAL_ACCOUNTS, getCashBankAccountGLCode } from '../accounting/accountMapping';
 import {
   executeAnimalEventTransaction,
   executeAnimalSaleOrRemovalTransaction
@@ -232,6 +237,11 @@ export const FarmOperationsModule: React.FC<Props> = ({
   const [breed, setBreed] = useState('দেশি ও ফ্রিজিয়ান ক্রস');
   const [gender, setGender] = useState<'MALE' | 'FEMALE'>('FEMALE');
   const [purchaseCost, setPurchaseCost] = useState('65000');
+  const [paymentMethod, setPaymentMethod] = useState<'CASH' | 'BANK' | 'CREDIT'>('CASH');
+  const [selectedBankAccountId, setSelectedBankAccountId] = useState<string>('');
+  const [selectedSupplierId, setSelectedSupplierId] = useState<string>('');
+  const [bankAccountsList, setBankAccountsList] = useState<CashBankAccount[]>([]);
+  const [suppliersList, setSuppliersList] = useState<Party[]>([]);
   const [currentWeight, setCurrentWeight] = useState('180');
   const [animalBirthDate, setAnimalBirthDate] = useState<string>(() => new Date().toISOString().split('T')[0]);
   const [animalPurchaseDate, setAnimalPurchaseDate] = useState<string>(() => new Date().toISOString().split('T')[0]);
@@ -430,6 +440,18 @@ export const FarmOperationsModule: React.FC<Props> = ({
       // Load animals from database without auto-seeding
       const aList = await db.animals.toArray();
       setAnimals(aList);
+
+      // Load bank accounts & suppliers for payment source selection
+      const banks = await db.cashBankAccounts.filter((b) => b.accountType === 'BANK' || b.accountType === 'MOBILE_BANKING').toArray();
+      setBankAccountsList(banks);
+      if (banks.length > 0) {
+        setSelectedBankAccountId((prev) => prev || banks[0].id);
+      }
+      const parties = await db.parties.where('type').equals('SUPPLIER').toArray();
+      setSuppliersList(parties);
+      if (parties.length > 0) {
+        setSelectedSupplierId((prev) => prev || parties[0].id);
+      }
 
       // Load feed items for feed event logging
       const allInv = await db.inventoryItems.toArray();

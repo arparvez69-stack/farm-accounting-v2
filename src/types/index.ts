@@ -139,6 +139,10 @@ export interface Animal {
   saleDate?: string | number;
   photoUrl?: string;
   notes?: string;
+  journalEntryId?: string;
+  paymentMethod?: 'CASH' | 'BANK' | 'CREDIT';
+  supplierId?: string;
+  bankAccountId?: string;
   synced?: boolean;
 }
 
@@ -529,6 +533,10 @@ export interface FixedAsset {
   depreciationRatePercent?: number; // annual %, entered once at purchase
   lastDepreciationDate?: string; // defaults to purchase date, hidden from the user
   photoUrl?: string;
+  journalEntryId?: string;
+  paymentMethod?: 'CASH' | 'BANK' | 'CREDIT';
+  supplierId?: string;
+  bankAccountId?: string;
   synced?: boolean;
 }
 
