@@ -28,7 +28,8 @@ import {
   Image as ImageIcon,
   Edit3,
   Trash2,
-  QrCode
+  QrCode,
+  ShoppingCart
 } from 'lucide-react';
 import jsQR from 'jsqr';
 import { db } from '../db/indexedDb';
@@ -52,7 +53,9 @@ import { postJournalEntry } from '../accounting/accountingEngine';
 import { CANONICAL_ACCOUNTS, getCashBankAccountGLCode } from '../accounting/accountMapping';
 import {
   executeAnimalEventTransaction,
-  executeAnimalSaleOrRemovalTransaction
+  executeAnimalSaleOrRemovalTransaction,
+  executeFishHarvestAndSaleTransaction,
+  executeCropHarvestAndSaleTransaction
 } from '../services/transactionService';
 import { AnimalDetailView } from './AnimalDetailView';
 import { notifyUndoableAction } from '../services/undoService';
@@ -212,6 +215,33 @@ export const FarmOperationsModule: React.FC<Props> = ({
   const [cropCycles, setCropCycles] = useState<CropCycle[]>([]);
   const [internalFlows, setInternalFlows] = useState<InternalFlow[]>([]);
   const [processingRuns, setProcessingRuns] = useState<ProcessingRun[]>([]);
+
+  // Harvest and Completed filter states
+  const [fishFilter, setFishFilter] = useState<'ACTIVE' | 'COMPLETED'>('ACTIVE');
+  const [cropFilter, setCropFilter] = useState<'ACTIVE' | 'COMPLETED'>('ACTIVE');
+
+  // Fish Harvest & Sale modal states
+  const [harvestFishBatch, setHarvestFishBatch] = useState<FishBatch | null>(null);
+  const [harvestFishWeight, setHarvestFishWeight] = useState('');
+  const [harvestFishMortality, setHarvestFishMortality] = useState('0');
+  const [harvestFishPrice, setHarvestFishPrice] = useState('');
+  const [harvestFishPaymentMethod, setHarvestFishPaymentMethod] = useState<'CASH' | 'BANK' | 'CREDIT'>('CASH');
+  const [harvestFishBankId, setHarvestFishBankId] = useState('');
+  const [harvestFishCustomer, setHarvestFishCustomer] = useState('');
+  const [harvestFishDate, setHarvestFishDate] = useState(() => new Date().toISOString().split('T')[0]);
+  const [harvestFishNotes, setHarvestFishNotes] = useState('');
+  const [isSubmittingFishHarvest, setIsSubmittingFishHarvest] = useState(false);
+
+  // Crop Harvest & Sale modal states
+  const [harvestCropCycle, setHarvestCropCycle] = useState<CropCycle | null>(null);
+  const [harvestCropYield, setHarvestCropYield] = useState('');
+  const [harvestCropPrice, setHarvestCropPrice] = useState('');
+  const [harvestCropPaymentMethod, setHarvestCropPaymentMethod] = useState<'CASH' | 'BANK' | 'CREDIT'>('CASH');
+  const [harvestCropBankId, setHarvestCropBankId] = useState('');
+  const [harvestCropCustomer, setHarvestCropCustomer] = useState('');
+  const [harvestCropDate, setHarvestCropDate] = useState(() => new Date().toISOString().split('T')[0]);
+  const [harvestCropNotes, setHarvestCropNotes] = useState('');
+  const [isSubmittingCropHarvest, setIsSubmittingCropHarvest] = useState(false);
 
   const [selectedEmptyCropSvg] = useState<string>(() => {
     const emptySvgs = [
@@ -1254,6 +1284,125 @@ export const FarmOperationsModule: React.FC<Props> = ({
       loadOpsData();
     } catch (err: any) {
       setMsg({ type: 'error', text: err.message });
+    }
+  };
+
+  const handleOpenFishHarvest = (batch: FishBatch) => {
+    setHarvestFishBatch(batch);
+    setHarvestFishWeight(batch.currentEstimatedWeightKg ? String(batch.currentEstimatedWeightKg) : '');
+    setHarvestFishMortality(batch.mortalityCount ? String(batch.mortalityCount) : '0');
+    setHarvestFishPrice('');
+    setHarvestFishPaymentMethod('CASH');
+    setHarvestFishBankId(bankAccountsList[0]?.id || '');
+    setHarvestFishCustomer('');
+    setHarvestFishDate(new Date().toISOString().split('T')[0]);
+    setHarvestFishNotes('');
+  };
+
+  const handleFishHarvestSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!harvestFishBatch) return;
+    try {
+      setIsSubmittingFishHarvest(true);
+      const weight = parseFloat(harvestFishWeight) || 0;
+      const mortality = parseInt(harvestFishMortality) || 0;
+      const price = parseFloat(harvestFishPrice) || 0;
+
+      if (weight <= 0) {
+        setMsg({ type: 'error', text: 'আহরিত মাছের ওজন অবশ্যই শূন্যের বেশি হতে হবে।' });
+        return;
+      }
+      if (price < 0) {
+        setMsg({ type: 'error', text: 'বিক্রয়মূল্য ঋণাত্মক হতে পারে না।' });
+        return;
+      }
+      if (harvestFishPaymentMethod === 'BANK' && price > 0 && !harvestFishBankId) {
+        setMsg({ type: 'error', text: 'ব্যাংক হিসাব নির্বাচন করুন।' });
+        return;
+      }
+
+      const result = await executeFishHarvestAndSaleTransaction({
+        batchId: harvestFishBatch.id,
+        harvestWeightKg: weight,
+        mortalityCount: mortality,
+        salePrice: price,
+        paymentMethod: harvestFishPaymentMethod,
+        bankAccountId: harvestFishPaymentMethod === 'BANK' ? harvestFishBankId : undefined,
+        customerName: harvestFishCustomer.trim() || undefined,
+        date: harvestFishDate,
+        notes: harvestFishNotes.trim() || undefined,
+        currentUserId: 'system-user'
+      });
+
+      setHarvestFishBatch(null);
+      setMsg({
+        type: 'success',
+        text: `মাছের ব্যাচ ${harvestFishBatch.id} আহরণ ও বিক্রয় সম্পন্ন হয়েছে! (ভাউচার: ${result.voucherNumber || 'হালনাগাদ'})`
+      });
+      setFishFilter('COMPLETED');
+      loadOpsData();
+    } catch (err: any) {
+      setMsg({ type: 'error', text: err.message });
+    } finally {
+      setIsSubmittingFishHarvest(false);
+    }
+  };
+
+  const handleOpenCropHarvest = (cycle: CropCycle) => {
+    setHarvestCropCycle(cycle);
+    setHarvestCropYield(cycle.harvestYieldKg ? String(cycle.harvestYieldKg) : '');
+    setHarvestCropPrice('');
+    setHarvestCropPaymentMethod('CASH');
+    setHarvestCropBankId(bankAccountsList[0]?.id || '');
+    setHarvestCropCustomer('');
+    setHarvestCropDate(new Date().toISOString().split('T')[0]);
+    setHarvestCropNotes('');
+  };
+
+  const handleCropHarvestSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!harvestCropCycle) return;
+    try {
+      setIsSubmittingCropHarvest(true);
+      const yieldKg = parseFloat(harvestCropYield) || 0;
+      const price = parseFloat(harvestCropPrice) || 0;
+
+      if (yieldKg <= 0) {
+        setMsg({ type: 'error', text: 'কর্তনকৃত ফলন অবশ্যই শূন্যের বেশি হতে হবে।' });
+        return;
+      }
+      if (price < 0) {
+        setMsg({ type: 'error', text: 'বিক্রয়মূল্য ঋণাত্মক হতে পারে না।' });
+        return;
+      }
+      if (harvestCropPaymentMethod === 'BANK' && price > 0 && !harvestCropBankId) {
+        setMsg({ type: 'error', text: 'ব্যাংক হিসাব নির্বাচন করুন।' });
+        return;
+      }
+
+      const result = await executeCropHarvestAndSaleTransaction({
+        cycleId: harvestCropCycle.id,
+        harvestYieldKg: yieldKg,
+        salePrice: price,
+        paymentMethod: harvestCropPaymentMethod,
+        bankAccountId: harvestCropPaymentMethod === 'BANK' ? harvestCropBankId : undefined,
+        customerName: harvestCropCustomer.trim() || undefined,
+        date: harvestCropDate,
+        notes: harvestCropNotes.trim() || undefined,
+        currentUserId: 'system-user'
+      });
+
+      setHarvestCropCycle(null);
+      setMsg({
+        type: 'success',
+        text: `শস্য চক্র ${harvestCropCycle.id} কর্তন ও বিক্রয় সম্পন্ন হয়েছে! (ভাউচার: ${result.voucherNumber || 'হালনাগাদ'})`
+      });
+      setCropFilter('COMPLETED');
+      loadOpsData();
+    } catch (err: any) {
+      setMsg({ type: 'error', text: err.message });
+    } finally {
+      setIsSubmittingCropHarvest(false);
     }
   };
 
@@ -3034,18 +3183,46 @@ export const FarmOperationsModule: React.FC<Props> = ({
                 <Fish className="w-5 h-5 text-sky-600" />
                 <span>মৎস্য চাষ ও পুকুর ব্যাচ ({fishBatches.length})</span>
               </h3>
-              <p className="text-[13px] text-gray-600 mt-0.5">পোনা মজুদের হিসাব, ফিড খরচ ও মরটালিটি ট্র্যাকিং</p>
+              <p className="text-[13px] text-gray-600 mt-0.5">পোনা মজুদের হিসাব, ফিড খরচ, মরটালিটি ও আহরণ-বিক্রয় ট্র্যাকিং</p>
             </div>
 
-            {role === 'OWNER' && (
-              <button
-                onClick={() => setShowAddFish(!showAddFish)}
-                className="px-3.5 py-2 rounded-xl bg-[#1E5128] hover:bg-[#173F1F] text-white text-[13px] font-bold shadow-xs transition-all cursor-pointer min-h-[40px] flex items-center gap-1.5"
-              >
-                <PlusCircle className="w-4 h-4" />
-                <span>+ নতুন মাছের ব্যাচ</span>
-              </button>
-            )}
+            <div className="flex items-center gap-2 flex-wrap">
+              {/* Filter: Active vs Completed */}
+              <div className="inline-flex p-1 bg-gray-100 dark:bg-slate-800 rounded-xl text-xs font-medium border border-gray-200 dark:border-slate-700">
+                <button
+                  type="button"
+                  onClick={() => setFishFilter('ACTIVE')}
+                  className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer font-semibold ${
+                    fishFilter === 'ACTIVE'
+                      ? 'bg-white dark:bg-slate-900 text-sky-700 dark:text-sky-400 shadow-xs'
+                      : 'text-gray-600 dark:text-slate-400 hover:text-gray-900'
+                  }`}
+                >
+                  সক্রিয় ব্যাচ ({fishBatches.filter((b) => b.status === 'ACTIVE').length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setFishFilter('COMPLETED')}
+                  className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer font-semibold ${
+                    fishFilter === 'COMPLETED'
+                      ? 'bg-white dark:bg-slate-900 text-emerald-700 dark:text-emerald-400 shadow-xs'
+                      : 'text-gray-600 dark:text-slate-400 hover:text-gray-900'
+                  }`}
+                >
+                  সমাপ্ত ({fishBatches.filter((b) => b.status === 'HARVESTED' || b.status === 'CLOSED').length})
+                </button>
+              </div>
+
+              {role === 'OWNER' && (
+                <button
+                  onClick={() => setShowAddFish(!showAddFish)}
+                  className="px-3.5 py-2 rounded-xl bg-[#1E5128] hover:bg-[#173F1F] text-white text-[13px] font-bold shadow-xs transition-all cursor-pointer min-h-[40px] flex items-center gap-1.5"
+                >
+                  <PlusCircle className="w-4 h-4" />
+                  <span>+ নতুন মাছের ব্যাচ</span>
+                </button>
+              )}
+            </div>
           </div>
 
           {showAddFish && (
@@ -3105,45 +3282,113 @@ export const FarmOperationsModule: React.FC<Props> = ({
             </form>
           )}
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-            {fishBatches.map((b, idx) => (
-              <div
-                key={b.id}
-                className="p-4 rounded-xl bg-[#F8FAFC] border border-gray-200 space-y-2.5 shadow-xs animate-fade-slide-up"
-                style={{ animationDelay: `${Math.min(idx * 35, 350)}ms` }}
-              >
-                <div className="flex items-center justify-between">
-                  <div>
-                    <span className="font-mono font-bold text-sky-700 text-[14px]">{b.id}</span>
-                    <h4 className="font-bold text-gray-900 text-[15px]">{b.pondName}</h4>
-                    <p className="text-[13px] text-gray-600">{b.species}</p>
-                  </div>
-                  <span className="px-2.5 py-1 rounded-full bg-sky-50 text-sky-700 border border-sky-200 text-xs font-semibold">
-                    {b.status}
-                  </span>
-                </div>
+          {fishBatches.filter((b) => fishFilter === 'ACTIVE' ? b.status === 'ACTIVE' : (b.status === 'HARVESTED' || b.status === 'CLOSED')).length === 0 ? (
+            <div className="flex flex-col items-center justify-center p-8 text-center bg-gray-50/70 dark:bg-slate-800/40 rounded-2xl border border-dashed border-gray-200 dark:border-slate-700">
+              <Fish className="w-12 h-12 text-sky-400 mb-2 stroke-[1.5]" />
+              <p className="text-sm font-bold text-gray-700 dark:text-slate-300">
+                {fishFilter === 'ACTIVE' ? 'কোনো সক্রিয় মাছের ব্যাচ পাওয়া যায়নি' : 'কোনো সমাপ্ত/আহরিত মাছের ব্যাচ নেই'}
+              </p>
+              <p className="text-xs text-gray-500 dark:text-slate-400 mt-0.5">
+                {fishFilter === 'ACTIVE' ? 'নতুন ব্যাচ মজুদ করতে উপরের বোতামটি চাপুন' : 'সক্রিয় ব্যাচ থেকে "আহরণ ও বিক্রয়" সম্পন্ন করলে তা এখানে দেখা যাবে'}
+              </p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+              {fishBatches
+                .filter((b) => fishFilter === 'ACTIVE' ? b.status === 'ACTIVE' : (b.status === 'HARVESTED' || b.status === 'CLOSED'))
+                .map((b, idx) => {
+                  const totalCost = (b.fingerlingCost || 0) + (b.totalFeedCost || 0);
+                  const netProfit = (b.harvestRevenue || 0) - totalCost;
+                  const isHarvested = b.status === 'HARVESTED' || b.status === 'CLOSED';
 
-                <div className="space-y-1.5 text-[13px] pt-2 border-t border-gray-200">
-                  <div className="flex justify-between">
-                    <span className="text-gray-600">মজুদ পোনা:</span>
-                    <span className="font-semibold text-gray-900">{b.fingerlingQty} টি</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-gray-600">পোনা খরচ:</span>
-                    <span className="font-semibold text-gray-900">{fmt(b.fingerlingCost)}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-gray-600">মোট ফিড প্রয়োগ:</span>
-                    <span className="font-semibold text-amber-700">{b.totalFeedKg} কেজি ({fmt(b.totalFeedCost)})</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-gray-600">মৃত পোনা সংখ্যা:</span>
-                    <span className="font-semibold text-red-600">{b.mortalityCount} টি</span>
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
+                  return (
+                    <div
+                      key={b.id}
+                      className="p-4 rounded-xl bg-[#F8FAFC] border border-gray-200 space-y-2.5 shadow-xs animate-fade-slide-up flex flex-col justify-between"
+                      style={{ animationDelay: `${Math.min(idx * 35, 350)}ms` }}
+                    >
+                      <div>
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <span className="font-mono font-bold text-sky-700 text-[14px]">{b.id}</span>
+                            <h4 className="font-bold text-gray-900 text-[15px]">{b.pondName}</h4>
+                            <p className="text-[13px] text-gray-600">{b.species}</p>
+                          </div>
+                          <span className={`px-2.5 py-1 rounded-full text-xs font-semibold border ${
+                            isHarvested
+                              ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                              : 'bg-sky-50 text-sky-700 border-sky-200'
+                          }`}>
+                            {isHarvested ? 'আহরিত (HARVESTED)' : b.status}
+                          </span>
+                        </div>
+
+                        <div className="space-y-1.5 text-[13px] pt-2 mt-2 border-t border-gray-200">
+                          <div className="flex justify-between">
+                            <span className="text-gray-600">মজুদ পোনা:</span>
+                            <span className="font-semibold text-gray-900">{b.fingerlingQty} টি</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-gray-600">পোনা খরচ:</span>
+                            <span className="font-semibold text-gray-900">{fmt(b.fingerlingCost)}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-gray-600">মোট ফিড প্রয়োগ:</span>
+                            <span className="font-semibold text-amber-700">{b.totalFeedKg} কেজি ({fmt(b.totalFeedCost)})</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-gray-600">মোট পুঞ্জীভূত খরচ (COGS):</span>
+                            <span className="font-bold text-gray-900">{fmt(totalCost)}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-gray-600">মৃত পোনা সংখ্যা (ক্ষতি):</span>
+                            <span className="font-semibold text-red-600">{b.mortalityCount || 0} টি</span>
+                          </div>
+
+                          {isHarvested && (
+                            <div className="mt-2 pt-2 border-t border-dashed border-emerald-300 space-y-1.5 bg-emerald-50/60 p-2.5 rounded-lg">
+                              {b.harvestDate && (
+                                <div className="flex justify-between">
+                                  <span className="text-gray-600">আহরণের তারিখ:</span>
+                                  <span className="font-medium text-gray-900">{b.harvestDate}</span>
+                                </div>
+                              )}
+                              <div className="flex justify-between">
+                                <span className="text-gray-600">আহরিত মোট ওজন:</span>
+                                <span className="font-bold text-emerald-800">{b.harvestWeightKg || 0} কেজি</span>
+                              </div>
+                              <div className="flex justify-between">
+                                <span className="text-gray-600">বিক্রয় রাজস্ব (Revenue):</span>
+                                <span className="font-bold text-emerald-700">{fmt(b.harvestRevenue || 0)}</span>
+                              </div>
+                              <div className="flex justify-between font-bold pt-1 border-t border-emerald-200">
+                                <span className="text-gray-700">নীট লাভ / (ক্ষতি):</span>
+                                <span className={netProfit >= 0 ? 'text-emerald-700' : 'text-red-600'}>
+                                  {fmt(netProfit)}
+                                </span>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      {!isHarvested && (
+                        <div className="pt-2">
+                          <button
+                            type="button"
+                            onClick={() => handleOpenFishHarvest(b)}
+                            className="w-full py-2 px-3 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-[13px] font-bold shadow-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                          >
+                            <ShoppingCart className="w-4 h-4" />
+                            <span>আহরণ ও বিক্রয় (Harvest & Sell)</span>
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+            </div>
+          )}
         </div>
       </div>
     )}
@@ -3175,18 +3420,46 @@ export const FarmOperationsModule: React.FC<Props> = ({
                 <Wheat className="w-5 h-5 text-amber-600" />
                 <span>শস্য ও নেপিয়ার ঘাস চাষ ({cropCycles.length})</span>
               </h3>
-              <p className="text-[13px] text-gray-600 mt-0.5">ঘাস চাষ, সার প্রয়োগ, সেচ ও ফসল কর্তন ট্র্যাকিং</p>
+              <p className="text-[13px] text-gray-600 mt-0.5">ঘাস চাষ, সার প্রয়োগ, সেচ, ফসল কর্তন ও বিক্রয় ট্র্যাকিং</p>
             </div>
 
-            {role === 'OWNER' && (
-              <button
-                onClick={() => setShowAddCrop(!showAddCrop)}
-                className="px-3.5 py-2 rounded-xl bg-[#1E5128] hover:bg-[#173F1F] text-white text-[13px] font-bold shadow-xs transition-all cursor-pointer min-h-[40px] flex items-center gap-1.5"
-              >
-                <PlusCircle className="w-4 h-4" />
-                <span>+ নতুন শস্য চক্র</span>
-              </button>
-            )}
+            <div className="flex items-center gap-2 flex-wrap">
+              {/* Filter: Active vs Completed */}
+              <div className="inline-flex p-1 bg-gray-100 dark:bg-slate-800 rounded-xl text-xs font-medium border border-gray-200 dark:border-slate-700">
+                <button
+                  type="button"
+                  onClick={() => setCropFilter('ACTIVE')}
+                  className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer font-semibold ${
+                    cropFilter === 'ACTIVE'
+                      ? 'bg-white dark:bg-slate-900 text-amber-700 dark:text-amber-400 shadow-xs'
+                      : 'text-gray-600 dark:text-slate-400 hover:text-gray-900'
+                  }`}
+                >
+                  সক্রিয় চক্র ({cropCycles.filter((c) => c.status === 'PLANTED' || c.status === 'GROWING').length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setCropFilter('COMPLETED')}
+                  className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer font-semibold ${
+                    cropFilter === 'COMPLETED'
+                      ? 'bg-white dark:bg-slate-900 text-emerald-700 dark:text-emerald-400 shadow-xs'
+                      : 'text-gray-600 dark:text-slate-400 hover:text-gray-900'
+                  }`}
+                >
+                  সমাপ্ত ({cropCycles.filter((c) => c.status === 'HARVESTED' || c.status === 'CLOSED').length})
+                </button>
+              </div>
+
+              {role === 'OWNER' && (
+                <button
+                  onClick={() => setShowAddCrop(!showAddCrop)}
+                  className="px-3.5 py-2 rounded-xl bg-[#1E5128] hover:bg-[#173F1F] text-white text-[13px] font-bold shadow-xs transition-all cursor-pointer min-h-[40px] flex items-center gap-1.5"
+                >
+                  <PlusCircle className="w-4 h-4" />
+                  <span>+ নতুন শস্য চক্র</span>
+                </button>
+              )}
+            </div>
           </div>
 
           {showAddCrop && (
@@ -3236,7 +3509,7 @@ export const FarmOperationsModule: React.FC<Props> = ({
             </form>
           )}
 
-          {cropCycles.length === 0 ? (
+          {cropCycles.filter((c) => cropFilter === 'ACTIVE' ? (c.status === 'PLANTED' || c.status === 'GROWING') : (c.status === 'HARVESTED' || c.status === 'CLOSED')).length === 0 ? (
             <div className="flex flex-col items-center justify-center p-8 text-center bg-gray-50/70 dark:bg-slate-800/40 rounded-2xl border border-dashed border-gray-200 dark:border-slate-700">
               <img
                 src={selectedEmptyCropSvg}
@@ -3244,44 +3517,106 @@ export const FarmOperationsModule: React.FC<Props> = ({
                 loading="lazy"
                 className="w-[50%] max-w-[240px] h-auto object-contain pointer-events-none drop-shadow-xs mb-3"
               />
-              <p className="text-sm font-bold text-gray-700 dark:text-slate-300">কোনো সক্রিয় শস্য চক্র পাওয়া যায়নি</p>
-              <p className="text-xs text-gray-500 dark:text-slate-400 mt-0.5">নতুন শস্য বা নেপিয়ার ঘাস চাষ যুক্ত করতে উপরের বোতামটি ব্যবহার করুন</p>
+              <p className="text-sm font-bold text-gray-700 dark:text-slate-300">
+                {cropFilter === 'ACTIVE' ? 'কোনো সক্রিয় শস্য চক্র পাওয়া যায়নি' : 'কোনো সমাপ্ত/কর্তনকৃত শস্য চক্র নেই'}
+              </p>
+              <p className="text-xs text-gray-500 dark:text-slate-400 mt-0.5">
+                {cropFilter === 'ACTIVE'
+                  ? 'নতুন শস্য বা নেপিয়ার ঘাস চাষ যুক্ত করতে উপরের বোতামটি ব্যবহার করুন'
+                  : 'সক্রিয় চক্র থেকে "আহরণ ও বিক্রয়" সম্পন্ন করলে তা এখানে দেখা যাবে'}
+              </p>
             </div>
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-              {cropCycles.map((c, idx) => (
-                <div
-                  key={c.id}
-                  className="p-4 rounded-xl bg-[#F8FAFC] border border-gray-200 space-y-2.5 shadow-xs animate-fade-slide-up"
-                  style={{ animationDelay: `${Math.min(idx * 35, 350)}ms` }}
-                >
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <span className="font-mono font-bold text-amber-700 text-[14px]">{c.id}</span>
-                      <h4 className="font-bold text-gray-900 text-[15px]">{c.cropName}</h4>
-                      <p className="text-[13px] text-gray-600">{c.plotName} ({c.areaDecimals} শতাংশ)</p>
-                    </div>
-                    <span className="px-2.5 py-1 rounded-full bg-amber-50 text-amber-800 border border-amber-200 text-xs font-semibold">
-                      {c.status}
-                    </span>
-                  </div>
+              {cropCycles
+                .filter((c) => cropFilter === 'ACTIVE' ? (c.status === 'PLANTED' || c.status === 'GROWING') : (c.status === 'HARVESTED' || c.status === 'CLOSED'))
+                .map((c, idx) => {
+                  const isHarvested = c.status === 'HARVESTED' || c.status === 'CLOSED';
+                  const costSum = (c.seedCost || 0) + (c.fertilizerCost || 0) + (c.irrigationCost || 0) + (c.labourCost || 0) + (c.otherCost || 0);
+                  const totalCost = costSum > 0 ? costSum : (c.totalCost || 0);
+                  const netProfit = (c.harvestRevenue || 0) - totalCost;
 
-                  <div className="space-y-1.5 text-[13px] pt-2 border-t border-gray-200">
-                    <div className="flex justify-between">
-                      <span className="text-gray-600">রোপণের তারিখ:</span>
-                      <span className="font-medium text-gray-900">{c.plantingDate}</span>
+                  return (
+                    <div
+                      key={c.id}
+                      className="p-4 rounded-xl bg-[#F8FAFC] border border-gray-200 space-y-2.5 shadow-xs animate-fade-slide-up flex flex-col justify-between"
+                      style={{ animationDelay: `${Math.min(idx * 35, 350)}ms` }}
+                    >
+                      <div>
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <span className="font-mono font-bold text-amber-700 text-[14px]">{c.id}</span>
+                            <h4 className="font-bold text-gray-900 text-[15px]">{c.cropName}</h4>
+                            <p className="text-[13px] text-gray-600">{c.plotName} ({c.areaDecimals} শতাংশ)</p>
+                          </div>
+                          <span className={`px-2.5 py-1 rounded-full text-xs font-semibold border ${
+                            isHarvested
+                              ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                              : 'bg-amber-50 text-amber-800 border-amber-200'
+                          }`}>
+                            {isHarvested ? 'কর্তনকৃত (HARVESTED)' : c.status}
+                          </span>
+                        </div>
+
+                        <div className="space-y-1.5 text-[13px] pt-2 mt-2 border-t border-gray-200">
+                          <div className="flex justify-between">
+                            <span className="text-gray-600">রোপণের তারিখ:</span>
+                            <span className="font-medium text-gray-900">{c.plantingDate}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-gray-600">মোট চাষ খরচ (COGS):</span>
+                            <span className="font-semibold text-red-600">{fmt(totalCost)}</span>
+                          </div>
+
+                          {!isHarvested && (
+                            <div className="flex justify-between">
+                              <span className="text-gray-600">প্রত্যাশিত কর্তন:</span>
+                              <span className="text-gray-900 font-medium">{c.expectedHarvestDate || 'নির্দিষ্ট নেই'}</span>
+                            </div>
+                          )}
+
+                          {isHarvested && (
+                            <div className="mt-2 pt-2 border-t border-dashed border-emerald-300 space-y-1.5 bg-emerald-50/60 p-2.5 rounded-lg">
+                              {c.actualHarvestDate && (
+                                <div className="flex justify-between">
+                                  <span className="text-gray-600">কর্তনের তারিখ:</span>
+                                  <span className="font-medium text-gray-900">{c.actualHarvestDate}</span>
+                                </div>
+                              )}
+                              <div className="flex justify-between">
+                                <span className="text-gray-600">কর্তনকৃত মোট ফলন:</span>
+                                <span className="font-bold text-emerald-800">{c.harvestYieldKg || 0} কেজি</span>
+                              </div>
+                              <div className="flex justify-between">
+                                <span className="text-gray-600">বিক্রয় রাজস্ব (Revenue):</span>
+                                <span className="font-bold text-emerald-700">{fmt(c.harvestRevenue || 0)}</span>
+                              </div>
+                              <div className="flex justify-between font-bold pt-1 border-t border-emerald-200">
+                                <span className="text-gray-700">নীট লাভ / (ক্ষতি):</span>
+                                <span className={netProfit >= 0 ? 'text-emerald-700' : 'text-red-600'}>
+                                  {fmt(netProfit)}
+                                </span>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      {!isHarvested && (
+                        <div className="pt-2">
+                          <button
+                            type="button"
+                            onClick={() => handleOpenCropHarvest(c)}
+                            className="w-full py-2 px-3 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-[13px] font-bold shadow-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                          >
+                            <ShoppingCart className="w-4 h-4" />
+                            <span>আহরণ ও বিক্রয় (Harvest & Sell)</span>
+                          </button>
+                        </div>
+                      )}
                     </div>
-                    <div className="flex justify-between">
-                      <span className="text-gray-600">মোট চাষ খরচ:</span>
-                      <span className="font-semibold text-red-600">{fmt(c.totalCost)}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-gray-600">কর্তনকৃত ফলন:</span>
-                      <span className="text-[#15803D] font-bold">{c.harvestYieldKg} কেজি</span>
-                    </div>
-                  </div>
-                </div>
-              ))}
+                  );
+                })}
             </div>
           )}
         </div>
@@ -3710,6 +4045,415 @@ export const FarmOperationsModule: React.FC<Props> = ({
                 তবুও এগিয়ে যান
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Fish Harvest & Sale Modal */}
+      {harvestFishBatch && (
+        <div id="harvest-fish-modal" className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
+          <div className="bg-white dark:bg-slate-900 rounded-2xl max-w-xl w-full p-5 sm:p-6 shadow-2xl border border-gray-200 dark:border-slate-800 space-y-4 my-8">
+            <div className="flex items-start justify-between gap-3 border-b border-gray-100 dark:border-slate-800 pb-3">
+              <div className="flex items-center gap-2.5 text-emerald-700 dark:text-emerald-400">
+                <div className="p-2 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800">
+                  <Fish className="w-6 h-6 text-emerald-600 dark:text-emerald-400" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold text-gray-900 dark:text-white">মাছ আহরণ ও এককালীন বিক্রয় (Harvest & Sale)</h3>
+                  <p className="text-xs text-gray-500 dark:text-slate-400">ব্যাচ: {harvestFishBatch.id} • {harvestFishBatch.pondName} ({harvestFishBatch.species})</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => !isSubmittingFishHarvest && setHarvestFishBatch(null)}
+                className="text-gray-400 hover:text-gray-600 dark:hover:text-slate-200 p-1 rounded-lg cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Batch Cost & Stock Information */}
+            <div className="p-3.5 bg-sky-50/70 dark:bg-sky-950/30 rounded-xl border border-sky-100 dark:border-sky-900/50 text-xs space-y-1.5">
+              <div className="font-semibold text-sky-900 dark:text-sky-300">ব্যাচের পুঞ্জীভূত মজুদ ও বিনিয়োগ তথ্য:</div>
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-gray-700 dark:text-slate-300">
+                <div>মজুদ পোনা: <span className="font-bold">{harvestFishBatch.fingerlingQty} টি</span></div>
+                <div>পোনা খরচ: <span className="font-bold">{fmt(harvestFishBatch.fingerlingCost || 0)}</span></div>
+                <div>ফিড খরচ: <span className="font-bold">{fmt(harvestFishBatch.totalFeedCost || 0)}</span></div>
+              </div>
+              <div className="pt-1.5 border-t border-sky-200/60 dark:border-sky-800/60 flex justify-between items-center">
+                <span className="text-sky-800 dark:text-sky-300 font-medium">বিক্রয়কালে স্থানান্তরিত মোট COGS (হিসাব ৫০১০):</span>
+                <span className="font-bold text-sky-950 dark:text-sky-200 text-sm">
+                  {fmt((harvestFishBatch.fingerlingCost || 0) + (harvestFishBatch.totalFeedCost || 0))}
+                </span>
+              </div>
+            </div>
+
+            <form onSubmit={handleFishHarvestSubmit} className="space-y-3.5 text-xs">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-semibold text-gray-700 dark:text-slate-300 mb-1">আহরণ ও বিক্রয়ের তারিখ *</label>
+                  <input
+                    type="date"
+                    required
+                    value={harvestFishDate}
+                    onChange={(e) => setHarvestFishDate(e.target.value)}
+                    max={new Date().toISOString().split('T')[0]}
+                    className="w-full bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-700 rounded-lg p-2.5 text-sm text-gray-900 dark:text-white"
+                  />
+                </div>
+                <div>
+                  <label className="block font-semibold text-gray-700 dark:text-slate-300 mb-1">মোট আহরিত মাছের ওজন (কেজি) *</label>
+                  <input
+                    type="number"
+                    step="any"
+                    required
+                    min="0.1"
+                    placeholder="যেমন: ৩৫০.৫"
+                    value={harvestFishWeight}
+                    onChange={(e) => setHarvestFishWeight(e.target.value)}
+                    className="w-full bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-700 rounded-lg p-2.5 text-sm text-gray-900 dark:text-white"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-semibold text-gray-700 dark:text-slate-300 mb-1">মোট মৃত মাছের সংখ্যা (Mortality Count) *</label>
+                  <input
+                    type="number"
+                    required
+                    min="0"
+                    placeholder="যেমন: ৫০"
+                    value={harvestFishMortality}
+                    onChange={(e) => setHarvestFishMortality(e.target.value)}
+                    className="w-full bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-700 rounded-lg p-2.5 text-sm text-gray-900 dark:text-white"
+                  />
+                  <span className="text-[11px] text-gray-500 dark:text-slate-400">পুরো চাষ চক্রে মোট কতটি পোনা মারা গেছে</span>
+                </div>
+                <div>
+                  <label className="block font-semibold text-emerald-800 dark:text-emerald-400 mb-1">মোট বিক্রয়মূল্য (Revenue ৳) *</label>
+                  <input
+                    type="number"
+                    step="any"
+                    required
+                    min="0"
+                    placeholder="যেমন: ৮৫০০০"
+                    value={harvestFishPrice}
+                    onChange={(e) => setHarvestFishPrice(e.target.value)}
+                    className="w-full bg-white dark:bg-slate-800 border border-emerald-400 dark:border-emerald-600 rounded-lg p-2.5 text-sm font-bold text-gray-900 dark:text-white focus:ring-2 focus:ring-emerald-500"
+                  />
+                  <span className="text-[11px] text-gray-500 dark:text-slate-400">রাজস্ব হিসাব ৪০১০ (Fish Sales Revenue)</span>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-semibold text-gray-700 dark:text-slate-300 mb-1">অর্থ প্রাপ্তির মাধ্যম *</label>
+                  <select
+                    value={harvestFishPaymentMethod}
+                    onChange={(e) => setHarvestFishPaymentMethod(e.target.value as any)}
+                    className="w-full bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-700 rounded-lg p-2.5 text-sm text-gray-900 dark:text-white"
+                  >
+                    <option value="CASH">নগদ গ্রহণ (Cash on Hand - 1010)</option>
+                    <option value="BANK">ব্যাংক স্থানান্তর / চেক (Bank Account - 1020)</option>
+                    <option value="RECEIVABLE">বাকিতে বিক্রয় (Accounts Receivable - 1030)</option>
+                  </select>
+                </div>
+                {harvestFishPaymentMethod === 'BANK' && (
+                  <div>
+                    <label className="block font-semibold text-gray-700 dark:text-slate-300 mb-1">ব্যাংক হিসাব *</label>
+                    <select
+                      required
+                      value={harvestFishBankId}
+                      onChange={(e) => setHarvestFishBankId(e.target.value)}
+                      className="w-full bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-700 rounded-lg p-2.5 text-sm text-gray-900 dark:text-white"
+                    >
+                      <option value="">-- ব্যাংক হিসাব নির্বাচন করুন --</option>
+                      {bankAccountsList.map((b) => (
+                        <option key={b.id} value={b.id}>
+                          {b.bankName} - {b.accountNumber} ({b.accountName})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+                {harvestFishPaymentMethod !== 'BANK' && (
+                  <div>
+                    <label className="block font-semibold text-gray-700 dark:text-slate-300 mb-1">ক্রেতার নাম (ঐচ্ছিক)</label>
+                    <input
+                      type="text"
+                      placeholder="যেমন: মেসার্স আলমগীর ফিশ আড়ৎ"
+                      value={harvestFishCustomer}
+                      onChange={(e) => setHarvestFishCustomer(e.target.value)}
+                      className="w-full bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-700 rounded-lg p-2.5 text-sm text-gray-900 dark:text-white"
+                    />
+                  </div>
+                )}
+              </div>
+
+              {harvestFishPaymentMethod === 'BANK' && (
+                <div>
+                  <label className="block font-semibold text-gray-700 dark:text-slate-300 mb-1">ক্রেতার নাম (ঐচ্ছিক)</label>
+                  <input
+                    type="text"
+                    placeholder="যেমন: মেসার্স আলমগীর ফিশ আড়ৎ"
+                    value={harvestFishCustomer}
+                    onChange={(e) => setHarvestFishCustomer(e.target.value)}
+                    className="w-full bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-700 rounded-lg p-2.5 text-sm text-gray-900 dark:text-white"
+                  />
+                </div>
+              )}
+
+              <div>
+                <label className="block font-semibold text-gray-700 dark:text-slate-300 mb-1">মন্তব্য বা নোট (ঐচ্ছিক)</label>
+                <input
+                  type="text"
+                  placeholder="যেমন: আড়তে পাইকারি দরে এককালীন বিক্রয় সম্পন্ন"
+                  value={harvestFishNotes}
+                  onChange={(e) => setHarvestFishNotes(e.target.value)}
+                  className="w-full bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-700 rounded-lg p-2.5 text-sm text-gray-900 dark:text-white"
+                />
+              </div>
+
+              {/* Real-time Profit/Loss Preview */}
+              {(() => {
+                const cogs = (harvestFishBatch.fingerlingCost || 0) + (harvestFishBatch.totalFeedCost || 0);
+                const rev = parseFloat(harvestFishPrice) || 0;
+                const net = rev - cogs;
+                return (
+                  <div className="p-3 bg-gray-50 dark:bg-slate-800/80 rounded-xl border border-gray-200 dark:border-slate-700 space-y-1">
+                    <div className="flex justify-between text-gray-600 dark:text-slate-400">
+                      <span>বিক্রয় রাজস্ব (Revenue 4010):</span>
+                      <span className="font-semibold text-gray-900 dark:text-white">{fmt(rev)}</span>
+                    </div>
+                    <div className="flex justify-between text-gray-600 dark:text-slate-400">
+                      <span>মোট বিক্রীত পণ্যের ব্যয় (COGS 5010):</span>
+                      <span className="font-semibold text-gray-900 dark:text-white">({fmt(cogs)})</span>
+                    </div>
+                    <div className="flex justify-between text-sm font-bold pt-1 border-t border-gray-200 dark:border-slate-700">
+                      <span>প্রত্যাশিত নীট লাভ / (ক্ষতি):</span>
+                      <span className={net >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}>
+                        {fmt(net)}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-gray-100 dark:border-slate-800">
+                <button
+                  type="button"
+                  disabled={isSubmittingFishHarvest}
+                  onClick={() => setHarvestFishBatch(null)}
+                  className="px-4 py-2.5 rounded-xl bg-gray-100 dark:bg-slate-800 hover:bg-gray-200 dark:hover:bg-slate-700 text-gray-700 dark:text-slate-300 text-xs font-bold transition-colors cursor-pointer min-h-[40px]"
+                >
+                  বাতিল
+                </button>
+                <button
+                  type="submit"
+                  id="btn-confirm-fish-harvest"
+                  disabled={isSubmittingFishHarvest}
+                  className="px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition-all cursor-pointer shadow-xs min-h-[40px] flex items-center gap-1.5 disabled:opacity-50"
+                >
+                  <ShoppingCart className="w-4 h-4" />
+                  <span>{isSubmittingFishHarvest ? 'আহরণ প্রক্রিয়াধীন...' : 'আহরণ ও বিক্রয় নিশ্চিত করুন'}</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Crop Harvest & Sale Modal */}
+      {harvestCropCycle && (
+        <div id="harvest-crop-modal" className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
+          <div className="bg-white dark:bg-slate-900 rounded-2xl max-w-xl w-full p-5 sm:p-6 shadow-2xl border border-gray-200 dark:border-slate-800 space-y-4 my-8">
+            <div className="flex items-start justify-between gap-3 border-b border-gray-100 dark:border-slate-800 pb-3">
+              <div className="flex items-center gap-2.5 text-amber-700 dark:text-amber-400">
+                <div className="p-2 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800">
+                  <Wheat className="w-6 h-6 text-amber-600 dark:text-amber-400" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold text-gray-900 dark:text-white">শস্য কর্তন ও এককালীন বিক্রয় (Harvest & Sale)</h3>
+                  <p className="text-xs text-gray-500 dark:text-slate-400">চক্র: {harvestCropCycle.id} • {harvestCropCycle.cropName} ({harvestCropCycle.plotName})</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => !isSubmittingCropHarvest && setHarvestCropCycle(null)}
+                className="text-gray-400 hover:text-gray-600 dark:hover:text-slate-200 p-1 rounded-lg cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Crop Cost & Area Information */}
+            {(() => {
+              const costSum = (harvestCropCycle.seedCost || 0) + (harvestCropCycle.fertilizerCost || 0) + (harvestCropCycle.irrigationCost || 0) + (harvestCropCycle.labourCost || 0) + (harvestCropCycle.otherCost || 0);
+              const totalCost = costSum > 0 ? costSum : (harvestCropCycle.totalCost || 0);
+              return (
+                <div className="p-3.5 bg-amber-50/70 dark:bg-amber-950/30 rounded-xl border border-amber-100 dark:border-amber-900/50 text-xs space-y-1.5">
+                  <div className="font-semibold text-amber-900 dark:text-amber-300">চক্রের পুঞ্জীভূত চাষ খরচ ও তথ্য:</div>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-gray-700 dark:text-slate-300">
+                    <div>জমির পরিমাণ: <span className="font-bold">{harvestCropCycle.areaDecimals} শতাংশ</span></div>
+                    <div>বীজ খরচ: <span className="font-bold">{fmt(harvestCropCycle.seedCost || 0)}</span></div>
+                    <div>সার/সেচ: <span className="font-bold">{fmt((harvestCropCycle.fertilizerCost || 0) + (harvestCropCycle.irrigationCost || 0))}</span></div>
+                  </div>
+                  <div className="pt-1.5 border-t border-amber-200/60 dark:border-amber-800/60 flex justify-between items-center">
+                    <span className="text-amber-800 dark:text-amber-300 font-medium">বিক্রয়কালে স্থানান্তরিত মোট COGS (হিসাব ৫০৩০):</span>
+                    <span className="font-bold text-amber-950 dark:text-amber-200 text-sm">
+                      {fmt(totalCost)}
+                    </span>
+                  </div>
+                </div>
+              );
+            })()}
+
+            <form onSubmit={handleCropHarvestSubmit} className="space-y-3.5 text-xs">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-semibold text-gray-700 dark:text-slate-300 mb-1">কর্তন ও বিক্রয়ের তারিখ *</label>
+                  <input
+                    type="date"
+                    required
+                    value={harvestCropDate}
+                    onChange={(e) => setHarvestCropDate(e.target.value)}
+                    max={new Date().toISOString().split('T')[0]}
+                    className="w-full bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-700 rounded-lg p-2.5 text-sm text-gray-900 dark:text-white"
+                  />
+                </div>
+                <div>
+                  <label className="block font-semibold text-gray-700 dark:text-slate-300 mb-1">কর্তনকৃত মোট ফলন (কেজি) *</label>
+                  <input
+                    type="number"
+                    step="any"
+                    required
+                    min="0.1"
+                    placeholder="যেমন: ৫০০"
+                    value={harvestCropYield}
+                    onChange={(e) => setHarvestCropYield(e.target.value)}
+                    className="w-full bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-700 rounded-lg p-2.5 text-sm text-gray-900 dark:text-white"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-semibold text-emerald-800 dark:text-emerald-400 mb-1">মোট বিক্রয়মূল্য (Revenue ৳) *</label>
+                  <input
+                    type="number"
+                    step="any"
+                    required
+                    min="0"
+                    placeholder="যেমন: ২০০০০"
+                    value={harvestCropPrice}
+                    onChange={(e) => setHarvestCropPrice(e.target.value)}
+                    className="w-full bg-white dark:bg-slate-800 border border-emerald-400 dark:border-emerald-600 rounded-lg p-2.5 text-sm font-bold text-gray-900 dark:text-white focus:ring-2 focus:ring-emerald-500"
+                  />
+                  <span className="text-[11px] text-gray-500 dark:text-slate-400">রাজস্ব হিসাব ৪০৪০ (Crop Sales Revenue)</span>
+                </div>
+                <div>
+                  <label className="block font-semibold text-gray-700 dark:text-slate-300 mb-1">অর্থ প্রাপ্তির মাধ্যম *</label>
+                  <select
+                    value={harvestCropPaymentMethod}
+                    onChange={(e) => setHarvestCropPaymentMethod(e.target.value as any)}
+                    className="w-full bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-700 rounded-lg p-2.5 text-sm text-gray-900 dark:text-white"
+                  >
+                    <option value="CASH">নগদ গ্রহণ (Cash on Hand - 1010)</option>
+                    <option value="BANK">ব্যাংক স্থানান্তর / চেক (Bank Account - 1020)</option>
+                    <option value="RECEIVABLE">বাকিতে বিক্রয় (Accounts Receivable - 1030)</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {harvestCropPaymentMethod === 'BANK' && (
+                  <div>
+                    <label className="block font-semibold text-gray-700 dark:text-slate-300 mb-1">ব্যাংক হিসাব *</label>
+                    <select
+                      required
+                      value={harvestCropBankId}
+                      onChange={(e) => setHarvestCropBankId(e.target.value)}
+                      className="w-full bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-700 rounded-lg p-2.5 text-sm text-gray-900 dark:text-white"
+                    >
+                      <option value="">-- ব্যাংক হিসাব নির্বাচন করুন --</option>
+                      {bankAccountsList.map((b) => (
+                        <option key={b.id} value={b.id}>
+                          {b.bankName} - {b.accountNumber} ({b.accountName})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+                <div className={harvestCropPaymentMethod === 'BANK' ? '' : 'sm:col-span-2'}>
+                  <label className="block font-semibold text-gray-700 dark:text-slate-300 mb-1">ক্রেতার নাম (ঐচ্ছিক)</label>
+                  <input
+                    type="text"
+                    placeholder="যেমন: খামারি বা স্থানীয় আড়তদার"
+                    value={harvestCropCustomer}
+                    onChange={(e) => setHarvestCropCustomer(e.target.value)}
+                    className="w-full bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-700 rounded-lg p-2.5 text-sm text-gray-900 dark:text-white"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block font-semibold text-gray-700 dark:text-slate-300 mb-1">মন্তব্য বা নোট (ঐচ্ছিক)</label>
+                <input
+                  type="text"
+                  placeholder="যেমন: পাকা নেপিয়ার ঘাস কেটে খামারিদের কাছে বিক্রয় সম্পন্ন"
+                  value={harvestCropNotes}
+                  onChange={(e) => setHarvestCropNotes(e.target.value)}
+                  className="w-full bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-700 rounded-lg p-2.5 text-sm text-gray-900 dark:text-white"
+                />
+              </div>
+
+              {/* Real-time Profit/Loss Preview */}
+              {(() => {
+                const costSum = (harvestCropCycle.seedCost || 0) + (harvestCropCycle.fertilizerCost || 0) + (harvestCropCycle.irrigationCost || 0) + (harvestCropCycle.labourCost || 0) + (harvestCropCycle.otherCost || 0);
+                const cogs = costSum > 0 ? costSum : (harvestCropCycle.totalCost || 0);
+                const rev = parseFloat(harvestCropPrice) || 0;
+                const net = rev - cogs;
+                return (
+                  <div className="p-3 bg-gray-50 dark:bg-slate-800/80 rounded-xl border border-gray-200 dark:border-slate-700 space-y-1">
+                    <div className="flex justify-between text-gray-600 dark:text-slate-400">
+                      <span>বিক্রয় রাজস্ব (Revenue 4040):</span>
+                      <span className="font-semibold text-gray-900 dark:text-white">{fmt(rev)}</span>
+                    </div>
+                    <div className="flex justify-between text-gray-600 dark:text-slate-400">
+                      <span>মোট চাষ ব্যয় (COGS 5030):</span>
+                      <span className="font-semibold text-gray-900 dark:text-white">({fmt(cogs)})</span>
+                    </div>
+                    <div className="flex justify-between text-sm font-bold pt-1 border-t border-gray-200 dark:border-slate-700">
+                      <span>প্রত্যাশিত নীট লাভ / (ক্ষতি):</span>
+                      <span className={net >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}>
+                        {fmt(net)}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-gray-100 dark:border-slate-800">
+                <button
+                  type="button"
+                  disabled={isSubmittingCropHarvest}
+                  onClick={() => setHarvestCropCycle(null)}
+                  className="px-4 py-2.5 rounded-xl bg-gray-100 dark:bg-slate-800 hover:bg-gray-200 dark:hover:bg-slate-700 text-gray-700 dark:text-slate-300 text-xs font-bold transition-colors cursor-pointer min-h-[40px]"
+                >
+                  বাতিল
+                </button>
+                <button
+                  type="submit"
+                  id="btn-confirm-crop-harvest"
+                  disabled={isSubmittingCropHarvest}
+                  className="px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition-all cursor-pointer shadow-xs min-h-[40px] flex items-center gap-1.5 disabled:opacity-50"
+                >
+                  <ShoppingCart className="w-4 h-4" />
+                  <span>{isSubmittingCropHarvest ? 'কর্তন প্রক্রিয়াধীন...' : 'কর্তন ও বিক্রয় নিশ্চিত করুন'}</span>
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

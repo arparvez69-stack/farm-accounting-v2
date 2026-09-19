@@ -23,7 +23,9 @@ import {
   JournalLine,
   Animal,
   AnimalEvent,
-  AnimalStatus
+  AnimalStatus,
+  FishBatch,
+  CropCycle
 } from '../types';
 import { generateAmortizationSchedule } from '../accounting/amortizationService';
 
@@ -1869,6 +1871,625 @@ export async function executeOwnerDrawingTransaction(params: {
       );
 
       return { journalEntryId: journalEntry.id, voucherNumber };
+    }
+  );
+}
+
+/**
+ * Atomic Execution of Fish Batch Harvest and Sale
+ * - Records harvest weight and mortality count
+ * - Posts Revenue leg: Debit Cash/Bank/Receivable, Credit Fish Sales Revenue (4010)
+ * - Posts Cost leg: Debit Fish COGS (5010), Credit Biological Assets (1580) for accumulated costs (fingerlingCost + totalFeedCost)
+ * - Marks FishBatch status as HARVESTED
+ */
+export interface FishHarvestSaleParams {
+  batchId: string;
+  harvestWeightKg: number;
+  mortalityCount: number;
+  salePrice: number;
+  paymentMethod: 'CASH' | 'BANK' | 'CREDIT';
+  bankAccountId?: string;
+  customerName?: string;
+  date?: string;
+  notes?: string;
+  currentUserId: string;
+}
+
+export async function executeFishHarvestAndSaleTransaction(
+  params: FishHarvestSaleParams
+): Promise<{ updatedBatch: FishBatch; sale?: Sale; journalEntryId?: string; voucherNumber?: string }> {
+  return await db.transaction(
+    'rw',
+    [
+      db.fishBatches,
+      db.journalEntries,
+      db.cashBankAccounts,
+      db.accounts,
+      db.sales,
+      db.auditLogs,
+      db.closedPeriods
+    ],
+    async () => {
+      const {
+        batchId,
+        harvestWeightKg,
+        mortalityCount,
+        salePrice,
+        paymentMethod,
+        bankAccountId,
+        customerName,
+        date,
+        notes,
+        currentUserId
+      } = params;
+
+      const todayStr = new Date().toISOString().split('T')[0];
+      const dateStr = date || todayStr;
+      if (dateStr > todayStr) {
+        throw new Error(`আহরণ ও বিক্রয়ের তারিখ ভবিষ্যতের হতে পারে না (${todayStr} বা তার পূর্বের তারিখ নির্বাচন করুন)।`);
+      }
+
+      const closedPeriod = await db.closedPeriods
+        .filter((p) => (p.startDate ? p.startDate <= dateStr : true) && p.endDate >= dateStr)
+        .first();
+      if (closedPeriod) {
+        throw new Error(`হিসাবকাল বন্ধ রয়েছে (${closedPeriod.notes || closedPeriod.endDate})। এই তারিখে নতুন লেনদেন পোস্টিং অনুমোদিত নয়।`);
+      }
+
+      const freshBatch = await db.fishBatches.get(batchId);
+      if (!freshBatch) {
+        throw new Error(`মাছের ব্যাচ পাওয়া যায়নি (ID: ${batchId})।`);
+      }
+      if (freshBatch.status === 'HARVESTED') {
+        throw new Error(`এই মাছের ব্যাচটি (${freshBatch.id}) ইতিমধ্যে আহরণ ও বিক্রয় সম্পন্ন হয়েছে।`);
+      }
+
+      const cleanWeight = Math.max(0, Number(harvestWeightKg) || 0);
+      const cleanMortality = Math.max(0, Number(mortalityCount) || 0);
+      const cleanPrice = Math.max(0, Math.round((Number(salePrice) || 0) * 100) / 100);
+
+      // Validate payment source if BANK
+      let bankAcc: CashBankAccount | undefined;
+      if (paymentMethod === 'BANK' && cleanPrice > 0) {
+        if (!bankAccountId) {
+          throw new Error('ব্যাংক মাধ্যমে বিক্রয়ের জন্য ব্যাংক হিসাব নির্বাচন করা আবশ্যক।');
+        }
+        bankAcc = await db.cashBankAccounts.get(bankAccountId);
+        if (!bankAcc) {
+          throw new Error('নির্বাচিত ব্যাংক হিসাবটি ডাটাবেজে পাওয়া যায়নি।');
+        }
+      }
+
+      const accounts = await db.accounts.toArray();
+
+      // Ensure accounts exist
+      let fishRevAcc = accounts.find((a) => a.code === CANONICAL_ACCOUNTS.FISH_REVENUE);
+      if (!fishRevAcc) {
+        const newAcc: Account = {
+          id: 'acc_4010',
+          code: CANONICAL_ACCOUNTS.FISH_REVENUE,
+          nameBn: 'মাছ বিক্রয় আয় (Fish Sales Revenue)',
+          nameEn: 'Fish Sales Revenue',
+          accountClass: 'REVENUE',
+          normalBalance: 'CREDIT',
+          isSystem: true,
+          isActive: true
+        };
+        await safeInsert(db.accounts, newAcc, { idPrefix: 'acc' });
+        accounts.push(newAcc);
+        fishRevAcc = newAcc;
+      }
+
+      let fishCogsAcc = accounts.find((a) => a.code === CANONICAL_ACCOUNTS.FISH_COGS);
+      if (!fishCogsAcc) {
+        const newAcc: Account = {
+          id: 'acc_5010',
+          code: CANONICAL_ACCOUNTS.FISH_COGS,
+          nameBn: 'বিক্রিত মাছের উৎপাদন ব্যয় (Fish COGS)',
+          nameEn: 'Fish Cost of Goods Sold',
+          accountClass: 'COGS',
+          normalBalance: 'DEBIT',
+          isSystem: true,
+          isActive: true
+        };
+        await safeInsert(db.accounts, newAcc, { idPrefix: 'acc' });
+        accounts.push(newAcc);
+        fishCogsAcc = newAcc;
+      }
+
+      let assetAcc = accounts.find((a) => a.code === CANONICAL_ACCOUNTS.LIVESTOCK_ASSETS);
+      if (!assetAcc) {
+        const newAcc: Account = {
+          id: 'acc_1580',
+          code: CANONICAL_ACCOUNTS.LIVESTOCK_ASSETS,
+          nameBn: 'পশুসম্পদ ও জৈবিক সম্পদ (Livestock & Biological Assets)',
+          nameEn: 'Livestock & Biological Assets',
+          accountClass: 'ASSET',
+          normalBalance: 'DEBIT',
+          isSystem: true,
+          isActive: true
+        };
+        await safeInsert(db.accounts, newAcc, { idPrefix: 'acc' });
+        accounts.push(newAcc);
+        assetAcc = newAcc;
+      }
+
+      const accumulatedCost = Math.round(((freshBatch.fingerlingCost || 0) + (freshBatch.totalFeedCost || 0)) * 100) / 100;
+      const paymentCode = getPaymentAccount(paymentMethod, 'SALE');
+
+      let journalEntryId: string | undefined;
+      let voucherNumber: string | undefined;
+      let saleRecord: Sale | undefined;
+
+      if (cleanPrice > 0 || accumulatedCost > 0) {
+        const journalLines: JournalLine[] = [];
+
+        // 1. Revenue recognition leg
+        if (cleanPrice > 0) {
+          journalLines.push(
+            {
+              accountId: paymentCode,
+              accountCode: paymentCode,
+              accountName:
+                paymentMethod === 'CASH'
+                  ? 'নগদ টাকা (Cash on Hand)'
+                  : paymentMethod === 'BANK'
+                  ? 'ব্যাংক হিসাব (Bank Accounts)'
+                  : 'গ্রাহকের নিকট পাওনা (Accounts Receivable)',
+              debit: cleanPrice,
+              credit: 0,
+              memo: `মাছ বিক্রয়: ${freshBatch.species} (${freshBatch.pondName})`
+            },
+            {
+              accountId: CANONICAL_ACCOUNTS.FISH_REVENUE,
+              accountCode: CANONICAL_ACCOUNTS.FISH_REVENUE,
+              accountName: fishRevAcc.nameBn || 'মাছ বিক্রয় আয় (Fish Sales Revenue)',
+              debit: 0,
+              credit: cleanPrice,
+              memo: `মাছ বিক্রয় রাজস্ব: ব্যাচ ${freshBatch.id} (${cleanWeight} কেজি)`
+            }
+          );
+        }
+
+        // 2. COGS & Biological Asset derecognition leg (fingerlingCost + totalFeedCost)
+        if (accumulatedCost > 0) {
+          journalLines.push(
+            {
+              accountId: CANONICAL_ACCOUNTS.FISH_COGS,
+              accountCode: CANONICAL_ACCOUNTS.FISH_COGS,
+              accountName: fishCogsAcc.nameBn || 'বিক্রিত মাছের উৎপাদন ব্যয় (Fish COGS)',
+              debit: accumulatedCost,
+              credit: 0,
+              memo: `মাছের ব্যাচ ${freshBatch.id} মোট পুঞ্জীভূত উৎপাদন ব্যয় (COGS)`
+            },
+            {
+              accountId: CANONICAL_ACCOUNTS.LIVESTOCK_ASSETS,
+              accountCode: CANONICAL_ACCOUNTS.LIVESTOCK_ASSETS,
+              accountName: assetAcc.nameBn || 'পশুসম্পদ ও জৈবিক সম্পদ (Livestock & Biological Assets)',
+              debit: 0,
+              credit: accumulatedCost,
+              memo: `মাছের ব্যাচ ${freshBatch.id} বিক্রয় বাবদ জৈবিক সম্পদ হিসাব সমন্বয়`
+            }
+          );
+        }
+
+        const check = validateBalancedLines(journalLines, accounts);
+        if (!check.isBalanced) {
+          throw new Error('মাছ আহরণ ও বিক্রয় জাবেদা ভারসাম্যহীন! কার্যক্রম বাতিল করা হলো।');
+        }
+
+        voucherNumber = generateTransactionNumber('SLF');
+        const journalEntry = await postJournalEntry(
+          {
+            id: generateUniqueId('j_fish_sale'),
+            voucherNumber,
+            voucherType: 'SALES',
+            date: dateStr,
+            narration: `মাছ আহরণ ও বিক্রয়: ${freshBatch.species} (${freshBatch.pondName}) - ওজন: ${cleanWeight} কেজি, বিক্রয়মূল্য: ৳${cleanPrice}, পুঞ্জীভূত খরচ: ৳${accumulatedCost}`,
+            reference: freshBatch.id,
+            lines: journalLines,
+            createdBy: currentUserId,
+            createdAt: new Date().toISOString()
+          },
+          { accounts, skipDbPut: true }
+        );
+        await safeInsert(db.journalEntries, journalEntry, { idPrefix: 'j' });
+        journalEntryId = journalEntry.id;
+
+        // Cash/Bank ledger update
+        if (cleanPrice > 0) {
+          if (paymentMethod === 'BANK' && bankAcc) {
+            await db.cashBankAccounts.update(bankAcc.id, {
+              currentBalance: Math.round((bankAcc.currentBalance + cleanPrice) * 100) / 100,
+              synced: false
+            });
+          } else if (paymentMethod === 'CASH') {
+            const cashAcc = await db.cashBankAccounts.where('accountType').equals('CASH').first();
+            if (cashAcc) {
+              await db.cashBankAccounts.update(cashAcc.id, {
+                currentBalance: Math.round((cashAcc.currentBalance + cleanPrice) * 100) / 100,
+                synced: false
+              });
+            }
+          }
+
+          saleRecord = {
+            id: generateUniqueId('sal'),
+            invoiceNumber: generateTransactionNumber('SAL'),
+            date: dateStr,
+            customerId: 'WALK_IN_CUSTOMER',
+            customerName: customerName?.trim() || 'সাধারণ ক্রেতা (Local Buyer)',
+            category: 'FISH',
+            items: [
+              {
+                itemId: freshBatch.id,
+                itemName: `মাছ বিক্রয়: ${freshBatch.species} (${freshBatch.pondName})`,
+                quantity: cleanWeight,
+                unit: 'কেজি',
+                unitPrice: cleanWeight > 0 ? Math.round((cleanPrice / cleanWeight) * 100) / 100 : cleanPrice,
+                lineTotal: cleanPrice,
+                cogsAmount: accumulatedCost
+              }
+            ],
+            subtotal: cleanPrice,
+            totalAmount: cleanPrice,
+            grandTotal: cleanPrice,
+            paidAmount: paymentMethod === 'CREDIT' ? 0 : cleanPrice,
+            dueAmount: paymentMethod === 'CREDIT' ? cleanPrice : 0,
+            paymentMethod,
+            bankAccountId: paymentMethod === 'BANK' ? bankAccountId : undefined,
+            journalEntryId,
+            status: paymentMethod === 'CREDIT' ? 'DUE' : 'PAID',
+            synced: false
+          };
+          await safeInsert(db.sales, saleRecord, { idPrefix: 'sal' });
+        }
+      }
+
+      // Update FishBatch record
+      freshBatch.harvestWeightKg = cleanWeight;
+      freshBatch.mortalityCount = cleanMortality;
+      freshBatch.harvestRevenue = cleanPrice;
+      freshBatch.harvestDate = dateStr;
+      freshBatch.status = 'HARVESTED';
+      if (notes) {
+        freshBatch.notes = freshBatch.notes ? `${freshBatch.notes} | ${notes.trim()}` : notes.trim();
+      }
+      freshBatch.synced = false;
+      await db.fishBatches.put(freshBatch);
+
+      // Audit Log
+      await safeInsert(
+        db.auditLogs,
+        {
+          id: generateUniqueId('aud'),
+          timestamp: new Date().toISOString(),
+          userId: currentUserId,
+          role: 'OWNER',
+          action: 'UPDATE',
+          module: 'PRODUCTION',
+          recordId: freshBatch.id,
+          status: 'SUCCESS',
+          details: `মাছ আহরণ ও বিক্রয় সম্পন্ন: ব্যাচ ${freshBatch.id}, ওজন ${cleanWeight} কেজি, বিক্রয় ৳${cleanPrice}, ক্ষতি/মৃত ${cleanMortality} টি, COGS ৳${accumulatedCost}`
+        },
+        { idPrefix: 'aud' }
+      );
+
+      return {
+        updatedBatch: freshBatch,
+        sale: saleRecord,
+        journalEntryId,
+        voucherNumber
+      };
+    }
+  );
+}
+
+/**
+ * Atomic Execution of Crop Cycle Harvest and Sale
+ * - Records harvest yield (kg) and actual harvest date
+ * - Posts Revenue leg: Debit Cash/Bank/Receivable, Credit Crop Sales Revenue (4040)
+ * - Posts Cost leg: Debit Crop COGS (5030), Credit Biological Assets (1580) for accumulated costs
+ * - Marks CropCycle status as HARVESTED
+ */
+export interface CropHarvestSaleParams {
+  cycleId: string;
+  harvestYieldKg: number;
+  salePrice: number;
+  paymentMethod: 'CASH' | 'BANK' | 'CREDIT';
+  bankAccountId?: string;
+  customerName?: string;
+  date?: string;
+  notes?: string;
+  currentUserId: string;
+}
+
+export async function executeCropHarvestAndSaleTransaction(
+  params: CropHarvestSaleParams
+): Promise<{ updatedCycle: CropCycle; sale?: Sale; journalEntryId?: string; voucherNumber?: string }> {
+  return await db.transaction(
+    'rw',
+    [
+      db.cropCycles,
+      db.journalEntries,
+      db.cashBankAccounts,
+      db.accounts,
+      db.sales,
+      db.auditLogs,
+      db.closedPeriods
+    ],
+    async () => {
+      const {
+        cycleId,
+        harvestYieldKg,
+        salePrice,
+        paymentMethod,
+        bankAccountId,
+        customerName,
+        date,
+        notes,
+        currentUserId
+      } = params;
+
+      const todayStr = new Date().toISOString().split('T')[0];
+      const dateStr = date || todayStr;
+      if (dateStr > todayStr) {
+        throw new Error(`কর্তন ও বিক্রয়ের তারিখ ভবিষ্যতের হতে পারে না (${todayStr} বা তার পূর্বের তারিখ নির্বাচন করুন)।`);
+      }
+
+      const closedPeriod = await db.closedPeriods
+        .filter((p) => (p.startDate ? p.startDate <= dateStr : true) && p.endDate >= dateStr)
+        .first();
+      if (closedPeriod) {
+        throw new Error(`হিসাবকাল বন্ধ রয়েছে (${closedPeriod.notes || closedPeriod.endDate})। এই তারিখে নতুন লেনদেন পোস্টিং অনুমোদিত নয়।`);
+      }
+
+      const freshCycle = await db.cropCycles.get(cycleId);
+      if (!freshCycle) {
+        throw new Error(`শস্য চক্র পাওয়া যায়নি (ID: ${cycleId})।`);
+      }
+      if (freshCycle.status === 'HARVESTED') {
+        throw new Error(`এই শস্য চক্রটি (${freshCycle.id}) ইতিমধ্যে কর্তন ও বিক্রয় সম্পন্ন হয়েছে।`);
+      }
+
+      const cleanYield = Math.max(0, Number(harvestYieldKg) || 0);
+      const cleanPrice = Math.max(0, Math.round((Number(salePrice) || 0) * 100) / 100);
+
+      // Validate payment source if BANK
+      let bankAcc: CashBankAccount | undefined;
+      if (paymentMethod === 'BANK' && cleanPrice > 0) {
+        if (!bankAccountId) {
+          throw new Error('ব্যাংক মাধ্যমে বিক্রয়ের জন্য ব্যাংক হিসাব নির্বাচন করা আবশ্যক।');
+        }
+        bankAcc = await db.cashBankAccounts.get(bankAccountId);
+        if (!bankAcc) {
+          throw new Error('নির্বাচিত ব্যাংক হিসাবটি ডাটাবেজে পাওয়া যায়নি।');
+        }
+      }
+
+      const accounts = await db.accounts.toArray();
+
+      // Ensure accounts exist
+      let cropRevAcc = accounts.find((a) => a.code === CANONICAL_ACCOUNTS.CROP_REVENUE);
+      if (!cropRevAcc) {
+        const newAcc: Account = {
+          id: 'acc_4040',
+          code: CANONICAL_ACCOUNTS.CROP_REVENUE,
+          nameBn: 'ফসল বিক্রয় আয় (Crop Sales Revenue)',
+          nameEn: 'Crop Sales Revenue',
+          accountClass: 'REVENUE',
+          normalBalance: 'CREDIT',
+          isSystem: true,
+          isActive: true
+        };
+        await safeInsert(db.accounts, newAcc, { idPrefix: 'acc' });
+        accounts.push(newAcc);
+        cropRevAcc = newAcc;
+      }
+
+      let cropCogsAcc = accounts.find((a) => a.code === CANONICAL_ACCOUNTS.CROP_COGS);
+      if (!cropCogsAcc) {
+        const newAcc: Account = {
+          id: 'acc_5030',
+          code: CANONICAL_ACCOUNTS.CROP_COGS,
+          nameBn: 'বিক্রিত ফসলের উৎপাদন ব্যয় (Crop COGS)',
+          nameEn: 'Crop Cost of Goods Sold',
+          accountClass: 'COGS',
+          normalBalance: 'DEBIT',
+          isSystem: true,
+          isActive: true
+        };
+        await safeInsert(db.accounts, newAcc, { idPrefix: 'acc' });
+        accounts.push(newAcc);
+        cropCogsAcc = newAcc;
+      }
+
+      let assetAcc = accounts.find((a) => a.code === CANONICAL_ACCOUNTS.LIVESTOCK_ASSETS);
+      if (!assetAcc) {
+        const newAcc: Account = {
+          id: 'acc_1580',
+          code: CANONICAL_ACCOUNTS.LIVESTOCK_ASSETS,
+          nameBn: 'পশুসম্পদ ও জৈবিক সম্পদ (Livestock & Biological Assets)',
+          nameEn: 'Livestock & Biological Assets',
+          accountClass: 'ASSET',
+          normalBalance: 'DEBIT',
+          isSystem: true,
+          isActive: true
+        };
+        await safeInsert(db.accounts, newAcc, { idPrefix: 'acc' });
+        accounts.push(newAcc);
+        assetAcc = newAcc;
+      }
+
+      const costSum =
+        (freshCycle.seedCost || 0) +
+        (freshCycle.fertilizerCost || 0) +
+        (freshCycle.irrigationCost || 0) +
+        (freshCycle.labourCost || 0) +
+        (freshCycle.otherCost || 0);
+      const accumulatedCost = Math.round((costSum > 0 ? costSum : (freshCycle.totalCost || 0)) * 100) / 100;
+      const paymentCode = getPaymentAccount(paymentMethod, 'SALE');
+
+      let journalEntryId: string | undefined;
+      let voucherNumber: string | undefined;
+      let saleRecord: Sale | undefined;
+
+      if (cleanPrice > 0 || accumulatedCost > 0) {
+        const journalLines: JournalLine[] = [];
+
+        // 1. Revenue recognition leg
+        if (cleanPrice > 0) {
+          journalLines.push(
+            {
+              accountId: paymentCode,
+              accountCode: paymentCode,
+              accountName:
+                paymentMethod === 'CASH'
+                  ? 'নগদ টাকা (Cash on Hand)'
+                  : paymentMethod === 'BANK'
+                  ? 'ব্যাংক হিসাব (Bank Accounts)'
+                  : 'গ্রাহকের নিকট পাওনা (Accounts Receivable)',
+              debit: cleanPrice,
+              credit: 0,
+              memo: `শস্য/ঘাস কর্তন ও বিক্রয়: ${freshCycle.cropName} (${freshCycle.plotName})`
+            },
+            {
+              accountId: CANONICAL_ACCOUNTS.CROP_REVENUE,
+              accountCode: CANONICAL_ACCOUNTS.CROP_REVENUE,
+              accountName: cropRevAcc.nameBn || 'ফসল বিক্রয় আয় (Crop Sales Revenue)',
+              debit: 0,
+              credit: cleanPrice,
+              memo: `ফসল বিক্রয় রাজস্ব: চক্র ${freshCycle.id} (${cleanYield} কেজি)`
+            }
+          );
+        }
+
+        // 2. COGS & Biological Asset derecognition leg (seedCost + fertilizerCost + irrigationCost + labourCost)
+        if (accumulatedCost > 0) {
+          journalLines.push(
+            {
+              accountId: CANONICAL_ACCOUNTS.CROP_COGS,
+              accountCode: CANONICAL_ACCOUNTS.CROP_COGS,
+              accountName: cropCogsAcc.nameBn || 'বিক্রিত ফসলের উৎপাদন ব্যয় (Crop COGS)',
+              debit: accumulatedCost,
+              credit: 0,
+              memo: `শস্য চক্র ${freshCycle.id} মোট পুঞ্জীভূত চাষ খরচ (COGS)`
+            },
+            {
+              accountId: CANONICAL_ACCOUNTS.LIVESTOCK_ASSETS,
+              accountCode: CANONICAL_ACCOUNTS.LIVESTOCK_ASSETS,
+              accountName: assetAcc.nameBn || 'পশুসম্পদ ও জৈবিক সম্পদ (Livestock & Biological Assets)',
+              debit: 0,
+              credit: accumulatedCost,
+              memo: `শস্য চক্র ${freshCycle.id} বিক্রয় বাবদ জৈবিক সম্পদ হিসাব সমন্বয়`
+            }
+          );
+        }
+
+        const check = validateBalancedLines(journalLines, accounts);
+        if (!check.isBalanced) {
+          throw new Error('ফসল কর্তন ও বিক্রয় জাবেদা ভারসাম্যহীন! কার্যক্রম বাতিল করা হলো।');
+        }
+
+        voucherNumber = generateTransactionNumber('SLC');
+        const journalEntry = await postJournalEntry(
+          {
+            id: generateUniqueId('j_crop_sale'),
+            voucherNumber,
+            voucherType: 'SALES',
+            date: dateStr,
+            narration: `ফসল কর্তন ও বিক্রয়: ${freshCycle.cropName} (${freshCycle.plotName}) - ফলন: ${cleanYield} কেজি, বিক্রয়মূল্য: ৳${cleanPrice}, পুঞ্জীভূত খরচ: ৳${accumulatedCost}`,
+            reference: freshCycle.id,
+            lines: journalLines,
+            createdBy: currentUserId,
+            createdAt: new Date().toISOString()
+          },
+          { accounts, skipDbPut: true }
+        );
+        await safeInsert(db.journalEntries, journalEntry, { idPrefix: 'j' });
+        journalEntryId = journalEntry.id;
+
+        // Cash/Bank ledger update
+        if (cleanPrice > 0) {
+          if (paymentMethod === 'BANK' && bankAcc) {
+            await db.cashBankAccounts.update(bankAcc.id, {
+              currentBalance: Math.round((bankAcc.currentBalance + cleanPrice) * 100) / 100,
+              synced: false
+            });
+          } else if (paymentMethod === 'CASH') {
+            const cashAcc = await db.cashBankAccounts.where('accountType').equals('CASH').first();
+            if (cashAcc) {
+              await db.cashBankAccounts.update(cashAcc.id, {
+                currentBalance: Math.round((cashAcc.currentBalance + cleanPrice) * 100) / 100,
+                synced: false
+              });
+            }
+          }
+
+          saleRecord = {
+            id: generateUniqueId('sal'),
+            invoiceNumber: generateTransactionNumber('SAL'),
+            date: dateStr,
+            customerId: 'WALK_IN_CUSTOMER',
+            customerName: customerName?.trim() || 'সাধারণ ক্রেতা (Local Buyer)',
+            category: 'CROP',
+            items: [
+              {
+                itemId: freshCycle.id,
+                itemName: `শস্য/ঘাস বিক্রয়: ${freshCycle.cropName} (${freshCycle.plotName})`,
+                quantity: cleanYield,
+                unit: 'কেজি',
+                unitPrice: cleanYield > 0 ? Math.round((cleanPrice / cleanYield) * 100) / 100 : cleanPrice,
+                lineTotal: cleanPrice,
+                cogsAmount: accumulatedCost
+              }
+            ],
+            subtotal: cleanPrice,
+            totalAmount: cleanPrice,
+            grandTotal: cleanPrice,
+            paidAmount: paymentMethod === 'CREDIT' ? 0 : cleanPrice,
+            dueAmount: paymentMethod === 'CREDIT' ? cleanPrice : 0,
+            paymentMethod,
+            bankAccountId: paymentMethod === 'BANK' ? bankAccountId : undefined,
+            journalEntryId,
+            status: paymentMethod === 'CREDIT' ? 'DUE' : 'PAID',
+            synced: false
+          };
+          await safeInsert(db.sales, saleRecord, { idPrefix: 'sal' });
+        }
+      }
+
+      // Update CropCycle record
+      freshCycle.harvestYieldKg = cleanYield;
+      freshCycle.harvestRevenue = cleanPrice;
+      freshCycle.actualHarvestDate = dateStr;
+      freshCycle.status = 'HARVESTED';
+      freshCycle.synced = false;
+      await db.cropCycles.put(freshCycle);
+
+      // Audit Log
+      await safeInsert(
+        db.auditLogs,
+        {
+          id: generateUniqueId('aud'),
+          timestamp: new Date().toISOString(),
+          userId: currentUserId,
+          role: 'OWNER',
+          action: 'UPDATE',
+          module: 'PRODUCTION',
+          recordId: freshCycle.id,
+          status: 'SUCCESS',
+          details: `ফসল কর্তন ও বিক্রয় সম্পন্ন: চক্র ${freshCycle.id}, ফলন ${cleanYield} কেজি, বিক্রয় ৳${cleanPrice}, COGS ৳${accumulatedCost}`
+        },
+        { idPrefix: 'aud' }
+      );
+
+      return {
+        updatedCycle: freshCycle,
+        sale: saleRecord,
+        journalEntryId,
+        voucherNumber
+      };
     }
   );
 }
