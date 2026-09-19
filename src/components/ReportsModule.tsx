@@ -203,6 +203,8 @@ export interface YoyComparisonData {
     netProfit: YoyMetric;
   };
   expenseBreakdown: Array<{
+    nameBn?: string;
+    code?: string;
     category: string;
     thisYear: number;
     lastYear: number;
@@ -901,6 +903,8 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
         pctChange = 100;
       }
       return {
+        nameBn: item.nameBn,
+        code: item.code,
         category: `${item.nameBn} (${item.code})`,
         thisYear: item.thisYear,
         lastYear: item.lastYear,
@@ -2177,7 +2181,7 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
                 <div className="flex items-start justify-between gap-2">
                   <div>
                     <div className="text-base font-bold text-gray-900 dark:text-slate-100 font-sans">{r.nameBn}</div>
-                    <span className="text-xs text-teal-700 dark:text-teal-400 font-mono underline underline-offset-2">
+                    <span className="text-xs text-gray-400 dark:text-slate-500 font-mono font-normal">
                       ({r.code})
                     </span>
                   </div>
@@ -4245,7 +4249,16 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
                     {/* Expense Categories Breakdown */}
                     {yoyData.expenseBreakdown.map((item) => (
                       <tr key={item.category} className="hover:bg-gray-50 text-gray-700">
-                        <td className="py-1.5 px-4 font-sans pl-8 text-gray-700">{item.category}</td>
+                        <td className="py-1.5 px-4 font-sans pl-8 text-gray-700">
+                          {item.nameBn ? (
+                            <span className="flex items-baseline gap-1.5">
+                              <span className="font-bold text-gray-900 text-[14px]">{item.nameBn}</span>
+                              <span className="text-xs text-gray-400 font-mono font-normal">({item.code})</span>
+                            </span>
+                          ) : (
+                            item.category
+                          )}
+                        </td>
                         <td className="py-1.5 px-4 text-right text-gray-900">{fmt(item.thisYear)}</td>
                         <td className="py-1.5 px-4 text-right text-gray-600">{fmt(item.lastYear)}</td>
                         <td className="py-1.5 px-4 text-right text-gray-600">

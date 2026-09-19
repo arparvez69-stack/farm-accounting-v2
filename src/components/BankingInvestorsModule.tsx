@@ -674,15 +674,17 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
                       {a.accountType === 'CASH' ? <Wallet className="w-5 h-5" /> : <Landmark className="w-5 h-5" />}
                     </div>
                     <div>
-                      <h4 className="font-bold text-gray-900 text-[15px] leading-tight">{a.name}</h4>
-                      <p className="text-[12px] text-gray-500">
-                        {a.bankName ? `${a.bankName} (${a.accountNumber || 'N/A'})` : a.accountType}
+                      <div className="flex items-baseline gap-1.5">
+                        <h4 className="font-bold text-gray-900 text-[15px] leading-tight">{a.name}</h4>
+                        <span className="text-xs text-gray-400 font-mono font-normal">
+                          ({a.accountType === 'CASH' ? '1010' : '1030'})
+                        </span>
+                      </div>
+                      <p className="text-[12px] text-gray-500 mt-0.5">
+                        {a.bankName ? `${a.bankName} (${a.accountNumber || 'N/A'})` : (a.accountType === 'CASH' ? 'নগদ ক্যাশ তহবিল' : 'ব্যাংক হিসাব')}
                       </p>
                     </div>
                   </div>
-                  <span className="text-xs px-2.5 py-1 rounded-full bg-gray-200 text-gray-700 font-mono font-semibold">
-                    {a.accountType === 'CASH' ? '1010' : '1030'}
-                  </span>
                 </div>
 
                 <div className="pt-2.5 border-t border-gray-200 flex items-center justify-between font-mono">
@@ -736,7 +738,7 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
                     <option value="">-- যে হিসাব থেকে টাকা বের হবে --</option>
                     {accounts.map((a) => (
                       <option key={a.id} value={a.id}>
-                        {a.name} (স্থিতি: {fmt(a.currentBalance)})
+                        {a.name} ({a.accountType === 'CASH' ? '1010' : '1030'}) - স্থিতি: {fmt(a.currentBalance)}
                       </option>
                     ))}
                   </select>
@@ -752,7 +754,7 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
                     <option value="">-- যে হিসাবে টাকা জমা হবে --</option>
                     {accounts.filter((a) => a.id !== fromAccId).map((a) => (
                       <option key={a.id} value={a.id}>
-                        {a.name} (স্থিতি: {fmt(a.currentBalance)})
+                        {a.name} ({a.accountType === 'CASH' ? '1010' : '1030'}) - স্থিতি: {fmt(a.currentBalance)}
                       </option>
                     ))}
                   </select>
@@ -1340,7 +1342,7 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
                     <option value="">হিসাব নির্বাচন করুন...</option>
                     {accounts.map((acc) => (
                       <option key={acc.id} value={acc.id}>
-                        {acc.name} ({acc.accountType === 'BANK' ? acc.bankName || 'ব্যাংক' : 'ক্যাশ'}) - স্থিতি: {fmt(acc.currentBalance)}
+                        {acc.name} ({acc.accountType === 'CASH' ? '1010' : '1030'} • {acc.accountType === 'BANK' ? acc.bankName || 'ব্যাংক' : 'ক্যাশ'}) - স্থিতি: {fmt(acc.currentBalance)}
                       </option>
                     ))}
                   </select>
@@ -1437,7 +1439,7 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
                     <option value="">হিসাব নির্বাচন করুন...</option>
                     {accounts.map((acc) => (
                       <option key={acc.id} value={acc.id}>
-                        {acc.name} ({acc.accountType === 'BANK' ? acc.bankName || 'ব্যাংক' : 'ক্যাশ'}) - স্থিতি: {fmt(acc.currentBalance)}
+                        {acc.name} ({acc.accountType === 'CASH' ? '1010' : '1030'} • {acc.accountType === 'BANK' ? acc.bankName || 'ব্যাংক' : 'ক্যাশ'}) - স্থিতি: {fmt(acc.currentBalance)}
                       </option>
                     ))}
                   </select>
@@ -1574,7 +1576,12 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
                               </span>
                             )}
                           </td>
-                          <td className="p-2.5 font-medium text-gray-800">{accountLabel}</td>
+                          <td className="p-2.5 font-medium text-gray-800">
+                            <span className="font-bold text-gray-900">{accountLabel}</span>
+                            {cashBankLine?.accountCode && (
+                              <span className="text-[11px] text-gray-400 font-mono ml-1.5 font-normal">({cashBankLine.accountCode})</span>
+                            )}
+                          </td>
                           <td className={`p-2.5 text-right font-mono font-bold whitespace-nowrap ${isCapital ? 'text-emerald-700' : 'text-rose-700'}`}>
                             {isCapital ? `+ ${fmt(amount)}` : `- ${fmt(amount)}`}
                           </td>
@@ -1897,7 +1904,7 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
                   <option value="">হিসাব নির্বাচন করুন...</option>
                   {accounts.map((acc) => (
                     <option key={acc.id} value={acc.id}>
-                      {acc.name} ({acc.accountType === 'BANK' ? acc.bankName || 'ব্যাংক' : 'ক্যাশ'}) - স্থিতি: {fmt(acc.currentBalance)}
+                      {acc.name} ({acc.accountType === 'CASH' ? '1010' : '1030'} • {acc.accountType === 'BANK' ? acc.bankName || 'ব্যাংক' : 'ক্যাশ'}) - স্থিতি: {fmt(acc.currentBalance)}
                     </option>
                   ))}
                 </select>

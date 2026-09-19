@@ -513,22 +513,33 @@ export async function executeLoanTransaction(params: {
       const liabilityGlCode = getLoanLiabilityAccount(effectiveMonths);
 
       const accounts = await db.accounts.toArray();
+      const assetAcc = accounts.find((a) => a.code === assetGlCode) || {
+        id: `acc_${assetGlCode}`,
+        code: assetGlCode,
+        nameBn: targetAcc.accountName || targetAcc.name || 'ব্যাংক/নগদ তহবিল'
+      };
+      const liabilityAcc = accounts.find((a) => a.code === liabilityGlCode) || {
+        id: `acc_${liabilityGlCode}`,
+        code: liabilityGlCode,
+        nameBn:
+          liabilityGlCode === '2110'
+            ? 'স্বল্পমেয়াদী ঋণ (Short-Term Loans)'
+            : 'দীর্ঘমেয়াদী ঋণ (Long-Term Loans)'
+      };
+
       const journalLines: JournalLine[] = [
         {
-          accountId: assetGlCode,
+          accountId: assetAcc.id,
           accountCode: assetGlCode,
-          accountName: targetAcc.accountName || targetAcc.name || 'ব্যাংক/নগদ তহবিল',
+          accountName: targetAcc.accountName || targetAcc.name || assetAcc.nameBn,
           debit: principal,
           credit: 0,
           memo: 'ঋণের অর্থ প্রাপ্তি'
         },
         {
-          accountId: liabilityGlCode,
+          accountId: liabilityAcc.id,
           accountCode: liabilityGlCode,
-          accountName:
-            liabilityGlCode === '2110'
-              ? 'স্বল্পমেয়াদী ঋণ (Short-Term Loans)'
-              : 'দীর্ঘমেয়াদী ঋণ (Long-Term Loans)',
+          accountName: liabilityAcc.nameBn,
           debit: 0,
           credit: principal,
           memo: `${lenderName} ঋণ অনুমোদন`
@@ -666,19 +677,30 @@ export async function executeInvestorTransaction(params: {
       const equityGlCode = getInvestorCapitalAccount(); // 3020
 
       const accounts = await db.accounts.toArray();
+      const assetAcc = accounts.find((a) => a.code === assetGlCode) || {
+        id: `acc_${assetGlCode}`,
+        code: assetGlCode,
+        nameBn: targetAcc.accountName || targetAcc.name || 'ব্যাংক/নগদ তহবিল'
+      };
+      const equityAcc = accounts.find((a) => a.code === equityGlCode) || {
+        id: `acc_${equityGlCode}`,
+        code: equityGlCode,
+        nameBn: 'বিনিয়োগকারীর মূলধন (Investor Capital)'
+      };
+
       const journalLines: JournalLine[] = [
         {
-          accountId: assetGlCode,
+          accountId: assetAcc.id,
           accountCode: assetGlCode,
-          accountName: targetAcc.accountName || targetAcc.name || 'ব্যাংক/নগদ তহবিল',
+          accountName: targetAcc.accountName || targetAcc.name || assetAcc.nameBn,
           debit: contribution,
           credit: 0,
           memo: 'বিনিয়োগ মূলধন গ্রহণ'
         },
         {
-          accountId: equityGlCode,
+          accountId: equityAcc.id,
           accountCode: equityGlCode,
-          accountName: 'বিনিয়োগকারীর মূলধন (Investor Capital)',
+          accountName: equityAcc.nameBn,
           debit: 0,
           credit: contribution,
           memo: `${investorName} মূলধন সংযোজন`
@@ -832,17 +854,33 @@ export async function executeLoanRepaymentTransaction(params: {
       const interestExpenseCode = '8010';
 
       const accounts = await db.accounts.toArray();
+      const liabilityAcc = accounts.find((a) => a.code === liabilityGlCode) || {
+        id: `acc_${liabilityGlCode}`,
+        code: liabilityGlCode,
+        nameBn:
+          liabilityGlCode === '2110'
+            ? 'স্বল্পমেয়াদী ঋণ (Short-Term Loans)'
+            : 'দীর্ঘমেয়াদী ঋণ (Long-Term Loans)'
+      };
+      const interestAcc = accounts.find((a) => a.code === interestExpenseCode) || {
+        id: `acc_${interestExpenseCode}`,
+        code: interestExpenseCode,
+        nameBn: 'ঋণের সুদ খরচ (Loan Interest Expense)'
+      };
+      const assetAcc = accounts.find((a) => a.code === assetGlCode) || {
+        id: `acc_${assetGlCode}`,
+        code: assetGlCode,
+        nameBn: sourceAcc.accountName || sourceAcc.name || 'ব্যাংক/নগদ তহবিল'
+      };
+
       const journalLines: JournalLine[] = [];
 
       // 1. Debit Principal to Liability (2110 / 2120)
       if (pAmt > 0) {
         journalLines.push({
-          accountId: liabilityGlCode,
+          accountId: liabilityAcc.id,
           accountCode: liabilityGlCode,
-          accountName:
-            liabilityGlCode === '2110'
-              ? 'স্বল্পমেয়াদী ঋণ (Short-Term Loans)'
-              : 'দীর্ঘমেয়াদী ঋণ (Long-Term Loans)',
+          accountName: liabilityAcc.nameBn,
           debit: pAmt,
           credit: 0,
           memo: `ঋণ কিস্তি আসল পরিশোধ: ${loan.lenderName}`
@@ -852,9 +890,9 @@ export async function executeLoanRepaymentTransaction(params: {
       // 2. Debit Interest to Interest Expense (8010)
       if (iAmt > 0) {
         journalLines.push({
-          accountId: interestExpenseCode,
+          accountId: interestAcc.id,
           accountCode: interestExpenseCode,
-          accountName: 'ঋণের সুদ খরচ (Loan Interest Expense)',
+          accountName: interestAcc.nameBn,
           debit: iAmt,
           credit: 0,
           memo: `ঋণ কিস্তি সুদ পরিশোধ: ${loan.lenderName}`
@@ -863,9 +901,9 @@ export async function executeLoanRepaymentTransaction(params: {
 
       // 3. Credit Source Account (1010 Cash or 1030 Bank)
       journalLines.push({
-        accountId: assetGlCode,
+        accountId: assetAcc.id,
         accountCode: assetGlCode,
-        accountName: sourceAcc.accountName || sourceAcc.name,
+        accountName: sourceAcc.accountName || sourceAcc.name || assetAcc.nameBn,
         debit: 0,
         credit: totalRepayment,
         memo: `ঋণ পরিশোধ: ${loan.lenderName} (${voucherNumber})`
@@ -1156,19 +1194,31 @@ export async function executeAnimalEventTransaction(params: {
         const paymentCode = paymentMethod === 'BANK' ? CANONICAL_ACCOUNTS.BANK : CANONICAL_ACCOUNTS.CASH;
         const paymentName = paymentMethod === 'BANK' ? 'ব্যাংক হিসাব (Bank Accounts)' : 'নগদ টাকা (Cash on Hand)';
 
+        const accounts = await db.accounts.toArray();
+        const expenseAcc = accounts.find((a) => a.code === expenseCode) || {
+          id: `acc_${expenseCode}`,
+          code: expenseCode,
+          nameBn: expenseName
+        };
+        const paymentAcc = accounts.find((a) => a.code === paymentCode) || {
+          id: `acc_${paymentCode}`,
+          code: paymentCode,
+          nameBn: paymentName
+        };
+
         const journalLines: JournalLine[] = [
           {
-            accountId: expenseCode,
+            accountId: expenseAcc.id,
             accountCode: expenseCode,
-            accountName: expenseName,
+            accountName: expenseAcc.nameBn || expenseName,
             debit: cost,
             credit: 0,
             memo: `${animal.id} (${animal.breed}) - ${event.eventType} ব্যয়`
           },
           {
-            accountId: paymentCode,
+            accountId: paymentAcc.id,
             accountCode: paymentCode,
-            accountName: paymentName,
+            accountName: paymentAcc.nameBn || paymentName,
             debit: 0,
             credit: cost,
             memo: 'কার্যক্রম ব্যয় পরিশোধ'
@@ -1176,7 +1226,6 @@ export async function executeAnimalEventTransaction(params: {
         ];
 
         // Explicit double-entry validation: Do not let this event save if unbalanced
-        const accounts = await db.accounts.toArray();
         const check = validateBalancedLines(journalLines, accounts);
         if (!check.isBalanced) {
           throw new Error('জাবেদা দাখিলা ভারসাম্যহীন! কার্যক্রম সংরক্ষণ বাতিল করা হলো।');
@@ -1422,23 +1471,34 @@ export async function executeAnimalSaleOrRemovalTransaction(params: {
         const paymentCode = paymentMethod === 'BANK' ? CANONICAL_ACCOUNTS.BANK : CANONICAL_ACCOUNTS.CASH;
         const revenueCode = CANONICAL_ACCOUNTS.LIVESTOCK_REVENUE; // 4020
 
+        const paymentAcc = accounts.find((a) => a.code === paymentCode) || {
+          id: `acc_${paymentCode}`,
+          code: paymentCode,
+          nameBn: paymentMethod === 'BANK' ? 'ব্যাংক হিসাব (Bank Accounts)' : 'নগদ টাকা (Cash on Hand)'
+        };
+        const revenueAcc = accounts.find((a) => a.code === revenueCode) || {
+          id: `acc_${revenueCode}`,
+          code: revenueCode,
+          nameBn: 'পশু বিক্রয় আয় (Livestock Sales Revenue)'
+        };
+
         const journalLines: JournalLine[] = [];
 
         // Revenue recognition
         if (cleanPrice > 0) {
           journalLines.push(
             {
-              accountId: paymentCode,
+              accountId: paymentAcc.id,
               accountCode: paymentCode,
-              accountName: paymentMethod === 'BANK' ? 'ব্যাংক হিসাব (Bank Accounts)' : 'নগদ টাকা (Cash on Hand)',
+              accountName: paymentAcc.nameBn,
               debit: cleanPrice,
               credit: 0,
               memo: `পশু বিক্রয়: ${freshAnimal.id}`
             },
             {
-              accountId: revenueCode,
+              accountId: revenueAcc.id,
               accountCode: revenueCode,
-              accountName: 'পশু বিক্রয় আয় (Livestock Sales Revenue)',
+              accountName: revenueAcc.nameBn,
               debit: 0,
               credit: cleanPrice,
               memo: `${freshAnimal.breed} (ট্যাগ: ${freshAnimal.id}) বিক্রয় রাজস্ব`
@@ -1450,17 +1510,17 @@ export async function executeAnimalSaleOrRemovalTransaction(params: {
         if (costToDerecognize > 0) {
           journalLines.push(
             {
-              accountId: CANONICAL_ACCOUNTS.LIVESTOCK_COGS,
+              accountId: livestockCogsAcc.id,
               accountCode: CANONICAL_ACCOUNTS.LIVESTOCK_COGS,
-              accountName: livestockCogsAcc?.nameBn || 'বিক্রিত পশুর অধিগ্রহণ/উৎপাদন ব্যয় (Livestock COGS)',
+              accountName: livestockCogsAcc.nameBn || 'বিক্রিত পশুর অধিগ্রহণ/উৎপাদন ব্যয় (Livestock COGS)',
               debit: costToDerecognize,
               credit: 0,
               memo: `${freshAnimal.breed} (ট্যাগ: ${freshAnimal.id}) মূল ক্রয়মূল্য খরচ (COGS)`
             },
             {
-              accountId: CANONICAL_ACCOUNTS.LIVESTOCK_ASSETS,
+              accountId: livestockAssetAcc.id,
               accountCode: CANONICAL_ACCOUNTS.LIVESTOCK_ASSETS,
-              accountName: livestockAssetAcc?.nameBn || 'পশুসম্পদ (Livestock & Biological Assets)',
+              accountName: livestockAssetAcc.nameBn || 'পশুসম্পদ (Livestock & Biological Assets)',
               debit: 0,
               credit: costToDerecognize,
               memo: `${freshAnimal.breed} (ট্যাগ: ${freshAnimal.id}) বিক্রয় বাবদ সম্পদ হিসাব সমন্বয়`
@@ -1552,17 +1612,17 @@ export async function executeAnimalSaleOrRemovalTransaction(params: {
         if (costToDerecognize > 0) {
           const writeOffLines: JournalLine[] = [
             {
-              accountId: CANONICAL_ACCOUNTS.LIVESTOCK_WRITEOFF,
+              accountId: writeOffAcc.id,
               accountCode: CANONICAL_ACCOUNTS.LIVESTOCK_WRITEOFF,
-              accountName: writeOffAcc?.nameBn || 'পশুসম্পদ অবলোপন (Livestock Write-off)',
+              accountName: writeOffAcc.nameBn || 'পশুসম্পদ অবলোপন (Livestock Write-off)',
               debit: costToDerecognize,
               credit: 0,
               memo: `পশু অবলোপন (${newStatus}): ${freshAnimal.id} (${freshAnimal.breed}) মূল ক্রয়মূল্য`
             },
             {
-              accountId: CANONICAL_ACCOUNTS.LIVESTOCK_ASSETS,
+              accountId: livestockAssetAcc.id,
               accountCode: CANONICAL_ACCOUNTS.LIVESTOCK_ASSETS,
-              accountName: livestockAssetAcc?.nameBn || 'পশুসম্পদ (Livestock & Biological Assets)',
+              accountName: livestockAssetAcc.nameBn || 'পশুসম্পদ (Livestock & Biological Assets)',
               debit: 0,
               credit: costToDerecognize,
               memo: `${freshAnimal.id} অপসারণ (${newStatus}) বাবদ সম্পদ বহির্গমন`

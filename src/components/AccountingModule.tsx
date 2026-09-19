@@ -616,23 +616,26 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
 
   const handleCreateAccount = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newAccCode || !newAccNameBn) return;
+    if (!newAccNameBn.trim()) return;
 
-    if (newAccCode.trim() === '1050') {
+    const codeToUse = newAccCode.trim() || getNextAccountCode(newAccClass, accounts);
+    if (!codeToUse) return;
+
+    if (codeToUse === '1050') {
       alert('১০৫০ কোড তৈরি বা ব্যবহার করা নিষিদ্ধ।');
       return;
     }
 
     try {
-      const existing = await db.accounts.where('code').equals(newAccCode.trim()).first();
+      const existing = await db.accounts.where('code').equals(codeToUse).first();
       if (existing) {
         alert('এই হিসাব কোডটি ইতিমধ্যে ব্যবহৃত হচ্ছে।');
         return;
       }
 
       const acc: Account = {
-        id: `acc_${newAccCode.trim()}`,
-        code: newAccCode.trim(),
+        id: `acc_${codeToUse}`,
+        code: codeToUse,
         nameBn: newAccNameBn.trim(),
         nameEn: newAccNameEn.trim() || newAccNameBn.trim(),
         accountClass: newAccClass,
@@ -1743,12 +1746,12 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
                   </label>
                   <input
                     type="text"
-                    required
-                    placeholder="কোড"
+                    placeholder={getNextAccountCode(newAccClass, accounts)}
                     value={newAccCode}
                     onChange={(e) => setNewAccCode(e.target.value)}
                     className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900 font-mono font-bold"
                   />
+                  <span className="text-[11px] text-gray-500 mt-1 block">স্বয়ংক্রিয় কোড নির্ধারিত (প্রয়োজনে পরিবর্তনযোগ্য)</span>
                 </div>
               </div>
               <div className="flex gap-2.5 justify-end">
