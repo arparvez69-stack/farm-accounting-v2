@@ -10,7 +10,12 @@ import {
   Phone,
   X,
   LayoutGrid,
-  List
+  List,
+  ArrowLeft,
+  ChevronRight,
+  CreditCard,
+  Calendar,
+  FileText
 } from 'lucide-react';
 import { db } from '../db/indexedDb';
 import { executePurchaseTransaction, executeSaleTransaction } from '../services/transactionService';
@@ -61,6 +66,83 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
   const [sales, setSales] = useState<Sale[]>([]);
   const [purchases, setPurchases] = useState<Purchase[]>([]);
   const [payments, setPayments] = useState<PaymentRecord[]>([]);
+  const [selectedParty, setSelectedParty] = useState<Party | null>(null);
+
+  const activeParty = selectedParty ? (parties.find((p) => p.id === selectedParty.id) || selectedParty) : null;
+
+  // Invoices and payment history for the selected party
+  const partyInvoices = React.useMemo(() => {
+    if (!activeParty) return [];
+
+    const matchedSales = sales
+      .filter(
+        (s) =>
+          s.customerId === activeParty.id ||
+          (s.customerName && s.customerName.trim().toLowerCase() === activeParty.name.trim().toLowerCase())
+      )
+      .map((s) => {
+        const total = Number(s.grandTotal || s.totalAmount || 0);
+        const paid = Number(s.paidAmount || 0);
+        const due = Number(s.dueAmount !== undefined ? s.dueAmount : Math.max(0, total - paid));
+        const invPayments = payments.filter((pmt) => pmt.parentId === s.id);
+        return {
+          id: s.id,
+          type: 'SALE' as const,
+          rawRecord: s,
+          date: s.date,
+          displayNumber: s.displayNumber || s.invoiceNumber,
+          internalNumber: s.invoiceNumber,
+          totalAmount: total,
+          paidAmount: paid,
+          dueAmount: due,
+          status: due <= 0 || s.status === 'PAID' ? 'PAID' : paid > 0 ? 'PARTIAL' : 'DUE',
+          paymentMethod: s.paymentMethod,
+          items: s.items || [],
+          payments: invPayments
+        };
+      });
+
+    const matchedPurchases = purchases
+      .filter(
+        (p) =>
+          p.supplierId === activeParty.id ||
+          (p.supplierName && p.supplierName.trim().toLowerCase() === activeParty.name.trim().toLowerCase())
+      )
+      .map((p) => {
+        const total = Number(p.grandTotal || p.totalAmount || 0);
+        const paid = Number(p.paidAmount || 0);
+        const due = Number(p.dueAmount !== undefined ? p.dueAmount : Math.max(0, total - paid));
+        const invPayments = payments.filter((pmt) => pmt.parentId === p.id);
+        return {
+          id: p.id,
+          type: 'PURCHASE' as const,
+          rawRecord: p,
+          date: p.date,
+          displayNumber: p.displayNumber || p.invoiceNumber,
+          internalNumber: p.invoiceNumber,
+          totalAmount: total,
+          paidAmount: paid,
+          dueAmount: due,
+          status: due <= 0 || p.status === 'PAID' ? 'PAID' : paid > 0 ? 'PARTIAL' : 'DUE',
+          paymentMethod: p.paymentMethod,
+          items: p.items || [],
+          payments: invPayments
+        };
+      });
+
+    const combined = [...matchedSales, ...matchedPurchases];
+    // Chronological order by date (ascending)
+    return combined.sort((a, b) => (a.date > b.date ? 1 : a.date < b.date ? -1 : 0));
+  }, [activeParty, sales, purchases, payments]);
+
+  const partySummary = React.useMemo(() => {
+    if (!activeParty) return { totalInvoiced: 0, totalPaid: 0, totalDue: 0, runningBalance: 0 };
+    const totalInvoiced = partyInvoices.reduce((acc, inv) => acc + inv.totalAmount, 0);
+    const totalPaid = partyInvoices.reduce((acc, inv) => acc + inv.paidAmount, 0);
+    const totalDue = partyInvoices.reduce((acc, inv) => acc + inv.dueAmount, 0);
+    const runningBalance = totalDue > 0 ? totalDue : (activeParty.balance || 0);
+    return { totalInvoiced, totalPaid, totalDue, runningBalance };
+  }, [activeParty, partyInvoices]);
 
   // Memoized options for customers and suppliers
   const customerOptions = React.useMemo<SearchableOption[]>(() => {
@@ -170,10 +252,11 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
       const pmtList = await db.payments.toArray();
       setPayments(pmtList);
 
-      if (tab === 'sales') {
+      if (tab === 'sales' || tab === 'parties') {
         const sList = await db.sales.orderBy('date').reverse().toArray();
         setSales(sList);
-      } else if (tab === 'purchases') {
+      }
+      if (tab === 'purchases' || tab === 'parties') {
         const pList = await db.purchases.orderBy('date').reverse().toArray();
         setPurchases(pList);
       }
@@ -1608,113 +1691,366 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
 
       {/* ===================== TAB 4: PARTIES (CUSTOMERS & SUPPLIERS) ===================== */}
       {tab === 'parties' && (
-        <div className="bg-white border border-gray-200 rounded-2xl p-4 sm:p-5 shadow-xs space-y-4">
-          <div className="flex items-center justify-between border-b border-gray-100 pb-3 flex-wrap gap-2">
-            <div>
-              <h3 className="text-[16px] font-bold text-gray-900 flex items-center gap-2">
-                <Users className="w-5 h-5 text-amber-700" />
-                <span>গ্রাহক ও সরবরাহকারী তালিকা (Parties Directory)</span>
-              </h3>
-              <p className="text-[13px] text-gray-600 mt-0.5">পাওনা ও দেনার হিসাব ট্র্যাকিং</p>
-            </div>
-
-            {role === 'OWNER' && (
-              <button
-                onClick={() => setShowAddParty(!showAddParty)}
-                className="px-3.5 py-2 rounded-xl bg-amber-700 hover:bg-amber-800 text-white text-[13px] font-bold shadow-xs transition-all cursor-pointer min-h-[40px] flex items-center gap-1.5"
-              >
-                <PlusCircle className="w-4 h-4" />
-                <span>+ নতুন ব্যক্তি/প্রতিষ্ঠান</span>
-              </button>
-            )}
-          </div>
-
-          {showAddParty && (
-            <form onSubmit={handleAddParty} className="p-4 bg-amber-50/40 border border-amber-200 rounded-xl space-y-3">
-              <div className="font-bold text-amber-900 text-[15px]">নতুন পক্ষ (Party) নিবন্ধন</div>
-              <div className="grid grid-cols-1 sm:grid-cols-4 gap-2.5">
-                <input
-                  type="text"
-                  required
-                  placeholder="নাম/প্রতিষ্ঠান"
-                  value={partyName}
-                  onChange={(e) => setPartyName(e.target.value)}
-                  className="bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900"
-                />
-                <select
-                  value={partyType}
-                  onChange={(e) => setPartyType(e.target.value as any)}
-                  className="bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900"
-                >
-                  <option value="CUSTOMER">ক্রেতা (Customer)</option>
-                  <option value="SUPPLIER">সরবরাহকারী (Supplier)</option>
-                </select>
-                <input
-                  type="text"
-                  placeholder="ফোন নম্বর"
-                  value={partyPhone}
-                  onChange={(e) => setPartyPhone(e.target.value)}
-                  className="bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900"
-                />
-                <input
-                  type="text"
-                  placeholder="ঠিকানা"
-                  value={partyAddress}
-                  onChange={(e) => setPartyAddress(e.target.value)}
-                  className="bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900"
-                />
-              </div>
-
-              <div className="flex justify-end gap-2.5 pt-1">
+        selectedParty ? (
+          /* Detailed Party Statement View */
+          <div className="bg-white border border-gray-200 rounded-2xl p-4 sm:p-6 shadow-xs space-y-6">
+            {/* Header with Back Button and Party Information */}
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border-b border-gray-100 pb-4">
+              <div className="flex items-center gap-3">
                 <button
                   type="button"
-                  onClick={() => setShowAddParty(false)}
-                  className="px-4 py-2 rounded-lg bg-gray-200 text-gray-800 text-[13px] font-semibold cursor-pointer min-h-[40px]"
+                  onClick={() => setSelectedParty(null)}
+                  className="px-3 py-2 rounded-xl bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200 transition-colors cursor-pointer flex items-center gap-1.5 text-xs sm:text-sm font-bold min-h-[40px]"
                 >
-                  বাতিল
+                  <ArrowLeft className="w-4 h-4" />
+                  <span>তালিকায় ফিরুন</span>
                 </button>
-                <button
-                  type="submit"
-                  className="px-4 py-2 rounded-lg bg-amber-700 hover:bg-amber-800 text-white text-[13px] font-bold cursor-pointer min-h-[40px]"
-                >
-                  সংরক্ষণ করুন
-                </button>
+                <div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <h3 className="text-lg sm:text-xl font-bold text-gray-900">
+                      {activeParty?.name}
+                    </h3>
+                    <span
+                      className={`px-2.5 py-0.5 rounded-full text-xs font-semibold ${
+                        activeParty?.type === 'CUSTOMER'
+                          ? 'bg-sky-50 text-sky-700 border border-sky-200'
+                          : 'bg-amber-50 text-amber-800 border border-amber-200'
+                      }`}
+                    >
+                      {activeParty?.type === 'CUSTOMER' ? 'ক্রেতা (Customer)' : 'সরবরাহকারী (Supplier)'}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-4 text-xs sm:text-[13px] text-gray-500 mt-1 flex-wrap">
+                    {activeParty?.phone && (
+                      <span className="flex items-center gap-1">
+                        <Phone className="w-3.5 h-3.5 text-gray-400" />
+                        {activeParty.phone}
+                      </span>
+                    )}
+                    {activeParty?.address && (
+                      <span>ঠিকানা: {activeParty.address}</span>
+                    )}
+                  </div>
+                </div>
               </div>
-            </form>
-          )}
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
-            {parties.map((p, idx) => (
-              <div
-                key={p.id}
-                style={{ animationDelay: `${Math.min(idx * 35, 350)}ms` }}
-                className="p-4 rounded-2xl bg-[#F8FAFC] border border-gray-200 space-y-2 shadow-xs animate-fade-slide-up hover:border-gray-300 transition-colors"
-              >
-                <div className="flex items-center justify-between">
-                  <span className="font-bold text-gray-900 text-[15px]">{p.name}</span>
-                  <span className={`px-2.5 py-1 rounded-full text-xs font-semibold ${
-                    p.type === 'CUSTOMER' ? 'bg-sky-50 text-sky-700 border border-sky-200' : 'bg-amber-50 text-amber-800 border border-amber-200'
-                  }`}>
-                    {p.type === 'CUSTOMER' ? 'ক্রেতা' : 'সরবরাহকারী'}
-                  </span>
+              <div className="text-xs text-gray-500">
+                পক্ষ কোড: <span className="font-mono text-gray-700 font-semibold">{activeParty?.id}</span>
+              </div>
+            </div>
+
+            {/* Top Running Balance Card (Requirement 2) */}
+            <div className="rounded-2xl bg-gradient-to-r from-amber-50 via-orange-50/50 to-amber-50/30 border border-amber-200/80 p-5 sm:p-6 shadow-2xs">
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                <div>
+                  <div className="text-xs sm:text-sm font-bold tracking-wide uppercase text-amber-800">
+                    {activeParty?.type === 'CUSTOMER'
+                      ? 'চলতি জের — গ্রাহকের নিকট মোট বকেয়া পাওনা (Total Owed by Customer)'
+                      : 'চলতি জের — সরবরাহকারীকে মোট প্রদেয় দেনা (Total Owed to Supplier)'}
+                  </div>
+                  <div className="text-2xl sm:text-4xl font-extrabold text-amber-950 font-mono mt-1">
+                    ৳{fmt(partySummary.runningBalance)}
+                  </div>
+                  <p className="text-xs text-amber-700/80 mt-1">
+                    {activeParty?.type === 'CUSTOMER'
+                      ? 'এই গ্রাহকের নিকট থেকে সর্বমোট বাকি আদায়যোগ্য পাওনা'
+                      : 'এই সরবরাহকারীকে খামার থেকে সর্বমোট পরিশোধযোগ্য বাকি দেনা'}
+                  </p>
                 </div>
-                <div className="text-gray-600 text-[13px] flex items-center gap-1.5">
-                  <Phone className="w-3.5 h-3.5 text-gray-500" />
-                  <span>{p.phone || 'ফোন নেই'}</span>
-                </div>
-                <div className="text-gray-600 text-[13px] truncate">
-                  {p.address || 'ঠিকানা নেই'}
-                </div>
-                <div className="pt-2 border-t border-gray-200 flex items-center justify-between font-mono">
-                  <span className="text-gray-600 text-[13px]">বর্তমান ব্যালেন্স:</span>
-                  <span className={`font-bold text-[14px] ${p.balance > 0 ? (p.type === 'CUSTOMER' ? 'text-sky-700' : 'text-amber-700') : 'text-gray-600'}`}>
-                    {fmt(p.balance)}
-                  </span>
+
+                {/* Summary Metrics */}
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 sm:gap-3 text-center">
+                  <div className="bg-white/90 backdrop-blur-xs p-2.5 sm:p-3 rounded-xl border border-amber-100 shadow-2xs">
+                    <div className="text-[11px] sm:text-xs text-gray-500 font-semibold">মোট চালান</div>
+                    <div className="text-base sm:text-lg font-bold text-gray-900 font-mono mt-0.5">
+                      {partyInvoices.length}টি
+                    </div>
+                  </div>
+                  <div className="bg-white/90 backdrop-blur-xs p-2.5 sm:p-3 rounded-xl border border-amber-100 shadow-2xs">
+                    <div className="text-[11px] sm:text-xs text-gray-500 font-semibold">সর্বমোট ইনভয়েস</div>
+                    <div className="text-base sm:text-lg font-bold text-gray-900 font-mono mt-0.5">
+                      ৳{fmt(partySummary.totalInvoiced)}
+                    </div>
+                  </div>
+                  <div className="bg-white/90 backdrop-blur-xs p-2.5 sm:p-3 rounded-xl border border-amber-100 shadow-2xs col-span-2 sm:col-span-1">
+                    <div className="text-[11px] sm:text-xs text-gray-500 font-semibold">মোট পরিশোধিত</div>
+                    <div className="text-base sm:text-lg font-bold text-emerald-700 font-mono mt-0.5">
+                      ৳{fmt(partySummary.totalPaid)}
+                    </div>
+                  </div>
                 </div>
               </div>
-            ))}
+            </div>
+
+            {/* Chronological Statement List (Requirement 1) */}
+            <div className="space-y-3">
+              <div className="flex items-center justify-between flex-wrap gap-2">
+                <h4 className="font-bold text-gray-900 text-sm sm:text-base flex items-center gap-2">
+                  <FileText className="w-4 h-4 text-amber-700" />
+                  <span>চালান ও কিস্তি পরিশোধের কালানুক্রমিক বিবরণী (Chronological Statement)</span>
+                </h4>
+                <span className="text-xs text-gray-500">
+                  সর্বমোট {partyInvoices.length}টি লেনদেন
+                </span>
+              </div>
+
+              {partyInvoices.length === 0 ? (
+                <div className="p-8 text-center bg-gray-50 rounded-2xl border border-dashed border-gray-200 space-y-1">
+                  <FileCheck className="w-8 h-8 text-gray-400 mx-auto" />
+                  <div className="text-sm font-semibold text-gray-700">কোনো চালান পাওয়া যায়নি</div>
+                  <div className="text-xs text-gray-500">
+                    এই {activeParty?.type === 'CUSTOMER' ? 'গ্রাহকের' : 'সরবরাহকারীর'} সাথে এখনো কোনো বিক্রয় বা ক্রয় চালান সম্পন্ন হয়নি।
+                  </div>
+                </div>
+              ) : (
+                <div className="border border-gray-200 rounded-2xl overflow-hidden shadow-2xs bg-white">
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-xs sm:text-[13px]">
+                      <thead className="bg-gray-50/90 border-b border-gray-200 text-gray-600 font-bold uppercase text-[11px] tracking-wider">
+                        <tr>
+                          <th className="p-3">তারিখ</th>
+                          <th className="p-3">চালান নম্বর</th>
+                          <th className="p-3">ধরণ</th>
+                          <th className="p-3">পণ্যের বিবরণ</th>
+                          <th className="p-3 text-right">মোট মূল্য</th>
+                          <th className="p-3 text-right">পরিশোধ</th>
+                          <th className="p-3 text-right">বাকি</th>
+                          <th className="p-3 text-center">অবস্থা</th>
+                          <th className="p-3 text-center">অ্যাকশন</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-100">
+                        {partyInvoices.map((inv) => (
+                          <React.Fragment key={inv.id}>
+                            <tr className="hover:bg-amber-50/30 transition-colors">
+                              <td className="p-3 text-gray-600 whitespace-nowrap font-mono">{inv.date}</td>
+                              <td className="p-3 font-bold text-amber-900 font-mono whitespace-nowrap">
+                                {inv.displayNumber}
+                              </td>
+                              <td className="p-3 whitespace-nowrap">
+                                <span
+                                  className={`px-2 py-0.5 rounded-full text-[11px] font-semibold ${
+                                    inv.type === 'SALE'
+                                      ? 'bg-amber-50 text-amber-800 border border-amber-200'
+                                      : 'bg-sky-50 text-sky-700 border border-sky-200'
+                                  }`}
+                                >
+                                  {inv.type === 'SALE' ? 'বিক্রয় চালান' : 'ক্রয় চালান'}
+                                </span>
+                              </td>
+                              <td className="p-3 text-gray-700 max-w-[220px]">
+                                {inv.items && inv.items.length > 0 ? (
+                                  <div className="space-y-0.5">
+                                    {inv.items.map((item, iIdx) => (
+                                      <div key={iIdx} className="truncate">
+                                        <span className="font-medium text-gray-900">{item.itemName}</span>{' '}
+                                        <span className="text-gray-500">
+                                          ({item.quantity} {item.unit})
+                                        </span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                ) : (
+                                  <span className="text-gray-400">বিবরণ নেই</span>
+                                )}
+                              </td>
+                              <td className="p-3 text-right font-mono font-bold text-gray-900 whitespace-nowrap">
+                                ৳{fmt(inv.totalAmount)}
+                              </td>
+                              <td className="p-3 text-right font-mono font-bold text-emerald-700 whitespace-nowrap">
+                                ৳{fmt(inv.paidAmount)}
+                              </td>
+                              <td className="p-3 text-right font-mono font-bold whitespace-nowrap">
+                                <span className={inv.dueAmount > 0 ? 'text-red-700 font-extrabold' : 'text-gray-500'}>
+                                  ৳{fmt(inv.dueAmount)}
+                                </span>
+                              </td>
+                              <td className="p-3 text-center whitespace-nowrap">
+                                <span
+                                  className={`px-2 py-0.5 rounded-full text-[11px] font-semibold ${
+                                    inv.status === 'PAID'
+                                      ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                                      : inv.status === 'PARTIAL'
+                                      ? 'bg-amber-50 text-amber-700 border border-amber-200'
+                                      : 'bg-red-50 text-red-700 border border-red-200'
+                                  }`}
+                                >
+                                  {inv.status === 'PAID' ? 'পরিশোধিত' : inv.status === 'PARTIAL' ? 'আংশিক বাকি' : 'বাকি'}
+                                </span>
+                              </td>
+                              <td className="p-3 text-center whitespace-nowrap">
+                                {inv.dueAmount > 0 ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => openPaymentModal(inv.type, inv.rawRecord)}
+                                    className="px-2.5 py-1 rounded-lg bg-amber-700 hover:bg-amber-800 text-white text-xs font-bold shadow-2xs transition-all cursor-pointer inline-flex items-center gap-1 min-h-[30px]"
+                                  >
+                                    <PlusCircle className="w-3.5 h-3.5" />
+                                    <span>কিস্তি পরিশোধ</span>
+                                  </button>
+                                ) : (
+                                  <span className="text-xs text-gray-400 font-medium">সম্পূর্ণ পরিশোধিত</span>
+                                )}
+                              </td>
+                            </tr>
+
+                            {/* Full Installment / Partial-Payment History Sub-Row */}
+                            {inv.payments && inv.payments.length > 0 ? (
+                              <tr className="bg-amber-50/25 border-b border-gray-100">
+                                <td colSpan={9} className="px-4 py-2.5">
+                                  <div className="space-y-1.5">
+                                    <div className="text-xs font-bold text-amber-900 flex items-center gap-1.5">
+                                      <CreditCard className="w-3.5 h-3.5 text-amber-700" />
+                                      <span>কিস্তি ও আংশিক পরিশোধের ইতিহাস ({inv.payments.length}টি কিস্তি সম্পন্ন):</span>
+                                    </div>
+                                    <div className="flex flex-wrap gap-2">
+                                      {inv.payments.map((pmt) => (
+                                        <div
+                                          key={pmt.id}
+                                          className="inline-flex items-center gap-1.5 bg-white px-2.5 py-1 rounded-lg border border-gray-200 text-gray-800 font-mono text-xs shadow-2xs"
+                                        >
+                                          <span className="text-gray-500">{pmt.date}:</span>
+                                          <span className="font-bold text-emerald-700">+ ৳{fmt(pmt.amount)}</span>
+                                          {pmt.note && (
+                                            <span className="text-gray-400 font-sans text-[11px]">({pmt.note})</span>
+                                          )}
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </div>
+                                </td>
+                              </tr>
+                            ) : inv.paidAmount > 0 ? (
+                              <tr className="bg-gray-50/40 border-b border-gray-100">
+                                <td colSpan={9} className="px-4 py-1.5 text-xs text-gray-500">
+                                  চালান সৃষ্টির সময় এককালীন পরিশোধ: <span className="font-mono font-bold text-emerald-700">৳{fmt(inv.paidAmount)}</span>
+                                </td>
+                              </tr>
+                            ) : null}
+                          </React.Fragment>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
-        </div>
+        ) : (
+          /* Parties Directory List */
+          <div className="bg-white border border-gray-200 rounded-2xl p-4 sm:p-5 shadow-xs space-y-4">
+            <div className="flex items-center justify-between border-b border-gray-100 pb-3 flex-wrap gap-2">
+              <div>
+                <h3 className="text-[16px] font-bold text-gray-900 flex items-center gap-2">
+                  <Users className="w-5 h-5 text-amber-700" />
+                  <span>গ্রাহক ও সরবরাহকারী তালিকা (Parties Directory)</span>
+                </h3>
+                <p className="text-[13px] text-gray-600 mt-0.5">যেকোনো পক্ষে ট্যাপ করে বিস্তারিত স্টেটমেন্ট ও চালানের ইতিহাস দেখুন</p>
+              </div>
+
+              {role === 'OWNER' && (
+                <button
+                  onClick={() => setShowAddParty(!showAddParty)}
+                  className="px-3.5 py-2 rounded-xl bg-amber-700 hover:bg-amber-800 text-white text-[13px] font-bold shadow-xs transition-all cursor-pointer min-h-[40px] flex items-center gap-1.5"
+                >
+                  <PlusCircle className="w-4 h-4" />
+                  <span>+ নতুন ব্যক্তি/প্রতিষ্ঠান</span>
+                </button>
+              )}
+            </div>
+
+            {showAddParty && (
+              <form onSubmit={handleAddParty} className="p-4 bg-amber-50/40 border border-amber-200 rounded-xl space-y-3">
+                <div className="font-bold text-amber-900 text-[15px]">নতুন পক্ষ (Party) নিবন্ধন</div>
+                <div className="grid grid-cols-1 sm:grid-cols-4 gap-2.5">
+                  <input
+                    type="text"
+                    required
+                    placeholder="নাম/প্রতিষ্ঠান"
+                    value={partyName}
+                    onChange={(e) => setPartyName(e.target.value)}
+                    className="bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900"
+                  />
+                  <select
+                    value={partyType}
+                    onChange={(e) => setPartyType(e.target.value as any)}
+                    className="bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900"
+                  >
+                    <option value="CUSTOMER">ক্রেতা (Customer)</option>
+                    <option value="SUPPLIER">সরবরাহকারী (Supplier)</option>
+                  </select>
+                  <input
+                    type="text"
+                    placeholder="ফোন নম্বর"
+                    value={partyPhone}
+                    onChange={(e) => setPartyPhone(e.target.value)}
+                    className="bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900"
+                  />
+                  <input
+                    type="text"
+                    placeholder="ঠিকানা"
+                    value={partyAddress}
+                    onChange={(e) => setPartyAddress(e.target.value)}
+                    className="bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900"
+                  />
+                </div>
+
+                <div className="flex justify-end gap-2.5 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => setShowAddParty(false)}
+                    className="px-4 py-2 rounded-lg bg-gray-200 text-gray-800 text-[13px] font-semibold cursor-pointer min-h-[40px]"
+                  >
+                    বাতিল
+                  </button>
+                  <button
+                    type="submit"
+                    className="px-4 py-2 rounded-lg bg-amber-700 hover:bg-amber-800 text-white text-[13px] font-bold cursor-pointer min-h-[40px]"
+                  >
+                    সংরক্ষণ করুন
+                  </button>
+                </div>
+              </form>
+            )}
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
+              {parties.map((p, idx) => (
+                <div
+                  key={p.id}
+                  style={{ animationDelay: `${Math.min(idx * 35, 350)}ms` }}
+                  onClick={() => setSelectedParty(p)}
+                  className="p-4 rounded-2xl bg-[#F8FAFC] border border-gray-200 space-y-2 shadow-xs animate-fade-slide-up hover:border-amber-400 hover:shadow-md transition-all cursor-pointer group"
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-gray-900 text-[15px] group-hover:text-amber-800 transition-colors">{p.name}</span>
+                    <span className={`px-2.5 py-1 rounded-full text-xs font-semibold ${
+                      p.type === 'CUSTOMER' ? 'bg-sky-50 text-sky-700 border border-sky-200' : 'bg-amber-50 text-amber-800 border border-amber-200'
+                    }`}>
+                      {p.type === 'CUSTOMER' ? 'ক্রেতা' : 'সরবরাহকারী'}
+                    </span>
+                  </div>
+                  <div className="text-gray-600 text-[13px] flex items-center gap-1.5">
+                    <Phone className="w-3.5 h-3.5 text-gray-500" />
+                    <span>{p.phone || 'ফোন নেই'}</span>
+                  </div>
+                  <div className="text-gray-600 text-[13px] truncate">
+                    {p.address || 'ঠিকানা নেই'}
+                  </div>
+                  <div className="pt-2 border-t border-gray-200 flex items-center justify-between font-mono">
+                    <span className="text-gray-600 text-[13px]">বর্তমান ব্যালেন্স:</span>
+                    <span className={`font-bold text-[14px] ${p.balance > 0 ? (p.type === 'CUSTOMER' ? 'text-sky-700' : 'text-amber-700') : 'text-gray-600'}`}>
+                      {fmt(p.balance)}
+                    </span>
+                  </div>
+                  <div className="pt-1.5 border-t border-gray-100 flex items-center justify-between text-xs text-amber-800 font-semibold group-hover:text-amber-900">
+                    <span>স্টেটমেন্ট ও চালান হিসাব দেখুন</span>
+                    <ChevronRight className="w-4 h-4 transform group-hover:translate-x-1 transition-transform text-amber-700" />
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )
       )}
 
       {/* ===================== MODAL: ADD INSTALLMENT / PAYMENT ===================== */}

@@ -29,7 +29,9 @@ import {
   Calendar,
   BookOpen,
   X,
-  Activity
+  Activity,
+  Fish,
+  Sprout
 } from 'lucide-react';
 import {
   BalanceSheetReport,
@@ -55,7 +57,7 @@ import {
 } from 'recharts';
 import { exportAllToExcel, createFullJsonBackup, restoreFromJsonBackup } from '../services/exportService';
 import { db } from '../db/indexedDb';
-import { UserRole, Sale, Purchase, PaymentRecord, Loan, Investor, CashBankAccount, JournalEntry, ClosedPeriod, Account, Animal, AnimalEvent } from '../types';
+import { UserRole, Sale, Purchase, PaymentRecord, Loan, Investor, CashBankAccount, JournalEntry, ClosedPeriod, Account, Animal, AnimalEvent, FishBatch, CropCycle } from '../types';
 import { StatusBadge, Card, IconTile } from './ui';
 
 type DatePreset = 'this_month' | 'last_month' | 'this_year' | 'custom';
@@ -114,6 +116,48 @@ export interface AnimalProfitabilityRow {
   totalRevenue: number;
   netProfit: number;
   costPerDay: number;
+}
+
+export interface PondProfitabilityRow {
+  id: string;
+  pondId: string;
+  pondName: string;
+  species: string;
+  status: string;
+  stockingDate: string;
+  harvestDate?: string;
+  fingerlingQty: number;
+  fingerlingCost: number;
+  feedKg: number;
+  feedCost: number;
+  otherCost: number;
+  totalCost: number;
+  harvestWeightKg: number;
+  totalRevenue: number;
+  netProfit: number;
+  profitMargin: number;
+}
+
+export interface CropProfitabilityRow {
+  id: string;
+  plotId: string;
+  plotName: string;
+  cropName: string;
+  cropCategory: string;
+  status: string;
+  plantingDate: string;
+  actualHarvestDate?: string;
+  areaDecimals: number;
+  seedCost: number;
+  fertilizerCost: number;
+  irrigationCost: number;
+  labourCost: number;
+  otherCost: number;
+  totalCost: number;
+  harvestYieldKg: number;
+  totalRevenue: number;
+  netProfit: number;
+  profitMargin: number;
 }
 
 export interface AgingItem {
@@ -249,6 +293,8 @@ type ReportType =
   | 'trialBalance'
   | 'ledger'
   | 'animalProfitability'
+  | 'pondProfitability'
+  | 'cropProfitability'
   | 'aging'
   | 'cashFlow'
   | 'backup'
@@ -341,6 +387,18 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
   const [animalSortDirection, setAnimalSortDirection] = useState<'desc' | 'asc'>('desc');
   const [animalStatusFilter, setAnimalStatusFilter] = useState<'ALL' | 'ACTIVE' | 'SOLD'>('ALL');
   const [animalSearchQuery, setAnimalSearchQuery] = useState<string>('');
+
+  // Pond Profitability State
+  const [pondRows, setPondRows] = useState<PondProfitabilityRow[]>([]);
+  const [pondSortKey, setPondSortKey] = useState<'netProfit' | 'totalCost' | 'totalRevenue' | 'harvestWeightKg'>('netProfit');
+  const [pondSortDirection, setPondSortDirection] = useState<'desc' | 'asc'>('desc');
+  const [pondSearchQuery, setPondSearchQuery] = useState<string>('');
+
+  // Crop Profitability State
+  const [cropRows, setCropRows] = useState<CropProfitabilityRow[]>([]);
+  const [cropSortKey, setCropSortKey] = useState<'netProfit' | 'totalCost' | 'totalRevenue' | 'harvestYieldKg'>('netProfit');
+  const [cropSortDirection, setCropSortDirection] = useState<'desc' | 'asc'>('desc');
+  const [cropSearchQuery, setCropSearchQuery] = useState<string>('');
 
   // Aging Report State (Receivables & Payables)
   const [agingSubTab, setAgingSubTab] = useState<'receivables' | 'payables'>('receivables');
@@ -465,6 +523,135 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
     });
 
     setAnimalRows(rows);
+  };
+
+  const loadPondProfitability = async () => {
+    const [allBatches, allSales] = await Promise.all([
+      db.fishBatches.toArray(),
+      db.sales.toArray()
+    ]);
+
+    const rows: PondProfitabilityRow[] = [];
+
+    for (const b of allBatches) {
+      const fingerlingCost = Number(b.fingerlingCost) || 0;
+      const feedCost = Number(b.totalFeedCost) || 0;
+      const otherCost = Number((b as any).otherCost || (b as any).otherCosts) || 0;
+      const totalCost = fingerlingCost + feedCost + otherCost;
+
+      // Check direct harvest revenue
+      let totalRevenue = Number(b.harvestRevenue) || 0;
+
+      // Check sales linked to this fish batch
+      let linkedSalesRevenue = 0;
+      for (const s of allSales) {
+        if (s.items && s.items.length > 0) {
+          for (const item of s.items) {
+            if (item.itemId === b.id || (item.itemName && item.itemName.includes(b.id))) {
+              linkedSalesRevenue += Number(item.lineTotal !== undefined ? item.lineTotal : (item.quantity * item.unitPrice)) || 0;
+            }
+          }
+        }
+      }
+
+      if (linkedSalesRevenue > totalRevenue) {
+        totalRevenue = linkedSalesRevenue;
+      }
+
+      // Only include batches that have actually been harvested/sold (i.e. have real revenue recorded).
+      if (totalRevenue > 0) {
+        const netProfit = totalRevenue - totalCost;
+        const profitMargin = totalRevenue > 0 ? (netProfit / totalRevenue) * 100 : 0;
+        rows.push({
+          id: b.id,
+          pondId: b.pondId || '',
+          pondName: b.pondName || 'পুকুর',
+          species: b.species || 'মাছ',
+          status: b.status,
+          stockingDate: b.stockingDate || '',
+          harvestDate: b.harvestDate || '',
+          fingerlingQty: Number(b.fingerlingQty) || 0,
+          fingerlingCost,
+          feedKg: Number(b.totalFeedKg) || 0,
+          feedCost,
+          otherCost,
+          totalCost,
+          harvestWeightKg: Number(b.harvestWeightKg) || 0,
+          totalRevenue,
+          netProfit,
+          profitMargin
+        });
+      }
+    }
+
+    setPondRows(rows);
+  };
+
+  const loadCropProfitability = async () => {
+    const [allCycles, allSales] = await Promise.all([
+      db.cropCycles.toArray(),
+      db.sales.toArray()
+    ]);
+
+    const rows: CropProfitabilityRow[] = [];
+
+    for (const c of allCycles) {
+      const seedCost = Number(c.seedCost) || 0;
+      const fertilizerCost = Number(c.fertilizerCost) || 0;
+      const irrigationCost = Number(c.irrigationCost) || 0;
+      const labourCost = Number(c.labourCost) || 0;
+      const otherCost = Number(c.otherCost) || 0;
+      const costSum = seedCost + fertilizerCost + irrigationCost + labourCost + otherCost;
+      const totalCost = costSum > 0 ? costSum : (Number(c.totalCost) || 0);
+
+      // Check direct harvest revenue
+      let totalRevenue = Number(c.harvestRevenue) || 0;
+
+      // Check sales linked to this crop cycle
+      let linkedSalesRevenue = 0;
+      for (const s of allSales) {
+        if (s.items && s.items.length > 0) {
+          for (const item of s.items) {
+            if (item.itemId === c.id || (item.itemName && item.itemName.includes(c.id))) {
+              linkedSalesRevenue += Number(item.lineTotal !== undefined ? item.lineTotal : (item.quantity * item.unitPrice)) || 0;
+            }
+          }
+        }
+      }
+
+      if (linkedSalesRevenue > totalRevenue) {
+        totalRevenue = linkedSalesRevenue;
+      }
+
+      // Only include crop cycles that have actually been harvested/sold (i.e. have real revenue recorded).
+      if (totalRevenue > 0) {
+        const netProfit = totalRevenue - totalCost;
+        const profitMargin = totalRevenue > 0 ? (netProfit / totalRevenue) * 100 : 0;
+        rows.push({
+          id: c.id,
+          plotId: c.plotId || '',
+          plotName: c.plotName || 'জমি/প্লট',
+          cropName: c.cropName || 'ফসল',
+          cropCategory: c.cropCategory || 'OTHER',
+          status: c.status,
+          plantingDate: c.plantingDate || '',
+          actualHarvestDate: c.actualHarvestDate || c.expectedHarvestDate || '',
+          areaDecimals: Number(c.areaDecimals) || 0,
+          seedCost,
+          fertilizerCost,
+          irrigationCost,
+          labourCost,
+          otherCost,
+          totalCost,
+          harvestYieldKg: Number(c.harvestYieldKg) || 0,
+          totalRevenue,
+          netProfit,
+          profitMargin
+        });
+      }
+    }
+
+    setCropRows(rows);
   };
 
   const loadAgingReport = async () => {
@@ -991,6 +1178,10 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
         await loadLedgerReport();
       } else if (activeReport === 'animalProfitability') {
         await loadAnimalProfitability();
+      } else if (activeReport === 'pondProfitability') {
+        await loadPondProfitability();
+      } else if (activeReport === 'cropProfitability') {
+        await loadCropProfitability();
       } else if (activeReport === 'aging') {
         await loadAgingReport();
       } else if (activeReport === 'cashFlow') {
@@ -1319,6 +1510,105 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
       avgDailyCost
     };
   }, [animalRows]);
+
+  const togglePondSort = (key: 'netProfit' | 'totalCost' | 'totalRevenue' | 'harvestWeightKg') => {
+    if (pondSortKey === key) {
+      setPondSortDirection((prev) => (prev === 'desc' ? 'asc' : 'desc'));
+    } else {
+      setPondSortKey(key);
+      setPondSortDirection('desc');
+    }
+  };
+
+  const sortedPondRows = useMemo(() => {
+    let result = [...pondRows];
+
+    if (pondSearchQuery.trim()) {
+      const q = pondSearchQuery.toLowerCase();
+      result = result.filter(
+        (r) =>
+          r.id.toLowerCase().includes(q) ||
+          r.pondName.toLowerCase().includes(q) ||
+          r.species.toLowerCase().includes(q)
+      );
+    }
+
+    result.sort((a, b) => {
+      const valA = a[pondSortKey];
+      const valB = b[pondSortKey];
+      return pondSortDirection === 'desc' ? valB - valA : valA - valB;
+    });
+
+    return result;
+  }, [pondRows, pondSearchQuery, pondSortKey, pondSortDirection]);
+
+  const pondSummary = useMemo(() => {
+    const totalBatches = pondRows.length;
+    const totalPondCost = pondRows.reduce((acc, r) => acc + r.totalCost, 0);
+    const totalPondRevenue = pondRows.reduce((acc, r) => acc + r.totalRevenue, 0);
+    const totalPondProfit = totalPondRevenue - totalPondCost;
+    const totalHarvestWeight = pondRows.reduce((acc, r) => acc + r.harvestWeightKg, 0);
+    const avgProfit = totalBatches > 0 ? totalPondProfit / totalBatches : 0;
+
+    return {
+      totalBatches,
+      totalPondCost,
+      totalPondRevenue,
+      totalPondProfit,
+      totalHarvestWeight,
+      avgProfit
+    };
+  }, [pondRows]);
+
+  const toggleCropSort = (key: 'netProfit' | 'totalCost' | 'totalRevenue' | 'harvestYieldKg') => {
+    if (cropSortKey === key) {
+      setCropSortDirection((prev) => (prev === 'desc' ? 'asc' : 'desc'));
+    } else {
+      setCropSortKey(key);
+      setCropSortDirection('desc');
+    }
+  };
+
+  const sortedCropRows = useMemo(() => {
+    let result = [...cropRows];
+
+    if (cropSearchQuery.trim()) {
+      const q = cropSearchQuery.toLowerCase();
+      result = result.filter(
+        (r) =>
+          r.id.toLowerCase().includes(q) ||
+          r.plotName.toLowerCase().includes(q) ||
+          r.cropName.toLowerCase().includes(q) ||
+          r.cropCategory.toLowerCase().includes(q)
+      );
+    }
+
+    result.sort((a, b) => {
+      const valA = a[cropSortKey];
+      const valB = b[cropSortKey];
+      return cropSortDirection === 'desc' ? valB - valA : valA - valB;
+    });
+
+    return result;
+  }, [cropRows, cropSearchQuery, cropSortKey, cropSortDirection]);
+
+  const cropSummary = useMemo(() => {
+    const totalCycles = cropRows.length;
+    const totalCropCost = cropRows.reduce((acc, r) => acc + r.totalCost, 0);
+    const totalCropRevenue = cropRows.reduce((acc, r) => acc + r.totalRevenue, 0);
+    const totalCropProfit = totalCropRevenue - totalCropCost;
+    const totalHarvestYield = cropRows.reduce((acc, r) => acc + r.harvestYieldKg, 0);
+    const avgProfit = totalCycles > 0 ? totalCropProfit / totalCycles : 0;
+
+    return {
+      totalCycles,
+      totalCropCost,
+      totalCropRevenue,
+      totalCropProfit,
+      totalHarvestYield,
+      avgProfit
+    };
+  }, [cropRows]);
 
   const currentAgingItems = useMemo(() => {
     const source = agingSubTab === 'receivables' ? receivablesList : payablesList;
@@ -1723,6 +2013,34 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
         >
           <TrendingUp className="w-4 h-4 shrink-0" />
           <span>পশুভিত্তিক লাভ-ক্ষতি</span>
+        </button>
+
+        <button
+          type="button"
+          id="tab-pond-profitability"
+          onClick={() => setActiveReport('pondProfitability')}
+          className={`flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg transition-all cursor-pointer min-h-[42px] text-center text-xs sm:text-[13px] font-bold ${
+            activeReport === 'pondProfitability'
+              ? 'bg-blue-700 text-white shadow-xs border border-blue-700'
+              : 'bg-white dark:bg-slate-900/60 text-blue-950 dark:text-blue-300 border border-blue-200/80 dark:border-blue-800 hover:bg-blue-100/80'
+          }`}
+        >
+          <Fish className="w-4 h-4 shrink-0" />
+          <span>পুকুর লাভ-ক্ষতি</span>
+        </button>
+
+        <button
+          type="button"
+          id="tab-crop-profitability"
+          onClick={() => setActiveReport('cropProfitability')}
+          className={`flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg transition-all cursor-pointer min-h-[42px] text-center text-xs sm:text-[13px] font-bold ${
+            activeReport === 'cropProfitability'
+              ? 'bg-emerald-700 text-white shadow-xs border border-emerald-700'
+              : 'bg-white dark:bg-slate-900/60 text-emerald-950 dark:text-emerald-300 border border-emerald-200/80 dark:border-emerald-800 hover:bg-emerald-100/80'
+          }`}
+        >
+          <Sprout className="w-4 h-4 shrink-0" />
+          <span>ফসল লাভ-ক্ষতি</span>
         </button>
 
         <button
@@ -2853,6 +3171,737 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
             </p>
             <p>
               • <strong>দুধ উৎপাদনের হিসাব:</strong> গাভীর ক্ষেত্রে উৎপন্ন দুধের পরিমাণ মেমো লাইন হিসেবে প্রদর্শিত হয়েছে।
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* ===================== REPORT: POND PROFITABILITY (পুকুর লাভ-ক্ষতি) ===================== */}
+      {activeReport === 'pondProfitability' && (
+        <div id="pond-profitability-report-card" className="bg-white border border-gray-200 rounded-2xl p-4 sm:p-6 space-y-6 shadow-xs">
+          {/* Header */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-gray-100 pb-4">
+            <div>
+              <h3 className="text-base sm:text-lg font-bold text-gray-900 flex items-center gap-2">
+                <Fish className="w-5 h-5 text-blue-700" />
+                <span>পুকুর লাভ-ক্ষতি প্রতিবেদন (Pond Profitability Report)</span>
+              </h3>
+              <p className="text-[13px] text-gray-500 mt-0.5">
+                মাছের প্রতিটি ব্যাচের মোট উৎপাদন ব্যয় (পোনা + খাদ্য + অন্যান্য), আহরণ/বিক্রয় রাজস্ব ও নিট লাভ-ক্ষতির তুলনামূলক বিবরণী (শুধুমাত্র বিক্রিত ও আহরিত ব্যাচ)
+              </p>
+            </div>
+            <div className="text-[12px] text-gray-500 bg-gray-50 px-3 py-1.5 rounded-lg border border-gray-200 flex items-center gap-1.5">
+              <span>ক্রমানুসারে সাজানো:</span>
+              <span className="font-bold text-blue-700">
+                {pondSortKey === 'netProfit'
+                  ? `নিট লাভ (${pondSortDirection === 'desc' ? 'সর্বোচ্চ ➔ সর্বনিম্ন' : 'সর্বনিম্ন ➔ সর্বোচ্চ'})`
+                  : pondSortKey === 'totalCost'
+                  ? `মোট ব্যয় (${pondSortDirection === 'desc' ? 'বেশি ➔ কম' : 'কম ➔ বেশি'})`
+                  : pondSortKey === 'totalRevenue'
+                  ? `মোট রাজস্ব (${pondSortDirection === 'desc' ? 'বেশি ➔ কম' : 'কম ➔ বেশি'})`
+                  : `আহরণ ওজন`}
+              </span>
+            </div>
+          </div>
+
+          {/* KPI Summary Cards */}
+          <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+            <div className="p-3.5 rounded-xl bg-gray-50 border border-gray-200 space-y-1">
+              <span className="text-[11px] font-bold text-gray-500 uppercase tracking-wide">
+                মোট আহরিত ব্যাচ
+              </span>
+              <div className="text-[18px] font-bold text-gray-900">
+                {pondSummary.totalBatches} <span className="text-[12px] font-normal text-gray-500">টি ব্যাচ</span>
+              </div>
+              <div className="text-[11px] text-gray-600">
+                মোট ওজন: {pondSummary.totalHarvestWeight.toLocaleString()} কেজি
+              </div>
+            </div>
+
+            <div className="p-3.5 rounded-xl bg-amber-50/70 border border-amber-200 space-y-1">
+              <span className="text-[11px] font-bold text-amber-800 uppercase tracking-wide">
+                সর্বমোট উৎপাদন ব্যয়
+              </span>
+              <div className="text-[18px] font-bold font-mono text-amber-900">
+                {fmt(pondSummary.totalPondCost)}
+              </div>
+              <div className="text-[11px] text-amber-700">পোনা + খাদ্য + অন্যান্য খরচ</div>
+            </div>
+
+            <div className="p-3.5 rounded-xl bg-cyan-50/70 border border-cyan-200 space-y-1">
+              <span className="text-[11px] font-bold text-cyan-800 uppercase tracking-wide">
+                সর্বমোট অর্জিত রাজস্ব
+              </span>
+              <div className="text-[18px] font-bold font-mono text-cyan-900">
+                {fmt(pondSummary.totalPondRevenue)}
+              </div>
+              <div className="text-[11px] text-cyan-700">মাছ আহরণ ও বিক্রয়লব্ধ আয়</div>
+            </div>
+
+            <div
+              className={`p-3.5 rounded-xl border space-y-1 ${
+                pondSummary.totalPondProfit >= 0
+                  ? 'bg-emerald-50/70 border-emerald-200 text-emerald-950'
+                  : 'bg-rose-50/70 border-rose-200 text-rose-950'
+              }`}
+            >
+              <span
+                className={`text-[11px] font-bold uppercase tracking-wide ${
+                  pondSummary.totalPondProfit >= 0 ? 'text-[#15803D]' : 'text-rose-700'
+                }`}
+              >
+                সার্বিক নিট লাভ/ক্ষতি
+              </span>
+              <div
+                className={`text-[18px] font-bold font-mono ${
+                  pondSummary.totalPondProfit >= 0 ? 'text-[#15803D]' : 'text-rose-700'
+                }`}
+              >
+                {pondSummary.totalPondProfit >= 0 ? '+' : ''}
+                {fmt(pondSummary.totalPondProfit)}
+              </div>
+              <div className="text-[11px] opacity-80">
+                {pondSummary.totalPondProfit >= 0 ? 'সার্বিক উদ্বৃত্ত লাভ' : 'চলতি ঘাটতি'}
+              </div>
+            </div>
+
+            <div className="p-3.5 rounded-xl bg-blue-50/70 border border-blue-200 space-y-1 col-span-2 sm:col-span-1">
+              <span className="text-[11px] font-bold text-blue-800 uppercase tracking-wide">
+                গড় নিট লাভ / ব্যাচ
+              </span>
+              <div className="text-[18px] font-bold font-mono text-blue-900">
+                {pondSummary.avgProfit >= 0 ? '+' : ''}
+                {fmt(pondSummary.avgProfit)}
+              </div>
+              <div className="text-[11px] text-blue-700">প্রতি ব্যাচের গড় মুনাফা</div>
+            </div>
+          </div>
+
+          {/* Controls: Search, Sort */}
+          <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3 pt-1">
+            {/* Search */}
+            <div className="relative flex-1 max-w-sm">
+              <Search className="w-4 h-4 text-gray-400 absolute left-3 top-3" />
+              <input
+                id="search-pond-profitability"
+                type="text"
+                value={pondSearchQuery}
+                onChange={(e) => setPondSearchQuery(e.target.value)}
+                placeholder="ব্যাচ আইডি, পুকুরের নাম বা মাছের প্রজাতি খুঁজুন..."
+                className="w-full pl-9 pr-4 py-2 text-[13px] rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-transparent bg-gray-50"
+              />
+            </div>
+
+            {/* Sort Button */}
+            <div className="flex items-center gap-2 flex-wrap">
+              <button
+                type="button"
+                id="btn-sort-pond-profit"
+                onClick={() => togglePondSort('netProfit')}
+                className={`px-3 py-2 rounded-xl border text-[12px] font-bold flex items-center gap-1.5 cursor-pointer transition-all ${
+                  pondSortKey === 'netProfit'
+                    ? 'bg-blue-700 text-white border-blue-700 shadow-xs'
+                    : 'bg-white text-gray-700 border-gray-200 hover:bg-gray-50'
+                }`}
+              >
+                <span>নিট লাভ অনুযায়ী ({pondSortDirection === 'desc' ? 'সর্বোচ্চ ➔ সর্বনিম্ন' : 'সর্বনিম্ন ➔ সর্বোচ্চ'})</span>
+                {pondSortKey === 'netProfit' ? (
+                  pondSortDirection === 'desc' ? (
+                    <ArrowDown className="w-3.5 h-3.5" />
+                  ) : (
+                    <ArrowUp className="w-3.5 h-3.5" />
+                  )
+                ) : (
+                  <ArrowUpDown className="w-3.5 h-3.5" />
+                )}
+              </button>
+            </div>
+          </div>
+
+          {/* Profitability Table */}
+          <div className="overflow-x-auto rounded-xl border border-gray-200">
+            <table className="w-full text-left text-xs border-collapse">
+              <thead>
+                <tr className="bg-gray-100 text-gray-700 font-bold border-b border-gray-200">
+                  <th className="py-3 px-3.5 whitespace-nowrap">ব্যাচ ও পুকুর</th>
+                  <th className="py-3 px-3 whitespace-nowrap">মজুত ও আহরণ তারিখ</th>
+                  <th className="py-3 px-3 whitespace-nowrap">পোনা খরচ</th>
+                  <th className="py-3 px-3 whitespace-nowrap">খাদ্য ও অন্যান্য</th>
+                  <th
+                    onClick={() => togglePondSort('totalCost')}
+                    className="py-3 px-3 whitespace-nowrap cursor-pointer hover:bg-gray-200/60 transition-all"
+                  >
+                    <div className="flex items-center gap-1">
+                      <span>সর্বমোট ব্যয়</span>
+                      {pondSortKey === 'totalCost' && (
+                        pondSortDirection === 'desc' ? <ArrowDown className="w-3.5 h-3.5" /> : <ArrowUp className="w-3.5 h-3.5" />
+                      )}
+                    </div>
+                  </th>
+                  <th
+                    onClick={() => togglePondSort('harvestWeightKg')}
+                    className="py-3 px-3 whitespace-nowrap cursor-pointer hover:bg-gray-200/60 transition-all"
+                  >
+                    <div className="flex items-center gap-1">
+                      <span>আহরণ ওজন</span>
+                      {pondSortKey === 'harvestWeightKg' && (
+                        pondSortDirection === 'desc' ? <ArrowDown className="w-3.5 h-3.5" /> : <ArrowUp className="w-3.5 h-3.5" />
+                      )}
+                    </div>
+                  </th>
+                  <th
+                    onClick={() => togglePondSort('totalRevenue')}
+                    className="py-3 px-3 whitespace-nowrap cursor-pointer hover:bg-gray-200/60 transition-all"
+                  >
+                    <div className="flex items-center gap-1">
+                      <span>সর্বমোট রাজস্ব</span>
+                      {pondSortKey === 'totalRevenue' && (
+                        pondSortDirection === 'desc' ? <ArrowDown className="w-3.5 h-3.5" /> : <ArrowUp className="w-3.5 h-3.5" />
+                      )}
+                    </div>
+                  </th>
+                  <th
+                    onClick={() => togglePondSort('netProfit')}
+                    className="py-3 px-3.5 whitespace-nowrap cursor-pointer hover:bg-gray-200/60 transition-all bg-gray-200/40"
+                  >
+                    <div className="flex items-center gap-1 text-blue-900 font-bold">
+                      <span>নিট লাভ / ক্ষতি</span>
+                      {pondSortKey === 'netProfit' && (
+                        pondSortDirection === 'desc' ? <ArrowDown className="w-3.5 h-3.5" /> : <ArrowUp className="w-3.5 h-3.5" />
+                      )}
+                    </div>
+                  </th>
+                  <th className="py-3 px-3 whitespace-nowrap">মার্জিন (%)</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100 font-sans">
+                {sortedPondRows.length > 0 ? (
+                  sortedPondRows.map((row) => {
+                    const isProfitable = row.netProfit >= 0;
+
+                    return (
+                      <tr key={row.id} className="hover:bg-blue-50/30 transition-colors">
+                        {/* Batch ID, Pond & Species */}
+                        <td className="py-3 px-3.5 whitespace-nowrap">
+                          <div className="flex items-center gap-2">
+                            <span className="font-mono font-bold text-gray-900">{row.id}</span>
+                            <span className="px-2 py-0.5 rounded bg-blue-50 text-blue-700 text-[11px] font-semibold border border-blue-200">
+                              {row.species}
+                            </span>
+                          </div>
+                          <div className="text-[11px] text-gray-500 mt-0.5">
+                            {row.pondName}
+                            {row.fingerlingQty > 0 ? ` • ${row.fingerlingQty.toLocaleString()}টি পোনা` : ''}
+                          </div>
+                        </td>
+
+                        {/* Dates */}
+                        <td className="py-3 px-3 whitespace-nowrap text-gray-600">
+                          <div className="font-mono text-gray-900 text-[12px]">
+                            {row.harvestDate || 'আহরণ তারিখ নেই'}
+                          </div>
+                          <div className="text-[10px] text-gray-400">
+                            মজুত: {row.stockingDate || '-'}
+                          </div>
+                        </td>
+
+                        {/* Fingerling Cost */}
+                        <td className="py-3 px-3 whitespace-nowrap font-mono text-gray-700">
+                          <div>{fmt(row.fingerlingCost)}</div>
+                        </td>
+
+                        {/* Feed & Other Costs */}
+                        <td className="py-3 px-3 whitespace-nowrap font-mono text-gray-700">
+                          <div>{fmt(row.feedCost + row.otherCost)}</div>
+                          <div className="text-[10px] text-gray-400">
+                            খাদ্য {fmt(row.feedCost)}
+                            {row.otherCost > 0 ? ` + অন্যান্য ${fmt(row.otherCost)}` : ''}
+                          </div>
+                        </td>
+
+                        {/* Total Cost */}
+                        <td className="py-3 px-3 whitespace-nowrap font-mono">
+                          <div className="font-bold text-amber-900">
+                            {fmt(row.totalCost)}
+                          </div>
+                        </td>
+
+                        {/* Harvest Weight */}
+                        <td className="py-3 px-3 whitespace-nowrap font-mono text-gray-800">
+                          <div className="font-semibold">{row.harvestWeightKg.toLocaleString()} কেজি</div>
+                        </td>
+
+                        {/* Total Revenue */}
+                        <td className="py-3 px-3 whitespace-nowrap font-mono">
+                          <div className="font-bold text-cyan-900">
+                            {fmt(row.totalRevenue)}
+                          </div>
+                        </td>
+
+                        {/* Net Profit / Loss */}
+                        <td className="py-3 px-3.5 whitespace-nowrap font-mono bg-gray-50/50">
+                          <div
+                            className={`font-bold text-[14px] flex items-center gap-1 ${
+                              isProfitable ? 'text-[#15803D]' : 'text-rose-700'
+                            }`}
+                          >
+                            <span>{isProfitable ? '+' : ''}</span>
+                            <span>{fmt(row.netProfit)}</span>
+                          </div>
+                          <div className="text-[10px] text-gray-500 mt-0.5">
+                            {isProfitable ? 'লাভ' : 'ক্ষতি'}
+                          </div>
+                        </td>
+
+                        {/* Profit Margin */}
+                        <td className="py-3 px-3 whitespace-nowrap font-mono">
+                          <span
+                            className={`px-2 py-0.5 rounded text-[11px] font-bold ${
+                              row.profitMargin >= 0
+                                ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
+                                : 'bg-rose-50 text-rose-800 border border-rose-200'
+                            }`}
+                          >
+                            {row.profitMargin >= 0 ? '+' : ''}
+                            {row.profitMargin.toFixed(1)}%
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  })
+                ) : (
+                  <tr>
+                    <td colSpan={9} className="py-8 text-center text-gray-500">
+                      কোনো আহরিত মাছের ব্যাচ পাওয়া যায়নি (শুধুমাত্র আহরণ ও বিক্রয়কৃত ব্যাচের তথ্য এখানে প্রদর্শিত হয়)।
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+
+              {/* Table Footer */}
+              {sortedPondRows.length > 0 && (
+                <tfoot>
+                  <tr className="bg-gray-100 font-bold text-gray-900 border-t-2 border-gray-300">
+                    <td colSpan={2} className="py-3 px-3.5">
+                      মোট সমষ্টি ({sortedPondRows.length}টি ব্যাচ)
+                    </td>
+                    <td className="py-3 px-3 font-mono text-gray-800">
+                      {fmt(sortedPondRows.reduce((acc, r) => acc + r.fingerlingCost, 0))}
+                    </td>
+                    <td className="py-3 px-3 font-mono text-gray-800">
+                      {fmt(sortedPondRows.reduce((acc, r) => acc + r.feedCost + r.otherCost, 0))}
+                    </td>
+                    <td className="py-3 px-3 font-mono text-amber-900">
+                      {fmt(sortedPondRows.reduce((acc, r) => acc + r.totalCost, 0))}
+                    </td>
+                    <td className="py-3 px-3 font-mono text-gray-800">
+                      {sortedPondRows.reduce((acc, r) => acc + r.harvestWeightKg, 0).toLocaleString()} কেজি
+                    </td>
+                    <td className="py-3 px-3 font-mono text-cyan-900">
+                      {fmt(sortedPondRows.reduce((acc, r) => acc + r.totalRevenue, 0))}
+                    </td>
+                    <td className="py-3 px-3.5 font-mono text-[14px]">
+                      {(() => {
+                        const sumNet = sortedPondRows.reduce((acc, r) => acc + r.netProfit, 0);
+                        return (
+                          <span className={sumNet >= 0 ? 'text-[#15803D]' : 'text-rose-700'}>
+                            {sumNet >= 0 ? '+' : ''}
+                            {fmt(sumNet)}
+                          </span>
+                        );
+                      })()}
+                    </td>
+                    <td className="py-3 px-3 font-mono text-[12px] text-gray-700">
+                      {(() => {
+                        const totRev = sortedPondRows.reduce((acc, r) => acc + r.totalRevenue, 0);
+                        const totNet = sortedPondRows.reduce((acc, r) => acc + r.netProfit, 0);
+                        const avgMarg = totRev > 0 ? (totNet / totRev) * 100 : 0;
+                        return `${avgMarg >= 0 ? '+' : ''}${avgMarg.toFixed(1)}%`;
+                      })()}
+                    </td>
+                  </tr>
+                </tfoot>
+              )}
+            </table>
+          </div>
+
+          {/* Footnote */}
+          <div className="p-3 bg-gray-50 rounded-xl border border-gray-200 text-[11px] text-gray-500 space-y-1">
+            <p>
+              • <strong>হিসাবের ভিত্তি:</strong> প্রতিটি মাছের ব্যাচের সর্বমোট উৎপাদন ব্যয় = পোনা ক্রয় খরচ + মোট খাদ্য খরচ + অন্যান্য খরচ।
+            </p>
+            <p>
+              • <strong>রাজস্ব ও নিট লাভ:</strong> শুধুমাত্র আহরণ ও বিক্রয় সম্পন্ন হওয়া ব্যাচসমূহ প্রদর্শিত হচ্ছে (নিট লাভ = সর্বমোট বিক্রয় রাজস্ব - সর্বমোট উৎপাদন ব্যয়)।
+            </p>
+            <p>
+              • <strong>ডাটা ফিল্টারিং:</strong> যেসব ব্যাচের ক্ষেত্রে প্রকৃত বিক্রয়/আহরণ রাজস্ব ডাটাবেজে লিপিবদ্ধ রয়েছে কেবলমাত্র সেই ব্যাচসমূহের হিসাব অন্তর্ভুক্ত।
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* ===================== REPORT: CROP PROFITABILITY (ফসল লাভ-ক্ষতি) ===================== */}
+      {activeReport === 'cropProfitability' && (
+        <div id="crop-profitability-report-card" className="bg-white border border-gray-200 rounded-2xl p-4 sm:p-6 space-y-6 shadow-xs">
+          {/* Header */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-gray-100 pb-4">
+            <div>
+              <h3 className="text-base sm:text-lg font-bold text-gray-900 flex items-center gap-2">
+                <Sprout className="w-5 h-5 text-emerald-700" />
+                <span>ফসল লাভ-ক্ষতি প্রতিবেদন (Crop Profitability Report)</span>
+              </h3>
+              <p className="text-[13px] text-gray-500 mt-0.5">
+                ফসলের প্রতিটি চক্রের মোট উৎপাদন ব্যয় (বীজ + সার + সেচ + শ্রমিক), আহরণ/বিক্রয় রাজস্ব ও নিট লাভ-ক্ষতির তুলনামূলক বিবরণী (শুধুমাত্র বিক্রিত ও আহরিত ফসল)
+              </p>
+            </div>
+            <div className="text-[12px] text-gray-500 bg-gray-50 px-3 py-1.5 rounded-lg border border-gray-200 flex items-center gap-1.5">
+              <span>ক্রমানুসারে সাজানো:</span>
+              <span className="font-bold text-emerald-700">
+                {cropSortKey === 'netProfit'
+                  ? `নিট লাভ (${cropSortDirection === 'desc' ? 'সর্বোচ্চ ➔ সর্বনিম্ন' : 'সর্বনিম্ন ➔ সর্বোচ্চ'})`
+                  : cropSortKey === 'totalCost'
+                  ? `মোট ব্যয় (${cropSortDirection === 'desc' ? 'বেশি ➔ কম' : 'কম ➔ বেশি'})`
+                  : cropSortKey === 'totalRevenue'
+                  ? `মোট রাজস্ব (${cropSortDirection === 'desc' ? 'বেশি ➔ কম' : 'কম ➔ বেশি'})`
+                  : `আহরিত ফলন`}
+              </span>
+            </div>
+          </div>
+
+          {/* KPI Summary Cards */}
+          <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+            <div className="p-3.5 rounded-xl bg-gray-50 border border-gray-200 space-y-1">
+              <span className="text-[11px] font-bold text-gray-500 uppercase tracking-wide">
+                মোট আহরিত ফসল চক্র
+              </span>
+              <div className="text-[18px] font-bold text-gray-900">
+                {cropSummary.totalCycles} <span className="text-[12px] font-normal text-gray-500">টি ফসল</span>
+              </div>
+              <div className="text-[11px] text-gray-600">
+                মোট ফলন: {cropSummary.totalHarvestYield.toLocaleString()} কেজি
+              </div>
+            </div>
+
+            <div className="p-3.5 rounded-xl bg-amber-50/70 border border-amber-200 space-y-1">
+              <span className="text-[11px] font-bold text-amber-800 uppercase tracking-wide">
+                সর্বমোট উৎপাদন ব্যয়
+              </span>
+              <div className="text-[18px] font-bold font-mono text-amber-900">
+                {fmt(cropSummary.totalCropCost)}
+              </div>
+              <div className="text-[11px] text-amber-700">বীজ + সার + সেচ + শ্রমিক + অন্যান্য</div>
+            </div>
+
+            <div className="p-3.5 rounded-xl bg-cyan-50/70 border border-cyan-200 space-y-1">
+              <span className="text-[11px] font-bold text-cyan-800 uppercase tracking-wide">
+                সর্বমোট অর্জিত রাজস্ব
+              </span>
+              <div className="text-[18px] font-bold font-mono text-cyan-900">
+                {fmt(cropSummary.totalCropRevenue)}
+              </div>
+              <div className="text-[11px] text-cyan-700">ফসল বিক্রয় ও আহরণলব্ধ আয়</div>
+            </div>
+
+            <div
+              className={`p-3.5 rounded-xl border space-y-1 ${
+                cropSummary.totalCropProfit >= 0
+                  ? 'bg-emerald-50/70 border-emerald-200 text-emerald-950'
+                  : 'bg-rose-50/70 border-rose-200 text-rose-950'
+              }`}
+            >
+              <span
+                className={`text-[11px] font-bold uppercase tracking-wide ${
+                  cropSummary.totalCropProfit >= 0 ? 'text-[#15803D]' : 'text-rose-700'
+                }`}
+              >
+                সার্বিক নিট লাভ/ক্ষতি
+              </span>
+              <div
+                className={`text-[18px] font-bold font-mono ${
+                  cropSummary.totalCropProfit >= 0 ? 'text-[#15803D]' : 'text-rose-700'
+                }`}
+              >
+                {cropSummary.totalCropProfit >= 0 ? '+' : ''}
+                {fmt(cropSummary.totalCropProfit)}
+              </div>
+              <div className="text-[11px] opacity-80">
+                {cropSummary.totalCropProfit >= 0 ? 'সার্বিক উদ্বৃত্ত লাভ' : 'চলতি ঘাটতি'}
+              </div>
+            </div>
+
+            <div className="p-3.5 rounded-xl bg-emerald-50/70 border border-emerald-200 space-y-1 col-span-2 sm:col-span-1">
+              <span className="text-[11px] font-bold text-emerald-800 uppercase tracking-wide">
+                গড় নিট লাভ / চক্র
+              </span>
+              <div className="text-[18px] font-bold font-mono text-emerald-900">
+                {cropSummary.avgProfit >= 0 ? '+' : ''}
+                {fmt(cropSummary.avgProfit)}
+              </div>
+              <div className="text-[11px] text-emerald-700">প্রতি ফসলের গড় মুনাফা</div>
+            </div>
+          </div>
+
+          {/* Controls: Search, Sort */}
+          <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3 pt-1">
+            {/* Search */}
+            <div className="relative flex-1 max-w-sm">
+              <Search className="w-4 h-4 text-gray-400 absolute left-3 top-3" />
+              <input
+                id="search-crop-profitability"
+                type="text"
+                value={cropSearchQuery}
+                onChange={(e) => setCropSearchQuery(e.target.value)}
+                placeholder="ফসল, জমির নাম বা বিভাগ দিয়ে খুঁজুন..."
+                className="w-full pl-9 pr-4 py-2 text-[13px] rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-emerald-600 focus:border-transparent bg-gray-50"
+              />
+            </div>
+
+            {/* Sort Button */}
+            <div className="flex items-center gap-2 flex-wrap">
+              <button
+                type="button"
+                id="btn-sort-crop-profit"
+                onClick={() => toggleCropSort('netProfit')}
+                className={`px-3 py-2 rounded-xl border text-[12px] font-bold flex items-center gap-1.5 cursor-pointer transition-all ${
+                  cropSortKey === 'netProfit'
+                    ? 'bg-emerald-700 text-white border-emerald-700 shadow-xs'
+                    : 'bg-white text-gray-700 border-gray-200 hover:bg-gray-50'
+                }`}
+              >
+                <span>নিট লাভ অনুযায়ী ({cropSortDirection === 'desc' ? 'সর্বোচ্চ ➔ সর্বনিম্ন' : 'সর্বনিম্ন ➔ সর্বোচ্চ'})</span>
+                {cropSortKey === 'netProfit' ? (
+                  cropSortDirection === 'desc' ? (
+                    <ArrowDown className="w-3.5 h-3.5" />
+                  ) : (
+                    <ArrowUp className="w-3.5 h-3.5" />
+                  )
+                ) : (
+                  <ArrowUpDown className="w-3.5 h-3.5" />
+                )}
+              </button>
+            </div>
+          </div>
+
+          {/* Profitability Table */}
+          <div className="overflow-x-auto rounded-xl border border-gray-200">
+            <table className="w-full text-left text-xs border-collapse">
+              <thead>
+                <tr className="bg-gray-100 text-gray-700 font-bold border-b border-gray-200">
+                  <th className="py-3 px-3.5 whitespace-nowrap">ফসল ও জমি</th>
+                  <th className="py-3 px-3 whitespace-nowrap">রোপণ ও আহরণ তারিখ</th>
+                  <th className="py-3 px-3 whitespace-nowrap">বীজ ও সার খরচ</th>
+                  <th className="py-3 px-3 whitespace-nowrap">সেচ ও শ্রমিক খরচ</th>
+                  <th
+                    onClick={() => toggleCropSort('totalCost')}
+                    className="py-3 px-3 whitespace-nowrap cursor-pointer hover:bg-gray-200/60 transition-all"
+                  >
+                    <div className="flex items-center gap-1">
+                      <span>সর্বমোট ব্যয়</span>
+                      {cropSortKey === 'totalCost' && (
+                        cropSortDirection === 'desc' ? <ArrowDown className="w-3.5 h-3.5" /> : <ArrowUp className="w-3.5 h-3.5" />
+                      )}
+                    </div>
+                  </th>
+                  <th
+                    onClick={() => toggleCropSort('harvestYieldKg')}
+                    className="py-3 px-3 whitespace-nowrap cursor-pointer hover:bg-gray-200/60 transition-all"
+                  >
+                    <div className="flex items-center gap-1">
+                      <span>আহরিত ফলন</span>
+                      {cropSortKey === 'harvestYieldKg' && (
+                        cropSortDirection === 'desc' ? <ArrowDown className="w-3.5 h-3.5" /> : <ArrowUp className="w-3.5 h-3.5" />
+                      )}
+                    </div>
+                  </th>
+                  <th
+                    onClick={() => toggleCropSort('totalRevenue')}
+                    className="py-3 px-3 whitespace-nowrap cursor-pointer hover:bg-gray-200/60 transition-all"
+                  >
+                    <div className="flex items-center gap-1">
+                      <span>সর্বমোট রাজস্ব</span>
+                      {cropSortKey === 'totalRevenue' && (
+                        cropSortDirection === 'desc' ? <ArrowDown className="w-3.5 h-3.5" /> : <ArrowUp className="w-3.5 h-3.5" />
+                      )}
+                    </div>
+                  </th>
+                  <th
+                    onClick={() => toggleCropSort('netProfit')}
+                    className="py-3 px-3.5 whitespace-nowrap cursor-pointer hover:bg-gray-200/60 transition-all bg-gray-200/40"
+                  >
+                    <div className="flex items-center gap-1 text-emerald-900 font-bold">
+                      <span>নিট লাভ / ক্ষতি</span>
+                      {cropSortKey === 'netProfit' && (
+                        cropSortDirection === 'desc' ? <ArrowDown className="w-3.5 h-3.5" /> : <ArrowUp className="w-3.5 h-3.5" />
+                      )}
+                    </div>
+                  </th>
+                  <th className="py-3 px-3 whitespace-nowrap">মার্জিন (%)</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100 font-sans">
+                {sortedCropRows.length > 0 ? (
+                  sortedCropRows.map((row) => {
+                    const isProfitable = row.netProfit >= 0;
+
+                    return (
+                      <tr key={row.id} className="hover:bg-emerald-50/30 transition-colors">
+                        {/* Crop Name, Category & Plot */}
+                        <td className="py-3 px-3.5 whitespace-nowrap">
+                          <div className="flex items-center gap-2">
+                            <span className="font-bold text-gray-900">{row.cropName}</span>
+                            <span className="px-2 py-0.5 rounded bg-emerald-50 text-emerald-800 text-[11px] font-semibold border border-emerald-200">
+                              {row.cropCategory === 'GRAIN' ? 'দানা শস্য' : row.cropCategory === 'VEGETABLE' ? 'শাকসবজি' : row.cropCategory === 'FODDER' ? 'ঘাস/পশুখাদ্য' : 'অন্যান্য'}
+                            </span>
+                          </div>
+                          <div className="text-[11px] text-gray-500 mt-0.5">
+                            {row.plotName} {row.areaDecimals > 0 ? ` • ${row.areaDecimals} শতাংশ` : ''}
+                            <span className="font-mono text-gray-400 ml-1">({row.id})</span>
+                          </div>
+                        </td>
+
+                        {/* Dates */}
+                        <td className="py-3 px-3 whitespace-nowrap text-gray-600">
+                          <div className="font-mono text-gray-900 text-[12px]">
+                            {row.actualHarvestDate || 'আহরণ তারিখ নেই'}
+                          </div>
+                          <div className="text-[10px] text-gray-400">
+                            রোপণ: {row.plantingDate || '-'}
+                          </div>
+                        </td>
+
+                        {/* Seed & Fertilizer Cost */}
+                        <td className="py-3 px-3 whitespace-nowrap font-mono text-gray-700">
+                          <div>{fmt(row.seedCost + row.fertilizerCost)}</div>
+                          <div className="text-[10px] text-gray-400">
+                            বীজ {fmt(row.seedCost)} + সার {fmt(row.fertilizerCost)}
+                          </div>
+                        </td>
+
+                        {/* Irrigation & Labour Cost */}
+                        <td className="py-3 px-3 whitespace-nowrap font-mono text-gray-700">
+                          <div>{fmt(row.irrigationCost + row.labourCost + row.otherCost)}</div>
+                          <div className="text-[10px] text-gray-400">
+                            সেচ {fmt(row.irrigationCost)} + শ্রমিক {fmt(row.labourCost)}
+                            {row.otherCost > 0 ? ` + অন্য ${fmt(row.otherCost)}` : ''}
+                          </div>
+                        </td>
+
+                        {/* Total Cost */}
+                        <td className="py-3 px-3 whitespace-nowrap font-mono">
+                          <div className="font-bold text-amber-900">
+                            {fmt(row.totalCost)}
+                          </div>
+                        </td>
+
+                        {/* Harvest Yield */}
+                        <td className="py-3 px-3 whitespace-nowrap font-mono text-gray-800">
+                          <div className="font-semibold">{row.harvestYieldKg.toLocaleString()} কেজি</div>
+                        </td>
+
+                        {/* Total Revenue */}
+                        <td className="py-3 px-3 whitespace-nowrap font-mono">
+                          <div className="font-bold text-cyan-900">
+                            {fmt(row.totalRevenue)}
+                          </div>
+                        </td>
+
+                        {/* Net Profit / Loss */}
+                        <td className="py-3 px-3.5 whitespace-nowrap font-mono bg-gray-50/50">
+                          <div
+                            className={`font-bold text-[14px] flex items-center gap-1 ${
+                              isProfitable ? 'text-[#15803D]' : 'text-rose-700'
+                            }`}
+                          >
+                            <span>{isProfitable ? '+' : ''}</span>
+                            <span>{fmt(row.netProfit)}</span>
+                          </div>
+                          <div className="text-[10px] text-gray-500 mt-0.5">
+                            {isProfitable ? 'লাভ' : 'ক্ষতি'}
+                          </div>
+                        </td>
+
+                        {/* Profit Margin */}
+                        <td className="py-3 px-3 whitespace-nowrap font-mono">
+                          <span
+                            className={`px-2 py-0.5 rounded text-[11px] font-bold ${
+                              row.profitMargin >= 0
+                                ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
+                                : 'bg-rose-50 text-rose-800 border border-rose-200'
+                            }`}
+                          >
+                            {row.profitMargin >= 0 ? '+' : ''}
+                            {row.profitMargin.toFixed(1)}%
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  })
+                ) : (
+                  <tr>
+                    <td colSpan={9} className="py-8 text-center text-gray-500">
+                      কোনো আহরিত ফসলের তথ্য পাওয়া যায়নি (শুধুমাত্র আহরণ ও বিক্রয়কৃত ফসলের তথ্য এখানে প্রদর্শিত হয়)।
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+
+              {/* Table Footer */}
+              {sortedCropRows.length > 0 && (
+                <tfoot>
+                  <tr className="bg-gray-100 font-bold text-gray-900 border-t-2 border-gray-300">
+                    <td colSpan={2} className="py-3 px-3.5">
+                      মোট সমষ্টি ({sortedCropRows.length}টি ফসল)
+                    </td>
+                    <td className="py-3 px-3 font-mono text-gray-800">
+                      {fmt(sortedCropRows.reduce((acc, r) => acc + r.seedCost + r.fertilizerCost, 0))}
+                    </td>
+                    <td className="py-3 px-3 font-mono text-gray-800">
+                      {fmt(sortedCropRows.reduce((acc, r) => acc + r.irrigationCost + r.labourCost + r.otherCost, 0))}
+                    </td>
+                    <td className="py-3 px-3 font-mono text-amber-900">
+                      {fmt(sortedCropRows.reduce((acc, r) => acc + r.totalCost, 0))}
+                    </td>
+                    <td className="py-3 px-3 font-mono text-gray-800">
+                      {sortedCropRows.reduce((acc, r) => acc + r.harvestYieldKg, 0).toLocaleString()} কেজি
+                    </td>
+                    <td className="py-3 px-3 font-mono text-cyan-900">
+                      {fmt(sortedCropRows.reduce((acc, r) => acc + r.totalRevenue, 0))}
+                    </td>
+                    <td className="py-3 px-3.5 font-mono text-[14px]">
+                      {(() => {
+                        const sumNet = sortedCropRows.reduce((acc, r) => acc + r.netProfit, 0);
+                        return (
+                          <span className={sumNet >= 0 ? 'text-[#15803D]' : 'text-rose-700'}>
+                            {sumNet >= 0 ? '+' : ''}
+                            {fmt(sumNet)}
+                          </span>
+                        );
+                      })()}
+                    </td>
+                    <td className="py-3 px-3 font-mono text-[12px] text-gray-700">
+                      {(() => {
+                        const totRev = sortedCropRows.reduce((acc, r) => acc + r.totalRevenue, 0);
+                        const totNet = sortedCropRows.reduce((acc, r) => acc + r.netProfit, 0);
+                        const avgMarg = totRev > 0 ? (totNet / totRev) * 100 : 0;
+                        return `${avgMarg >= 0 ? '+' : ''}${avgMarg.toFixed(1)}%`;
+                      })()}
+                    </td>
+                  </tr>
+                </tfoot>
+              )}
+            </table>
+          </div>
+
+          {/* Footnote */}
+          <div className="p-3 bg-gray-50 rounded-xl border border-gray-200 text-[11px] text-gray-500 space-y-1">
+            <p>
+              • <strong>হিসাবের ভিত্তি:</strong> প্রতিটি ফসল চক্রের সর্বমোট উৎপাদন ব্যয় = বীজ ক্রয় + সার ও বালাইনাশক + সেচ খরচ + শ্রমিক মজুরি + অন্যান্য ব্যয়।
+            </p>
+            <p>
+              • <strong>রাজস্ব ও নিট লাভ:</strong> শুধুমাত্র আহরণ ও বিক্রয় সম্পন্ন হওয়া ফসলসমূহ প্রদর্শিত হচ্ছে (নিট লাভ = সর্বমোট ফসল বিক্রয় রাজস্ব - সর্বমোট উৎপাদন ব্যয়)।
+            </p>
+            <p>
+              • <strong>ডাটা ফিল্টারিং:</strong> যেসব ফসল চক্রের ক্ষেত্রে প্রকৃত বিক্রয়/আহরণ রাজস্ব ডাটাবেজে লিপিবদ্ধ রয়েছে কেবলমাত্র সেই চক্রসমূহের হিসাব অন্তর্ভুক্ত।
             </p>
           </div>
         </div>
