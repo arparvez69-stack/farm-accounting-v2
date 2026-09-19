@@ -2153,6 +2153,23 @@ export async function executeFishHarvestAndSaleTransaction(
         fishCogsAcc = newAcc;
       }
 
+      let fishMortalityAcc = accounts.find((a) => a.code === CANONICAL_ACCOUNTS.FISH_MORTALITY_LOSS);
+      if (!fishMortalityAcc) {
+        const newAcc: Account = {
+          id: 'acc_8030',
+          code: CANONICAL_ACCOUNTS.FISH_MORTALITY_LOSS,
+          nameBn: 'মাছের মৃত্যুজনিত ক্ষতি (Fish Mortality Loss)',
+          nameEn: 'Fish Mortality Loss',
+          accountClass: 'OTHER_EXPENSE',
+          normalBalance: 'DEBIT',
+          isSystem: true,
+          isActive: true
+        };
+        await safeInsert(db.accounts, newAcc, { idPrefix: 'acc' });
+        accounts.push(newAcc);
+        fishMortalityAcc = newAcc;
+      }
+
       let assetAcc = accounts.find((a) => a.code === CANONICAL_ACCOUNTS.LIVESTOCK_ASSETS);
       if (!assetAcc) {
         const newAcc: Account = {
@@ -2171,6 +2188,12 @@ export async function executeFishHarvestAndSaleTransaction(
       }
 
       const accumulatedCost = Math.round(((freshBatch.fingerlingCost || 0) + (freshBatch.totalFeedCost || 0)) * 100) / 100;
+      const totalStock = (freshBatch.fingerlingQty && freshBatch.fingerlingQty > 0)
+        ? freshBatch.fingerlingQty
+        : (cleanMortality > 0 ? cleanMortality : 1);
+      const mortalityRatio = Math.min(1, Math.max(0, cleanMortality / totalStock));
+      const mortalityCost = cleanMortality > 0 ? Math.round(accumulatedCost * mortalityRatio * 100) / 100 : 0;
+      const harvestedCogs = Math.max(0, Math.round((accumulatedCost - mortalityCost) * 100) / 100);
       const paymentCode = getPaymentAccount(paymentMethod, 'SALE');
 
       let journalEntryId: string | undefined;
@@ -2180,7 +2203,7 @@ export async function executeFishHarvestAndSaleTransaction(
       if (cleanPrice > 0 || accumulatedCost > 0) {
         const journalLines: JournalLine[] = [];
 
-        // 1. Revenue recognition leg
+        // 1. Revenue recognition leg: Dr Cash/Bank/Receivable, Cr Fish Sales Revenue (4010)
         if (cleanPrice > 0) {
           journalLines.push(
             {
@@ -2207,26 +2230,38 @@ export async function executeFishHarvestAndSaleTransaction(
           );
         }
 
-        // 2. COGS & Biological Asset derecognition leg (fingerlingCost + totalFeedCost)
+        // 2. COGS & Mortality Loss & Biological Asset derecognition leg
         if (accumulatedCost > 0) {
-          journalLines.push(
-            {
+          if (harvestedCogs > 0) {
+            journalLines.push({
               accountId: CANONICAL_ACCOUNTS.FISH_COGS,
               accountCode: CANONICAL_ACCOUNTS.FISH_COGS,
               accountName: fishCogsAcc.nameBn || 'বিক্রিত মাছের উৎপাদন ব্যয় (Fish COGS)',
-              debit: accumulatedCost,
+              debit: harvestedCogs,
               credit: 0,
-              memo: `মাছের ব্যাচ ${freshBatch.id} মোট পুঞ্জীভূত উৎপাদন ব্যয় (COGS)`
-            },
-            {
-              accountId: CANONICAL_ACCOUNTS.LIVESTOCK_ASSETS,
-              accountCode: CANONICAL_ACCOUNTS.LIVESTOCK_ASSETS,
-              accountName: assetAcc.nameBn || 'পশুসম্পদ ও জৈবিক সম্পদ (Livestock & Biological Assets)',
-              debit: 0,
-              credit: accumulatedCost,
-              memo: `মাছের ব্যাচ ${freshBatch.id} বিক্রয় বাবদ জৈবিক সম্পদ হিসাব সমন্বয়`
-            }
-          );
+              memo: `মাছের ব্যাচ ${freshBatch.id} আহরিত মাছের উৎপাদন ব্যয় (COGS)`
+            });
+          }
+
+          if (mortalityCost > 0) {
+            journalLines.push({
+              accountId: CANONICAL_ACCOUNTS.FISH_MORTALITY_LOSS,
+              accountCode: CANONICAL_ACCOUNTS.FISH_MORTALITY_LOSS,
+              accountName: fishMortalityAcc.nameBn || 'মাছের মৃত্যুজনিত ক্ষতি (Fish Mortality Loss)',
+              debit: mortalityCost,
+              credit: 0,
+              memo: `মাছের ব্যাচ ${freshBatch.id} মৃত মাছ অবলোপন (${cleanMortality} টি)`
+            });
+          }
+
+          journalLines.push({
+            accountId: CANONICAL_ACCOUNTS.LIVESTOCK_ASSETS,
+            accountCode: CANONICAL_ACCOUNTS.LIVESTOCK_ASSETS,
+            accountName: assetAcc.nameBn || 'পশুসম্পদ ও জৈবিক সম্পদ (Livestock & Biological Assets)',
+            debit: 0,
+            credit: accumulatedCost,
+            memo: `মাছের ব্যাচ ${freshBatch.id} আহরণ ও অবলোপন বাবদ পুঞ্জীভূত উৎপাদন খরচ হিসাব সমন্বয়`
+          });
         }
 
         const check = validateBalancedLines(journalLines, accounts);
@@ -2286,7 +2321,7 @@ export async function executeFishHarvestAndSaleTransaction(
                 unit: 'কেজি',
                 unitPrice: cleanWeight > 0 ? Math.round((cleanPrice / cleanWeight) * 100) / 100 : cleanPrice,
                 lineTotal: cleanPrice,
-                cogsAmount: accumulatedCost
+                cogsAmount: harvestedCogs
               }
             ],
             subtotal: cleanPrice,
@@ -2328,7 +2363,7 @@ export async function executeFishHarvestAndSaleTransaction(
           module: 'PRODUCTION',
           recordId: freshBatch.id,
           status: 'SUCCESS',
-          details: `মাছ আহরণ ও বিক্রয় সম্পন্ন: ব্যাচ ${freshBatch.id}, ওজন ${cleanWeight} কেজি, বিক্রয় ৳${cleanPrice}, ক্ষতি/মৃত ${cleanMortality} টি, COGS ৳${accumulatedCost}`
+          details: `মাছ আহরণ ও বিক্রয় সম্পন্ন: ব্যাচ ${freshBatch.id}, ওজন ${cleanWeight} কেজি, বিক্রয় ৳${cleanPrice}, COGS ৳${harvestedCogs}${mortalityCost > 0 ? `, মৃত্যুজনিত ক্ষতি ৳${mortalityCost}` : ''}`
         },
         { idPrefix: 'aud' }
       );

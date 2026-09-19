@@ -586,6 +586,16 @@ export const DEFAULT_CHART_OF_ACCOUNTS: Account[] = [
     normalBalance: 'DEBIT',
     isSystem: true,
     isActive: true
+  },
+  {
+    id: 'acc_8030',
+    code: '8030',
+    nameBn: 'মাছের মৃত্যুজনিত ক্ষতি (Fish Mortality Loss)',
+    nameEn: 'Fish Mortality Loss',
+    accountClass: 'OTHER_EXPENSE',
+    normalBalance: 'DEBIT',
+    isSystem: true,
+    isActive: true
   }
 ];
 

@@ -800,6 +800,246 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
     }
   };
 
+  // Fixed Asset Disposal State
+  const [disposingAsset, setDisposingAsset] = useState<FixedAsset | null>(null);
+  const [disposalProceeds, setDisposalProceeds] = useState<string>('0');
+  const [disposalPaymentMethod, setDisposalPaymentMethod] = useState<'CASH' | 'BANK'>('CASH');
+  const [disposalBankAccountId, setDisposalBankAccountId] = useState<string>('');
+  const [disposalDate, setDisposalDate] = useState<string>(new Date().toISOString().split('T')[0]);
+  const [disposalReason, setDisposalReason] = useState<string>('');
+  const [submittingDisposal, setSubmittingDisposal] = useState<boolean>(false);
+
+  const handleOpenDisposeAsset = (ast: FixedAsset) => {
+    setDisposingAsset(ast);
+    setDisposalProceeds('0');
+    setDisposalPaymentMethod('CASH');
+    setDisposalBankAccountId(bankAccountsList.length > 0 ? bankAccountsList[0].id : '');
+    setDisposalDate(new Date().toISOString().split('T')[0]);
+    setDisposalReason('');
+  };
+
+  const handleConfirmDisposal = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!disposingAsset) return;
+
+    try {
+      setSubmittingDisposal(true);
+      const cost = Number(disposingAsset.originalCost || (disposingAsset as any).disposedOriginalCost || 0);
+      const accum = Number(disposingAsset.accumulatedDepreciation || (disposingAsset as any).disposedAccumulatedDepreciation || 0);
+      // Carrying value = cost - accumulated depreciation
+      const carryingValue = Math.round(Math.max(0, cost - accum) * 100) / 100;
+      const proceeds = Math.max(0, parseFloat(disposalProceeds) || 0);
+      // Compare with sale proceeds
+      const gainLoss = Math.round((proceeds - carryingValue) * 100) / 100;
+      const dateStr = disposalDate || new Date().toISOString().split('T')[0];
+
+      // 1. Ensure Gain/Loss on Asset Disposal account exists; create if missing
+      const accounts = await db.accounts.toArray();
+      let disposalAcc = accounts.find(
+        (a) =>
+          a.code === '7020' ||
+          a.nameEn?.toLowerCase().includes('gain/loss on asset disposal') ||
+          a.nameBn?.includes('Gain/Loss on Asset Disposal')
+      );
+
+      if (!disposalAcc) {
+        disposalAcc = {
+          id: 'acc_7020',
+          code: '7020',
+          nameBn: 'স্থায়ী সম্পদ বিক্রয়জনিত লাভ/ক্ষতি (Gain/Loss on Asset Disposal)',
+          nameEn: 'Gain/Loss on Asset Disposal',
+          accountClass: 'OTHER_INCOME',
+          normalBalance: 'CREDIT',
+          isSystem: true,
+          isActive: true
+        };
+        await safeInsert(db.accounts, disposalAcc, { idPrefix: 'acc' });
+      }
+
+      // 2. Asset Account to Credit (e.g. 1520 Buildings, 1550 Machinery, 1510 Land)
+      const normCat = disposingAsset.category === 'BUILDING' ? 'BUILDINGS' : disposingAsset.category;
+      const assetAccInfo = getAssetAccountInfo(normCat);
+      const assetGLCode = assetAccInfo.code;
+      const assetGLAcc = accounts.find((a) => a.code === assetGLCode) || {
+        id: `acc_${assetGLCode}`,
+        code: assetGLCode,
+        nameBn: assetAccInfo.name
+      };
+
+      // 3. Accumulated Depreciation Account (1590) to Debit
+      const accumGLCode = CANONICAL_ACCOUNTS.ACCUMULATED_DEPRECIATION || '1590';
+      const accumGLAcc = accounts.find((a) => a.code === accumGLCode) || {
+        id: 'acc_1590',
+        code: accumGLCode,
+        nameBn: 'পুঞ্জীভূত অবচয় (Accumulated Depreciation)'
+      };
+
+      // 4. Payment Account (Cash / Bank) to Debit for sale proceeds
+      let paymentCode: string = CANONICAL_ACCOUNTS.CASH;
+      let paymentAccName = 'নগদ টাকা (Cash on Hand)';
+      let receivingBankId: string | undefined;
+
+      if (proceeds > 0) {
+        if (disposalPaymentMethod === 'BANK' && disposalBankAccountId) {
+          paymentCode = CANONICAL_ACCOUNTS.BANK;
+          const bAcc = await db.cashBankAccounts.get(disposalBankAccountId);
+          paymentAccName = bAcc?.name || 'ব্যাংক হিসাব (Bank Accounts)';
+          receivingBankId = disposalBankAccountId;
+        } else {
+          paymentCode = CANONICAL_ACCOUNTS.CASH;
+          const cashAcc = await db.cashBankAccounts.where('accountType').equals('CASH').first();
+          receivingBankId = cashAcc?.id;
+        }
+      }
+
+      const paymentAcc = accounts.find((a) => a.code === paymentCode) || {
+        id: `acc_${paymentCode}`,
+        code: paymentCode,
+        nameBn: paymentAccName
+      };
+
+      // 5. Balanced Journal Lines for Fixed Asset Disposal:
+      // Dr Cash/Bank for Proceeds (if > 0)
+      // Dr Accumulated Depreciation (1590) to derecognize
+      // Dr Gain/Loss on Asset Disposal (if loss)
+      // Cr Fixed Asset (Asset GL) for original cost
+      // Cr Gain/Loss on Asset Disposal (if gain)
+      const lines: JournalLine[] = [];
+
+      if (proceeds > 0) {
+        lines.push({
+          accountId: paymentAcc.id,
+          accountCode: paymentCode,
+          accountName: paymentAcc.nameBn || paymentAccName,
+          debit: proceeds,
+          credit: 0,
+          memo: `${disposingAsset.name} স্থায়ী সম্পদ বিক্রয়লব্ধ প্রাপ্তি`
+        });
+      }
+
+      if (accum > 0) {
+        lines.push({
+          accountId: accumGLAcc.id,
+          accountCode: accumGLCode,
+          accountName: accumGLAcc.nameBn,
+          debit: accum,
+          credit: 0,
+          memo: `${disposingAsset.name} পুঞ্জীভূত অবচয় অবলোপন`
+        });
+      }
+
+      if (gainLoss > 0) {
+        // Gain on Disposal -> Credit Gain/Loss account
+        lines.push({
+          accountId: disposalAcc.id,
+          accountCode: disposalAcc.code,
+          accountName: disposalAcc.nameBn,
+          debit: 0,
+          credit: gainLoss,
+          memo: `${disposingAsset.name} সম্পদ বিক্রয়জনিত লাভ (Gain on Asset Disposal)`
+        });
+      } else if (gainLoss < 0) {
+        // Loss on Disposal -> Debit Gain/Loss account
+        const lossAmount = Math.abs(gainLoss);
+        lines.push({
+          accountId: disposalAcc.id,
+          accountCode: disposalAcc.code,
+          accountName: disposalAcc.nameBn,
+          debit: lossAmount,
+          credit: 0,
+          memo: `${disposingAsset.name} সম্পদ বিক্রয়জনিত ক্ষতি (Loss on Asset Disposal)`
+        });
+      }
+
+      // Credit Fixed Asset GL account to remove historical cost
+      lines.push({
+        accountId: assetGLAcc.id,
+        accountCode: assetGLCode,
+        accountName: assetGLAcc.nameBn || assetAccInfo.name,
+        debit: 0,
+        credit: cost,
+        memo: `${disposingAsset.name} স্থায়ী সম্পদ হিসাব হতে অবলোপন`
+      });
+
+      const voucherNumber = generateTransactionNumber('DISP');
+      const entryId = generateUniqueId('j_disp');
+
+      await postJournalEntry(
+        {
+          id: entryId,
+          voucherNumber,
+          voucherType: 'JOURNAL',
+          date: dateStr,
+          narration: `স্থায়ী সম্পদ অপসারণ/বিক্রয়: ${disposingAsset.name} (${disposingAsset.id}), বিক্রয়মূল্য: ৳${proceeds}, পুস্তক মূল্য: ৳${carryingValue}, ${gainLoss >= 0 ? `লাভ: ৳${gainLoss}` : `ক্ষতি: ৳${Math.abs(gainLoss)}`}${disposalReason ? ` [মন্তব্য: ${disposalReason}]` : ''}`,
+          reference: disposingAsset.id,
+          lines,
+          createdBy: currentUserId,
+          createdAt: new Date().toISOString()
+        },
+        { accounts }
+      );
+
+      // Update receiving Cash/Bank balance
+      if (proceeds > 0 && receivingBankId) {
+        const cbAcc = await db.cashBankAccounts.get(receivingBankId);
+        if (cbAcc) {
+          await db.cashBankAccounts.update(receivingBankId, {
+            currentBalance: Math.round((cbAcc.currentBalance + proceeds) * 100) / 100,
+            synced: false
+          });
+        }
+      }
+
+      // Update Fixed Asset record: mark DISPOSED and clear active cost and accumulated depreciation from active Balance Sheet totals
+      await db.fixedAssets.update(disposingAsset.id, {
+        status: 'DISPOSED',
+        originalCost: 0,
+        accumulatedDepreciation: 0,
+        currentBookValue: 0,
+        disposalDate: dateStr,
+        disposalProceeds: proceeds,
+        gainLossOnDisposal: gainLoss,
+        disposalJournalId: entryId,
+        disposedOriginalCost: cost,
+        disposedAccumulatedDepreciation: accum,
+        synced: false
+      } as any);
+
+      // Audit Log
+      await safeInsert(db.auditLogs, {
+        id: generateUniqueId('audit'),
+        timestamp: new Date().toISOString(),
+        userId: currentUserId,
+        role: 'OWNER',
+        action: 'DELETE',
+        module: 'ASSETS',
+        recordId: disposingAsset.id,
+        status: 'SUCCESS',
+        details: JSON.stringify({
+          action: 'ASSET_DISPOSED',
+          assetId: disposingAsset.id,
+          name: disposingAsset.name,
+          cost,
+          accumulatedDepreciation: accum,
+          carryingValue,
+          saleProceeds: proceeds,
+          gainLoss,
+          voucherNumber,
+          date: dateStr
+        }),
+        synced: false
+      });
+
+      setDisposingAsset(null);
+      triggerSuccessAnimation('স্থায়ী সম্পদ সফলভাবে অপসারিত হয়েছে!', `${disposingAsset.name} (পুস্তক মূল্য: ৳${carryingValue})`);
+      await loadData();
+    } catch (err: any) {
+      alert(err.message || 'সম্পদ অপসারণ করতে ত্রুটি হয়েছে।');
+    } finally {
+      setSubmittingDisposal(false);
+    }
+  };
+
   // Vaccine Templates Management State
   const [vaccineTemplates, setVaccineTemplates] = useState<VaccineTemplate[]>(() => getVaccineTemplates());
   const [showAddEditVaccineModal, setShowAddEditVaccineModal] = useState<boolean>(false);
@@ -1716,41 +1956,94 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
 
                     <div className="flex justify-between items-start">
                       <div>
-                        <h4 className="font-bold text-gray-900 text-[15px]">{ast.name}</h4>
+                        <div className="flex items-center gap-2">
+                          <h4 className="font-bold text-gray-900 text-[15px]">{ast.name}</h4>
+                          {(ast as any).status === 'DISPOSED' && (
+                            <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300 border border-rose-300">
+                              অপসারিত (DISPOSED)
+                            </span>
+                          )}
+                        </div>
                         <span className="text-[12px] text-gray-500 font-mono">{ast.id} | {ast.category}</span>
                       </div>
-                      <button
-                        type="button"
-                        onClick={() => handleOpenEditAsset(ast)}
-                        className="p-1.5 rounded-lg bg-gray-50 hover:bg-gray-100 dark:bg-slate-800 dark:hover:bg-slate-700 text-gray-600 dark:text-slate-300 border border-gray-200 dark:border-slate-700 transition-all cursor-pointer"
-                        title="সম্পদ ও ক্রয়মূল্য সম্পাদনা করুন"
-                      >
-                        <Edit3 className="w-3.5 h-3.5" />
-                      </button>
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => handleOpenEditAsset(ast)}
+                          className="p-1.5 rounded-lg bg-gray-50 hover:bg-gray-100 dark:bg-slate-800 dark:hover:bg-slate-700 text-gray-600 dark:text-slate-300 border border-gray-200 dark:border-slate-700 transition-all cursor-pointer"
+                          title="সম্পদ ও ক্রয়মূল্য সম্পাদনা করুন"
+                        >
+                          <Edit3 className="w-3.5 h-3.5" />
+                        </button>
+                        {(ast as any).status !== 'DISPOSED' && (
+                          <button
+                            type="button"
+                            onClick={() => handleOpenDisposeAsset(ast)}
+                            className="px-2 py-1 rounded-lg bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/40 dark:hover:bg-rose-900/60 text-rose-700 dark:text-rose-300 border border-rose-200 dark:border-rose-800 transition-all cursor-pointer text-xs font-bold flex items-center gap-1"
+                            title="স্থায়ী সম্পদ অপসারণ / বিক্রয় (Dispose Asset)"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                            <span>অপসারণ</span>
+                          </button>
+                        )}
+                      </div>
                     </div>
                   </div>
 
                   <div className="space-y-1.5 pt-2.5 border-t border-gray-200 font-mono text-[13px]">
-                    <div className="flex justify-between">
-                      <span className="font-sans text-gray-600">মূল ক্রয়মূল্য:</span>
-                      <span className="text-gray-900 font-semibold">{fmt(ast.originalCost)}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="font-sans text-gray-600">মাসিক অবচয় হার:</span>
-                      <span className="text-amber-700 font-semibold">{fmt(monthly)}/মাস</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="font-sans text-gray-600">পুঞ্জীভূত অবচয় (1590):</span>
-                      <span className="text-red-600 font-semibold">{fmt(ast.accumulatedDepreciation)}</span>
-                    </div>
-                    <div className="flex justify-between font-bold text-[#15803D] pt-1.5 border-t border-gray-200">
-                      <span className="font-sans text-gray-900">বর্তমান পুস্তক মূল্য:</span>
-                      <span>{fmt(ast.currentBookValue)}</span>
-                    </div>
-                    <div className="flex justify-between text-[11px] text-gray-500 pt-1 border-t border-gray-100">
-                      <span className="font-sans">সর্বশেষ অবচয় হিসাব:</span>
-                      <span>{ast.lastDepreciationDate || ast.purchaseDate || 'হিসাব হয়নি'}</span>
-                    </div>
+                    {(ast as any).status === 'DISPOSED' ? (
+                      <>
+                        <div className="flex justify-between">
+                          <span className="font-sans text-gray-600">মূল ক্রয়মূল্য (পূর্বে):</span>
+                          <span className="text-gray-900 font-semibold line-through">{fmt((ast as any).disposedOriginalCost || 0)}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="font-sans text-gray-600">অবলোপিত অবচয়:</span>
+                          <span className="text-gray-500 font-semibold">{fmt((ast as any).disposedAccumulatedDepreciation || 0)}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="font-sans text-gray-600">বিক্রয়লব্ধ মূল্য:</span>
+                          <span className="text-emerald-700 font-semibold">{fmt((ast as any).disposalProceeds || 0)}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="font-sans text-gray-600">বিক্রয়জনিত লাভ/ক্ষতি:</span>
+                          <span className={`font-semibold ${((ast as any).gainLossOnDisposal || 0) >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+                            {((ast as any).gainLossOnDisposal || 0) >= 0 ? `লাভ ${fmt((ast as any).gainLossOnDisposal || 0)}` : `ক্ষতি ${fmt(Math.abs((ast as any).gainLossOnDisposal || 0))}`}
+                          </span>
+                        </div>
+                        <div className="flex justify-between font-bold text-gray-500 pt-1.5 border-t border-gray-200">
+                          <span className="font-sans">সক্রিয় ব্যালেন্স শিট প্রভাব:</span>
+                          <span className="text-emerald-600">৳০.০০ (বাতিল)</span>
+                        </div>
+                        <div className="flex justify-between text-[11px] text-gray-500 pt-1 border-t border-gray-100">
+                          <span className="font-sans">অপসারণ তারিখ:</span>
+                          <span>{(ast as any).disposalDate || 'অপসারিত'}</span>
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        <div className="flex justify-between">
+                          <span className="font-sans text-gray-600">মূল ক্রয়মূল্য:</span>
+                          <span className="text-gray-900 font-semibold">{fmt(ast.originalCost)}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="font-sans text-gray-600">মাসিক অবচয় হার:</span>
+                          <span className="text-amber-700 font-semibold">{fmt(monthly)}/মাস</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="font-sans text-gray-600">পুঞ্জীভূত অবচয় (1590):</span>
+                          <span className="text-red-600 font-semibold">{fmt(ast.accumulatedDepreciation)}</span>
+                        </div>
+                        <div className="flex justify-between font-bold text-[#15803D] pt-1.5 border-t border-gray-200">
+                          <span className="font-sans text-gray-900">বর্তমান পুস্তক মূল্য:</span>
+                          <span>{fmt(ast.currentBookValue)}</span>
+                        </div>
+                        <div className="flex justify-between text-[11px] text-gray-500 pt-1 border-t border-gray-100">
+                          <span className="font-sans">সর্বশেষ অবচয় হিসাব:</span>
+                          <span>{ast.lastDepreciationDate || ast.purchaseDate || 'হিসাব হয়নি'}</span>
+                        </div>
+                      </>
+                    )}
                   </div>
                 </div>
               );
@@ -1889,6 +2182,222 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
                     </button>
                   </div>
                 </form>
+              </div>
+            </div>
+          )}
+
+          {/* Dispose Asset Modal */}
+          {disposingAsset && (
+            <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+              <div className="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 rounded-2xl w-full max-w-lg p-5 space-y-4 shadow-xl animate-fade-in">
+                <div className="flex justify-between items-center border-b border-gray-100 dark:border-slate-800 pb-3">
+                  <div>
+                    <h3 className="font-bold text-gray-900 dark:text-slate-100 text-base flex items-center gap-2">
+                      <Trash2 className="w-5 h-5 text-rose-600" />
+                      <span>স্থায়ী সম্পদ অপসারণ ও বিক্রয় (Dispose Asset)</span>
+                    </h3>
+                    <p className="text-xs text-gray-500 dark:text-slate-400">
+                      সম্পদটি ব্যালেন্স শিট হতে অবলোপন করা হবে এবং লাভ/ক্ষতি হিসাবভুক্ত হবে
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setDisposingAsset(null)}
+                    className="p-1 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 dark:hover:bg-slate-800 cursor-pointer"
+                  >
+                    ✕
+                  </button>
+                </div>
+
+                {(() => {
+                  const cost = Number(disposingAsset.originalCost || (disposingAsset as any).disposedOriginalCost || 0);
+                  const accum = Number(disposingAsset.accumulatedDepreciation || (disposingAsset as any).disposedAccumulatedDepreciation || 0);
+                  const carryingValue = Math.round(Math.max(0, cost - accum) * 100) / 100;
+                  const proceeds = Math.max(0, parseFloat(disposalProceeds) || 0);
+                  const gainLoss = Math.round((proceeds - carryingValue) * 100) / 100;
+
+                  return (
+                    <form onSubmit={handleConfirmDisposal} className="space-y-4">
+                      {/* Asset Summary */}
+                      <div className="p-3 bg-slate-50 dark:bg-slate-800/60 rounded-xl border border-gray-200 dark:border-slate-700 space-y-1.5 text-xs">
+                        <div className="flex justify-between">
+                          <span className="text-gray-500">সম্পদের নাম:</span>
+                          <span className="font-bold text-gray-900 dark:text-slate-100">{disposingAsset.name}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-gray-500">ক্যাটাগরি:</span>
+                          <span className="text-gray-700 dark:text-slate-300 font-mono">{disposingAsset.category}</span>
+                        </div>
+                        <div className="flex justify-between pt-1 border-t border-gray-200/60 dark:border-slate-700/60">
+                          <span className="text-gray-500">মূল ক্রয়মূল্য (Historical Cost):</span>
+                          <span className="font-semibold text-gray-900 dark:text-slate-100 font-mono">৳{cost.toLocaleString()}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-gray-500">পুঞ্জীভূত অবচয় (Accumulated Depreciation):</span>
+                          <span className="font-semibold text-rose-600 font-mono">৳{accum.toLocaleString()}</span>
+                        </div>
+                        <div className="flex justify-between pt-1 border-t border-gray-200/60 dark:border-slate-700/60 font-bold">
+                          <span className="text-gray-900 dark:text-slate-100">বহনকারী / পুস্তক মূল্য (Carrying Value):</span>
+                          <span className="text-emerald-700 dark:text-emerald-400 font-mono">৳{carryingValue.toLocaleString()}</span>
+                        </div>
+                      </div>
+
+                      {/* Inputs: Proceeds, Method, Date */}
+                      <div className="space-y-3">
+                        <div>
+                          <label className="block text-xs font-semibold text-gray-700 dark:text-slate-300 mb-1">
+                            বিক্রয়লব্ধ অর্থ / বিক্রয়মূল্য (Sale Proceeds ৳)
+                          </label>
+                          <input
+                            type="number"
+                            step="0.01"
+                            min="0"
+                            required
+                            value={disposalProceeds}
+                            onChange={(e) => setDisposalProceeds(e.target.value)}
+                            className="w-full bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-700 rounded-lg p-2.5 text-sm text-gray-900 dark:text-slate-100 font-mono font-bold"
+                            placeholder="0.00"
+                          />
+                          <p className="text-[11px] text-gray-500 mt-0.5">সম্পদটি অকেজো হয়ে গেলে বা মূল্য না পেলে 0 লিখুন।</p>
+                        </div>
+
+                        {proceeds > 0 && (
+                          <div className="space-y-2 p-2.5 bg-slate-50 dark:bg-slate-800/40 rounded-xl border border-gray-200 dark:border-slate-700">
+                            <label className="block text-xs font-semibold text-gray-700 dark:text-slate-300">
+                              অর্থ প্রাপ্তির মাধ্যম (Payment Method)
+                            </label>
+                            <div className="grid grid-cols-2 gap-2">
+                              <button
+                                type="button"
+                                onClick={() => setDisposalPaymentMethod('CASH')}
+                                className={`py-1.5 px-3 rounded-lg text-xs font-bold border cursor-pointer flex items-center justify-center gap-1.5 ${
+                                  disposalPaymentMethod === 'CASH'
+                                    ? 'bg-emerald-50 border-emerald-500 text-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-300'
+                                    : 'bg-white dark:bg-slate-800 border-gray-200 dark:border-slate-700 text-gray-700 dark:text-slate-300'
+                                }`}
+                              >
+                                <Wallet className="w-3.5 h-3.5" />
+                                <span>নগদ (Cash 1010)</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setDisposalPaymentMethod('BANK');
+                                  if (bankAccountsList.length > 0 && !disposalBankAccountId) {
+                                    setDisposalBankAccountId(bankAccountsList[0].id);
+                                  }
+                                }}
+                                className={`py-1.5 px-3 rounded-lg text-xs font-bold border cursor-pointer flex items-center justify-center gap-1.5 ${
+                                  disposalPaymentMethod === 'BANK'
+                                    ? 'bg-blue-50 border-blue-500 text-blue-800 dark:bg-blue-950/50 dark:text-blue-300'
+                                    : 'bg-white dark:bg-slate-800 border-gray-200 dark:border-slate-700 text-gray-700 dark:text-slate-300'
+                                }`}
+                              >
+                                <Landmark className="w-3.5 h-3.5" />
+                                <span>ব্যাংক (Bank 1030)</span>
+                              </button>
+                            </div>
+
+                            {disposalPaymentMethod === 'BANK' && (
+                              <div className="pt-1">
+                                <label className="block text-[11px] font-medium text-gray-600 dark:text-slate-400 mb-1">
+                                  ব্যাংক অ্যাকাউন্ট
+                                </label>
+                                <select
+                                  value={disposalBankAccountId}
+                                  onChange={(e) => setDisposalBankAccountId(e.target.value)}
+                                  className="w-full bg-white dark:bg-slate-900 border border-gray-300 dark:border-slate-700 rounded-lg p-2 text-xs text-gray-900 dark:text-slate-100"
+                                >
+                                  {bankAccountsList.map((b) => (
+                                    <option key={b.id} value={b.id}>
+                                      {b.name} ({b.accountNumber || 'সাধারণ'})
+                                    </option>
+                                  ))}
+                                </select>
+                              </div>
+                            )}
+                          </div>
+                        )}
+
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                          <div>
+                            <label className="block text-xs font-semibold text-gray-700 dark:text-slate-300 mb-1">
+                              অপসারণের তারিখ
+                            </label>
+                            <input
+                              type="date"
+                              required
+                              value={disposalDate}
+                              onChange={(e) => setDisposalDate(e.target.value)}
+                              className="w-full bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-700 rounded-lg p-2 text-xs text-gray-900 dark:text-slate-100"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-semibold text-gray-700 dark:text-slate-300 mb-1">
+                              অপসারণের কারণ / বিবরণ
+                            </label>
+                            <input
+                              type="text"
+                              value={disposalReason}
+                              onChange={(e) => setDisposalReason(e.target.value)}
+                              placeholder="যেমন: মেয়াদোত্তীর্ণ বা অকেজো বিক্রয়"
+                              className="w-full bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-700 rounded-lg p-2 text-xs text-gray-900 dark:text-slate-100"
+                            />
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Gain / Loss live calculation box */}
+                      <div
+                        className={`p-3 rounded-xl border text-xs space-y-1 ${
+                          gainLoss > 0
+                            ? 'bg-emerald-50 dark:bg-emerald-950/40 border-emerald-300 dark:border-emerald-800 text-emerald-900 dark:text-emerald-200'
+                            : gainLoss < 0
+                            ? 'bg-rose-50 dark:bg-rose-950/40 border-rose-300 dark:border-rose-800 text-rose-900 dark:text-rose-200'
+                            : 'bg-gray-50 dark:bg-slate-800 border-gray-200 dark:border-slate-700 text-gray-700 dark:text-slate-300'
+                        }`}
+                      >
+                        <div className="flex justify-between items-center font-bold text-[13px]">
+                          <span>হিসাবভুক্ত লাভ / ক্ষতি (Gain/Loss):</span>
+                          <span className="font-mono">
+                            {gainLoss > 0
+                              ? `+ ৳${gainLoss.toLocaleString()} (লাভ — Gain on Disposal)`
+                              : gainLoss < 0
+                              ? `- ৳${Math.abs(gainLoss).toLocaleString()} (ক্ষতি — Loss on Disposal)`
+                              : '৳০.০০ (লাভ বা ক্ষতি নেই)'}
+                          </span>
+                        </div>
+                        <p className="text-[11px] opacity-80 pt-0.5">
+                          {gainLoss >= 0
+                            ? 'উক্ত লাভটি "Gain/Loss on Asset Disposal" (7020) অ্যাকাউন্টে ক্রেডিট করা হবে।'
+                            : 'উক্ত ক্ষতিটি "Gain/Loss on Asset Disposal" (7020) অ্যাকাউন্টে ডেবিট করা হবে।'}
+                        </p>
+                      </div>
+
+                      <div className="p-2.5 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900 rounded-xl text-xs text-amber-900 dark:text-amber-300">
+                        ⚠️ নিশ্চিতকরণ: অপসারিত সম্পদের ক্রয়মূল্য ও পুঞ্জীভূত অবচয় সমন্বয় জাবেদার মাধ্যমে সক্রিয় ব্যালেন্স শিট হতে সম্পূর্ণ বাদ দেওয়া হবে।
+                      </div>
+
+                      <div className="flex justify-end gap-2 pt-2 border-t border-gray-100 dark:border-slate-800">
+                        <button
+                          type="button"
+                          onClick={() => setDisposingAsset(null)}
+                          className="px-4 py-2 rounded-lg bg-gray-100 hover:bg-gray-200 dark:bg-slate-800 text-gray-700 dark:text-slate-300 text-xs font-semibold cursor-pointer"
+                        >
+                          বাতিল
+                        </button>
+                        <button
+                          type="submit"
+                          disabled={submittingDisposal}
+                          className="px-4 py-2 rounded-lg bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold shadow-xs cursor-pointer disabled:opacity-50 flex items-center gap-1.5"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                          <span>{submittingDisposal ? 'অপসারণ প্রক্রিয়াধীন...' : 'অপসারণ নিশ্চিত করুন'}</span>
+                        </button>
+                      </div>
+                    </form>
+                  );
+                })()}
               </div>
             </div>
           )}

@@ -58,6 +58,7 @@ import {
 import { exportAllToExcel, createFullJsonBackup, restoreFromJsonBackup } from '../services/exportService';
 import { db } from '../db/indexedDb';
 import { UserRole, Sale, Purchase, PaymentRecord, Loan, Investor, CashBankAccount, JournalEntry, ClosedPeriod, Account, Animal, AnimalEvent, FishBatch, CropCycle } from '../types';
+import { generateAmortizationSchedule, addMonthsToDate } from '../accounting/amortizationService';
 import { StatusBadge, Card, IconTile } from './ui';
 
 type DatePreset = 'this_month' | 'last_month' | 'this_year' | 'custom';
@@ -300,7 +301,8 @@ type ReportType =
   | 'backup'
   | 'vatSummary'
   | 'yoyComparison'
-  | 'herdSummary';
+  | 'herdSummary'
+  | 'loans';
 
 export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
   const [activeReport, setActiveReport] = useState<ReportType>('pl');
@@ -363,6 +365,10 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
     latestClosedPeriod: ClosedPeriod | null;
   } | null>(null);
 
+  // Loan Outstanding Principal (Current vs Long-Term) Breakdown State
+  const [loansList, setLoansList] = useState<Loan[]>([]);
+  const [expandedLoanId, setExpandedLoanId] = useState<string | null>(null);
+
   useEffect(() => {
     const handleSettingsChanged = () => {
       const isReg = localStorage.getItem('goted_vat_registered') === 'true';
@@ -414,6 +420,115 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
   const [datePreset, setDatePreset] = useState<DatePreset>('this_month');
   const [startDate, setStartDate] = useState<string>(() => getPresetDates('this_month').startDate);
   const [endDate, setEndDate] = useState<string>(() => getPresetDates('this_month').endDate);
+
+  // Calculate each loan's outstanding principal (Current: next 12 months vs Long-term: remaining after that)
+  // based on the amortization schedule
+  const loanPrincipalBreakdownList = useMemo(() => {
+    const asOfDate = endDate || new Date().toISOString().split('T')[0];
+    const twelveMonthsDate = addMonthsToDate(asOfDate, 12);
+
+    return loansList.map((loan) => {
+      const outstanding = Math.max(
+        0,
+        Number(
+          loan.remainingPrincipal ??
+          loan.remainingBalance ??
+          (loan.principalAmount - (loan.totalPaidPrincipal || 0))
+        ) || 0
+      );
+
+      const rate = Number(loan.annualInterestRatePercent ?? loan.interestRateAnnual ?? loan.interestRate ?? 0);
+      const tenure = Number(loan.termMonths ?? loan.tenureMonths ?? 12);
+      const start = loan.startDate || loan.disbursedDate || asOfDate;
+
+      if (loan.status === 'PAID_OFF' || outstanding <= 0) {
+        return {
+          loan,
+          loanId: loan.id,
+          lenderName: loan.lenderName || 'ঋণ প্রদানকারী',
+          loanNumber: loan.loanNumber || loan.id,
+          loanType: loan.loanType,
+          outstandingPrincipal: 0,
+          currentPrincipal: 0,
+          longTermPrincipal: 0,
+          interestRate: rate,
+          termMonths: tenure,
+          status: loan.status,
+          scheduleItemsIn12Months: 0,
+          scheduleItemsAfter12Months: 0
+        };
+      }
+
+      const schedule = loan.schedule && loan.schedule.length > 0
+        ? loan.schedule
+        : generateAmortizationSchedule(loan.principalAmount, rate, tenure, start);
+
+      let unpaidItems = schedule.filter((s) => !s.isPaid && s.date >= asOfDate);
+      if (unpaidItems.length === 0) {
+        unpaidItems = schedule.filter((s) => !s.isPaid);
+      }
+      if (unpaidItems.length === 0 && outstanding > 0) {
+        unpaidItems = schedule.filter((s) => s.date >= asOfDate);
+        if (unpaidItems.length === 0) {
+          unpaidItems = schedule;
+        }
+      }
+
+      let currentPortion = 0;
+      let longTermPortion = 0;
+      let in12Count = 0;
+      let after12Count = 0;
+
+      for (const item of unpaidItems) {
+        const pPortion = Number(item.principalPortion) || 0;
+        if (item.date <= twelveMonthsDate) {
+          currentPortion += pPortion;
+          in12Count++;
+        } else {
+          longTermPortion += pPortion;
+          after12Count++;
+        }
+      }
+
+      const totalSchedPrincipal = currentPortion + longTermPortion;
+      if (totalSchedPrincipal > 0 && Math.abs(totalSchedPrincipal - outstanding) > 0.05) {
+        const ratio = outstanding / totalSchedPrincipal;
+        currentPortion = Math.round(currentPortion * ratio * 100) / 100;
+        longTermPortion = Math.round(Math.max(0, outstanding - currentPortion) * 100) / 100;
+      } else {
+        currentPortion = Math.round(Math.min(currentPortion, outstanding) * 100) / 100;
+        longTermPortion = Math.round(Math.max(0, outstanding - currentPortion) * 100) / 100;
+      }
+
+      return {
+        loan,
+        loanId: loan.id,
+        lenderName: loan.lenderName || 'ঋণ প্রদানকারী',
+        loanNumber: loan.loanNumber || loan.id,
+        loanType: loan.loanType,
+        outstandingPrincipal: outstanding,
+        currentPrincipal: currentPortion,
+        longTermPrincipal: longTermPortion,
+        interestRate: rate,
+        termMonths: tenure,
+        status: loan.status,
+        scheduleItemsIn12Months: in12Count,
+        scheduleItemsAfter12Months: after12Count
+      };
+    });
+  }, [loansList, endDate]);
+
+  const loanBreakdownTotals = useMemo(() => {
+    return loanPrincipalBreakdownList.reduce(
+      (acc, item) => {
+        acc.totalOutstanding += item.outstandingPrincipal;
+        acc.totalCurrent += item.currentPrincipal;
+        acc.totalLongTerm += item.longTermPrincipal;
+        return acc;
+      },
+      { totalOutstanding: 0, totalCurrent: 0, totalLongTerm: 0 }
+    );
+  }, [loanPrincipalBreakdownList]);
 
   const handleSelectPreset = (preset: 'this_month' | 'last_month' | 'this_year') => {
     const dates = getPresetDates(preset);
@@ -1155,8 +1270,12 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
   const loadReports = async () => {
     setLoading(true);
     try {
-      const periods = await getClosedPeriods();
+      const [periods, allLoans] = await Promise.all([
+        getClosedPeriods(),
+        db.loans.toArray()
+      ]);
       setClosedPeriodsList(periods);
+      setLoansList(allLoans);
       if (periods.length > 0) {
         await loadYoyProfitBarChart(periods);
       } else {
@@ -2117,6 +2236,20 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
 
         <button
           type="button"
+          id="tab-loans-report"
+          onClick={() => setActiveReport('loans')}
+          className={`flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg transition-all cursor-pointer min-h-[42px] text-center text-xs sm:text-[13px] font-bold ${
+            activeReport === 'loans'
+              ? 'bg-amber-700 text-white shadow-xs border border-amber-700'
+              : 'bg-white dark:bg-slate-900/60 text-amber-950 dark:text-amber-300 border border-amber-200/80 dark:border-amber-800 hover:bg-amber-100/80'
+          }`}
+        >
+          <Landmark className="w-4 h-4 shrink-0" />
+          <span>ঋণ দায় বিবরণী</span>
+        </button>
+
+        <button
+          type="button"
           id="tab-backup-restore"
           onClick={() => setActiveReport('backup')}
           className={`flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg transition-all cursor-pointer min-h-[42px] text-center text-xs sm:text-[13px] font-bold ${
@@ -2412,12 +2545,26 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
                 </div>
                 <div className="space-y-1.5">
                   {bs.liabilities.map((l) => (
-                    <div key={l.code} className="flex justify-between items-baseline text-gray-700 py-0.5">
-                      <span className="font-sans flex items-baseline gap-1.5">
-                        <span className="font-bold text-gray-900 text-[14px]">{l.nameBn}</span>
-                        <span className="text-xs text-gray-400 font-mono font-normal">({l.code})</span>
-                      </span>
-                      <span className="font-semibold text-gray-900">{fmt(l.amount)}</span>
+                    <div key={l.code} className="space-y-1">
+                      <div className="flex justify-between items-baseline text-gray-700 py-0.5">
+                        <span className="font-sans flex items-baseline gap-1.5">
+                          <span className="font-bold text-gray-900 text-[14px]">{l.nameBn}</span>
+                          <span className="text-xs text-gray-400 font-mono font-normal">({l.code})</span>
+                        </span>
+                        <span className="font-semibold text-gray-900">{fmt(l.amount)}</span>
+                      </div>
+                      {l.code === '2010' && loanBreakdownTotals.totalOutstanding > 0 && (
+                        <div className="pl-3 py-1 my-0.5 border-l-2 border-amber-400 bg-amber-50/70 rounded-r text-[11px] space-y-0.5">
+                          <div className="flex justify-between text-amber-900 font-sans">
+                            <span>↳ চলতি দায় (Current: আগামী ১২ মাসে প্রদেয়):</span>
+                            <span className="font-bold font-mono">{fmt(loanBreakdownTotals.totalCurrent)}</span>
+                          </div>
+                          <div className="flex justify-between text-slate-700 font-sans">
+                            <span>↳ দীর্ঘমেয়াদী দায় (Long-term: ১২ মাস পর প্রদেয়):</span>
+                            <span className="font-bold font-mono">{fmt(loanBreakdownTotals.totalLongTerm)}</span>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   ))}
                 </div>
@@ -2454,6 +2601,121 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
               </div>
             </div>
           </div>
+
+          {/* LOAN PRINCIPAL BREAKDOWN (CURRENT VS LONG-TERM FROM AMORTIZATION SCHEDULE) */}
+          {loanPrincipalBreakdownList.length > 0 && (
+            <div className="mt-6 pt-5 border-t border-gray-200 space-y-3">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                <div>
+                  <h4 className="text-sm sm:text-base font-bold text-gray-900 flex items-center gap-2">
+                    <Landmark className="w-4 h-4 text-amber-600" />
+                    <span>ঋণের বকেয়া মূলধন ও চলতি/দীর্ঘমেয়াদী বিভাজন বিবরণী (Loan Outstanding Principal Breakdown)</span>
+                  </h4>
+                  <p className="text-xs text-gray-500 mt-0.5">
+                    পরিশোধ তফসিল (Amortization Schedule) অনুযায়ী আগামী ১২ মাসে প্রদেয় চলতি মূলধন এবং পরবর্তী মেয়াদের দীর্ঘমেয়াদী মূলধন
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="px-2.5 py-1 rounded-full text-xs font-semibold bg-amber-50 text-amber-800 border border-amber-200">
+                    মোট বকেয়া আসল: {fmt(loanBreakdownTotals.totalOutstanding)}
+                  </span>
+                </div>
+              </div>
+
+              {/* Summary Cards */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 font-mono text-xs">
+                <div className="p-3 bg-slate-50 border border-gray-200 rounded-xl">
+                  <span className="font-sans text-gray-500 block text-[11px]">মোট বকেয়া আসল (Outstanding)</span>
+                  <span className="text-sm sm:text-base font-bold text-gray-900">{fmt(loanBreakdownTotals.totalOutstanding)}</span>
+                </div>
+                <div className="p-3 bg-amber-50/70 border border-amber-200 rounded-xl">
+                  <span className="font-sans text-amber-800 font-medium block text-[11px]">চলতি আসল (Current: আগামী ১২ মাস)</span>
+                  <span className="text-sm sm:text-base font-bold text-amber-900">{fmt(loanBreakdownTotals.totalCurrent)}</span>
+                </div>
+                <div className="p-3 bg-blue-50/70 border border-blue-200 rounded-xl">
+                  <span className="font-sans text-blue-800 font-medium block text-[11px]">দীর্ঘমেয়াদী আসল (Long-term: ১২ মাস পর)</span>
+                  <span className="text-sm sm:text-base font-bold text-blue-900">{fmt(loanBreakdownTotals.totalLongTerm)}</span>
+                </div>
+              </div>
+
+              {/* Detailed Breakdown Table */}
+              <div className="overflow-x-auto rounded-xl border border-gray-200">
+                <table className="w-full text-left border-collapse text-xs">
+                  <thead>
+                    <tr className="bg-gray-100 text-gray-700 font-semibold border-b border-gray-200">
+                      <th className="p-3">ঋণদাতা / সংস্থা (Lender)</th>
+                      <th className="p-3 text-center">ধরন / মেয়াদ</th>
+                      <th className="p-3 text-right">সুদের হার</th>
+                      <th className="p-3 text-right">মোট বকেয়া আসল</th>
+                      <th className="p-3 text-right bg-amber-50/60 text-amber-900">চলতি আসল (Current: ≤১২ মাস)</th>
+                      <th className="p-3 text-right bg-blue-50/60 text-blue-900">দীর্ঘমেয়াদী আসল (Long-term: &gt;১২ মাস)</th>
+                      <th className="p-3 text-center">অবস্থা</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100 font-mono">
+                    {loanPrincipalBreakdownList.map((item) => (
+                      <tr key={item.loanId} className="hover:bg-gray-50/80 transition-colors">
+                        <td className="p-3 font-sans">
+                          <div className="font-bold text-gray-900">{item.lenderName}</div>
+                          <div className="text-[11px] text-gray-400 font-mono">{item.loanNumber}</div>
+                        </td>
+                        <td className="p-3 text-center font-sans text-gray-600">
+                          <span className="inline-block px-2 py-0.5 rounded bg-gray-100 text-[11px]">
+                            {item.loanType === 'BANK' ? 'ব্যাংক' : item.loanType === 'NGO' ? 'এনজিও' : 'ব্যক্তিগত'}
+                          </span>
+                          <div className="text-[11px] text-gray-500 font-mono mt-0.5">{item.termMonths} মাস</div>
+                        </td>
+                        <td className="p-3 text-right font-sans text-gray-700">
+                          {item.interestRate}% বার্ষিক
+                        </td>
+                        <td className="p-3 text-right font-bold text-gray-900">
+                          {fmt(item.outstandingPrincipal)}
+                        </td>
+                        <td className="p-3 text-right font-bold text-amber-800 bg-amber-50/40">
+                          {fmt(item.currentPrincipal)}
+                          {item.scheduleItemsIn12Months > 0 && (
+                            <div className="text-[10px] text-amber-700/80 font-normal font-sans">({item.scheduleItemsIn12Months}টি কিস্তি)</div>
+                          )}
+                        </td>
+                        <td className="p-3 text-right font-bold text-blue-800 bg-blue-50/40">
+                          {fmt(item.longTermPrincipal)}
+                          {item.scheduleItemsAfter12Months > 0 && (
+                            <div className="text-[10px] text-blue-700/80 font-normal font-sans">({item.scheduleItemsAfter12Months}টি কিস্তি)</div>
+                          )}
+                        </td>
+                        <td className="p-3 text-center font-sans">
+                          <span className={`inline-flex px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                            item.status === 'PAID_OFF'
+                              ? 'bg-gray-100 text-gray-600'
+                              : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                          }`}>
+                            {item.status === 'PAID_OFF' ? 'পরিশোধিত' : 'চলমান'}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot>
+                    <tr className="bg-gray-50 font-bold border-t-2 border-gray-300 font-mono">
+                      <td colSpan={3} className="p-3 font-sans text-gray-900">
+                        মোট সমষ্টি (Total Portfolio):
+                      </td>
+                      <td className="p-3 text-right text-gray-900">
+                        {fmt(loanBreakdownTotals.totalOutstanding)}
+                      </td>
+                      <td className="p-3 text-right text-amber-900 bg-amber-50/80">
+                        {fmt(loanBreakdownTotals.totalCurrent)}
+                      </td>
+                      <td className="p-3 text-right text-blue-900 bg-blue-50/80">
+                        {fmt(loanBreakdownTotals.totalLongTerm)}
+                      </td>
+                      <td className="p-3"></td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -5747,6 +6009,242 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
             </div>
           )}
         </div>
+      </div>
+    )}
+
+    {/* ===================== REPORT: LOANS OUTSTANDING PRINCIPAL (CURRENT VS LONG-TERM) ===================== */}
+    {activeReport === 'loans' && (
+      <div className="bg-white border border-gray-200 rounded-2xl p-4 sm:p-6 space-y-6 shadow-xs">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border-b border-gray-100 pb-4">
+          <div>
+            <h3 className="text-lg font-bold text-gray-900 flex items-center gap-2">
+              <Landmark className="w-5 h-5 text-amber-600" />
+              <span>ঋণের বকেয়া মূলধন ও চলতি/দীর্ঘমেয়াদী বিশ্লেষণ প্রতিবেদন (Loan Outstanding Principal Report)</span>
+            </h3>
+            <p className="text-[13px] text-gray-500 mt-1">
+              পরিশোধ তফসিল (Amortization Schedule) থেকে প্রতিটি ঋণের বকেয়া আসলকে আগামী ১২ মাসে প্রদেয় চলতি (Current) এবং পরবর্তী মেয়াদের দীর্ঘমেয়াদী (Long-term) হিসেবে বিভাজন
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-xs px-3 py-1.5 rounded-lg bg-amber-50 text-amber-900 border border-amber-200 font-medium font-sans">
+              ভিত্তি তারিখ: {endDate || new Date().toISOString().split('T')[0]}
+            </span>
+          </div>
+        </div>
+
+        {/* KPI Cards */}
+        <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
+          <div className="p-4 bg-slate-50 border border-gray-200 rounded-xl">
+            <span className="text-xs text-gray-500 font-medium block">মোট বকেয়া আসল (Total Outstanding)</span>
+            <span className="text-xl font-bold font-mono text-gray-900 mt-1 block">
+              {fmt(loanBreakdownTotals.totalOutstanding)}
+            </span>
+            <span className="text-[11px] text-gray-400 mt-0.5 block">সকল ঋণের সমন্বিত অবশিষ্ট আসল</span>
+          </div>
+
+          <div className="p-4 bg-amber-50 border border-amber-200 rounded-xl">
+            <span className="text-xs text-amber-800 font-medium block">চলতি আসল (Current Portion)</span>
+            <span className="text-xl font-bold font-mono text-amber-900 mt-1 block">
+              {fmt(loanBreakdownTotals.totalCurrent)}
+            </span>
+            <span className="text-[11px] text-amber-700 mt-0.5 block">আগামী ১২ মাসের মধ্যে প্রদেয়</span>
+          </div>
+
+          <div className="p-4 bg-blue-50 border border-blue-200 rounded-xl">
+            <span className="text-xs text-blue-800 font-medium block">দীর্ঘমেয়াদী আসল (Long-term Portion)</span>
+            <span className="text-xl font-bold font-mono text-blue-900 mt-1 block">
+              {fmt(loanBreakdownTotals.totalLongTerm)}
+            </span>
+            <span className="text-[11px] text-blue-700 mt-0.5 block">১২ মাস পরবর্তী সময়ে প্রদেয়</span>
+          </div>
+
+          <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-xl">
+            <span className="text-xs text-emerald-800 font-medium block">ঋণের পোর্টফোলিও সংখ্যা</span>
+            <span className="text-xl font-bold font-mono text-emerald-900 mt-1 block">
+              {loanPrincipalBreakdownList.length} <span className="text-xs font-normal font-sans">টি ঋণ</span>
+            </span>
+            <span className="text-[11px] text-emerald-700 mt-0.5 block">
+              সক্রিয়: {loanPrincipalBreakdownList.filter(l => l.outstandingPrincipal > 0).length}টি
+            </span>
+          </div>
+        </div>
+
+        {/* Loans Table */}
+        {loanPrincipalBreakdownList.length === 0 ? (
+          <div className="text-center py-12 text-gray-500 bg-gray-50 rounded-xl border border-gray-100 font-sans">
+            কোনো ঋণের তথ্য পাওয়া যায়নি।
+          </div>
+        ) : (
+          <div className="space-y-4">
+            <div className="overflow-x-auto rounded-xl border border-gray-200">
+              <table className="w-full text-left border-collapse text-xs">
+                <thead>
+                  <tr className="bg-gray-100 text-gray-700 font-semibold border-b border-gray-200">
+                    <th className="p-3">ঋণদাতা ও রেফারেন্স</th>
+                    <th className="p-3 text-center">ধরন / মেয়াদ</th>
+                    <th className="p-3 text-right">সুদের হার</th>
+                    <th className="p-3 text-right">মোট বকেয়া আসল</th>
+                    <th className="p-3 text-right bg-amber-50/70 text-amber-900">চলতি আসল (≤১২ মাস)</th>
+                    <th className="p-3 text-right bg-blue-50/70 text-blue-900">দীর্ঘমেয়াদী আসল (&gt;১২ মাস)</th>
+                    <th className="p-3 text-center">তফসিল বিস্তারিত</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100 font-mono">
+                  {loanPrincipalBreakdownList.map((item) => {
+                    const asOfDate = endDate || new Date().toISOString().split('T')[0];
+                    const twelveMonthsDate = addMonthsToDate(asOfDate, 12);
+                    const isExpanded = expandedLoanId === item.loanId;
+                    const schedule = item.loan.schedule && item.loan.schedule.length > 0
+                      ? item.loan.schedule
+                      : generateAmortizationSchedule(
+                          item.loan.principalAmount,
+                          item.interestRate,
+                          item.termMonths,
+                          item.loan.startDate || item.loan.disbursedDate || asOfDate
+                        );
+
+                    return (
+                      <React.Fragment key={item.loanId}>
+                        <tr className="hover:bg-gray-50/80 transition-colors">
+                          <td className="p-3 font-sans">
+                            <div className="font-bold text-gray-900">{item.lenderName}</div>
+                            <div className="text-[11px] text-gray-400 font-mono">{item.loanNumber}</div>
+                          </td>
+                          <td className="p-3 text-center font-sans text-gray-600">
+                            <span className="inline-block px-2 py-0.5 rounded bg-gray-100 text-[11px]">
+                              {item.loanType === 'BANK' ? 'ব্যাংক' : item.loanType === 'NGO' ? 'এনজিও' : 'ব্যক্তিগত'}
+                            </span>
+                            <div className="text-[11px] text-gray-500 font-mono mt-0.5">{item.termMonths} মাস</div>
+                          </td>
+                          <td className="p-3 text-right font-sans text-gray-700">
+                            {item.interestRate}% বার্ষিক
+                          </td>
+                          <td className="p-3 text-right font-bold text-gray-900 text-[13px]">
+                            {fmt(item.outstandingPrincipal)}
+                          </td>
+                          <td className="p-3 text-right font-bold text-amber-800 bg-amber-50/50 text-[13px]">
+                            {fmt(item.currentPrincipal)}
+                            {item.scheduleItemsIn12Months > 0 && (
+                              <div className="text-[10px] text-amber-700/80 font-normal font-sans">
+                                ({item.scheduleItemsIn12Months}টি কিস্তি)
+                              </div>
+                            )}
+                          </td>
+                          <td className="p-3 text-right font-bold text-blue-800 bg-blue-50/50 text-[13px]">
+                            {fmt(item.longTermPrincipal)}
+                            {item.scheduleItemsAfter12Months > 0 && (
+                              <div className="text-[10px] text-blue-700/80 font-normal font-sans">
+                                ({item.scheduleItemsAfter12Months}টি কিস্তি)
+                              </div>
+                            )}
+                          </td>
+                          <td className="p-3 text-center font-sans">
+                            <button
+                              type="button"
+                              onClick={() => setExpandedLoanId(isExpanded ? null : item.loanId)}
+                              className="px-2.5 py-1 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium text-xs transition-colors cursor-pointer"
+                            >
+                              {isExpanded ? 'লুকান ▲' : 'তফসিল দেখুন ▼'}
+                            </button>
+                          </td>
+                        </tr>
+
+                        {/* Expanded Amortization Schedule with Current vs Long-term Badges */}
+                        {isExpanded && (
+                          <tr>
+                            <td colSpan={7} className="p-4 bg-slate-50/90 border-t border-b border-gray-200">
+                              <div className="space-y-3">
+                                <div className="flex items-center justify-between">
+                                  <div className="font-sans font-bold text-gray-800 text-xs flex items-center gap-2">
+                                    <span>কিস্তি পরিশোধ তফসিল (Amortization Schedule)</span>
+                                    <span className="text-[11px] font-normal text-gray-500">
+                                      (কাট-অফ তারিখ: {twelveMonthsDate} এর পূর্বের কিস্তি = চলতি আসল, পরবর্তী কিস্তি = দীর্ঘমেয়াদী আসল)
+                                    </span>
+                                  </div>
+                                  <div className="flex items-center gap-3 text-[11px] font-sans">
+                                    <span className="flex items-center gap-1">
+                                      <span className="w-2.5 h-2.5 rounded-full bg-amber-500 inline-block"></span>
+                                      <span className="text-amber-900 font-medium">চলতি (আগামী ১২ মাস)</span>
+                                    </span>
+                                    <span className="flex items-center gap-1">
+                                      <span className="w-2.5 h-2.5 rounded-full bg-blue-500 inline-block"></span>
+                                      <span className="text-blue-900 font-medium">দীর্ঘমেয়াদী (&gt;১২ মাস)</span>
+                                    </span>
+                                  </div>
+                                </div>
+
+                                <div className="max-h-64 overflow-y-auto border border-gray-200 rounded-lg bg-white">
+                                  <table className="w-full text-left text-xs">
+                                    <thead className="sticky top-0 bg-gray-100 text-gray-700 font-semibold border-b border-gray-200">
+                                      <tr>
+                                        <th className="p-2 text-center">কিস্তি #</th>
+                                        <th className="p-2">তারিখ</th>
+                                        <th className="p-2 text-right">মোট কিস্তি (EMI)</th>
+                                        <th className="p-2 text-right">আসল অংশ (Principal)</th>
+                                        <th className="p-2 text-right">সুদ অংশ (Interest)</th>
+                                        <th className="p-2 text-right">অবশিষ্ট ব্যালেন্স</th>
+                                        <th className="p-2 text-center">হিসাবরক্ষণ শ্রেণী</th>
+                                      </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-gray-100 font-mono">
+                                      {schedule.map((row) => {
+                                        const isWithin12Months = row.date <= twelveMonthsDate;
+                                        return (
+                                          <tr key={row.installmentNumber} className={row.isPaid ? 'bg-gray-50 text-gray-400' : ''}>
+                                            <td className="p-2 text-center font-sans">{row.installmentNumber}</td>
+                                            <td className="p-2">{row.date}</td>
+                                            <td className="p-2 text-right">{fmt(row.totalPayment)}</td>
+                                            <td className={`p-2 text-right font-bold ${
+                                              row.isPaid ? 'text-gray-400' : isWithin12Months ? 'text-amber-700' : 'text-blue-700'
+                                            }`}>
+                                              {fmt(row.principalPortion)}
+                                            </td>
+                                            <td className="p-2 text-right text-gray-600">{fmt(row.interestPortion)}</td>
+                                            <td className="p-2 text-right">{fmt(row.remainingBalance)}</td>
+                                            <td className="p-2 text-center font-sans">
+                                              {row.isPaid ? (
+                                                <span className="px-1.5 py-0.5 rounded text-[10px] bg-gray-100 text-gray-600">পরিশোধিত</span>
+                                              ) : isWithin12Months ? (
+                                                <span className="px-1.5 py-0.5 rounded text-[10px] bg-amber-100 text-amber-800 font-semibold">চলতি আসল</span>
+                                              ) : (
+                                                <span className="px-1.5 py-0.5 rounded text-[10px] bg-blue-100 text-blue-800 font-semibold">দীর্ঘমেয়াদী</span>
+                                              )}
+                                            </td>
+                                          </tr>
+                                        );
+                                      })}
+                                    </tbody>
+                                  </table>
+                                </div>
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                      </React.Fragment>
+                    );
+                  })}
+                </tbody>
+                <tfoot>
+                  <tr className="bg-gray-50 font-bold border-t-2 border-gray-300 font-mono">
+                    <td colSpan={3} className="p-3 font-sans text-gray-900">
+                      মোট পোর্টফোলিও সমষ্টি:
+                    </td>
+                    <td className="p-3 text-right text-gray-900 text-sm">
+                      {fmt(loanBreakdownTotals.totalOutstanding)}
+                    </td>
+                    <td className="p-3 text-right text-amber-900 bg-amber-50 text-sm">
+                      {fmt(loanBreakdownTotals.totalCurrent)}
+                    </td>
+                    <td className="p-3 text-right text-blue-900 bg-blue-50 text-sm">
+                      {fmt(loanBreakdownTotals.totalLongTerm)}
+                    </td>
+                    <td className="p-3"></td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+          </div>
+        )}
       </div>
     )}
     </div>

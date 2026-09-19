@@ -87,6 +87,7 @@ async function executeDepreciationInternal(currentUserId?: string): Promise<Depr
       nameBn: 'পুঞ্জীভূত অবচয় (Accumulated Depreciation)'
     };
 
+    const existingJournalEntries = await db.journalEntries.toArray();
     const todayStr = new Date().toISOString().split('T')[0];
     let totalEntriesPosted = 0;
     let grandTotalDepr = 0;
@@ -94,6 +95,7 @@ async function executeDepreciationInternal(currentUserId?: string): Promise<Depr
 
     for (const asset of assets) {
       try {
+        if ((asset as any).status === 'DISPOSED') continue;
         const cost = Number(asset.originalCost || 0);
         if (cost <= 0) continue;
 
@@ -126,6 +128,34 @@ async function executeDepreciationInternal(currentUserId?: string): Promise<Depr
           // Only post for full months elapsed up to today
           if (nextDate > todayStr) {
             break;
+          }
+
+          const period = nextDate.slice(0, 7); // YYYY-MM
+
+          // Check for an existing depreciation entry for the same assetId + period
+          const isAlreadyPosted = existingJournalEntries.some((entry) => {
+            if (!entry) return false;
+            const isSameAsset =
+              entry.reference === asset.id ||
+              Boolean(entry.narration && entry.narration.includes(asset.id));
+            if (!isSameAsset) return false;
+
+            const entryPeriod = entry.date ? entry.date.slice(0, 7) : '';
+            const isSamePeriod = entryPeriod === period || entry.date === nextDate;
+            if (!isSamePeriod) return false;
+
+            const hasDeprLine = entry.lines?.some(
+              (l) =>
+                l.accountCode === deprAccounts.expenseCode ||
+                l.accountCode === deprAccounts.accumulatedCode
+            );
+            return hasDeprLine || entry.voucherType === 'ADJUSTMENT';
+          });
+
+          if (isAlreadyPosted) {
+            // Skip if already posted; advance cursorDate to ensure safe repeated runs without duplicates
+            cursorDate = nextDate;
+            continue;
           }
 
           const remainingDepreciable = Math.max(0, maxDepreciableTotal - currentAccumulated);
@@ -163,20 +193,21 @@ async function executeDepreciationInternal(currentUserId?: string): Promise<Depr
             }
           ];
 
-          await postJournalEntry(
-            {
-              id: entryId,
-              voucherNumber,
-              voucherType: 'ADJUSTMENT',
-              date: nextDate,
-              narration: `স্থায়ী সম্পদ স্বয়ংক্রিয় অবচয়: ${asset.name} (${asset.id}) - মাসিক কিস্তি (${nextDate})`,
-              reference: asset.id,
-              lines,
-              createdBy: currentUserId || 'AUTO_DEPRECIATION',
-              createdAt: new Date().toISOString()
-            },
-            { accounts }
-          );
+          const newEntry = {
+            id: entryId,
+            voucherNumber,
+            voucherType: 'ADJUSTMENT' as const,
+            date: nextDate,
+            narration: `স্থায়ী সম্পদ স্বয়ংক্রিয় অবচয়: ${asset.name} (${asset.id}) - মাসিক কিস্তি (${nextDate})`,
+            reference: asset.id,
+            lines,
+            createdBy: currentUserId || 'AUTO_DEPRECIATION',
+            createdAt: new Date().toISOString()
+          };
+
+          await postJournalEntry(newEntry, { accounts });
+
+          existingJournalEntries.push(newEntry as any);
 
           currentAccumulated = Math.round((currentAccumulated + amountToPost) * 100) / 100;
           cursorDate = nextDate;
@@ -226,6 +257,11 @@ async function executeDepreciationInternal(currentUserId?: string): Promise<Depr
             monthsPosted: monthsPostedForAsset,
             amount: totalAssetDepr,
             lastDepreciationDate: cursorDate
+          });
+        } else if (cursorDate && cursorDate > (asset.lastDepreciationDate || '')) {
+          await db.fixedAssets.update(asset.id, {
+            lastDepreciationDate: cursorDate,
+            synced: false
           });
         }
       } catch (assetErr: any) {

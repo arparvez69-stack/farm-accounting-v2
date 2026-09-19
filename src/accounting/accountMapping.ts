@@ -74,7 +74,8 @@ export const CANONICAL_ACCOUNTS = {
 
   // 8000 Other Expense
   LOAN_INTEREST: '8010',
-  LIVESTOCK_WRITEOFF: '8020'
+  LIVESTOCK_WRITEOFF: '8020',
+  FISH_MORTALITY_LOSS: '8030'
 } as const;
 
 /**
@@ -91,7 +92,7 @@ export function assertValidInventoryAccount(code: string): string {
  * Maps payment method to Cash / Bank / Receivable / Payable account
  */
 export function getPaymentAccount(
-  method: 'CASH' | 'BANK' | 'CREDIT',
+  method: 'CASH' | 'BANK' | 'CREDIT' | string,
   type: 'SALE' | 'PURCHASE'
 ): string {
   if (type === 'SALE') {
@@ -101,7 +102,10 @@ export function getPaymentAccount(
       case 'BANK':
         return CANONICAL_ACCOUNTS.BANK; // 1030
       case 'CREDIT':
+      case 'RECEIVABLE':
         return CANONICAL_ACCOUNTS.ACCOUNTS_RECEIVABLE; // 1040 AR
+      default:
+        return CANONICAL_ACCOUNTS.CASH;
     }
   } else {
     switch (method) {
@@ -110,7 +114,10 @@ export function getPaymentAccount(
       case 'BANK':
         return CANONICAL_ACCOUNTS.BANK; // 1030
       case 'CREDIT':
+      case 'PAYABLE':
         return CANONICAL_ACCOUNTS.ACCOUNTS_PAYABLE; // 2010 AP
+      default:
+        return CANONICAL_ACCOUNTS.CASH;
     }
   }
 }

@@ -1215,7 +1215,7 @@ export const FarmOperationsModule: React.FC<Props> = ({
         customerName: harvestFishCustomer.trim() || undefined,
         date: harvestFishDate,
         notes: harvestFishNotes.trim() || undefined,
-        currentUserId: 'system-user'
+        currentUserId: currentUserId || 'system-user'
       });
 
       setHarvestFishBatch(null);
@@ -1273,7 +1273,7 @@ export const FarmOperationsModule: React.FC<Props> = ({
         customerName: harvestCropCustomer.trim() || undefined,
         date: harvestCropDate,
         notes: harvestCropNotes.trim() || undefined,
-        currentUserId: 'system-user'
+        currentUserId: currentUserId || 'system-user'
       });
 
       setHarvestCropCycle(null);
@@ -4028,8 +4028,8 @@ export const FarmOperationsModule: React.FC<Props> = ({
                     className="w-full bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-700 rounded-lg p-2.5 text-sm text-gray-900 dark:text-white"
                   >
                     <option value="CASH">নগদ গ্রহণ (Cash on Hand - 1010)</option>
-                    <option value="BANK">ব্যাংক স্থানান্তর / চেক (Bank Account - 1020)</option>
-                    <option value="RECEIVABLE">বাকিতে বিক্রয় (Accounts Receivable - 1030)</option>
+                    <option value="BANK">ব্যাংক স্থানান্তর / চেক (Bank Account - 1030)</option>
+                    <option value="CREDIT">বাকিতে বিক্রয় (Accounts Receivable - 1040)</option>
                   </select>
                 </div>
                 {harvestFishPaymentMethod === 'BANK' && (
@@ -4090,9 +4090,16 @@ export const FarmOperationsModule: React.FC<Props> = ({
 
               {/* Real-time Profit/Loss Preview */}
               {(() => {
-                const cogs = (harvestFishBatch.fingerlingCost || 0) + (harvestFishBatch.totalFeedCost || 0);
+                const totalCost = (harvestFishBatch.fingerlingCost || 0) + (harvestFishBatch.totalFeedCost || 0);
+                const mort = parseInt(harvestFishMortality) || 0;
+                const totalStock = (harvestFishBatch.fingerlingQty && harvestFishBatch.fingerlingQty > 0)
+                  ? harvestFishBatch.fingerlingQty
+                  : (mort > 0 ? mort : 1);
+                const mortRatio = Math.min(1, Math.max(0, mort / totalStock));
+                const mortCost = mort > 0 ? Math.round(totalCost * mortRatio * 100) / 100 : 0;
+                const cogs = Math.max(0, Math.round((totalCost - mortCost) * 100) / 100);
                 const rev = parseFloat(harvestFishPrice) || 0;
-                const net = rev - cogs;
+                const net = rev - totalCost;
                 return (
                   <div className="p-3 bg-gray-50 dark:bg-slate-800/80 rounded-xl border border-gray-200 dark:border-slate-700 space-y-1">
                     <div className="flex justify-between text-gray-600 dark:text-slate-400">
@@ -4100,9 +4107,15 @@ export const FarmOperationsModule: React.FC<Props> = ({
                       <span className="font-semibold text-gray-900 dark:text-white">{fmt(rev)}</span>
                     </div>
                     <div className="flex justify-between text-gray-600 dark:text-slate-400">
-                      <span>মোট বিক্রীত পণ্যের ব্যয় (COGS 5010):</span>
+                      <span>আহরিত মাছের উৎপাদন ব্যয় (COGS 5010):</span>
                       <span className="font-semibold text-gray-900 dark:text-white">({fmt(cogs)})</span>
                     </div>
+                    {mortCost > 0 && (
+                      <div className="flex justify-between text-rose-600 dark:text-rose-400">
+                        <span>মাছের মৃত্যুজনিত ক্ষতি (Mortality Loss 8030):</span>
+                        <span className="font-semibold">({fmt(mortCost)})</span>
+                      </div>
+                    )}
                     <div className="flex justify-between text-sm font-bold pt-1 border-t border-gray-200 dark:border-slate-700">
                       <span>প্রত্যাশিত নীট লাভ / (ক্ষতি):</span>
                       <span className={net >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}>
@@ -4233,8 +4246,8 @@ export const FarmOperationsModule: React.FC<Props> = ({
                     className="w-full bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-700 rounded-lg p-2.5 text-sm text-gray-900 dark:text-white"
                   >
                     <option value="CASH">নগদ গ্রহণ (Cash on Hand - 1010)</option>
-                    <option value="BANK">ব্যাংক স্থানান্তর / চেক (Bank Account - 1020)</option>
-                    <option value="RECEIVABLE">বাকিতে বিক্রয় (Accounts Receivable - 1030)</option>
+                    <option value="BANK">ব্যাংক স্থানান্তর / চেক (Bank Account - 1030)</option>
+                    <option value="CREDIT">বাকিতে বিক্রয় (Accounts Receivable - 1040)</option>
                   </select>
                 </div>
               </div>
