@@ -9,7 +9,7 @@ import {
   getInvestorCapitalAccount
 } from '../accounting/accountMapping';
 import { postJournalEntry, validateBalancedLines } from '../accounting/accountingEngine';
-import { generateTransactionNumber, generateUniqueId, safeInsert } from '../utils/idGenerator';
+import { generateDisplayNumber, generateTransactionNumber, generateUniqueId, safeInsert } from '../utils/idGenerator';
 import {
   Account,
   InventoryItem,
@@ -84,6 +84,7 @@ export async function executeSaleTransaction(params: {
 
       const saleId = generateUniqueId('sal');
       const invoiceNumber = generateTransactionNumber('SAL');
+      const displayNumber = await generateDisplayNumber('SAL', dateStr);
 
       // Canonical account mappings:
       // Credit sale -> 1040 AR
@@ -163,6 +164,7 @@ export async function executeSaleTransaction(params: {
       const saleRecord: Sale = {
         id: saleId,
         invoiceNumber,
+        displayNumber,
         date: dateStr,
         customerId: customer.id,
         customerName: customer.name,
@@ -297,6 +299,7 @@ export async function executePurchaseTransaction(params: {
 
       const purchaseId = generateUniqueId('pur');
       const invoiceNumber = generateTransactionNumber('PUR');
+      const displayNumber = await generateDisplayNumber('PUR', dateStr);
 
       // Canonical account mappings:
       // Feed Purchase -> 1051 Feed Inventory!
@@ -356,6 +359,7 @@ export async function executePurchaseTransaction(params: {
       const purchaseRecord: Purchase = {
         id: purchaseId,
         invoiceNumber,
+        displayNumber,
         date: dateStr,
         supplierId: supplier.id,
         supplierName: supplier.name,
@@ -1536,6 +1540,7 @@ export async function executeAnimalSaleOrRemovalTransaction(params: {
 
         const voucherNumber = generateTransactionNumber('SLV');
         const invoiceNumber = generateTransactionNumber('SAL');
+        const displayNumber = await generateDisplayNumber('SAL', date);
 
         const journalEntry = await postJournalEntry(
           {
@@ -1560,6 +1565,7 @@ export async function executeAnimalSaleOrRemovalTransaction(params: {
           saleRecord = {
             id: saleId,
             invoiceNumber,
+            displayNumber,
             date,
             customerId: 'pty_walkin',
             customerName: customerName?.trim() || 'সাধারণ ক্রেতা (Walk-in Buyer)',
@@ -2175,9 +2181,11 @@ export async function executeFishHarvestAndSaleTransaction(
             }
           }
 
+          const fishDisplayNumber = await generateDisplayNumber('SAL', dateStr);
           saleRecord = {
             id: generateUniqueId('sal'),
             invoiceNumber: generateTransactionNumber('SAL'),
+            displayNumber: fishDisplayNumber,
             date: dateStr,
             customerId: 'WALK_IN_CUSTOMER',
             customerName: customerName?.trim() || 'সাধারণ ক্রেতা (Local Buyer)',
@@ -2488,9 +2496,11 @@ export async function executeCropHarvestAndSaleTransaction(
             }
           }
 
+          const cropDisplayNumber = await generateDisplayNumber('SAL', dateStr);
           saleRecord = {
             id: generateUniqueId('sal'),
             invoiceNumber: generateTransactionNumber('SAL'),
+            displayNumber: cropDisplayNumber,
             date: dateStr,
             customerId: 'WALK_IN_CUSTOMER',
             customerName: customerName?.trim() || 'সাধারণ ক্রেতা (Local Buyer)',

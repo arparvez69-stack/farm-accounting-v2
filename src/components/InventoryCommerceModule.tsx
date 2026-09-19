@@ -374,9 +374,9 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
       setSaleDate(new Date().toISOString().split('T')[0]);
       setMsg({
         type: 'success',
-        text: `বিক্রয় চালান ${res.sale.invoiceNumber} (৳${res.sale.totalAmount}) সফলভাবে সম্পন্ন এবং দ্বৈত-দাখিলায় পোস্ট হয়েছে!`
+        text: `বিক্রয় চালান ${res.sale.displayNumber || res.sale.invoiceNumber} (৳${res.sale.totalAmount}) সফলভাবে সম্পন্ন এবং দ্বৈত-দাখিলায় পোস্ট হয়েছে!`
       });
-      triggerSuccessAnimation('বিক্রয় চালান সফলভাবে তৈরি হয়েছে!', `চালান: ${res.sale.invoiceNumber} (৳${res.sale.totalAmount.toLocaleString()})`);
+      triggerSuccessAnimation('বিক্রয় চালান সফলভাবে তৈরি হয়েছে!', `চালান: ${res.sale.displayNumber || res.sale.invoiceNumber} (৳${res.sale.totalAmount.toLocaleString()})`);
       notifyUndoableAction({
         type: 'SALE',
         saleId: res.sale.id,
@@ -460,9 +460,9 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
       setPurchDate(new Date().toISOString().split('T')[0]);
       setMsg({
         type: 'success',
-        text: `ক্রয় চালান ${res.purchase.invoiceNumber} (৳${res.purchase.grandTotal}) সফলভাবে সংরক্ষিত এবং স্টকে যুক্ত হয়েছে!`
+        text: `ক্রয় চালান ${res.purchase.displayNumber || res.purchase.invoiceNumber} (৳${res.purchase.grandTotal}) সফলভাবে সংরক্ষিত এবং স্টকে যুক্ত হয়েছে!`
       });
-      triggerSuccessAnimation('ক্রয় চালান সফলভাবে সংরক্ষিত হয়েছে!', `চালান: ${res.purchase.invoiceNumber} (৳${res.purchase.grandTotal.toLocaleString()})`);
+      triggerSuccessAnimation('ক্রয় চালান সফলভাবে সংরক্ষিত হয়েছে!', `চালান: ${res.purchase.displayNumber || res.purchase.invoiceNumber} (৳${res.purchase.grandTotal.toLocaleString()})`);
       notifyUndoableAction({
         type: 'PURCHASE',
         purchaseId: res.purchase.id,
@@ -525,7 +525,7 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
     setPaymentModal({
       parentType,
       parentId: item.id,
-      invoiceNumber: item.invoiceNumber,
+      invoiceNumber: item.displayNumber || item.invoiceNumber,
       partyName: 'customerName' in item ? item.customerName : item.supplierName,
       totalAmount: total,
       paidAmount: paid,
@@ -1287,7 +1287,7 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                     return (
                       <React.Fragment key={s.id}>
                         <tr className="hover:bg-gray-50/80">
-                          <td className="p-3 font-bold text-amber-800 font-mono">{s.invoiceNumber}</td>
+                          <td className="p-3 font-bold text-amber-800 font-mono">{s.displayNumber || s.invoiceNumber}</td>
                           <td className="p-3 text-gray-600">{s.date}</td>
                           <td className="p-3 font-semibold text-gray-900">{s.customerName}</td>
                           <td className="p-3">
@@ -1534,7 +1534,7 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                     return (
                       <React.Fragment key={p.id}>
                         <tr className="hover:bg-gray-50/80">
-                          <td className="p-3 font-bold text-sky-700 font-mono">{p.invoiceNumber}</td>
+                          <td className="p-3 font-bold text-sky-700 font-mono">{p.displayNumber || p.invoiceNumber}</td>
                           <td className="p-3 text-gray-600">{p.date}</td>
                           <td className="p-3 font-semibold text-gray-900">{p.supplierName}</td>
                           <td className="p-3">
