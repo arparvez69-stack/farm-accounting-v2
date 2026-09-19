@@ -1622,3 +1622,253 @@ export async function executeAnimalSaleOrRemovalTransaction(params: {
     }
   );
 }
+
+/**
+ * Atomic Execution of Owner Capital Transaction
+ * Owner puts money into the business.
+ * Debit: Cash (1010) or Bank (1030)
+ * Credit: Owner Capital (3010)
+ */
+export async function executeOwnerCapitalTransaction(params: {
+  amount: number;
+  targetAccountId: string;
+  currentUserId: string;
+  date?: string;
+  notes?: string;
+}): Promise<{ journalEntryId: string; voucherNumber: string }> {
+  return await db.transaction(
+    'rw',
+    [
+      db.journalEntries,
+      db.cashBankAccounts,
+      db.accounts,
+      db.auditLogs,
+      db.closedPeriods
+    ],
+    async () => {
+      const { amount, targetAccountId, currentUserId, date, notes } = params;
+
+      if (amount <= 0) {
+        throw new Error('মূলধনের পরিমাণ ০ থেকে বেশি হতে হবে (Capital amount must be strictly greater than 0).');
+      }
+
+      const cleanAmount = Math.round(amount * 100) / 100;
+      let targetAcc = await db.cashBankAccounts.get(targetAccountId);
+      if (!targetAcc) {
+        targetAcc = await db.cashBankAccounts.where('accountType').equals(targetAccountId).first();
+      }
+      if (!targetAcc) {
+        targetAcc = await db.cashBankAccounts.toCollection().first();
+      }
+      if (!targetAcc) {
+        throw new Error(`তহবিল/ব্যাংক অ্যাকাউন্ট (${targetAccountId}) পাওয়া যায়নি।`);
+      }
+
+      const todayStr = new Date().toISOString().split('T')[0];
+      const dateStr = date || todayStr;
+      if (dateStr > todayStr) {
+        throw new Error(`লেনদেনের তারিখ ভবিষ্যতের হতে পারে না (${todayStr} বা তার পূর্বের তারিখ নির্বাচন করুন)।`);
+      }
+
+      const voucherNumber = generateTransactionNumber('RCV');
+      const assetGlCode = getCashBankAccountGLCode(targetAcc.accountType);
+      const capitalGlCode = CANONICAL_ACCOUNTS.OWNER_CAPITAL; // 3010
+
+      const accounts = await db.accounts.toArray();
+      const targetAccName = targetAcc.accountName || targetAcc.name || 'ব্যাংক/নগদ তহবিল';
+
+      const journalLines: JournalLine[] = [
+        {
+          accountId: assetGlCode,
+          accountCode: assetGlCode,
+          accountName: targetAccName,
+          debit: cleanAmount,
+          credit: 0,
+          memo: `মালিকের মূলধন জমা: ${targetAccName}`
+        },
+        {
+          accountId: capitalGlCode,
+          accountCode: capitalGlCode,
+          accountName: 'মালিকের মূলধন (Owner\'s Capital)',
+          debit: 0,
+          credit: cleanAmount,
+          memo: `মালিক কর্তৃক ব্যবসায় মূলধন বিনিয়োগ${notes ? ` (${notes.trim()})` : ''}`
+        }
+      ];
+
+      const check = validateBalancedLines(journalLines, accounts);
+      if (!check.isBalanced) {
+        throw new Error('মূলধন জাবেদা ভারসাম্যহীন! কার্যক্রম বাতিল করা হলো।');
+      }
+
+      const journalEntry = await postJournalEntry(
+        {
+          id: generateUniqueId('j_cap'),
+          voucherNumber,
+          voucherType: 'RECEIPT',
+          date: dateStr,
+          narration: `মালিকের মূলধন জমা: ৳${cleanAmount} (${targetAccName})${notes ? ` - ${notes.trim()}` : ''}`,
+          reference: voucherNumber,
+          lines: journalLines,
+          createdBy: currentUserId,
+          createdAt: new Date().toISOString()
+        },
+        { accounts, skipDbPut: true }
+      );
+      await safeInsert(db.journalEntries, journalEntry, { idPrefix: 'j' });
+
+      // Update cash/bank balance
+      await db.cashBankAccounts.update(targetAcc.id, {
+        currentBalance: Math.round((targetAcc.currentBalance + cleanAmount) * 100) / 100,
+        synced: false
+      });
+
+      // Audit log
+      await safeInsert(
+        db.auditLogs,
+        {
+          id: generateUniqueId('aud'),
+          timestamp: new Date().toISOString(),
+          userId: currentUserId,
+          role: 'OWNER',
+          action: 'OWNER_CAPITAL_ADDED',
+          module: 'FINANCE',
+          recordId: journalEntry.id,
+          status: 'SUCCESS',
+          details: `মালিকের মূলধন জমা: ৳${cleanAmount} (${targetAccName}, ভাউচার: ${voucherNumber})`
+        },
+        { idPrefix: 'aud' }
+      );
+
+      return { journalEntryId: journalEntry.id, voucherNumber };
+    }
+  );
+}
+
+/**
+ * Atomic Execution of Owner Drawing Transaction
+ * Owner takes money out for personal use.
+ * Debit: Owner Drawings (3040)
+ * Credit: Cash (1010) or Bank (1030)
+ */
+export async function executeOwnerDrawingTransaction(params: {
+  amount: number;
+  sourceAccountId: string;
+  currentUserId: string;
+  date?: string;
+  notes?: string;
+}): Promise<{ journalEntryId: string; voucherNumber: string }> {
+  return await db.transaction(
+    'rw',
+    [
+      db.journalEntries,
+      db.cashBankAccounts,
+      db.accounts,
+      db.auditLogs,
+      db.closedPeriods
+    ],
+    async () => {
+      const { amount, sourceAccountId, currentUserId, date, notes } = params;
+
+      if (amount <= 0) {
+        throw new Error('উত্তোলনের পরিমাণ ০ থেকে বেশি হতে হবে (Drawing amount must be strictly greater than 0).');
+      }
+
+      const cleanAmount = Math.round(amount * 100) / 100;
+      let sourceAcc = await db.cashBankAccounts.get(sourceAccountId);
+      if (!sourceAcc) {
+        sourceAcc = await db.cashBankAccounts.where('accountType').equals(sourceAccountId).first();
+      }
+      if (!sourceAcc) {
+        sourceAcc = await db.cashBankAccounts.toCollection().first();
+      }
+      if (!sourceAcc) {
+        throw new Error(`তহবিল/ব্যাংক অ্যাকাউন্ট (${sourceAccountId}) পাওয়া যায়নি।`);
+      }
+
+      if (sourceAcc.currentBalance < cleanAmount) {
+        throw new Error(
+          `পর্যাপ্ত ব্যালেন্স নেই! ${sourceAcc.accountName || sourceAcc.name} এ বর্তমান স্থিতি: ৳${sourceAcc.currentBalance}`
+        );
+      }
+
+      const todayStr = new Date().toISOString().split('T')[0];
+      const dateStr = date || todayStr;
+      if (dateStr > todayStr) {
+        throw new Error(`লেনদেনের তারিখ ভবিষ্যতের হতে পারে না (${todayStr} বা তার পূর্বের তারিখ নির্বাচন করুন)।`);
+      }
+
+      const voucherNumber = generateTransactionNumber('PMV');
+      const assetGlCode = getCashBankAccountGLCode(sourceAcc.accountType);
+      const drawingsGlCode = CANONICAL_ACCOUNTS.OWNER_DRAWINGS; // 3040
+
+      const accounts = await db.accounts.toArray();
+      const sourceAccName = sourceAcc.accountName || sourceAcc.name || 'ব্যাংক/নগদ তহবিল';
+
+      const journalLines: JournalLine[] = [
+        {
+          accountId: drawingsGlCode,
+          accountCode: drawingsGlCode,
+          accountName: 'মালিকের উত্তোলন (Owner\'s Drawings)',
+          debit: cleanAmount,
+          credit: 0,
+          memo: `মালিকের ব্যক্তিগত উত্তোলন${notes ? ` (${notes.trim()})` : ''}`
+        },
+        {
+          accountId: assetGlCode,
+          accountCode: assetGlCode,
+          accountName: sourceAccName,
+          debit: 0,
+          credit: cleanAmount,
+          memo: `মালিকের উত্তোলন পরিশোধ: ${sourceAccName}`
+        }
+      ];
+
+      const check = validateBalancedLines(journalLines, accounts);
+      if (!check.isBalanced) {
+        throw new Error('উত্তোলন জাবেদা ভারসাম্যহীন! কার্যক্রম বাতিল করা হলো।');
+      }
+
+      const journalEntry = await postJournalEntry(
+        {
+          id: generateUniqueId('j_draw'),
+          voucherNumber,
+          voucherType: 'PAYMENT',
+          date: dateStr,
+          narration: `মালিকের ব্যক্তিগত উত্তোলন: ৳${cleanAmount} (${sourceAccName})${notes ? ` - ${notes.trim()}` : ''}`,
+          reference: voucherNumber,
+          lines: journalLines,
+          createdBy: currentUserId,
+          createdAt: new Date().toISOString()
+        },
+        { accounts, skipDbPut: true }
+      );
+      await safeInsert(db.journalEntries, journalEntry, { idPrefix: 'j' });
+
+      // Update cash/bank balance
+      await db.cashBankAccounts.update(sourceAcc.id, {
+        currentBalance: Math.round((sourceAcc.currentBalance - cleanAmount) * 100) / 100,
+        synced: false
+      });
+
+      // Audit log
+      await safeInsert(
+        db.auditLogs,
+        {
+          id: generateUniqueId('aud'),
+          timestamp: new Date().toISOString(),
+          userId: currentUserId,
+          role: 'OWNER',
+          action: 'OWNER_DRAWING',
+          module: 'FINANCE',
+          recordId: journalEntry.id,
+          status: 'SUCCESS',
+          details: `মালিকের ব্যক্তিগত উত্তোলন: ৳${cleanAmount} (${sourceAccName}, ভাউচার: ${voucherNumber})`
+        },
+        { idPrefix: 'aud' }
+      );
+
+      return { journalEntryId: journalEntry.id, voucherNumber };
+    }
+  );
+}

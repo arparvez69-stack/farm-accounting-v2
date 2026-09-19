@@ -5,12 +5,17 @@ import {
   ArrowRightLeft,
   Users,
   PlusCircle,
+  MinusCircle,
   CheckCircle2,
   AlertCircle,
   Eye,
   Clock,
   Calendar,
   CreditCard,
+  UserCheck,
+  ArrowDownCircle,
+  ArrowUpCircle,
+  History,
   X
 } from 'lucide-react';
 import { db } from '../db/indexedDb';
@@ -18,10 +23,12 @@ import {
   executeContraTransferTransaction,
   executeInvestorTransaction,
   executeLoanTransaction,
-  executeLoanRepaymentTransaction
+  executeLoanRepaymentTransaction,
+  executeOwnerCapitalTransaction,
+  executeOwnerDrawingTransaction
 } from '../services/transactionService';
 import { generateAmortizationSchedule } from '../accounting/amortizationService';
-import { AmortizationScheduleItem, CashBankAccount, Investor, Loan, UserRole } from '../types';
+import { AmortizationScheduleItem, CashBankAccount, Investor, Loan, UserRole, JournalEntry } from '../types';
 import { generateTransactionNumber, generateUniqueId, safeInsert } from '../utils/idGenerator';
 
 interface Props {
@@ -29,7 +36,7 @@ interface Props {
   currentUserId: string;
 }
 
-type FinanceTab = 'accounts' | 'transfers' | 'loans' | 'investors';
+type FinanceTab = 'accounts' | 'transfers' | 'loans' | 'investors' | 'owner';
 
 export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId }) => {
   const [tab, setTab] = useState<FinanceTab>('accounts');
@@ -39,6 +46,22 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
   const [accounts, setAccounts] = useState<CashBankAccount[]>([]);
   const [loans, setLoans] = useState<Loan[]>([]);
   const [investors, setInvestors] = useState<Investor[]>([]);
+
+  // Owner Capital & Drawings State
+  const [showAddCapitalModal, setShowAddCapitalModal] = useState(false);
+  const [capitalAmount, setCapitalAmount] = useState('');
+  const [capitalTargetAccId, setCapitalTargetAccId] = useState('');
+  const [capitalDate, setCapitalDate] = useState(new Date().toISOString().split('T')[0]);
+  const [capitalNotes, setCapitalNotes] = useState('');
+
+  const [showDrawingModal, setShowDrawingModal] = useState(false);
+  const [drawingAmount, setDrawingAmount] = useState('');
+  const [drawingSourceAccId, setDrawingSourceAccId] = useState('');
+  const [drawingDate, setDrawingDate] = useState(new Date().toISOString().split('T')[0]);
+  const [drawingNotes, setDrawingNotes] = useState('');
+
+  const [ownerEntries, setOwnerEntries] = useState<JournalEntry[]>([]);
+  const [submittingOwner, setSubmittingOwner] = useState(false);
 
   // Add Bank Account Modal
   const [showAddAccount, setShowAddAccount] = useState(false);
@@ -115,6 +138,12 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
           const freshInv = invList.find((i) => i.id === selectedInvestor.id);
           if (freshInv) setSelectedInvestor(freshInv);
         }
+      } else if (tab === 'owner') {
+        const jEntries = await db.journalEntries.toArray();
+        const filtered = jEntries
+          .filter((j) => j.lines?.some((l) => l.accountCode === '3010' || l.accountCode === '3040'))
+          .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+        setOwnerEntries(filtered);
       }
     } catch (e) {
       console.error(e);
@@ -323,6 +352,98 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
     }
   };
 
+  // EXECUTE OWNER CAPITAL (Add Capital: Dr Cash/Bank, Cr 3010)
+  const handleExecuteAddCapital = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const amt = parseFloat(capitalAmount) || 0;
+    if (amt <= 0) {
+      setMsg({ type: 'error', text: 'মূলধনের পরিমাণ ০ থেকে বেশি হতে হবে।' });
+      return;
+    }
+    const accId = capitalTargetAccId || accounts[0]?.id;
+    if (!accId) {
+      setMsg({ type: 'error', text: 'জমার জন্য ক্যাশ বা ব্যাংক হিসাব নির্বাচন করুন।' });
+      return;
+    }
+
+    setSubmittingOwner(true);
+    try {
+      const res = await executeOwnerCapitalTransaction({
+        amount: amt,
+        targetAccountId: accId,
+        currentUserId,
+        date: capitalDate,
+        notes: capitalNotes
+      });
+
+      setMsg({
+        type: 'success',
+        text: `মালিকের মূলধন ৳${amt.toLocaleString()} সফলভাবে জমা ও জাবেদায় পোস্ট করা হয়েছে (ভাউচার: ${res.voucherNumber})!`
+      });
+      setShowAddCapitalModal(false);
+      setCapitalAmount('');
+      setCapitalNotes('');
+      window.dispatchEvent(new CustomEvent('accounting_entry_posted'));
+      await loadFinanceData();
+    } catch (err: any) {
+      setMsg({ type: 'error', text: `মূলধন জমা ব্যর্থ হয়েছে: ${err.message}` });
+    } finally {
+      setSubmittingOwner(false);
+    }
+  };
+
+  // EXECUTE OWNER DRAWINGS (Personal Drawings: Dr 3040, Cr Cash/Bank)
+  const handleExecuteDrawing = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const amt = parseFloat(drawingAmount) || 0;
+    if (amt <= 0) {
+      setMsg({ type: 'error', text: 'উত্তোলনের পরিমাণ ০ থেকে বেশি হতে হবে।' });
+      return;
+    }
+    const accId = drawingSourceAccId || accounts[0]?.id;
+    if (!accId) {
+      setMsg({ type: 'error', text: 'উত্তোলনের জন্য ক্যাশ বা ব্যাংক হিসাব নির্বাচন করুন।' });
+      return;
+    }
+
+    setSubmittingOwner(true);
+    try {
+      const res = await executeOwnerDrawingTransaction({
+        amount: amt,
+        sourceAccountId: accId,
+        currentUserId,
+        date: drawingDate,
+        notes: drawingNotes
+      });
+
+      setMsg({
+        type: 'success',
+        text: `মালিকের ব্যক্তিগত উত্তোলন ৳${amt.toLocaleString()} সফলভাবে সম্পন্ন ও জাবেদায় পোস্ট করা হয়েছে (ভাউচার: ${res.voucherNumber})!`
+      });
+      setShowDrawingModal(false);
+      setDrawingAmount('');
+      setDrawingNotes('');
+      window.dispatchEvent(new CustomEvent('accounting_entry_posted'));
+      await loadFinanceData();
+    } catch (err: any) {
+      setMsg({ type: 'error', text: `উত্তোলন ব্যর্থ হয়েছে: ${err.message}` });
+    } finally {
+      setSubmittingOwner(false);
+    }
+  };
+
+  const ownerTotalCapital = ownerEntries.reduce((sum, j) => {
+    const line3010 = j.lines?.find((l) => l.accountCode === '3010');
+    return sum + (line3010?.credit || 0);
+  }, 0);
+
+  const ownerTotalDrawings = ownerEntries.reduce((sum, j) => {
+    const line3040 = j.lines?.find((l) => l.accountCode === '3040');
+    return sum + (line3040?.debit || 0);
+  }, 0);
+
+  const ownerNetEquity = Math.round((ownerTotalCapital - ownerTotalDrawings) * 100) / 100;
+
   const fmt = (n: number) => `৳${Number(n || 0).toLocaleString('en-IN', { minimumFractionDigits: 0 })}`;
 
   return (
@@ -352,11 +473,11 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
               <span>ব্যাংকিং, তহবিল স্থানান্তর, ঋণ ও মূলধন (Banking & Capital)</span>
             </h2>
             <p className="text-[14px] text-gray-600 mt-0.5">
-              নগদ ও ব্যাংক তহবিল (1010/1030), কন্ট্রা জাবেদা, ব্যাংক ঋণ (2110/2120) ও বিনিয়োগকারী মূলধন (3020)
+              নগদ ও ব্যাংক তহবিল (1010/1030), কন্ট্রা জাবেদা, ব্যাংক ঋণ (2110/2120), বিনিয়োগকারী (3020) ও মালিকের মূলধন/উত্তোলন (3010/3040)
             </p>
           </div>
 
-          <div className="w-full sm:w-auto grid grid-cols-2 sm:grid-cols-4 gap-2 bg-gray-100 dark:bg-slate-800/80 border border-gray-200/80 dark:border-slate-700 p-1.5 rounded-xl text-[13px] font-semibold">
+          <div className="w-full sm:w-auto grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2 bg-gray-100 dark:bg-slate-800/80 border border-gray-200/80 dark:border-slate-700 p-1.5 rounded-xl text-[13px] font-semibold">
           <button
             type="button"
             onClick={() => setTab('accounts')}
@@ -404,6 +525,18 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
           >
             <Users className="w-4 h-4 shrink-0" />
             <span>বিনিয়োগকারী</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setTab('owner')}
+            className={`flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg transition-all cursor-pointer min-h-[42px] text-center text-xs sm:text-[13px] font-bold ${
+              tab === 'owner'
+                ? 'bg-amber-600 text-white shadow-xs border border-amber-600'
+                : 'bg-white dark:bg-slate-900/60 text-amber-950 dark:text-amber-300 border border-amber-200/80 dark:border-amber-800 hover:bg-amber-100/80'
+            }`}
+          >
+            <UserCheck className="w-4 h-4 shrink-0" />
+            <span>মালিকের লেনদেন</span>
           </button>
         </div>
         </div>
@@ -1096,6 +1229,349 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
                 )}
               </div>
             ))}
+          </div>
+        </div>
+      )}
+
+      {/* ===================== TAB 5: OWNER TRANSACTIONS (CAPITAL & DRAWINGS) ===================== */}
+      {tab === 'owner' && (
+        <div className="bg-white border border-gray-200 rounded-2xl p-4 sm:p-5 shadow-xs space-y-5">
+          {/* Header & Action Buttons */}
+          <div className="flex items-center justify-between border-b border-gray-100 pb-3 flex-wrap gap-3">
+            <div>
+              <h3 className="text-[16px] font-bold text-gray-900 flex items-center gap-2">
+                <UserCheck className="w-5 h-5 text-amber-600" />
+                <span>মালিকের লেনদেন (Owner Transactions)</span>
+              </h3>
+              <p className="text-[13px] text-gray-600 mt-0.5">
+                মালিকের নিজস্ব মূলধন জমা (Cr 3010) ও ব্যক্তিগত প্রয়োজন বাবদ উত্তোলন (Dr 3040) — বহিরাগত বিনিয়োগকারী থেকে সম্পূর্ণ পৃথক
+              </p>
+            </div>
+
+            {role === 'OWNER' && (
+              <div className="flex items-center gap-2 flex-wrap">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowAddCapitalModal(true);
+                    setShowDrawingModal(false);
+                  }}
+                  className="px-3.5 py-2 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white text-[13px] font-bold shadow-xs transition-all cursor-pointer min-h-[40px] flex items-center gap-1.5"
+                >
+                  <PlusCircle className="w-4 h-4" />
+                  <span>+ মূলধন জমা (Add Capital)</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowDrawingModal(true);
+                    setShowAddCapitalModal(false);
+                  }}
+                  className="px-3.5 py-2 rounded-xl bg-rose-700 hover:bg-rose-800 text-white text-[13px] font-bold shadow-xs transition-all cursor-pointer min-h-[40px] flex items-center gap-1.5"
+                >
+                  <MinusCircle className="w-4 h-4" />
+                  <span>- উত্তোলন (Drawing)</span>
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* ADD CAPITAL FORM */}
+          {showAddCapitalModal && (
+            <form onSubmit={handleExecuteAddCapital} className="p-4 sm:p-5 bg-emerald-50/60 border border-emerald-200 rounded-xl space-y-4">
+              <div className="flex items-center justify-between border-b border-emerald-100 pb-2">
+                <div>
+                  <div className="font-bold text-emerald-900 text-[15px] flex items-center gap-2">
+                    <ArrowDownCircle className="w-4 h-4 text-emerald-700" />
+                    <span>মালিকের মূলধন জমা (Add Owner Capital)</span>
+                  </div>
+                  <p className="text-xs text-emerald-800 mt-0.5">
+                    জাবেদা দাখিলা: ডেবিট নগদ/ব্যাংক (1010/1030) | ক্রেডিট মালিকের মূলধন (3010)
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowAddCapitalModal(false)}
+                  className="p-1 text-gray-400 hover:text-gray-700 cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+                <div>
+                  <label className="block font-medium text-gray-700 mb-1">মূলধনের পরিমাণ ৳ *</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="1"
+                    required
+                    placeholder="যেমন: 50000"
+                    value={capitalAmount}
+                    onChange={(e) => setCapitalAmount(e.target.value)}
+                    className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-sm text-gray-900 font-mono"
+                  />
+                </div>
+
+                <div>
+                  <label className="block font-medium text-gray-700 mb-1">জমার হিসাব (Deposit Destination) *</label>
+                  <select
+                    required
+                    value={capitalTargetAccId}
+                    onChange={(e) => setCapitalTargetAccId(e.target.value)}
+                    className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-sm text-gray-900"
+                  >
+                    <option value="">হিসাব নির্বাচন করুন...</option>
+                    {accounts.map((acc) => (
+                      <option key={acc.id} value={acc.id}>
+                        {acc.name} ({acc.accountType === 'BANK' ? acc.bankName || 'ব্যাংক' : 'ক্যাশ'}) - স্থিতি: {fmt(acc.currentBalance)}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block font-medium text-gray-700 mb-1">লেনদেনের তারিখ *</label>
+                  <input
+                    type="date"
+                    required
+                    max={new Date().toISOString().split('T')[0]}
+                    value={capitalDate}
+                    onChange={(e) => setCapitalDate(e.target.value)}
+                    className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-sm text-gray-900"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-gray-700 mb-1">বিবরণ / নোট (ঐচ্ছিক)</label>
+                <input
+                  type="text"
+                  placeholder="যেমন: খামার সম্প্রসারণ বাবদ ব্যক্তিগত তহবিল থেকে মূলধন জমা"
+                  value={capitalNotes}
+                  onChange={(e) => setCapitalNotes(e.target.value)}
+                  className="w-full bg-white border border-gray-300 rounded-lg p-2 text-sm text-gray-900"
+                />
+              </div>
+
+              <div className="flex justify-end gap-2 pt-2 border-t border-emerald-100">
+                <button
+                  type="button"
+                  onClick={() => setShowAddCapitalModal(false)}
+                  className="px-3.5 py-2 rounded-lg bg-gray-200 hover:bg-gray-300 text-gray-800 text-xs font-semibold cursor-pointer"
+                >
+                  বাতিল
+                </button>
+                <button
+                  type="submit"
+                  disabled={submittingOwner}
+                  className="px-4 py-2 rounded-lg bg-emerald-700 hover:bg-emerald-800 disabled:opacity-50 text-white text-xs font-bold cursor-pointer shadow-xs"
+                >
+                  {submittingOwner ? 'সংরক্ষণ হচ্ছে...' : 'মূলধন জমা নিশ্চিত করুন'}
+                </button>
+              </div>
+            </form>
+          )}
+
+          {/* DRAWING FORM */}
+          {showDrawingModal && (
+            <form onSubmit={handleExecuteDrawing} className="p-4 sm:p-5 bg-rose-50/60 border border-rose-200 rounded-xl space-y-4">
+              <div className="flex items-center justify-between border-b border-rose-100 pb-2">
+                <div>
+                  <div className="font-bold text-rose-900 text-[15px] flex items-center gap-2">
+                    <ArrowUpCircle className="w-4 h-4 text-rose-700" />
+                    <span>মালিকের ব্যক্তিগত উত্তোলন (Owner Drawings)</span>
+                  </div>
+                  <p className="text-xs text-rose-800 mt-0.5">
+                    জাবেদা দাখিলা: ডেবিট মালিকের উত্তোলন (3040) | ক্রেডিট নগদ/ব্যাংক (1010/1030)
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowDrawingModal(false)}
+                  className="p-1 text-gray-400 hover:text-gray-700 cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+                <div>
+                  <label className="block font-medium text-gray-700 mb-1">উত্তোলনের পরিমাণ ৳ *</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="1"
+                    required
+                    placeholder="যেমন: 15000"
+                    value={drawingAmount}
+                    onChange={(e) => setDrawingAmount(e.target.value)}
+                    className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-sm text-gray-900 font-mono"
+                  />
+                </div>
+
+                <div>
+                  <label className="block font-medium text-gray-700 mb-1">উৎস হিসাব (Withdrawal Source) *</label>
+                  <select
+                    required
+                    value={drawingSourceAccId}
+                    onChange={(e) => setDrawingSourceAccId(e.target.value)}
+                    className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-sm text-gray-900"
+                  >
+                    <option value="">হিসাব নির্বাচন করুন...</option>
+                    {accounts.map((acc) => (
+                      <option key={acc.id} value={acc.id}>
+                        {acc.name} ({acc.accountType === 'BANK' ? acc.bankName || 'ব্যাংক' : 'ক্যাশ'}) - স্থিতি: {fmt(acc.currentBalance)}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block font-medium text-gray-700 mb-1">লেনদেনের তারিখ *</label>
+                  <input
+                    type="date"
+                    required
+                    max={new Date().toISOString().split('T')[0]}
+                    value={drawingDate}
+                    onChange={(e) => setDrawingDate(e.target.value)}
+                    className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-sm text-gray-900"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-gray-700 mb-1">বিবরণ / নোট (ঐচ্ছিক)</label>
+                <input
+                  type="text"
+                  placeholder="যেমন: ব্যক্তিগত পারিবারিক খরচ বাবদ তহবিল উত্তোলন"
+                  value={drawingNotes}
+                  onChange={(e) => setDrawingNotes(e.target.value)}
+                  className="w-full bg-white border border-gray-300 rounded-lg p-2 text-sm text-gray-900"
+                />
+              </div>
+
+              <div className="flex justify-end gap-2 pt-2 border-t border-rose-100">
+                <button
+                  type="button"
+                  onClick={() => setShowDrawingModal(false)}
+                  className="px-3.5 py-2 rounded-lg bg-gray-200 hover:bg-gray-300 text-gray-800 text-xs font-semibold cursor-pointer"
+                >
+                  বাতিল
+                </button>
+                <button
+                  type="submit"
+                  disabled={submittingOwner}
+                  className="px-4 py-2 rounded-lg bg-rose-700 hover:bg-rose-800 disabled:opacity-50 text-white text-xs font-bold cursor-pointer shadow-xs"
+                >
+                  {submittingOwner ? 'সংরক্ষণ হচ্ছে...' : 'উত্তোলন নিশ্চিত করুন'}
+                </button>
+              </div>
+            </form>
+          )}
+
+          {/* Equity Metric Summary Cards */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
+            <div className="p-4 rounded-xl bg-emerald-50/70 border border-emerald-200 shadow-xs">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-emerald-800">মোট মূলধন জমা (3010)</span>
+                <ArrowDownCircle className="w-4 h-4 text-emerald-600" />
+              </div>
+              <div className="mt-2 text-xl font-bold font-mono text-emerald-700">
+                {fmt(ownerTotalCapital)}
+              </div>
+              <p className="text-[11px] text-emerald-600 mt-1">ব্যবসায়ে মালিকের নিজস্ব মূলধন</p>
+            </div>
+
+            <div className="p-4 rounded-xl bg-rose-50/70 border border-rose-200 shadow-xs">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-rose-800">মোট উত্তোলন (3040)</span>
+                <ArrowUpCircle className="w-4 h-4 text-rose-600" />
+              </div>
+              <div className="mt-2 text-xl font-bold font-mono text-rose-700">
+                {fmt(ownerTotalDrawings)}
+              </div>
+              <p className="text-[11px] text-rose-600 mt-1">মালিকের ব্যক্তিগত উত্তোলন (Contra-Equity)</p>
+            </div>
+
+            <div className="p-4 rounded-xl bg-amber-50/70 border border-amber-200 shadow-xs">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-amber-800">নিট মালিকানা স্থিতি (Net Equity)</span>
+                <UserCheck className="w-4 h-4 text-amber-600" />
+              </div>
+              <div className="mt-2 text-xl font-bold font-mono text-amber-900">
+                {fmt(ownerNetEquity)}
+              </div>
+              <p className="text-[11px] text-amber-700 mt-1">মূলধন (3010) বিয়োগ উত্তোলন (3040)</p>
+            </div>
+          </div>
+
+          {/* Transaction History Table */}
+          <div className="space-y-3 pt-2">
+            <div className="flex items-center justify-between">
+              <h4 className="text-sm font-bold text-gray-900 flex items-center gap-1.5">
+                <History className="w-4 h-4 text-gray-500" />
+                <span>মালিকের লেনদেন বিবরণী ({ownerEntries.length})</span>
+              </h4>
+            </div>
+
+            {ownerEntries.length === 0 ? (
+              <div className="text-center py-8 bg-gray-50 rounded-xl border border-dashed border-gray-300 text-gray-500 text-xs">
+                মালিকের কোনো মূলধন জমা বা উত্তোলনের রেকর্ড পাওয়া যায়নি। উপরের বাটন ব্যবহার করে নতুন লেনদেন যোগ করুন।
+              </div>
+            ) : (
+              <div className="overflow-x-auto rounded-xl border border-gray-200">
+                <table className="w-full text-left text-xs text-gray-800 border-collapse">
+                  <thead className="bg-[#F8FAFC] text-gray-700 font-semibold border-b border-gray-200">
+                    <tr>
+                      <th className="p-2.5">তারিখ</th>
+                      <th className="p-2.5">ভাউচার নং</th>
+                      <th className="p-2.5 text-center">লেনদেনের ধরন</th>
+                      <th className="p-2.5">তহবিল / মাধ্যম</th>
+                      <th className="p-2.5 text-right">পরিমাণ (৳)</th>
+                      <th className="p-2.5">বিবরণ / নোট</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {ownerEntries.map((entry) => {
+                      const isCapital = entry.lines?.some((l) => l.accountCode === '3010');
+                      const amount = isCapital
+                        ? entry.lines?.find((l) => l.accountCode === '3010')?.credit || 0
+                        : entry.lines?.find((l) => l.accountCode === '3040')?.debit || 0;
+                      const cashBankLine = entry.lines?.find((l) => l.accountCode === '1010' || l.accountCode === '1030');
+                      const accountLabel = cashBankLine?.accountName || 'তহবিল/ব্যাংক';
+
+                      return (
+                        <tr key={entry.id} className="hover:bg-gray-50 transition-colors">
+                          <td className="p-2.5 font-mono whitespace-nowrap text-gray-700">{entry.date}</td>
+                          <td className="p-2.5 font-mono font-bold text-gray-900 whitespace-nowrap">{entry.voucherNumber}</td>
+                          <td className="p-2.5 text-center whitespace-nowrap">
+                            {isCapital ? (
+                              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-100 text-emerald-800 border border-emerald-300">
+                                <ArrowDownCircle className="w-3 h-3 text-emerald-600" />
+                                <span>মূলধন জমা</span>
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-rose-100 text-rose-800 border border-rose-300">
+                                <ArrowUpCircle className="w-3 h-3 text-rose-600" />
+                                <span>ব্যক্তিগত উত্তোলন</span>
+                              </span>
+                            )}
+                          </td>
+                          <td className="p-2.5 font-medium text-gray-800">{accountLabel}</td>
+                          <td className={`p-2.5 text-right font-mono font-bold whitespace-nowrap ${isCapital ? 'text-emerald-700' : 'text-rose-700'}`}>
+                            {isCapital ? `+ ${fmt(amount)}` : `- ${fmt(amount)}`}
+                          </td>
+                          <td className="p-2.5 text-gray-600 max-w-xs truncate" title={entry.narration}>
+                            {entry.narration}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
         </div>
       )}
