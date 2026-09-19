@@ -39,6 +39,7 @@ export interface LedgerEntry {
   reversalOf?: string;
   correctionOf?: string;
   relatedPerson?: string;
+  createdBy?: string;
 }
 
 export interface ProfitLossReport {
@@ -903,7 +904,8 @@ export async function getGeneralLedger(accountCode: string): Promise<{ account?:
           reversedBy: entry.reversedBy,
           reversalOf: entry.reversalOf,
           correctionOf: entry.correctionOf,
-          relatedPerson: entry.relatedPerson
+          relatedPerson: entry.relatedPerson,
+          createdBy: entry.createdBy
         });
       }
     }

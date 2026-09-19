@@ -1472,8 +1472,9 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
                   (j.reversalOf && ('রিভার্সাল'.includes(q) || 'reversal'.includes(q))) ||
                   (j.correctionOf && ('নতুন সংশোধিত'.includes(q) || 'correction'.includes(q)));
                 const personMatch = Boolean(j.relatedPerson && j.relatedPerson.toLowerCase().includes(q));
+                const authorMatch = Boolean(j.createdBy && j.createdBy.toLowerCase().includes(q));
 
-                return descMatch || amountMatch || dateMatch || voucherMatch || idMatch || accountMatch || badgeMatch || personMatch;
+                return descMatch || amountMatch || dateMatch || voucherMatch || idMatch || accountMatch || badgeMatch || personMatch || authorMatch;
               });
 
               if (filtered.length === 0) {
@@ -1545,6 +1546,12 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
                               <span className="inline-flex items-center gap-1 font-semibold text-blue-800 dark:text-blue-300 bg-blue-50 dark:bg-blue-950/60 border border-blue-200 dark:border-blue-800 px-2 py-0.5 rounded text-[11px]">
                                 <User className="w-3 h-3 text-blue-600 dark:text-blue-400 shrink-0" />
                                 <span>সংশ্লিষ্ট: {j.relatedPerson}</span>
+                              </span>
+                            )}
+                            {j.createdBy && (
+                              <span className="inline-flex items-center gap-1 font-medium text-emerald-800 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-200 dark:border-emerald-800 px-2 py-0.5 rounded text-[11px]">
+                                <User className="w-3 h-3 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                                <span>যোগ করেছেন: {j.createdBy}</span>
                               </span>
                             )}
                           </div>
@@ -1706,7 +1713,8 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
                   const dateMatch = row.date && row.date.includes(q);
                   const voucherMatch = row.voucherNumber && row.voucherNumber.toLowerCase().includes(q);
                   const personMatch = Boolean(row.relatedPerson && row.relatedPerson.toLowerCase().includes(q));
-                  return descMatch || amountMatch || dateMatch || voucherMatch || personMatch;
+                  const authorMatch = Boolean(row.createdBy && row.createdBy.toLowerCase().includes(q));
+                  return descMatch || amountMatch || dateMatch || voucherMatch || personMatch || authorMatch;
                 }).length;
                 return (
                   <span>
@@ -1734,7 +1742,8 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
               const dateMatch = row.date && row.date.includes(q);
               const voucherMatch = row.voucherNumber && row.voucherNumber.toLowerCase().includes(q);
               const personMatch = Boolean(row.relatedPerson && row.relatedPerson.toLowerCase().includes(q));
-              return descMatch || amountMatch || dateMatch || voucherMatch || personMatch;
+              const authorMatch = Boolean(row.createdBy && row.createdBy.toLowerCase().includes(q));
+              return descMatch || amountMatch || dateMatch || voucherMatch || personMatch || authorMatch;
             });
 
             const visibleRows = filtered.slice(0, ledgerVisibleCount);
@@ -1805,6 +1814,12 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
                                 <span className="inline-flex items-center gap-1 font-semibold text-blue-800 dark:text-blue-300 bg-blue-50 dark:bg-blue-950/60 border border-blue-200 dark:border-blue-800 px-2 py-0.5 rounded text-[11px]">
                                   <User className="w-3 h-3 text-blue-600 dark:text-blue-400 shrink-0" />
                                   <span>সংশ্লিষ্ট: {row.relatedPerson}</span>
+                                </span>
+                              )}
+                              {row.createdBy && (
+                                <span className="inline-flex items-center gap-1 font-medium text-emerald-800 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-200 dark:border-emerald-800 px-2 py-0.5 rounded text-[11px]">
+                                  <User className="w-3 h-3 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                                  <span>যোগ করেছেন: {row.createdBy}</span>
                                 </span>
                               )}
                             </div>
