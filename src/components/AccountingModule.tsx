@@ -2513,30 +2513,26 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
 
                       {/* Journal Entry Preview */}
                       <div className="pt-2 border-t border-purple-200/60 text-xs space-y-1 text-purple-900">
-                        <div className="font-bold">সমন্বয় দাখিলা পূর্বরূপ (Journal Entry Preview):</div>
-                        <div className="p-2.5 rounded-lg bg-white border border-purple-200 font-mono text-[11px] space-y-1">
+                        <div className="font-bold">সমাপনী দাখিলা পূর্বরূপ (Compound Closing Entry Preview):</div>
+                        <div className="p-2.5 rounded-lg bg-white border border-purple-200 font-mono text-[11px] space-y-1.5">
+                          <div className="flex justify-between text-gray-700">
+                            <span>ডেবিট: সকল আয় হিসাব বন্ধ (Revenues Zeroing)</span>
+                            <span>৳{closingPreview.totalRevenue.toLocaleString('en-IN')}</span>
+                          </div>
+                          <div className="flex justify-between text-gray-700">
+                            <span>ক্রেডিট: সকল ব্যয় হিসাব বন্ধ (Expenses Zeroing)</span>
+                            <span>৳{(closingPreview.totalCogs + closingPreview.totalOperatingExpenses + closingPreview.totalOtherExpenses).toLocaleString('en-IN')}</span>
+                          </div>
                           {closingPreview.netProfitToTransfer >= 0 ? (
-                            <>
-                              <div className="flex justify-between text-gray-700">
-                                <span>ডেবিট: ৩০৬০ - আয় সারাংশ হিসাব (Income Summary)</span>
-                                <span>৳{Math.abs(closingPreview.netProfitToTransfer).toLocaleString('en-IN')}</span>
-                              </div>
-                              <div className="flex justify-between text-emerald-800 font-bold">
-                                <span>ক্রেডিট: ৩০৫০ - পুঞ্জীভূত লাভ/মুনাফা (Retained Earnings)</span>
-                                <span>৳{Math.abs(closingPreview.netProfitToTransfer).toLocaleString('en-IN')}</span>
-                              </div>
-                            </>
+                            <div className="flex justify-between text-emerald-800 font-bold border-t border-purple-100 pt-1">
+                              <span>ক্রেডিট: ৩০৫০ - পুঞ্জীভূত লাভ/মুনাফা (Retained Earnings)</span>
+                              <span>৳{Math.abs(closingPreview.netProfitToTransfer).toLocaleString('en-IN')}</span>
+                            </div>
                           ) : (
-                            <>
-                              <div className="flex justify-between text-red-800 font-bold">
-                                <span>ডেবিট: ৩০৫০ - পুঞ্জীভূত লাভ/মুনাফা (Retained Earnings)</span>
-                                <span>৳{Math.abs(closingPreview.netProfitToTransfer).toLocaleString('en-IN')}</span>
-                              </div>
-                              <div className="flex justify-between text-gray-700">
-                                <span>ক্রেডিট: ৩০৬০ - আয় সারাংশ হিসাব (Income Summary)</span>
-                                <span>৳{Math.abs(closingPreview.netProfitToTransfer).toLocaleString('en-IN')}</span>
-                              </div>
-                            </>
+                            <div className="flex justify-between text-red-800 font-bold border-t border-purple-100 pt-1">
+                              <span>ডেবিট: ৩০৫০ - পুঞ্জীভূত লাভ/মুনাফা (Retained Earnings)</span>
+                              <span>৳{Math.abs(closingPreview.netProfitToTransfer).toLocaleString('en-IN')}</span>
+                            </div>
                           )}
                         </div>
                       </div>

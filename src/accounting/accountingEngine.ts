@@ -227,8 +227,20 @@ export async function postJournalEntry(
   }
 
   // Prevent posting new journal entries on or before the latest closed period's endDate
-  if (!options?.isClosingEntry) {
-    const latestClosed = await getLatestClosedPeriod();
+  const latestClosed = await getLatestClosedPeriod();
+  if (options?.isClosingEntry) {
+    if (latestClosed && entry.date <= latestClosed.endDate) {
+      throw new Error(
+        `হিসাবকাল সমাপ্তি ত্রুটি: এই অর্থবছর বা তারিখ (${entry.date}) ইতোমধ্যে বন্ধ সময়কালের (${latestClosed.endDate}) অন্তর্ভুক্ত। বন্ধ সময়কালে পুনরায় সমাপনী দাখিলা পোস্ট করা যাবে না (Fiscal year/date already closed).`
+      );
+    }
+    const existingExact = await db.closedPeriods.where('endDate').equals(entry.date).first();
+    if (existingExact) {
+      throw new Error(
+        `হিসাবকাল সমাপ্তি ত্রুটি: এই অর্থবছর সমাপ্তির তারিখ (${entry.date}) ইতোমধ্যে বন্ধ (Closed) করা হয়েছে। একই তারিখে পুনরায় বছর সমাপ্তি করা যাবে না (Fiscal year-end date already closed).`
+      );
+    }
+  } else {
     if (latestClosed && entry.date <= latestClosed.endDate) {
       throw new Error(
         `হিসাবরক্ষণ সীমাবদ্ধতা: ${latestClosed.endDate} বা তার পূর্বের সময়কালের হিসাব ইতোমধ্যে বছর সমাপ্তি (Year-End Closed) করা হয়েছে। বন্ধ সময়কালের কোনো তারিখে নতুন জাবেদা পোস্ট বা পরিবর্তন করা যাবে না। সংশোধনের জন্য সমাপ্তির পরবর্তী তারিখের নতুন সমন্বয় দাখিলা প্রদান করুন। (Cannot post journal entry dated on or before closed period end date: ${latestClosed.endDate}).`
@@ -283,6 +295,10 @@ export async function reverseJournalEntry(
 
   if (original.reversedBy) {
     throw new Error(`এই জাবেদা দাখিলাটি (#${original.voucherNumber}) ইতোমধ্যে সংশোধিত/রিভার্স করা হয়েছে।`);
+  }
+
+  if (original.reference?.startsWith('YEC-') || original.voucherNumber?.startsWith('YEC')) {
+    throw new Error('সমাপনী দাখিলা (Year-End Closing Entry) সরাসরি রিভার্স করা যাবে না।');
   }
 
   const today = customReversalDate || new Date().toISOString().split('T')[0];
@@ -940,73 +956,145 @@ export interface YearEndClosingPreview {
  * Reuses the existing Profit & Loss logic from the beginning up to the chosen date.
  */
 export async function previewYearEndClosing(closingDate: string): Promise<YearEndClosingPreview> {
+  const emptyPreview = (reason: string, prevDate?: string): YearEndClosingPreview => ({
+    closingDate,
+    previousClosingDate: prevDate,
+    totalRevenue: 0,
+    totalCogs: 0,
+    grossProfit: 0,
+    totalOperatingExpenses: 0,
+    operatingProfit: 0,
+    totalOtherIncome: 0,
+    totalOtherExpenses: 0,
+    netProfit: 0,
+    previousTransferred: 0,
+    netProfitToTransfer: 0,
+    canClose: false,
+    blockReason: reason
+  });
+
   if (!closingDate) {
-    throw new Error('সমাপ্তি তারিখ নির্বাচন করুন (Closing date is required).');
+    return emptyPreview('সমাপ্তি তারিখ নির্বাচন করা হয়নি।');
   }
 
-  // Check if this exact fiscal year-end date or an overlapping/prior date is already closed
-  const existingExact = await db.closedPeriods.where('endDate').equals(closingDate).first();
-  if (existingExact) {
-    return {
-      closingDate,
-      previousClosingDate: existingExact.endDate,
-      totalRevenue: 0,
-      totalCogs: 0,
-      grossProfit: 0,
-      totalOperatingExpenses: 0,
-      operatingProfit: 0,
-      totalOtherIncome: 0,
-      totalOtherExpenses: 0,
-      netProfit: 0,
-      previousTransferred: 0,
-      netProfitToTransfer: 0,
-      canClose: false,
-      blockReason: `হিসাবকাল সমাপ্তি ত্রুটি: এই অর্থবছর সমাপ্তির তারিখ (${closingDate}) ইতোমধ্যে বন্ধ (Closed) করা হয়েছে। একই তারিখে পুনরায় সমাপ্তি সম্ভব নয়।`
-    };
+  const todayStr = new Date().toISOString().split('T')[0];
+  if (closingDate > todayStr) {
+    return emptyPreview(`সমাপ্তি তারিখ ভবিষ্যতের হতে পারে না (${todayStr} বা তার পূর্বের তারিখ নির্বাচন করুন)।`);
   }
 
-  const latestClosed = await getLatestClosedPeriod();
-  if (latestClosed && closingDate <= latestClosed.endDate) {
-    return {
-      closingDate,
-      previousClosingDate: latestClosed.endDate,
-      totalRevenue: 0,
-      totalCogs: 0,
-      grossProfit: 0,
-      totalOperatingExpenses: 0,
-      operatingProfit: 0,
-      totalOtherIncome: 0,
-      totalOtherExpenses: 0,
-      netProfit: 0,
-      previousTransferred: 0,
-      netProfitToTransfer: 0,
-      canClose: false,
-      blockReason: `সমাপ্তি তারিখটি পূর্ববর্তী বন্ধ সময়কালের শেষ তারিখ (${latestClosed.endDate}) এর পরের হতে হবে।`
-    };
-  }
-
-  // Calculate profit and loss from the beginning to the chosen date
-  const pl = await generateProfitLoss({ endDate: closingDate });
+  // Check ClosedPeriod for the exact fiscal year-end date
   const allClosed = await getClosedPeriods();
+  const existingExact = allClosed.find((p) => p.endDate === closingDate);
+  if (existingExact) {
+    return emptyPreview(
+      `হিসাবকাল সমাপ্তি ত্রুটি: এই অর্থবছর সমাপ্তির তারিখ (${closingDate}) ইতোমধ্যে বন্ধ (Closed) করা হয়েছে। একই তারিখে পুনরায় সমাপ্তি সম্ভব নয়।`,
+      existingExact.endDate
+    );
+  }
+
+  const latestClosed = allClosed.length > 0 ? allClosed[0] : null;
+  if (latestClosed && closingDate <= latestClosed.endDate) {
+    return emptyPreview(
+      `সমাপ্তি তারিখটি পূর্ববর্তী বন্ধ সময়কালের শেষ তারিখ (${latestClosed.endDate}) এর পরের হতে হবে।`,
+      latestClosed.endDate
+    );
+  }
+
+  const conflictingClosed = allClosed.find((p) => p.endDate >= closingDate);
+  if (conflictingClosed) {
+    return emptyPreview(
+      `সমাপ্তি তারিখটি ইতোমধ্যে সমাপ্ত সময়কালের অন্তর্ভুক্ত (${conflictingClosed.endDate})।`,
+      conflictingClosed.endDate
+    );
+  }
+
+  // Pre-closing integrity check: Trial Balance must be balanced before closing
+  const tb = await generateTrialBalance({ endDate: closingDate });
+  if (!tb.isBalanced) {
+    return emptyPreview(
+      `রেওয়ামিল ভারসাম্যহীন (Trial Balance is unbalanced: পার্থক্য ৳${tb.difference})। রেওয়ামিল না মেলা পর্যন্ত বছর সমাপ্তি করা সম্ভব নয়।`
+    );
+  }
+
+  const rawAccounts = await db.accounts.toArray();
+  const accountsByCode = new Map<string, Account>();
+  for (const acc of rawAccounts) {
+    if (!accountsByCode.has(acc.code)) {
+      accountsByCode.set(acc.code, acc);
+    }
+  }
+
+  // Read all journal entries up to closingDate
+  const allEntries = await db.journalEntries.toArray();
+  const periodEntries = allEntries.filter((e) => e.date && e.date <= closingDate);
+
+  const accountBalances: Record<string, number> = {};
+  for (const entry of periodEntries) {
+    for (const line of entry.lines) {
+      const code = line.accountCode?.trim();
+      if (!code) continue;
+      if (accountBalances[code] === undefined) accountBalances[code] = 0;
+      const acc = resolveAccountMetadata(code, accountsByCode);
+      if (acc.normalBalance === 'CREDIT') {
+        accountBalances[code] += (Number(line.credit || 0) - Number(line.debit || 0));
+      } else {
+        accountBalances[code] += (Number(line.debit || 0) - Number(line.credit || 0));
+      }
+    }
+  }
+
+  let totalRevenue = 0;
+  let totalCogs = 0;
+  let totalOperatingExpenses = 0;
+  let totalOtherIncome = 0;
+  let totalOtherExpenses = 0;
+
+  const allRelevantCodes = new Set([...accountsByCode.keys(), ...Object.keys(accountBalances)]);
+  for (const code of allRelevantCodes) {
+    const bal = Math.round((accountBalances[code] || 0) * 100) / 100;
+    if (bal === 0) continue;
+
+    const acc = resolveAccountMetadata(code, accountsByCode);
+    if (acc.accountClass === 'REVENUE') {
+      totalRevenue += bal;
+    } else if (acc.accountClass === 'COGS') {
+      totalCogs += bal;
+    } else if (acc.accountClass === 'EXPENSE') {
+      totalOperatingExpenses += bal;
+    } else if (acc.accountClass === 'OTHER_INCOME') {
+      totalOtherIncome += bal;
+    } else if (acc.accountClass === 'OTHER_EXPENSE') {
+      totalOtherExpenses += bal;
+    }
+  }
+
+  totalRevenue = Math.round(totalRevenue * 100) / 100;
+  totalCogs = Math.round(totalCogs * 100) / 100;
+  totalOperatingExpenses = Math.round(totalOperatingExpenses * 100) / 100;
+  totalOtherIncome = Math.round(totalOtherIncome * 100) / 100;
+  totalOtherExpenses = Math.round(totalOtherExpenses * 100) / 100;
+
+  const grossProfit = Math.round((totalRevenue - totalCogs) * 100) / 100;
+  const operatingProfit = Math.round((grossProfit - totalOperatingExpenses) * 100) / 100;
+  const netProfit = Math.round((operatingProfit + totalOtherIncome - totalOtherExpenses) * 100) / 100;
+
   const previousTransferred = Math.round(
     allClosed.reduce((sum, p) => sum + (Number(p.netProfitTransferred) || 0), 0) * 100
   ) / 100;
 
-  const netProfitToTransfer = Math.round((pl.netProfit - previousTransferred) * 100) / 100;
-
   return {
     closingDate,
     previousClosingDate: latestClosed ? latestClosed.endDate : undefined,
-    totalRevenue: pl.totalRevenue,
-    totalCogs: pl.totalCogs,
-    grossProfit: pl.grossProfit,
-    totalOperatingExpenses: pl.totalOperatingExpenses,
-    operatingProfit: pl.operatingProfit,
-    totalOtherIncome: pl.totalOtherIncome,
-    totalOtherExpenses: pl.totalOtherExpenses,
-    netProfit: pl.netProfit,
+    totalRevenue,
+    totalCogs,
+    grossProfit,
+    totalOperatingExpenses,
+    operatingProfit,
+    totalOtherIncome,
+    totalOtherExpenses,
+    netProfit,
     previousTransferred,
-    netProfitToTransfer,
+    netProfitToTransfer: netProfit,
     canClose: true
   };
 }
@@ -1035,22 +1123,43 @@ export async function executeYearEndClosing(params: {
     throw new Error('সমাপ্তি তারিখ প্রদান করা বাধ্যতামূলক।');
   }
 
-  // Check ClosedPeriod for the exact fiscal year-end date
-  const existingExactClosed = await db.closedPeriods.where('endDate').equals(closingDate).first();
+  const todayStr = new Date().toISOString().split('T')[0];
+  if (closingDate > todayStr) {
+    throw new Error(`সমাপ্তি তারিখ ভবিষ্যতের হতে পারে না (${todayStr} বা তার পূর্বের তারিখ নির্বাচন করুন)।`);
+  }
+
+  // 1. Check ClosedPeriod for the exact fiscal year-end date
+  const allClosed = await getClosedPeriods();
+  const existingExactClosed = allClosed.find((p) => p.endDate === closingDate);
   if (existingExactClosed) {
     throw new Error(
       `হিসাবকাল সমাপ্তি ত্রুটি: এই অর্থবছর সমাপ্তির তারিখ (${closingDate}) ইতোমধ্যে বন্ধ (Closed) করা হয়েছে। একই তারিখে পুনরায় বছর সমাপ্তি করা যাবে না (Fiscal year-end date already closed).`
     );
   }
 
-  const latestClosed = await getLatestClosedPeriod();
+  const latestClosed = allClosed.length > 0 ? allClosed[0] : null;
   if (latestClosed && closingDate <= latestClosed.endDate) {
     throw new Error(
       `সমাপ্তি তারিখটি পূর্ববর্তী বন্ধ সময়কালের শেষ তারিখ (${latestClosed.endDate}) এর পরের হতে হবে।`
     );
   }
 
-  // Ensure accounts 3050 (Retained Earnings) and 3060 (Income Summary) exist
+  const conflictingClosed = allClosed.find((p) => p.endDate >= closingDate);
+  if (conflictingClosed) {
+    throw new Error(
+      `সমাপ্তি তারিখটি ইতোমধ্যে সমাপ্ত সময়কালের অন্তর্ভুক্ত (${conflictingClosed.endDate})।`
+    );
+  }
+
+  // 2. Pre-closing integrity check: Trial Balance must be balanced before closing
+  const preTb = await generateTrialBalance({ endDate: closingDate });
+  if (!preTb.isBalanced) {
+    throw new Error(
+      `হিসাবকাল সমাপ্তি ত্রুটি: রেওয়ামিল ভারসাম্যহীন (Trial balance unbalanced)! মোট ডেবিট: ৳${preTb.totalDebit}, মোট ক্রেডিট: ৳${preTb.totalCredit} (পার্থক্য: ৳${preTb.difference})। রেওয়ামিল ভারসাম্যপূর্ণ না হলে বছর সমাপ্তি করা যাবে না।`
+    );
+  }
+
+  // 3. Ensure accounts 3050 (Retained Earnings) and 3060 (Income Summary) exist
   let reAcc = await db.accounts.where('code').equals('3050').first();
   if (!reAcc) {
     reAcc = {
@@ -1074,7 +1183,7 @@ export async function executeYearEndClosing(params: {
       nameBn: 'আয় সারাংশ হিসাব (Income Summary)',
       nameEn: 'Income Summary',
       accountClass: 'EQUITY',
-      normalBalance: 'DEBIT',
+      normalBalance: 'CREDIT',
       isSystem: true,
       isActive: true
     };
@@ -1115,10 +1224,12 @@ export async function executeYearEndClosing(params: {
   let totalRevenueCreditsToClose = 0;
   let totalExpenseDebitsToClose = 0;
 
-  for (const acc of accountsByCode.values()) {
-    const bal = Math.round((accountBalances[acc.code] || 0) * 100) / 100;
+  const allAccountCodes = new Set([...accountsByCode.keys(), ...Object.keys(accountBalances)]);
+  for (const code of allAccountCodes) {
+    const bal = Math.round((accountBalances[code] || 0) * 100) / 100;
     if (bal === 0) continue;
 
+    const acc = resolveAccountMetadata(code, accountsByCode);
     const isRevenueClass = acc.accountClass === 'REVENUE' || acc.accountClass === 'OTHER_INCOME';
     const isExpenseClass = acc.accountClass === 'EXPENSE' || acc.accountClass === 'COGS' || acc.accountClass === 'OTHER_EXPENSE';
 
@@ -1206,13 +1317,26 @@ export async function executeYearEndClosing(params: {
     });
   }
 
+  // Verify balanced closing lines before posting
+  const sumDebits = Math.round(closingLines.reduce((sum, l) => sum + (Number(l.debit) || 0), 0) * 100) / 100;
+  const sumCredits = Math.round(closingLines.reduce((sum, l) => sum + (Number(l.credit) || 0), 0) * 100) / 100;
+  if (sumDebits !== sumCredits) {
+    throw new Error(
+      `CRITICAL ACCOUNTING ERROR: সমাপনী দাখিলা ভারসাম্যহীন (Unbalanced Closing Entry)! মোট ডেবিট: ৳${sumDebits}, মোট ক্রেডিট: ৳${sumCredits}`
+    );
+  }
+
   const voucherNum = generateTransactionNumber('YEC');
   const entryId = generateUniqueId('j');
   let postedEntry: JournalEntry | undefined;
 
   // Post the closing journal entry if there are any balances to close
   if (closingLines.length > 0) {
-    const allAccountsList = Array.from(accountsByCode.values());
+    const allAccountsList: Account[] = [];
+    for (const code of allAccountCodes) {
+      allAccountsList.push(resolveAccountMetadata(code, accountsByCode));
+    }
+
     postedEntry = await postJournalEntry(
       {
         id: entryId,
@@ -1257,6 +1381,12 @@ export async function executeYearEndClosing(params: {
     status: 'SUCCESS',
     details: `বছর সমাপ্তি সম্পন্ন (${closingDate}): সকল আয় ও ব্যয় হিসাব শূন্য করা হয়েছে এবং পুঞ্জীভূত লাভে স্থানান্তরিত ৳${calculatedNetProfit}${postedEntry ? ` (ভাউচার: ${voucherNum})` : ''}`
   });
+
+  // Post-closing Trial Balance verification
+  const postTb = await generateTrialBalance({ endDate: closingDate });
+  if (!postTb.isBalanced) {
+    console.error('Post-closing Trial Balance imbalance detected:', postTb);
+  }
 
   return {
     closedPeriod,
