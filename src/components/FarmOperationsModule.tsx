@@ -57,7 +57,8 @@ import {
   executeFishStockingTransaction,
   executeFishHarvestAndSaleTransaction,
   executeCropHarvestAndSaleTransaction,
-  calculateFishBatchRecordedCosts
+  calculateFishBatchRecordedCosts,
+  calculateCropCycleRecordedCosts
 } from '../services/transactionService';
 import { AnimalDetailView } from './AnimalDetailView';
 import { notifyUndoableAction } from '../services/undoService';
@@ -3430,8 +3431,8 @@ export const FarmOperationsModule: React.FC<Props> = ({
                 .filter((c) => cropFilter === 'ACTIVE' ? (c.status === 'PLANTED' || c.status === 'GROWING') : (c.status === 'HARVESTED' || c.status === 'CLOSED'))
                 .map((c, idx) => {
                   const isHarvested = c.status === 'HARVESTED' || c.status === 'CLOSED';
-                  const costSum = (c.seedCost || 0) + (c.fertilizerCost || 0) + (c.irrigationCost || 0) + (c.labourCost || 0) + (c.otherCost || 0);
-                  const totalCost = costSum > 0 ? costSum : (c.totalCost || 0);
+                  const recorded = calculateCropCycleRecordedCosts(c);
+                  const totalCost = recorded.totalRecordedCost > 0 ? recorded.totalRecordedCost : (c.totalCost || 0);
                   const netProfit = (c.harvestRevenue || 0) - totalCost;
 
                   return (
@@ -4334,8 +4335,8 @@ export const FarmOperationsModule: React.FC<Props> = ({
 
               {/* Real-time Profit/Loss Preview */}
               {(() => {
-                const costSum = (harvestCropCycle.seedCost || 0) + (harvestCropCycle.fertilizerCost || 0) + (harvestCropCycle.irrigationCost || 0) + (harvestCropCycle.labourCost || 0) + (harvestCropCycle.otherCost || 0);
-                const cogs = costSum > 0 ? costSum : (harvestCropCycle.totalCost || 0);
+                const recorded = calculateCropCycleRecordedCosts(harvestCropCycle);
+                const cogs = recorded.totalRecordedCost > 0 ? recorded.totalRecordedCost : (harvestCropCycle.totalCost || 0);
                 const rev = parseFloat(harvestCropPrice) || 0;
                 const net = rev - cogs;
                 return (

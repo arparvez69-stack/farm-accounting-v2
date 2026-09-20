@@ -237,12 +237,39 @@ export interface CropCycle {
   irrigationCost: number;
   labourCost: number;
   otherCost: number;
+  protectionCost?: number;
+  machineryCost?: number;
   totalCost: number;
   harvestYieldKg: number;
   harvestRevenue: number;
   internalConsumptionKg: number;
   status: 'PLANTED' | 'GROWING' | 'HARVESTED' | 'CLOSED';
   synced?: boolean;
+}
+
+export interface CropCostBreakdown {
+  seedCost: number;
+  fertilizerCost: number;
+  irrigationCost: number;
+  labourCost: number;
+  protectionCost: number;
+  machineryCost: number;
+  otherCost: number;
+  totalRecordedCost: number;
+}
+
+export interface CropProductionCostParams {
+  cycleId: string;
+  costType: 'SEED' | 'FERTILIZER' | 'IRRIGATION' | 'LABOUR' | 'PROTECTION' | 'MACHINERY' | 'OTHER';
+  amount: number;
+  quantity?: number;
+  date?: string;
+  paymentMethod?: 'CASH' | 'BANK' | 'CREDIT' | 'INVENTORY';
+  bankAccountId?: string;
+  supplierId?: string;
+  inventoryItemId?: string;
+  notes?: string;
+  currentUserId: string;
 }
 
 export interface InternalFlow {

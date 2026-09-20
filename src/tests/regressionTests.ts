@@ -2,8 +2,8 @@ import { validateBalancedLines } from '../accounting/accountingEngine';
 import { DEFAULT_CHART_OF_ACCOUNTS } from '../accounting/defaultAccounts';
 import { getInventoryAssetAccount, getPaymentAccount, CANONICAL_ACCOUNTS } from '../accounting/accountMapping';
 import { generateTransactionNumber, generateUniqueId } from '../utils/idGenerator';
-import { JournalLine, Animal, AnimalEvent, InventoryItem, Party, Sale, Purchase, FishBatch } from '../types';
-import { calculateFishBatchRecordedCosts } from '../services/transactionService';
+import { JournalLine, Animal, AnimalEvent, InventoryItem, Party, Sale, Purchase, FishBatch, CropCycle } from '../types';
+import { calculateFishBatchRecordedCosts, calculateCropCycleRecordedCosts } from '../services/transactionService';
 
 export interface TestResult {
   success: boolean;
@@ -410,6 +410,107 @@ async function runRegressionTestsInternal(): Promise<TestResult> {
     ];
     const cogsCheck = validateBalancedLines(mockCogsLines, accounts);
     assert(cogsCheck.isBalanced, 'Fish COGS and biological asset derecognition journal entry must strictly balance (Dr COGS/Mortality, Cr 1580).');
+
+    // ----------------------------------------------------
+    // TEST 15: Crop Production Cost Breakdown & WIP Accumulation
+    // ----------------------------------------------------
+    const mockCropCycle: CropCycle = {
+      id: 'CROP-TEST-001',
+      plotId: 'plot_1',
+      plotName: 'Plot Alpha (1.5 Acre)',
+      cropName: 'Aman Rice',
+      cropCategory: 'GRAIN',
+      plantingDate: '2026-06-15',
+      expectedHarvestDate: '2026-11-15',
+      areaDecimals: 150,
+      seedCost: 6500,
+      fertilizerCost: 12000,
+      irrigationCost: 4500,
+      labourCost: 8000,
+      protectionCost: 3200,
+      machineryCost: 5800,
+      otherCost: 1500,
+      totalCost: 41500,
+      harvestYieldKg: 0,
+      harvestRevenue: 0,
+      internalConsumptionKg: 0,
+      status: 'GROWING',
+      synced: false
+    };
+
+    const cropCosts = calculateCropCycleRecordedCosts(mockCropCycle);
+    assert(
+      cropCosts.seedCost === 6500 &&
+      cropCosts.fertilizerCost === 12000 &&
+      cropCosts.irrigationCost === 4500 &&
+      cropCosts.labourCost === 8000 &&
+      cropCosts.protectionCost === 3200 &&
+      cropCosts.machineryCost === 5800 &&
+      cropCosts.otherCost === 1500,
+      'Crop cycle recorded cost breakdown must preserve each distinct production cost component (Seed, Fert, Irrig, Labour, Protection, Machinery, Other).'
+    );
+    assert(
+      cropCosts.totalRecordedCost === 41500,
+      'Total accumulated crop production cost must accurately sum all legitimate production cost components.'
+    );
+
+    // Verify WIP Account 1054 and Crop Accounts Exist
+    const wipAcc = accounts.find((a) => a.code === CANONICAL_ACCOUNTS.WIP);
+    assert(!!wipAcc, 'Account 1054 Work in Progress (WIP) must exist in chart of accounts.');
+
+    const cropRevAcc = accounts.find((a) => a.code === CANONICAL_ACCOUNTS.CROP_REVENUE);
+    assert(!!cropRevAcc, 'Account 4040 Crop Sales Revenue must exist in chart of accounts.');
+
+    const cropCogsAcc = accounts.find((a) => a.code === CANONICAL_ACCOUNTS.CROP_COGS);
+    assert(!!cropCogsAcc, 'Account 5030 Crop COGS must exist in chart of accounts.');
+
+    // ----------------------------------------------------
+    // TEST 16: Crop WIP Capitalization & Harvest Derecognition
+    // ----------------------------------------------------
+    // 1. WIP Capitalization Journal Lines (Dr 1054, Cr Cash/Bank/Inventory)
+    const mockWipLines: JournalLine[] = [
+      { accountId: CANONICAL_ACCOUNTS.WIP, accountCode: CANONICAL_ACCOUNTS.WIP, accountName: 'Work in Progress', debit: cropCosts.totalRecordedCost, credit: 0 },
+      { accountId: CANONICAL_ACCOUNTS.CASH, accountCode: CANONICAL_ACCOUNTS.CASH, accountName: 'Cash', debit: 0, credit: cropCosts.totalRecordedCost }
+    ];
+    const wipCheck = validateBalancedLines(mockWipLines, accounts);
+    assert(wipCheck.isBalanced, 'Crop production cost WIP capitalization journal entry must strictly balance (Dr 1054 WIP, Cr Cash).');
+
+    // 2. Crop Harvest Revenue Recognition (Dr Cash, Cr 4040 Crop Revenue)
+    const cropHarvestRevenue = 78000;
+    const mockCropRevLines: JournalLine[] = [
+      { accountId: CANONICAL_ACCOUNTS.CASH, accountCode: CANONICAL_ACCOUNTS.CASH, accountName: 'Cash', debit: cropHarvestRevenue, credit: 0 },
+      { accountId: CANONICAL_ACCOUNTS.CROP_REVENUE, accountCode: CANONICAL_ACCOUNTS.CROP_REVENUE, accountName: 'Crop Revenue', debit: 0, credit: cropHarvestRevenue }
+    ];
+    const cropRevCheck = validateBalancedLines(mockCropRevLines, accounts);
+    assert(cropRevCheck.isBalanced, 'Crop harvest revenue journal entry must strictly balance (Dr Cash, Cr 4040).');
+
+    // 3. Crop Harvest COGS & WIP Derecognition (Dr 5030 Crop COGS, Cr 1054 WIP)
+    const mockCropCogsLines: JournalLine[] = [
+      { accountId: CANONICAL_ACCOUNTS.CROP_COGS, accountCode: CANONICAL_ACCOUNTS.CROP_COGS, accountName: 'Crop COGS', debit: cropCosts.totalRecordedCost, credit: 0 },
+      { accountId: CANONICAL_ACCOUNTS.WIP, accountCode: CANONICAL_ACCOUNTS.WIP, accountName: 'Work in Progress', debit: 0, credit: cropCosts.totalRecordedCost }
+    ];
+    const cropCogsCheck = validateBalancedLines(mockCropCogsLines, accounts);
+    assert(cropCogsCheck.isBalanced, 'Crop harvest COGS derecognition journal entry must strictly balance (Dr 5030 COGS, Cr 1054 WIP).');
+    assert(mockCropCogsLines[0].debit === cropCosts.totalRecordedCost, 'Crop COGS derecognition must exactly match the traceable accumulated WIP production cost.');
+
+    // ----------------------------------------------------
+    // TEST 17: Crop Harvest & Sale Transaction Multi-Leg Integrity
+    // ----------------------------------------------------
+    // Verify separation of Sales Revenue from Production Cost
+    assert((CANONICAL_ACCOUNTS.CROP_REVENUE as string) !== (CANONICAL_ACCOUNTS.CROP_COGS as string), 'Crop Revenue (4040) and Crop COGS (5030) must be distinct accounts.');
+    assert((CANONICAL_ACCOUNTS.CROP_REVENUE as string) !== (CANONICAL_ACCOUNTS.WIP as string), 'Crop Revenue (4040) and Crop WIP (1054) must be distinct accounts.');
+    
+    // Verify Credit Sale payment mapping (Accounts Receivable 1030)
+    const creditPaymentAccount = getPaymentAccount('CREDIT', 'SALE');
+    assert(creditPaymentAccount === CANONICAL_ACCOUNTS.ACCOUNTS_RECEIVABLE, 'Crop credit sale must map to Accounts Receivable (1030).');
+    
+    // Verify Cash Sale payment mapping (Cash on Hand 1010)
+    const cashPaymentAccount = getPaymentAccount('CASH', 'SALE');
+    assert(cashPaymentAccount === CANONICAL_ACCOUNTS.CASH, 'Crop cash sale must map to Cash on Hand (1010).');
+
+    // Verify Bank Sale payment mapping (Bank Accounts 1020)
+    const bankPaymentAccount = getPaymentAccount('BANK', 'SALE');
+    assert(bankPaymentAccount === CANONICAL_ACCOUNTS.BANK, 'Crop bank sale must map to Bank Accounts (1020).');
 
   } catch (error: any) {
     failures.push(`CRITICAL RUNTIME ERROR: ${error.message}`);
