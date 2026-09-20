@@ -2180,7 +2180,7 @@ export async function executeFishStockingTransaction(
             accountName: assetAcc.nameBn || 'পশুসম্পদ ও জৈবিক সম্পদ (Livestock & Biological Assets)',
             debit: cleanCost,
             credit: 0,
-            memo: `পোনা মজুদ: ${species} (${pondName}) - ${cleanQty} টি পোনা ক্রয়`
+            memo: `মাছের ব্যাচ ${batchId}: পোনা মজুদ (${species} - ${pondName}, ${cleanQty} টি)`
           },
           {
             accountId: creditAccCode,
@@ -2833,7 +2833,11 @@ export async function executeFishHarvestAndSaleTransaction(
       let expensedDebit = 0;
 
       for (const entry of existingEntries) {
-        for (const line of entry.lines) {
+        for (const line of entry.lines || []) {
+          // Strictly verify this line belongs to THIS fish batch to prevent cross-batch contamination
+          const isLineForThisBatch = line.memo ? line.memo.includes(freshBatch.id) : (entry.reference === freshBatch.id);
+          if (!isLineForThisBatch) continue;
+
           if (line.accountCode === CANONICAL_ACCOUNTS.FISH_COGS) {
             alreadyTransferredCogs += (line.debit || 0) - (line.credit || 0);
           } else if (line.accountCode === CANONICAL_ACCOUNTS.FISH_MORTALITY_LOSS) {
@@ -2914,9 +2918,55 @@ export async function executeFishHarvestAndSaleTransaction(
         }
       }
 
-      // Requirement 9: Do not reduce an asset account that never received the corresponding production cost.
-      // Transfer cost is bounded by the actual balance residing in the asset account and remaining cost to transfer.
-      const costToTransfer = Math.min(currentAssetBalance, remainingCostToTransfer);
+      // If there are legitimate recorded production costs that were missing from GL before harvest, integrate them into Biological Assets
+      if (remainingCostToTransfer > currentAssetBalance) {
+        const missingCapitalization = Math.round((remainingCostToTransfer - currentAssetBalance) * 100) / 100;
+        if (missingCapitalization > 0) {
+          const creditCode = CANONICAL_ACCOUNTS.CASH;
+          const cashAccItem = accounts.find((a) => a.code === creditCode);
+          const integrationLines: JournalLine[] = [
+            {
+              accountId: targetAssetCode,
+              accountCode: targetAssetCode,
+              accountName: targetAssetAcc.nameBn || 'পশুসম্পদ ও জৈবিক সম্পদ (Livestock & Biological Assets)',
+              debit: missingCapitalization,
+              credit: 0,
+              memo: `মাছের ব্যাচ ${freshBatch.id}: নথিভুক্ত উৎপাদন ব্যয় জৈবিক সম্পদে হিসাবভুক্তকরণ`
+            },
+            {
+              accountId: creditCode,
+              accountCode: creditCode,
+              accountName: cashAccItem?.nameBn || 'নগদ টাকা (Cash on Hand)',
+              debit: 0,
+              credit: missingCapitalization,
+              memo: `মাছের ব্যাচ ${freshBatch.id}: উৎপাদন খরচ বাবদ অর্থ পরিশোধ সমন্বয়`
+            }
+          ];
+
+          const checkInteg = validateBalancedLines(integrationLines, accounts);
+          if (checkInteg.isBalanced) {
+            const integEntry = await postJournalEntry(
+              {
+                id: generateUniqueId('j_fish_integ'),
+                voucherNumber: generateTransactionNumber('JV'),
+                voucherType: 'ADJUSTMENT',
+                date: dateStr,
+                narration: `মাছের ব্যাচ ${freshBatch.id}: নথিভুক্ত উৎপাদন ব্যয় জৈবিক সম্পদে সমন্বয় - মোট: ৳${missingCapitalization}`,
+                reference: freshBatch.id,
+                lines: integrationLines,
+                createdBy: currentUserId,
+                createdAt: new Date().toISOString()
+              },
+              { accounts, skipDbPut: true }
+            );
+            await safeInsert(db.journalEntries, integEntry, { idPrefix: 'j' });
+            currentAssetBalance = Math.round((currentAssetBalance + missingCapitalization) * 100) / 100;
+          }
+        }
+      }
+
+      // Each Fish batch has its own accumulated production cost; do not bound by shared GL account 1580
+      const costToTransfer = remainingCostToTransfer;
 
       let cogsJournalEntryId: string | undefined;
       let cogsVoucherNumber: string | undefined;
@@ -3049,9 +3099,11 @@ export function calculateCropCycleRecordedCosts(cycle: CropCycle): CropCostBreak
   const machineryCost = Math.max(0, Number((cycle as any).machineryCost ?? (cycle as any).operationalCost) || 0);
   const otherCost = Math.max(0, Number(cycle.otherCost ?? (cycle as any).otherCosts) || 0);
 
-  const sumComponents = seedCost + fertilizerCost + irrigationCost + labourCost + protectionCost + machineryCost + otherCost;
+  const sumComponents = Math.round(
+    (seedCost + fertilizerCost + irrigationCost + labourCost + protectionCost + machineryCost + otherCost) * 100
+  ) / 100;
   const totalCostField = Math.max(0, Number(cycle.totalCost) || 0);
-  const totalRecordedCost = Math.round(Math.max(sumComponents, totalCostField) * 100) / 100;
+  const totalRecordedCost = sumComponents > 0 ? sumComponents : Math.round(totalCostField * 100) / 100;
 
   return {
     seedCost,
@@ -3326,10 +3378,8 @@ export async function executeCropProductionCostTransaction(
         freshCycle.labourCost = Math.round(((freshCycle.labourCost || 0) + cleanAmount) * 100) / 100;
       } else if (costType === 'PROTECTION') {
         freshCycle.protectionCost = Math.round(((freshCycle.protectionCost || 0) + cleanAmount) * 100) / 100;
-        freshCycle.otherCost = Math.round(((freshCycle.otherCost || 0) + cleanAmount) * 100) / 100;
       } else if (costType === 'MACHINERY') {
         freshCycle.machineryCost = Math.round(((freshCycle.machineryCost || 0) + cleanAmount) * 100) / 100;
-        freshCycle.otherCost = Math.round(((freshCycle.otherCost || 0) + cleanAmount) * 100) / 100;
       } else {
         freshCycle.otherCost = Math.round(((freshCycle.otherCost || 0) + cleanAmount) * 100) / 100;
       }
@@ -3365,9 +3415,183 @@ export async function executeCropProductionCostTransaction(
 }
 
 /**
+ * Helper to get default original operating expense account details for crop production cost types.
+ */
+function getCropCostOriginalExpenseInfo(costType: string): { code: string; nameBn: string; nameEn: string } {
+  switch (costType) {
+    case 'LABOUR':
+      return {
+        code: CANONICAL_ACCOUNTS.FARM_LABOUR_WAGES, // 6020
+        nameBn: 'খামার শ্রমিকের মজুরি (Farm Labour Wages)',
+        nameEn: 'Farm Labour Wages'
+      };
+    case 'IRRIGATION':
+      return {
+        code: CANONICAL_ACCOUNTS.IRRIGATION, // 6070
+        nameBn: 'সেচ ও পানি সরবরাহ খরচ (Irrigation & Water)',
+        nameEn: 'Irrigation & Water Expense'
+      };
+    case 'PROTECTION':
+      return {
+        code: CANONICAL_ACCOUNTS.VET_MEDICINE, // 6040
+        nameBn: 'চিকিৎসা ও ওষুধ / বালাইনাশক (Veterinary & Medicine / Crop Protection)',
+        nameEn: 'Veterinary & Medicine'
+      };
+    case 'MACHINERY':
+      return {
+        code: CANONICAL_ACCOUNTS.REPAIR_MAINTENANCE, // 6090
+        nameBn: 'যন্ত্রপাতি মেরামত ও পরিচালন (Machinery & Maintenance)',
+        nameEn: 'Repair & Maintenance'
+      };
+    case 'SEED':
+    case 'FERTILIZER':
+    case 'OTHER':
+    default:
+      return {
+        code: CANONICAL_ACCOUNTS.MISCELLANEOUS_EXPENSE, // 6150
+        nameBn: 'বিবিধ খামার পরিচালন ব্যয় (Miscellaneous Farm Expense)',
+        nameEn: 'Miscellaneous Expense'
+      };
+  }
+}
+
+/**
+ * Builds balanced journal credit lines for capitalizing crop production costs into WIP
+ * by crediting the original expense accounts rather than Cash/Bank, preventing duplicate cash deductions.
+ */
+async function buildCropExpenseCreditLines(
+  freshCycle: CropCycle,
+  amountToCredit: number,
+  accounts: Account[],
+  expenseAccountsMap?: Map<string, number>
+): Promise<JournalLine[]> {
+  let remaining = Math.round(amountToCredit * 100) / 100;
+  const creditLines: JournalLine[] = [];
+
+  // 1. First, credit any specific GL expense accounts previously debited for this cycle
+  if (expenseAccountsMap && expenseAccountsMap.size > 0) {
+    for (const [expCode, netAmount] of expenseAccountsMap.entries()) {
+      if (remaining <= 0) break;
+      const reclassAmt = Math.min(remaining, netAmount);
+      if (reclassAmt > 0) {
+        let expAcc = accounts.find((a) => a.code === expCode);
+        if (!expAcc) {
+          const newAcc: Account = {
+            id: `acc_${expCode}`,
+            code: expCode,
+            nameBn: 'পরিচালন ব্যয়',
+            nameEn: 'Operating Expense',
+            accountClass: 'EXPENSE',
+            normalBalance: 'DEBIT',
+            isSystem: true,
+            isActive: true
+          };
+          await safeInsert(db.accounts, newAcc, { idPrefix: 'acc' });
+          accounts.push(newAcc);
+          expAcc = newAcc;
+        }
+        creditLines.push({
+          accountId: expCode,
+          accountCode: expCode,
+          accountName: expAcc.nameBn || 'পরিচালন ব্যয়',
+          debit: 0,
+          credit: reclassAmt,
+          memo: `শস্য চক্র ${freshCycle.id}: পূর্বে পরিশোধিত পরিচালন ব্যয় WIP-তে সমন্বয়`
+        });
+        remaining = Math.round((remaining - reclassAmt) * 100) / 100;
+        expenseAccountsMap.set(expCode, Math.max(0, netAmount - reclassAmt));
+      }
+    }
+  }
+
+  // 2. If additional recorded costs remain to be credited, distribute across component original expense accounts
+  if (remaining > 0) {
+    const breakdown = calculateCropCycleRecordedCosts(freshCycle);
+    const components: Array<{ type: string; amount: number; label: string }> = [
+      { type: 'LABOUR', amount: breakdown.labourCost, label: 'শ্রমিক মজুরি' },
+      { type: 'IRRIGATION', amount: breakdown.irrigationCost, label: 'সেচ খরচ' },
+      { type: 'PROTECTION', amount: breakdown.protectionCost, label: 'বালাইনাশক/ফসল রক্ষা' },
+      { type: 'MACHINERY', amount: breakdown.machineryCost, label: 'যন্ত্রপাতি পরিচালন' },
+      { type: 'FERTILIZER', amount: breakdown.fertilizerCost, label: 'সার প্রয়োগ' },
+      { type: 'SEED', amount: breakdown.seedCost, label: 'বীজ/চারা খরচ' },
+      { type: 'OTHER', amount: breakdown.otherCost, label: 'অন্যান্য উৎপাদন খরচ' }
+    ];
+
+    for (const comp of components) {
+      if (remaining <= 0) break;
+      if (comp.amount > 0) {
+        const allocAmt = Math.min(remaining, comp.amount);
+        const expInfo = getCropCostOriginalExpenseInfo(comp.type);
+        let expAcc = accounts.find((a) => a.code === expInfo.code);
+        if (!expAcc) {
+          const newAcc: Account = {
+            id: `acc_${expInfo.code}`,
+            code: expInfo.code,
+            nameBn: expInfo.nameBn,
+            nameEn: expInfo.nameEn,
+            accountClass: 'EXPENSE',
+            normalBalance: 'DEBIT',
+            isSystem: true,
+            isActive: true
+          };
+          await safeInsert(db.accounts, newAcc, { idPrefix: 'acc' });
+          accounts.push(newAcc);
+          expAcc = newAcc;
+        }
+
+        creditLines.push({
+          accountId: expInfo.code,
+          accountCode: expInfo.code,
+          accountName: expAcc.nameBn || expInfo.nameBn,
+          debit: 0,
+          credit: allocAmt,
+          memo: `শস্য চক্র ${freshCycle.id}: পূর্বে পরিশোধিত পরিচালন ব্যয় WIP-তে সমন্বয় (${comp.label})`
+        });
+        remaining = Math.round((remaining - allocAmt) * 100) / 100;
+      }
+    }
+  }
+
+  // 3. Any final unallocated fraction goes to Miscellaneous Expense (6150), never Cash/Bank
+  if (remaining > 0) {
+    const expInfo = getCropCostOriginalExpenseInfo('OTHER');
+    let expAcc = accounts.find((a) => a.code === expInfo.code);
+    if (!expAcc) {
+      const newAcc: Account = {
+        id: `acc_${expInfo.code}`,
+        code: expInfo.code,
+        nameBn: expInfo.nameBn,
+        nameEn: expInfo.nameEn,
+        accountClass: 'EXPENSE',
+        normalBalance: 'DEBIT',
+        isSystem: true,
+        isActive: true
+      };
+      await safeInsert(db.accounts, newAcc, { idPrefix: 'acc' });
+      accounts.push(newAcc);
+      expAcc = newAcc;
+    }
+
+    creditLines.push({
+      accountId: expInfo.code,
+      accountCode: expInfo.code,
+      accountName: expAcc.nameBn || expInfo.nameBn,
+      debit: 0,
+      credit: remaining,
+      memo: `শস্য চক্র ${freshCycle.id}: পূর্বে পরিশোধিত উৎপাদন ব্যয় WIP-তে সমন্বয়`
+    });
+    remaining = 0;
+  }
+
+  return creditLines;
+}
+
+/**
  * Integrate legitimate recorded production costs on a CropCycle into accounting WIP before harvest.
- * Checks General Ledger to verify whether costs have already been capitalized to WIP (1054) / Biological Assets (1580)
- * or posted as operating expenses, avoiding duplicate entries while ensuring full traceable WIP accumulation.
+ * Checks General Ledger strictly by cycle ID to verify whether costs have already been capitalized to WIP (1054)
+ * or transferred to COGS. Any reclassification of previously paid and expensed costs debits Crop WIP (1054)
+ * and credits the original Expense accounts (Dr Crop WIP / Cr original Expense) — NEVER crediting Cash/Bank,
+ * preventing artificial double-payment of cash and preventing duplicate costs.
  */
 export async function integrateCropProductionCostAccounting(
   cycleId: string,
@@ -3407,9 +3631,14 @@ export async function integrateCropProductionCostAccounting(
       let alreadyCapitalizedWip = 0;
       let alreadyTransferredCogs = 0;
       let expensedDebit = 0;
+      const expenseAccountsMap = new Map<string, number>();
 
       for (const entry of existingEntries) {
         for (const line of entry.lines || []) {
+          // Strictly verify this line belongs to THIS crop cycle to prevent cross-cycle contamination
+          const isLineForThisCycle = line.memo ? line.memo.includes(freshCycle.id) : (entry.reference === freshCycle.id);
+          if (!isLineForThisCycle) continue;
+
           const code = line.accountCode;
           if (code === CANONICAL_ACCOUNTS.WIP || code === CANONICAL_ACCOUNTS.LIVESTOCK_ASSETS) {
             alreadyCapitalizedWip += (line.debit || 0) - (line.credit || 0);
@@ -3426,7 +3655,10 @@ export async function integrateCropProductionCostAccounting(
             code === CANONICAL_ACCOUNTS.MISCELLANEOUS_EXPENSE
           ) {
             const netExp = (line.debit || 0) - (line.credit || 0);
-            if (netExp > 0) expensedDebit += netExp;
+            if (netExp > 0) {
+              expensedDebit += netExp;
+              expenseAccountsMap.set(code, (expenseAccountsMap.get(code) || 0) + netExp);
+            }
           }
         }
       }
@@ -3437,7 +3669,7 @@ export async function integrateCropProductionCostAccounting(
       // If already fully capitalized or transferred, no integration needed
       const missingWip = Math.max(
         0,
-        Math.round((totalRecordedCost - (alreadyCapitalizedWip + alreadyTransferredCogs + expensedDebit)) * 100) / 100
+        Math.round((totalRecordedCost - (alreadyCapitalizedWip + alreadyTransferredCogs)) * 100) / 100
       );
 
       if (missingWip <= 0) {
@@ -3462,8 +3694,8 @@ export async function integrateCropProductionCostAccounting(
         wipAcc = newAcc;
       }
 
-      const creditCode = paymentMethod === 'CREDIT' ? CANONICAL_ACCOUNTS.ACCOUNTS_PAYABLE : CANONICAL_ACCOUNTS.CASH;
-      const creditAcc = accounts.find((a) => a.code === creditCode);
+      // Reclassify previously paid and expensed costs into WIP: Dr Crop WIP / Cr original Expense (NEVER Cash/Bank)
+      const creditLines = await buildCropExpenseCreditLines(freshCycle, missingWip, accounts, expenseAccountsMap);
 
       const journalLines: JournalLine[] = [
         {
@@ -3474,14 +3706,7 @@ export async function integrateCropProductionCostAccounting(
           credit: 0,
           memo: `শস্য উৎপাদন ব্যয় WIP-তে হিসাবভুক্তকরণ: চক্র ${freshCycle.id} (${freshCycle.cropName})`
         },
-        {
-          accountId: creditCode,
-          accountCode: creditCode,
-          accountName: creditAcc?.nameBn || (creditCode === CANONICAL_ACCOUNTS.CASH ? 'নগদ টাকা (Cash on Hand)' : 'দেনা হিসাব'),
-          debit: 0,
-          credit: missingWip,
-          memo: `শস্য চাষ বাবদ ব্যয় সমন্বয়: চক্র ${freshCycle.id}`
-        }
+        ...creditLines
       ];
 
       const balanceCheck = validateBalancedLines(journalLines, accounts);
@@ -3511,6 +3736,158 @@ export async function integrateCropProductionCostAccounting(
         journalEntryId: journalEntry.id,
         voucherNumber,
         integratedAmount: missingWip
+      };
+    }
+  );
+}
+
+/**
+ * Integrate legitimate recorded production costs on a FishBatch into accounting Biological Assets (1580) before harvest.
+ * Checks General Ledger strictly by batch ID to verify whether costs have already been capitalized to Biological Assets (1580),
+ * avoiding duplicate entries while ensuring full traceable cost accumulation per batch.
+ */
+export async function integrateFishProductionCostAccounting(
+  batchId: string,
+  currentUserId: string = 'system-user',
+  paymentMethod: 'CASH' | 'BANK' | 'CREDIT' = 'CASH'
+): Promise<{ journalEntryId?: string; voucherNumber?: string; integratedAmount: number }> {
+  return await db.transaction(
+    'rw',
+    [
+      db.fishBatches,
+      db.journalEntries,
+      db.cashBankAccounts,
+      db.accounts,
+      db.auditLogs,
+      db.closedPeriods
+    ],
+    async () => {
+      const freshBatch = await db.fishBatches.get(batchId);
+      if (!freshBatch) {
+        throw new Error(`মাছের ব্যাচ পাওয়া যায়নি (ID: ${batchId})।`);
+      }
+
+      const recordedCosts = calculateFishBatchRecordedCosts(freshBatch);
+      const totalRecordedCost = recordedCosts.totalRecordedCost;
+      if (totalRecordedCost <= 0) {
+        return { integratedAmount: 0 };
+      }
+
+      const existingEntries = await db.journalEntries
+        .filter(
+          (j) =>
+            j.reference === freshBatch.id ||
+            (j.lines && j.lines.some((l) => l.memo && l.memo.includes(freshBatch.id)))
+        )
+        .toArray();
+
+      let alreadyCapitalizedAsset = 0;
+      let alreadyTransferredCogs = 0;
+      let expensedDebit = 0;
+
+      for (const entry of existingEntries) {
+        for (const line of entry.lines || []) {
+          const isLineForThisBatch = line.memo ? line.memo.includes(freshBatch.id) : (entry.reference === freshBatch.id);
+          if (!isLineForThisBatch) continue;
+
+          const code = line.accountCode;
+          if (code === CANONICAL_ACCOUNTS.LIVESTOCK_ASSETS || code === CANONICAL_ACCOUNTS.WIP) {
+            alreadyCapitalizedAsset += (line.debit || 0) - (line.credit || 0);
+          } else if (code === CANONICAL_ACCOUNTS.FISH_COGS || code === CANONICAL_ACCOUNTS.FISH_MORTALITY_LOSS) {
+            alreadyTransferredCogs += (line.debit || 0) - (line.credit || 0);
+          } else if (
+            code === CANONICAL_ACCOUNTS.FEED_EXPENSE ||
+            code === CANONICAL_ACCOUNTS.FARM_LABOUR_WAGES ||
+            code === CANONICAL_ACCOUNTS.VET_MEDICINE ||
+            code === CANONICAL_ACCOUNTS.ELECTRICITY ||
+            code === CANONICAL_ACCOUNTS.IRRIGATION ||
+            code === CANONICAL_ACCOUNTS.MISCELLANEOUS_EXPENSE
+          ) {
+            const netExp = (line.debit || 0) - (line.credit || 0);
+            if (netExp > 0) expensedDebit += netExp;
+          }
+        }
+      }
+
+      alreadyCapitalizedAsset = Math.max(0, Math.round(alreadyCapitalizedAsset * 100) / 100);
+      alreadyTransferredCogs = Math.max(0, Math.round(alreadyTransferredCogs * 100) / 100);
+
+      const missingAsset = Math.max(
+        0,
+        Math.round((totalRecordedCost - (alreadyCapitalizedAsset + alreadyTransferredCogs + expensedDebit)) * 100) / 100
+      );
+
+      if (missingAsset <= 0) {
+        return { integratedAmount: 0 };
+      }
+
+      const accounts = await db.accounts.toArray();
+      let assetAcc = accounts.find((a) => a.code === CANONICAL_ACCOUNTS.LIVESTOCK_ASSETS);
+      if (!assetAcc) {
+        const newAcc: Account = {
+          id: 'acc_1580',
+          code: CANONICAL_ACCOUNTS.LIVESTOCK_ASSETS,
+          nameBn: 'পশুসম্পদ ও জৈবিক সম্পদ (Livestock & Biological Assets)',
+          nameEn: 'Livestock & Biological Assets',
+          accountClass: 'ASSET',
+          normalBalance: 'DEBIT',
+          isSystem: true,
+          isActive: true
+        };
+        await safeInsert(db.accounts, newAcc, { idPrefix: 'acc' });
+        accounts.push(newAcc);
+        assetAcc = newAcc;
+      }
+
+      const creditCode = paymentMethod === 'CREDIT' ? CANONICAL_ACCOUNTS.ACCOUNTS_PAYABLE : CANONICAL_ACCOUNTS.CASH;
+      const creditAcc = accounts.find((a) => a.code === creditCode);
+
+      const journalLines: JournalLine[] = [
+        {
+          accountId: CANONICAL_ACCOUNTS.LIVESTOCK_ASSETS,
+          accountCode: CANONICAL_ACCOUNTS.LIVESTOCK_ASSETS,
+          accountName: assetAcc.nameBn || 'পশুসম্পদ ও জৈবিক সম্পদ (Livestock & Biological Assets)',
+          debit: missingAsset,
+          credit: 0,
+          memo: `মাছের ব্যাচ ${freshBatch.id}: উৎপাদন ব্যয় জৈবিক সম্পদে হিসাবভুক্তকরণ`
+        },
+        {
+          accountId: creditCode,
+          accountCode: creditCode,
+          accountName: creditAcc?.nameBn || (creditCode === CANONICAL_ACCOUNTS.CASH ? 'নগদ টাকা (Cash on Hand)' : 'দেনা হিসাব'),
+          debit: 0,
+          credit: missingAsset,
+          memo: `মাছের ব্যাচ ${freshBatch.id}: উৎপাদন খরচ বাবদ অর্থ পরিশোধ সমন্বয়`
+        }
+      ];
+
+      const balanceCheck = validateBalancedLines(journalLines, accounts);
+      if (!balanceCheck.isBalanced) {
+        throw new Error('মাছ জৈবিক সম্পদ হিসাবভুক্তকরণ জাবেদা ভারসাম্যহীন!');
+      }
+
+      const dateStr = freshBatch.stockingDate || new Date().toISOString().split('T')[0];
+      const voucherNumber = generateTransactionNumber('JV');
+      const journalEntry = await postJournalEntry(
+        {
+          id: generateUniqueId('j_fish_asset'),
+          voucherNumber,
+          voucherType: 'JOURNAL',
+          date: dateStr,
+          narration: `মাছের ব্যাচ উৎপাদন ব্যয় হিসাবভুক্তকরণ: ব্যাচ ${freshBatch.id} (${freshBatch.species} - ${freshBatch.pondName}) - ৳${missingAsset}`,
+          reference: freshBatch.id,
+          lines: journalLines,
+          createdBy: currentUserId,
+          createdAt: new Date().toISOString()
+        },
+        { accounts, skipDbPut: true }
+      );
+      await safeInsert(db.journalEntries, journalEntry, { idPrefix: 'j' });
+
+      return {
+        journalEntryId: journalEntry.id,
+        voucherNumber,
+        integratedAmount: missingAsset
       };
     }
   );
@@ -3693,6 +4070,10 @@ export async function executeCropHarvestAndSaleTransaction(
 
       for (const entry of existingEntries) {
         for (const line of entry.lines || []) {
+          // Strictly verify this line belongs to THIS crop cycle to prevent cross-cycle contamination
+          const isLineForThisCycle = line.memo ? line.memo.includes(freshCycle.id) : (entry.reference === freshCycle.id);
+          if (!isLineForThisCycle) continue;
+
           const code = line.accountCode;
           if (code === CANONICAL_ACCOUNTS.CROP_COGS) {
             alreadyTransferredCogs += (line.debit || 0) - (line.credit || 0);
@@ -3753,6 +4134,7 @@ export async function executeCropHarvestAndSaleTransaction(
             });
             totalReclassed += reclassAmt;
             reclassRemaining = Math.round((reclassRemaining - reclassAmt) * 100) / 100;
+            expenseAccountsMap.set(expCode, Math.max(0, netAmount - reclassAmt));
           }
         }
 
@@ -3789,11 +4171,11 @@ export async function executeCropHarvestAndSaleTransaction(
       }
 
       // 4. If there are legitimate recorded production costs that were missing from GL before harvest, integrate them into WIP
+      // Uses Dr Crop WIP / Cr original Expense (NEVER Dr Crop WIP / Cr Cash)
       if (remainingCostToTransfer > currentAssetBalance) {
         const missingCapitalization = Math.round((remainingCostToTransfer - currentAssetBalance) * 100) / 100;
         if (missingCapitalization > 0) {
-          const creditCode = CANONICAL_ACCOUNTS.CASH;
-          const cashAccItem = accounts.find((a) => a.code === creditCode);
+          const creditLines = await buildCropExpenseCreditLines(freshCycle, missingCapitalization, accounts, expenseAccountsMap);
           const integrationLines: JournalLine[] = [
             {
               accountId: targetAssetCode,
@@ -3803,14 +4185,7 @@ export async function executeCropHarvestAndSaleTransaction(
               credit: 0,
               memo: `শস্য চক্র ${freshCycle.id} নথিভুক্ত উৎপাদন ব্যয় WIP-তে হিসাবভুক্তকরণ`
             },
-            {
-              accountId: creditCode,
-              accountCode: creditCode,
-              accountName: cashAccItem?.nameBn || 'নগদ টাকা (Cash on Hand)',
-              debit: 0,
-              credit: missingCapitalization,
-              memo: `শস্য চক্র ${freshCycle.id} চাষ খরচ বাবদ অর্থ পরিশোধ সমন্বয়`
-            }
+            ...creditLines
           ];
 
           const checkInteg = validateBalancedLines(integrationLines, accounts);
@@ -3835,8 +4210,9 @@ export async function executeCropHarvestAndSaleTransaction(
         }
       }
 
-      // 5. Transfer accumulated WIP cost to Crop COGS (5030)
-      const costToTransfer = Math.min(currentAssetBalance, remainingCostToTransfer);
+      // 5. Transfer accumulated cycle cost to Crop COGS (5030).
+      // Each Crop cycle has its own accumulated cost; shared WIP account 1054 does not determine cycle cost by itself.
+      const costToTransfer = remainingCostToTransfer;
       let cogsJournalEntryId: string | undefined;
       let cogsVoucherNumber: string | undefined;
 

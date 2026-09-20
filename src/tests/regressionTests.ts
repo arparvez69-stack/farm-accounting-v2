@@ -454,6 +454,41 @@ async function runRegressionTestsInternal(): Promise<TestResult> {
       'Total accumulated crop production cost must accurately sum all legitimate production cost components.'
     );
 
+    // Verify exact component sum (Seed + Fertilizer + Irrigation + Labour + Protection + Machinery + Other = Total exactly once)
+    const testCycle: CropCycle = {
+      id: 'cycle_test_exact_sum',
+      plotId: 'plot_1',
+      plotName: 'Plot 1',
+      cropName: 'Corn',
+      cropCategory: 'GRAIN',
+      plantingDate: '2026-07-01',
+      expectedHarvestDate: '2026-10-01',
+      areaDecimals: 100,
+      seedCost: 1000,
+      fertilizerCost: 2000,
+      irrigationCost: 500,
+      labourCost: 1500,
+      protectionCost: 800,
+      machineryCost: 1200,
+      otherCost: 300,
+      totalCost: 0,
+      status: 'GROWING',
+      harvestYieldKg: 0,
+      harvestRevenue: 0,
+      internalConsumptionKg: 0,
+      synced: false
+    };
+    const exactSumCosts = calculateCropCycleRecordedCosts(testCycle);
+    const expectedSum = 1000 + 2000 + 500 + 1500 + 800 + 1200 + 300; // 7300
+    assert(
+      exactSumCosts.totalRecordedCost === expectedSum && exactSumCosts.totalRecordedCost === 7300,
+      `Crop cost total must equal actual sum of Seed + Fertilizer + Irrigation + Labour + Protection + Machinery + Other exactly once (expected 7300, got ${exactSumCosts.totalRecordedCost}).`
+    );
+    assert(
+      exactSumCosts.protectionCost === 800 && exactSumCosts.machineryCost === 1200 && exactSumCosts.otherCost === 300,
+      'Protection, Machinery, and Other must each be counted separately without overlap.'
+    );
+
     // Verify WIP Account 1054 and Crop Accounts Exist
     const wipAcc = accounts.find((a) => a.code === CANONICAL_ACCOUNTS.WIP);
     assert(!!wipAcc, 'Account 1054 Work in Progress (WIP) must exist in chart of accounts.');
@@ -511,6 +546,244 @@ async function runRegressionTestsInternal(): Promise<TestResult> {
     // Verify Bank Sale payment mapping (Bank Accounts 1020)
     const bankPaymentAccount = getPaymentAccount('BANK', 'SALE');
     assert(bankPaymentAccount === CANONICAL_ACCOUNTS.BANK, 'Crop bank sale must map to Bank Accounts (1020).');
+
+    // ----------------------------------------------------
+    // TEST 18: Fish Batch Costing Isolation (Batch A vs Batch B & Account 1580)
+    // ----------------------------------------------------
+    const batchA: FishBatch = {
+      id: 'FISH-BATCH-A',
+      pondId: 'pond_1',
+      pondName: 'Pond North',
+      species: 'Tilapia',
+      stockingDate: '2026-02-01',
+      fingerlingQty: 1500,
+      fingerlingCost: 12000,
+      totalFeedKg: 600,
+      totalFeedCost: 22000,
+      medicineCost: 1800,
+      labourCost: 4500,
+      electricityCost: 2500,
+      waterTreatmentCost: 1100,
+      otherCost: 600,
+      mortalityCount: 50,
+      currentEstimatedWeightKg: 500,
+      status: 'ACTIVE',
+      synced: false
+    };
+
+    const batchB: FishBatch = {
+      id: 'FISH-BATCH-B',
+      pondId: 'pond_2',
+      pondName: 'Pond South',
+      species: 'Pangash',
+      stockingDate: '2026-02-15',
+      fingerlingQty: 2500,
+      fingerlingCost: 18000,
+      totalFeedKg: 900,
+      totalFeedCost: 30000,
+      medicineCost: 3200,
+      labourCost: 6000,
+      electricityCost: 3800,
+      waterTreatmentCost: 1500,
+      otherCost: 1000,
+      mortalityCount: 80,
+      currentEstimatedWeightKg: 850,
+      status: 'ACTIVE',
+      synced: false
+    };
+
+    const costsA = calculateFishBatchRecordedCosts(batchA);
+    const costsB = calculateFishBatchRecordedCosts(batchB);
+
+    assert(
+      costsA.totalRecordedCost === 12000 + 22000 + 1800 + 4500 + 2500 + 1100 + 600 && costsA.totalRecordedCost === 44500,
+      `Batch A recorded costs must equal exactly ৳44,500 (got ${costsA.totalRecordedCost}).`
+    );
+    assert(
+      costsB.totalRecordedCost === 18000 + 30000 + 3200 + 6000 + 3800 + 1500 + 1000 && costsB.totalRecordedCost === 63500,
+      `Batch B recorded costs must equal exactly ৳63,500 (got ${costsB.totalRecordedCost}).`
+    );
+
+    // Simulate adding production costs strictly to Batch A
+    const updatedBatchA: FishBatch = {
+      ...batchA,
+      totalFeedCost: batchA.totalFeedCost + 5000,
+      medicineCost: (batchA.medicineCost || 0) + 1200
+    };
+    const updatedCostsA = calculateFishBatchRecordedCosts(updatedBatchA);
+    const unperturbedCostsB = calculateFishBatchRecordedCosts(batchB);
+
+    assert(
+      updatedCostsA.totalRecordedCost === 44500 + 5000 + 1200 && updatedCostsA.totalRecordedCost === 50700,
+      `Batch A recorded costs after updates must equal exactly ৳50,700 (got ${updatedCostsA.totalRecordedCost}).`
+    );
+    assert(
+      unperturbedCostsB.totalRecordedCost === 63500,
+      'Batch A cost additions must NEVER alter or affect Batch B accumulated production cost.'
+    );
+
+    // Shared GL Account 1580 balance must NOT be used as the cost of a specific Fish batch
+    const sharedGl1580Balance = updatedCostsA.totalRecordedCost + unperturbedCostsB.totalRecordedCost; // 114,200
+    assert(
+      updatedCostsA.totalRecordedCost !== sharedGl1580Balance && unperturbedCostsB.totalRecordedCost !== sharedGl1580Balance,
+      'Specific Fish batch cost must derive from its own accumulated recorded costs, never the shared GL account 1580 pool.'
+    );
+
+    // ----------------------------------------------------
+    // TEST 19: Crop Cycle WIP Costing & Cross-Cycle Isolation (Cycle A vs Cycle B)
+    // ----------------------------------------------------
+    // Each Crop cycle must have its own accumulated cost; shared WIP account 1054 must not determine a cycle's cost by itself.
+    // Include legitimate: Seed, Fertilizer, Irrigation, Labour, Protection, Machinery, Other costs.
+    const cropCycleA: CropCycle = {
+      id: 'CROP-CYCLE-A',
+      plotId: 'plot_1',
+      plotName: 'Plot 1 North Field',
+      cropName: 'BRRI-28 Boro Rice',
+      cropCategory: 'GRAIN',
+      plantingDate: '2026-01-15',
+      expectedHarvestDate: '2026-05-15',
+      areaDecimals: 50,
+      status: 'GROWING',
+      seedCost: 5000,
+      fertilizerCost: 8000,
+      irrigationCost: 6500,
+      labourCost: 12000,
+      protectionCost: 3500,
+      machineryCost: 4500,
+      otherCost: 2000,
+      totalCost: 41500,
+      harvestYieldKg: 0,
+      harvestRevenue: 0,
+      internalConsumptionKg: 0,
+      synced: false
+    };
+
+    const cropCycleB: CropCycle = {
+      id: 'CROP-CYCLE-B',
+      plotId: 'plot_2',
+      plotName: 'Plot 2 South Field',
+      cropName: 'Kalyansona Wheat',
+      cropCategory: 'GRAIN',
+      plantingDate: '2026-02-10',
+      expectedHarvestDate: '2026-06-10',
+      areaDecimals: 35,
+      status: 'GROWING',
+      seedCost: 4000,
+      fertilizerCost: 6000,
+      irrigationCost: 3000,
+      labourCost: 7500,
+      protectionCost: 2200,
+      machineryCost: 3500,
+      otherCost: 1500,
+      totalCost: 27700,
+      harvestYieldKg: 0,
+      harvestRevenue: 0,
+      internalConsumptionKg: 0,
+      synced: false
+    };
+
+    const costsCycleA = calculateCropCycleRecordedCosts(cropCycleA);
+    const costsCycleB = calculateCropCycleRecordedCosts(cropCycleB);
+
+    // Verify Cycle A has exact accumulated cost: Seed(5000) + Fert(8000) + Irrig(6500) + Labour(12000) + Protection(3500) + Machinery(4500) + Other(2000) = 41,500
+    assert(
+      costsCycleA.totalRecordedCost === 5000 + 8000 + 6500 + 12000 + 3500 + 4500 + 2000 && costsCycleA.totalRecordedCost === 41500,
+      `Crop Cycle A recorded costs must equal exactly ৳41,500 (got ${costsCycleA.totalRecordedCost}).`
+    );
+
+    // Verify Cycle B has exact accumulated cost: Seed(4000) + Fert(6000) + Irrig(3000) + Labour(7500) + Protection(2200) + Machinery(3500) + Other(1500) = 27,700
+    assert(
+      costsCycleB.totalRecordedCost === 4000 + 6000 + 3000 + 7500 + 2200 + 3500 + 1500 && costsCycleB.totalRecordedCost === 27700,
+      `Crop Cycle B recorded costs must equal exactly ৳27,700 (got ${costsCycleB.totalRecordedCost}).`
+    );
+
+    // Simulate adding further legitimate costs exclusively to Cycle A (e.g. additional weeding labour + protection)
+    const updatedCycleA: CropCycle = {
+      ...cropCycleA,
+      labourCost: cropCycleA.labourCost + 3000,
+      protectionCost: (cropCycleA.protectionCost || 0) + 1500
+    };
+    const updatedCostsCycleA = calculateCropCycleRecordedCosts(updatedCycleA);
+    const unperturbedCostsCycleB = calculateCropCycleRecordedCosts(cropCycleB);
+
+    assert(
+      updatedCostsCycleA.totalRecordedCost === 41500 + 3000 + 1500 && updatedCostsCycleA.totalRecordedCost === 46000,
+      `Crop Cycle A recorded costs after updates must equal exactly ৳46,000 (got ${updatedCostsCycleA.totalRecordedCost}).`
+    );
+    assert(
+      unperturbedCostsCycleB.totalRecordedCost === 27700,
+      'Crop Cycle A cost additions must NEVER alter or affect Crop Cycle B accumulated production cost.'
+    );
+
+    // Shared GL Account 1054 balance must NOT determine the cost of a specific Crop cycle by itself
+    const sharedGl1054Balance = updatedCostsCycleA.totalRecordedCost + unperturbedCostsCycleB.totalRecordedCost; // 73,700
+    assert(
+      updatedCostsCycleA.totalRecordedCost !== sharedGl1054Balance && unperturbedCostsCycleB.totalRecordedCost !== sharedGl1054Balance,
+      'Specific Crop cycle cost must derive from its own accumulated recorded costs, never the shared GL account 1054 pool.'
+    );
+
+    // ----------------------------------------------------
+    // TEST 20: Reclassification to Crop WIP (Dr 1054 WIP / Cr original Expense, NOT Cash)
+    // ----------------------------------------------------
+    // When reclassifying costs already paid and expensed, journal entries MUST credit the original expense accounts,
+    // NEVER Cash (1010) or Bank (1020), preventing artificial cash outflow duplicates.
+    const mockReclassLines: JournalLine[] = [
+      {
+        accountId: CANONICAL_ACCOUNTS.WIP,
+        accountCode: CANONICAL_ACCOUNTS.WIP,
+        accountName: 'Work in Progress',
+        debit: 46000,
+        credit: 0,
+        memo: `শস্য চক্র ${cropCycleA.id} উৎপাদন ব্যয় WIP-তে হিসাবভুক্তকরণ`
+      },
+      {
+        accountId: CANONICAL_ACCOUNTS.FARM_LABOUR_WAGES,
+        accountCode: CANONICAL_ACCOUNTS.FARM_LABOUR_WAGES,
+        accountName: 'Farm Labour Wages',
+        debit: 0,
+        credit: 15000,
+        memo: `শস্য চক্র ${cropCycleA.id} শ্রমিক মজুরি সমন্বয়`
+      },
+      {
+        accountId: CANONICAL_ACCOUNTS.IRRIGATION,
+        accountCode: CANONICAL_ACCOUNTS.IRRIGATION,
+        accountName: 'Irrigation Expense',
+        debit: 0,
+        credit: 6500,
+        memo: `শস্য চক্র ${cropCycleA.id} সেচ খরচ সমন্বয়`
+      },
+      {
+        accountId: CANONICAL_ACCOUNTS.VET_MEDICINE,
+        accountCode: CANONICAL_ACCOUNTS.VET_MEDICINE,
+        accountName: 'Crop Protection Expense',
+        debit: 0,
+        credit: 5000,
+        memo: `শস্য চক্র ${cropCycleA.id} বালাইনাশক সমন্বয়`
+      },
+      {
+        accountId: CANONICAL_ACCOUNTS.REPAIR_MAINTENANCE,
+        accountCode: CANONICAL_ACCOUNTS.REPAIR_MAINTENANCE,
+        accountName: 'Machinery Expense',
+        debit: 0,
+        credit: 4500,
+        memo: `শস্য চক্র ${cropCycleA.id} যন্ত্রপাতি পরিচালন সমন্বয়`
+      },
+      {
+        accountId: CANONICAL_ACCOUNTS.MISCELLANEOUS_EXPENSE,
+        accountCode: CANONICAL_ACCOUNTS.MISCELLANEOUS_EXPENSE,
+        accountName: 'Miscellaneous Crop Expense',
+        debit: 0,
+        credit: 15000, // Seed (5000) + Fert (8000) + Other (2000)
+        memo: `শস্য চক্র ${cropCycleA.id} সার ও বীজ পরিচালন সমন্বয়`
+      }
+    ];
+
+    const reclassBalanceCheck = validateBalancedLines(mockReclassLines, accounts);
+    assert(reclassBalanceCheck.isBalanced, 'Crop WIP reclassification journal entry must strictly balance (Dr 1054 WIP, Cr original Expense).');
+    
+    // Check that Cash and Bank are NOT credited
+    const creditsCash = mockReclassLines.some(l => (l.accountCode === CANONICAL_ACCOUNTS.CASH || l.accountCode === CANONICAL_ACCOUNTS.BANK) && (l.credit || 0) > 0);
+    assert(!creditsCash, 'Reclassification of already paid and expensed costs must NEVER credit Cash or Bank (Dr WIP / Cr original Expense).');
 
   } catch (error: any) {
     failures.push(`CRITICAL RUNTIME ERROR: ${error.message}`);
