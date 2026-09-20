@@ -25,7 +25,7 @@ export function getRawEmailsEnv(): string {
     process.env.OWNER_EMAILS?.trim() ||
     process.env.EMAIL?.trim() ||
     process.env.email?.trim() ||
-    'atikurrahman00021@gmail.com, arparvez69@gmail.com, arparvez4@gmail.com, lubaiyatasnum111@gmail.com'
+    'atikurrahman00021@gmail.com, arparvez69@gmail.com, arparvez4@gmail.com, lubaiyatasnum111@gmail.com, arparvez111@gmail.com'
   );
 }
 
@@ -52,6 +52,7 @@ export function getApprovedOwnerEmails(): string[] {
   list.add('arparvez69@gmail.com');
   list.add('arparvez4@gmail.com');
   list.add('lubaiyatasnum111@gmail.com');
+  list.add('arparvez111@gmail.com');
 
   if (envEmails) {
     envEmails

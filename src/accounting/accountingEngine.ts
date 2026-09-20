@@ -585,9 +585,17 @@ export async function generateTrialBalance(dateRange?: DateRangeFilter): Promise
 /**
  * Computes Profit & Loss Statement (লাভ-ক্ষতি বিবরণী)
  */
-export async function generateProfitLoss(dateRange?: DateRangeFilter): Promise<ProfitLossReport> {
+export async function generateProfitLoss(
+  dateRange?: DateRangeFilter,
+  options?: { includeClosingEntries?: boolean }
+): Promise<ProfitLossReport> {
   const rawAccounts = await db.accounts.toArray();
   let entries = await db.journalEntries.toArray();
+
+  // Exclude Year-End Closing entries unless explicitly requested so that P&L reports reflect actual period operations
+  if (!options?.includeClosingEntries) {
+    entries = entries.filter((e) => !e.reference?.startsWith('YEC-') && !e.voucherNumber?.startsWith('YEC'));
+  }
 
   if (dateRange?.startDate || dateRange?.endDate) {
     entries = entries.filter((e) => {
@@ -702,7 +710,24 @@ export async function generateBalanceSheet(dateRange?: DateRangeFilter): Promise
     });
   }
 
-  const pl = await generateProfitLoss(dateRange?.endDate ? { endDate: dateRange.endDate } : undefined);
+  // Find the latest closed period on or before the balance sheet as-of date (if any)
+  const allClosed = await getClosedPeriods();
+  const relevantClosed = allClosed.filter((cp) => cp.endDate && (!dateRange?.endDate || cp.endDate <= dateRange.endDate));
+  const latestRelevantClosed = relevantClosed.length > 0 ? relevantClosed[0] : null;
+
+  let unclosedStartDate: string | undefined = undefined;
+  if (latestRelevantClosed?.endDate) {
+    const d = new Date(latestRelevantClosed.endDate);
+    d.setDate(d.getDate() + 1);
+    unclosedStartDate = d.toISOString().split('T')[0];
+  }
+
+  // Only calculate net profit for the unclosed portion of the period so that closed profits transferred
+  // into Retained Earnings (3050) are not double-counted on the Balance Sheet.
+  const pl = await generateProfitLoss({
+    startDate: unclosedStartDate,
+    endDate: dateRange?.endDate
+  });
 
   // Deduplicate accounts by code
   const accountsByCode = new Map<string, Account>();
