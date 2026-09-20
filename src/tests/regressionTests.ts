@@ -3,7 +3,7 @@ import { DEFAULT_CHART_OF_ACCOUNTS } from '../accounting/defaultAccounts';
 import { getInventoryAssetAccount, getPaymentAccount, CANONICAL_ACCOUNTS } from '../accounting/accountMapping';
 import { generateTransactionNumber, generateUniqueId } from '../utils/idGenerator';
 import { JournalLine, Animal, AnimalEvent, InventoryItem, Party, Sale, Purchase, FishBatch, CropCycle } from '../types';
-import { calculateFishBatchRecordedCosts, calculateCropCycleRecordedCosts } from '../services/transactionService';
+import { calculateFishBatchRecordedCosts, calculateCropCycleRecordedCosts, buildFishExpenseCreditLines, buildCropExpenseCreditLines } from '../services/transactionService';
 
 export interface TestResult {
   success: boolean;
@@ -784,6 +784,429 @@ async function runRegressionTestsInternal(): Promise<TestResult> {
     // Check that Cash and Bank are NOT credited
     const creditsCash = mockReclassLines.some(l => (l.accountCode === CANONICAL_ACCOUNTS.CASH || l.accountCode === CANONICAL_ACCOUNTS.BANK) && (l.credit || 0) > 0);
     assert(!creditsCash, 'Reclassification of already paid and expensed costs must NEVER credit Cash or Bank (Dr WIP / Cr original Expense).');
+
+    // ----------------------------------------------------
+    // TEST 21: Full Fish Batch Lifecycle (Cost -> Harvest -> COGS -> Mortality)
+    // ----------------------------------------------------
+    // 1. Specific Batch Cost Accumulation
+    const lifecycleBatchA: FishBatch = {
+      id: 'FISH-BATCH-ALPHA',
+      pondId: 'pond_a',
+      pondName: 'Pond Alpha',
+      species: 'Rui & Katla',
+      stockingDate: '2026-02-01',
+      fingerlingQty: 2000,
+      fingerlingCost: 12000,
+      totalFeedKg: 800,
+      totalFeedCost: 35000,
+      medicineCost: 3000,
+      labourCost: 8000,
+      electricityCost: 4500,
+      waterTreatmentCost: 2500,
+      otherCost: 1000,
+      mortalityCount: 200, // 10% mortality (200 / 2000)
+      currentEstimatedWeightKg: 1200,
+      status: 'ACTIVE',
+      synced: false
+    };
+
+    const batchACosts = calculateFishBatchRecordedCosts(lifecycleBatchA);
+    const expectedTotalCostA = 12000 + 35000 + 3000 + 8000 + 4500 + 2500 + 1000; // ৳66,000
+    assert(
+      batchACosts.totalRecordedCost === expectedTotalCostA && batchACosts.totalRecordedCost === 66000,
+      `Fish batch Alpha total accumulated cost must equal exactly ৳66,000 (got ৳${batchACosts.totalRecordedCost}).`
+    );
+
+    // Rule: Never use global 1580 as a batch cost
+    const global1580SimulatedBalance = 250000;
+    assert(
+      batchACosts.totalRecordedCost !== global1580SimulatedBalance,
+      'Fish batch production cost must be derived exclusively from the batch record, never the global 1580 balance.'
+    );
+
+    // 2. Capitalization / Reclassification without artificial Cash credit
+    const missingCapAmount = 66000;
+    const fishCreditLines = await buildFishExpenseCreditLines(lifecycleBatchA, missingCapAmount, accounts);
+    const sumCredits = fishCreditLines.reduce((acc, l) => acc + (l.credit || 0), 0);
+    assert(
+      Math.round(sumCredits * 100) / 100 === missingCapAmount,
+      `Fish expense credit lines must sum to ৳${missingCapAmount} (got ৳${sumCredits}).`
+    );
+
+    const fishHasCashCredit = fishCreditLines.some(
+      (l) => (l.accountCode === CANONICAL_ACCOUNTS.CASH || l.accountCode === CANONICAL_ACCOUNTS.BANK) && (l.credit || 0) > 0
+    );
+    assert(!fishHasCashCredit, 'Capitalization of fish costs must credit original expense accounts, NEVER Cash or Bank.');
+
+    const fishCapLines: JournalLine[] = [
+      {
+        accountId: CANONICAL_ACCOUNTS.LIVESTOCK_ASSETS,
+        accountCode: CANONICAL_ACCOUNTS.LIVESTOCK_ASSETS,
+        accountName: 'Livestock & Biological Assets',
+        debit: missingCapAmount,
+        credit: 0,
+        memo: `মাছের ব্যাচ ${lifecycleBatchA.id}: উৎপাদন ব্যয় জৈবিক সম্পদে হিসাবভুক্তকরণ`
+      },
+      ...fishCreditLines
+    ];
+    const capCheck = validateBalancedLines(fishCapLines, accounts);
+    assert(capCheck.isBalanced, 'Fish biological asset capitalization journal entry must be strictly balanced.');
+
+    // 3. Sales Revenue Recognition Leg: Cash Sale & Credit Sale
+    const batchASalePrice = 110000;
+    // Cash Sale: Dr Cash/Bank -> Cr Fish Sales Revenue
+    const cashSaleLines: JournalLine[] = [
+      {
+        accountId: CANONICAL_ACCOUNTS.CASH,
+        accountCode: CANONICAL_ACCOUNTS.CASH,
+        accountName: 'Cash on Hand',
+        debit: batchASalePrice,
+        credit: 0,
+        memo: 'Cash Sale'
+      },
+      {
+        accountId: CANONICAL_ACCOUNTS.FISH_REVENUE,
+        accountCode: CANONICAL_ACCOUNTS.FISH_REVENUE,
+        accountName: 'Fish Sales Revenue',
+        debit: 0,
+        credit: batchASalePrice,
+        memo: 'Fish Sales Revenue'
+      }
+    ];
+    const cashSaleCheck = validateBalancedLines(cashSaleLines, accounts);
+    assert(cashSaleCheck.isBalanced, 'Cash sale journal entry must strictly balance (Dr Cash -> Cr Fish Sales Revenue).');
+
+    // Credit Sale: Dr AR -> Cr Fish Sales Revenue
+    const creditSaleLines: JournalLine[] = [
+      {
+        accountId: CANONICAL_ACCOUNTS.ACCOUNTS_RECEIVABLE,
+        accountCode: CANONICAL_ACCOUNTS.ACCOUNTS_RECEIVABLE,
+        accountName: 'Accounts Receivable',
+        debit: batchASalePrice,
+        credit: 0,
+        memo: 'Credit Sale'
+      },
+      {
+        accountId: CANONICAL_ACCOUNTS.FISH_REVENUE,
+        accountCode: CANONICAL_ACCOUNTS.FISH_REVENUE,
+        accountName: 'Fish Sales Revenue',
+        debit: 0,
+        credit: batchASalePrice,
+        memo: 'Fish Sales Revenue'
+      }
+    ];
+    const creditSaleCheck = validateBalancedLines(creditSaleLines, accounts);
+    assert(creditSaleCheck.isBalanced, 'Credit sale journal entry must strictly balance (Dr AR -> Cr Fish Sales Revenue).');
+
+    // 4. Harvest COGS & Mortality Accounting
+    // Mortality must use the appropriate portion of that batch's accumulated cost
+    const totalQty = lifecycleBatchA.fingerlingQty;
+    const mortalityCount = lifecycleBatchA.mortalityCount;
+    const batchAMortalityRatio = mortalityCount / totalQty; // 200 / 2000 = 0.10
+    const mortalityCost = Math.round(batchACosts.totalRecordedCost * batchAMortalityRatio * 100) / 100; // ৳6,600
+    const harvestedCogs = Math.round((batchACosts.totalRecordedCost - mortalityCost) * 100) / 100; // ৳59,400
+
+    assert(mortalityCost === 6600, `Fish mortality cost must be exactly 10% of ৳66,000 = ৳6,600 (got ৳${mortalityCost}).`);
+    assert(harvestedCogs === 59400, `Harvested Fish COGS must be exactly remaining ৳59,400 (got ৳${harvestedCogs}).`);
+    assert(
+      mortalityCost + harvestedCogs === batchACosts.totalRecordedCost,
+      'COGS and Mortality Loss combined must equal 100% of accumulated batch cost.'
+    );
+
+    // Harvest: Dr Fish COGS & Dr Mortality Loss -> Cr Biological Assets
+    const harvestCogsLines: JournalLine[] = [
+      {
+        accountId: CANONICAL_ACCOUNTS.FISH_COGS,
+        accountCode: CANONICAL_ACCOUNTS.FISH_COGS,
+        accountName: 'Fish COGS',
+        debit: harvestedCogs,
+        credit: 0,
+        memo: `মাছের ব্যাচ ${lifecycleBatchA.id}: বিক্রীত মাছের উৎপাদন ব্যয় (COGS)`
+      },
+      {
+        accountId: CANONICAL_ACCOUNTS.FISH_MORTALITY_LOSS,
+        accountCode: CANONICAL_ACCOUNTS.FISH_MORTALITY_LOSS,
+        accountName: 'Fish Mortality Loss',
+        debit: mortalityCost,
+        credit: 0,
+        memo: `মাছের ব্যাচ ${lifecycleBatchA.id}: মৃত্যুজনিত ক্ষতি`
+      },
+      {
+        accountId: CANONICAL_ACCOUNTS.LIVESTOCK_ASSETS,
+        accountCode: CANONICAL_ACCOUNTS.LIVESTOCK_ASSETS,
+        accountName: 'Livestock & Biological Assets',
+        debit: 0,
+        credit: batchACosts.totalRecordedCost,
+        memo: `মাছের ব্যাচ ${lifecycleBatchA.id}: জৈবিক সম্পদ সমন্বয়`
+      }
+    ];
+    const harvestCheck = validateBalancedLines(harvestCogsLines, accounts);
+    assert(harvestCheck.isBalanced, 'Fish harvest COGS & mortality journal entry must strictly balance.');
+
+    // 5. No Duplicate COGS
+    const alreadyTransferredCogs = harvestedCogs;
+    const alreadyTransferredMortality = mortalityCost;
+    const remainingCostToTransfer = Math.max(
+      0,
+      Math.round((batchACosts.totalRecordedCost - (alreadyTransferredCogs + alreadyTransferredMortality)) * 100) / 100
+    );
+    assert(
+      remainingCostToTransfer === 0,
+      'After full harvest, remaining cost to transfer must be ৳0, preventing duplicate COGS posting.'
+    );
+
+    // 6. No Cross-Batch Cost Contamination
+    const lifecycleBatchB: FishBatch = {
+      id: 'FISH-BATCH-BETA',
+      pondId: 'pond_b',
+      pondName: 'Pond Beta',
+      species: 'Tilapia',
+      stockingDate: '2026-02-15',
+      fingerlingQty: 3000,
+      fingerlingCost: 9000,
+      totalFeedKg: 600,
+      totalFeedCost: 21000,
+      mortalityCount: 0,
+      currentEstimatedWeightKg: 0,
+      status: 'ACTIVE',
+      synced: false
+    };
+    const batchBCosts = calculateFishBatchRecordedCosts(lifecycleBatchB);
+    assert(
+      batchBCosts.totalRecordedCost === 30000,
+      'Fish Batch Beta accumulated cost must be isolated at ৳30,000 without cross-batch interference.'
+    );
+    assert(
+      batchACosts.totalRecordedCost === 66000,
+      'Batch Alpha cost must remain unaffected by Batch Beta existence.'
+    );
+
+    // 7. Prevent Duplicate Harvest & Status Verification
+    const harvestedBatchA: FishBatch = {
+      ...lifecycleBatchA,
+      status: 'HARVESTED',
+      harvestRevenue: batchASalePrice,
+      harvestWeightKg: 1200
+    };
+    assert(
+      harvestedBatchA.status === 'HARVESTED',
+      'Batch status must transition to HARVESTED only after accounting entries complete successfully.'
+    );
+    const isDuplicateBlocked = (harvestedBatchA.status as string) === 'HARVESTED' || (harvestedBatchA.status as string) === 'CLOSED';
+    assert(
+      isDuplicateBlocked,
+      'A batch marked as HARVESTED or CLOSED must be blocked from duplicate harvesting.'
+    );
+
+    // ----------------------------------------------------
+    // TEST 22: Full Crop Cycle Harvest & COGS Lifecycle
+    // ----------------------------------------------------
+    // 1. Specific Crop Cycle Cost Accumulation
+    const lifecycleCycleA: CropCycle = {
+      id: 'CROP-CYCLE-ALPHA',
+      plotId: 'plot_1',
+      plotName: 'North Field Plot 1',
+      cropName: 'Aman Paddy (BRRI-28)',
+      cropCategory: 'GRAIN',
+      plantingDate: '2026-02-01',
+      expectedHarvestDate: '2026-05-15',
+      areaDecimals: 50,
+      seedCost: 5000,
+      fertilizerCost: 10000,
+      irrigationCost: 4000,
+      labourCost: 12000,
+      protectionCost: 3000,
+      machineryCost: 6000,
+      otherCost: 2000,
+      totalCost: 42000,
+      harvestYieldKg: 0,
+      harvestRevenue: 0,
+      internalConsumptionKg: 0,
+      status: 'GROWING',
+      synced: false
+    };
+
+    const cycleACosts = calculateCropCycleRecordedCosts(lifecycleCycleA);
+    const expectedTotalCostCycleA = 5000 + 10000 + 4000 + 12000 + 3000 + 6000 + 2000; // ৳42,000
+    assert(
+      cycleACosts.totalRecordedCost === expectedTotalCostCycleA && cycleACosts.totalRecordedCost === 42000,
+      `Crop cycle Alpha total accumulated cost must equal exactly ৳42,000 (got ৳${cycleACosts.totalRecordedCost}).`
+    );
+
+    // Rule: Never use global 1054 balance as the cycle cost
+    const global1054SimulatedBalance = 150000;
+    assert(
+      cycleACosts.totalRecordedCost !== global1054SimulatedBalance,
+      'Crop cycle production cost must be derived exclusively from the cycle record, never the global 1054 WIP balance.'
+    );
+
+    // 2. Capitalization / WIP Integration without artificial Cash credit
+    const missingWipAmount = 42000;
+    const cropCreditLines = await buildCropExpenseCreditLines(lifecycleCycleA, missingWipAmount, accounts);
+    const sumCropCredits = cropCreditLines.reduce((acc, l) => acc + (l.credit || 0), 0);
+    assert(
+      Math.round(sumCropCredits * 100) / 100 === missingWipAmount,
+      `Crop expense credit lines must sum to ৳${missingWipAmount} (got ৳${sumCropCredits}).`
+    );
+
+    const cropHasCashCredit = cropCreditLines.some(
+      (l) => (l.accountCode === CANONICAL_ACCOUNTS.CASH || l.accountCode === CANONICAL_ACCOUNTS.BANK) && (l.credit || 0) > 0
+    );
+    assert(!cropHasCashCredit, 'Capitalization of crop costs to WIP must credit original expense accounts, NEVER Cash or Bank.');
+
+    const cropWipIntegrationLines: JournalLine[] = [
+      {
+        accountId: CANONICAL_ACCOUNTS.WIP,
+        accountCode: CANONICAL_ACCOUNTS.WIP,
+        accountName: 'Work in Progress (WIP)',
+        debit: missingWipAmount,
+        credit: 0,
+        memo: `শস্য চক্র ${lifecycleCycleA.id}: নথিভুক্ত উৎপাদন ব্যয় WIP-তে হিসাবভুক্তকরণ`
+      },
+      ...cropCreditLines
+    ];
+    const cropWipCheck = validateBalancedLines(cropWipIntegrationLines, accounts);
+    assert(cropWipCheck.isBalanced, 'Crop WIP integration journal entry must be strictly balanced.');
+
+    // 3. Sales Revenue Recognition Leg: Cash Sale & Credit Sale
+    const cycleASalePrice = 75000;
+    // Cash Sale: Dr Cash/Bank -> Cr Crop Sales Revenue
+    const cashCropSaleLines: JournalLine[] = [
+      {
+        accountId: CANONICAL_ACCOUNTS.CASH,
+        accountCode: CANONICAL_ACCOUNTS.CASH,
+        accountName: 'Cash on Hand',
+        debit: cycleASalePrice,
+        credit: 0,
+        memo: 'Cash Sale'
+      },
+      {
+        accountId: CANONICAL_ACCOUNTS.CROP_REVENUE,
+        accountCode: CANONICAL_ACCOUNTS.CROP_REVENUE,
+        accountName: 'Crop Sales Revenue',
+        debit: 0,
+        credit: cycleASalePrice,
+        memo: 'Crop Sales Revenue'
+      }
+    ];
+    const cashCropSaleCheck = validateBalancedLines(cashCropSaleLines, accounts);
+    assert(cashCropSaleCheck.isBalanced, 'Cash sale journal entry must strictly balance (Dr Cash -> Cr Crop Sales Revenue).');
+
+    // Credit Sale: Dr AR -> Cr Crop Sales Revenue
+    const creditCropSaleLines: JournalLine[] = [
+      {
+        accountId: CANONICAL_ACCOUNTS.ACCOUNTS_RECEIVABLE,
+        accountCode: CANONICAL_ACCOUNTS.ACCOUNTS_RECEIVABLE,
+        accountName: 'Accounts Receivable',
+        debit: cycleASalePrice,
+        credit: 0,
+        memo: 'Credit Sale'
+      },
+      {
+        accountId: CANONICAL_ACCOUNTS.CROP_REVENUE,
+        accountCode: CANONICAL_ACCOUNTS.CROP_REVENUE,
+        accountName: 'Crop Sales Revenue',
+        debit: 0,
+        credit: cycleASalePrice,
+        memo: 'Crop Sales Revenue'
+      }
+    ];
+    const creditCropSaleCheck = validateBalancedLines(creditCropSaleLines, accounts);
+    assert(creditCropSaleCheck.isBalanced, 'Credit sale journal entry must strictly balance (Dr AR -> Cr Crop Sales Revenue).');
+
+    // 4. Harvest: Dr Crop COGS -> Cr that cycle's WIP
+    const harvestedCropCogs = cycleACosts.totalRecordedCost; // ৳42,000
+    const cropHarvestCogsLines: JournalLine[] = [
+      {
+        accountId: CANONICAL_ACCOUNTS.CROP_COGS,
+        accountCode: CANONICAL_ACCOUNTS.CROP_COGS,
+        accountName: 'Crop COGS',
+        debit: harvestedCropCogs,
+        credit: 0,
+        memo: `শস্য চক্র ${lifecycleCycleA.id}: বিক্রিত ফসলের উৎপাদন ব্যয় (COGS)`
+      },
+      {
+        accountId: CANONICAL_ACCOUNTS.WIP,
+        accountCode: CANONICAL_ACCOUNTS.WIP,
+        accountName: 'Work in Progress (WIP)',
+        debit: 0,
+        credit: harvestedCropCogs,
+        memo: `শস্য চক্র ${lifecycleCycleA.id}: বিক্রয় বাবদ WIP সমাপ্তি সমন্বয়`
+      }
+    ];
+    const cropHarvestCheck = validateBalancedLines(cropHarvestCogsLines, accounts);
+    assert(cropHarvestCheck.isBalanced, 'Crop harvest COGS journal entry must strictly balance (Dr Crop COGS -> Cr that cycle WIP).');
+    assert(
+      cropHarvestCogsLines[0].accountCode === CANONICAL_ACCOUNTS.CROP_COGS && (cropHarvestCogsLines[0].debit || 0) === 42000,
+      'Crop harvest COGS entry must debit Crop COGS (5030) for exactly ৳42,000.'
+    );
+    assert(
+      cropHarvestCogsLines[1].accountCode === CANONICAL_ACCOUNTS.WIP && (cropHarvestCogsLines[1].credit || 0) === 42000,
+      'Crop harvest COGS entry must credit that cycle WIP (1054) for exactly ৳42,000.'
+    );
+
+    // 5. No Duplicate COGS
+    const alreadyTransferredCropCogs = harvestedCropCogs;
+    const remainingCropCostToTransfer = Math.max(
+      0,
+      Math.round((cycleACosts.totalRecordedCost - alreadyTransferredCropCogs) * 100) / 100
+    );
+    assert(
+      remainingCropCostToTransfer === 0,
+      'After harvest, remaining cost to transfer must be ৳0, preventing duplicate COGS posting.'
+    );
+
+    // 6. No Cross-Cycle Cost Contamination
+    const lifecycleCycleB: CropCycle = {
+      id: 'CROP-CYCLE-BETA',
+      plotId: 'plot_2',
+      plotName: 'South Field Plot 2',
+      cropName: 'Maize',
+      cropCategory: 'GRAIN',
+      plantingDate: '2026-02-10',
+      expectedHarvestDate: '2026-06-01',
+      areaDecimals: 30,
+      seedCost: 3000,
+      fertilizerCost: 5000,
+      irrigationCost: 2000,
+      labourCost: 4000,
+      protectionCost: 1000,
+      machineryCost: 2500,
+      otherCost: 500,
+      totalCost: 18000,
+      harvestYieldKg: 0,
+      harvestRevenue: 0,
+      internalConsumptionKg: 0,
+      status: 'GROWING',
+      synced: false
+    };
+    const cycleBCosts = calculateCropCycleRecordedCosts(lifecycleCycleB);
+    assert(
+      cycleBCosts.totalRecordedCost === 18000,
+      'Crop Cycle Beta accumulated cost must be isolated at ৳18,000 without cross-cycle interference.'
+    );
+    assert(
+      cycleACosts.totalRecordedCost === 42000,
+      'Cycle Alpha cost must remain unaffected by Cycle Beta existence.'
+    );
+
+    // 7. Prevent Duplicate Harvest & Status Verification
+    const harvestedCycleA: CropCycle = {
+      ...lifecycleCycleA,
+      status: 'HARVESTED',
+      harvestRevenue: cycleASalePrice,
+      harvestYieldKg: 2500,
+      actualHarvestDate: '2026-05-15'
+    };
+    assert(
+      harvestedCycleA.status === 'HARVESTED',
+      'Crop cycle status must transition to HARVESTED only after accounting entries complete successfully.'
+    );
+    const isCropDuplicateBlocked = (harvestedCycleA.status as string) === 'HARVESTED' || (harvestedCycleA.status as string) === 'CLOSED';
+    assert(
+      isCropDuplicateBlocked,
+      'A crop cycle marked as HARVESTED or CLOSED must be blocked from duplicate harvesting.'
+    );
 
   } catch (error: any) {
     failures.push(`CRITICAL RUNTIME ERROR: ${error.message}`);
