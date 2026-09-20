@@ -216,6 +216,16 @@ export const DEFAULT_CHART_OF_ACCOUNTS: Account[] = [
     isActive: true
   },
   {
+    id: 'acc_2050',
+    code: '2050',
+    nameBn: 'বিনিয়োগকারীর লভ্যাংশ প্রদেয় (Investor Profit Payable)',
+    nameEn: 'Investor Profit Payable',
+    accountClass: 'LIABILITY',
+    normalBalance: 'CREDIT',
+    isSystem: true,
+    isActive: true
+  },
+  {
     id: 'acc_2110',
     code: '2110',
     nameBn: 'স্বল্পমেয়াদী ঋণ (Short-Term Loans)',
@@ -282,6 +292,16 @@ export const DEFAULT_CHART_OF_ACCOUNTS: Account[] = [
     code: '3060',
     nameBn: 'আয় সারাংশ হিসাব (Income Summary)',
     nameEn: 'Income Summary',
+    accountClass: 'EQUITY',
+    normalBalance: 'DEBIT',
+    isSystem: true,
+    isActive: true
+  },
+  {
+    id: 'acc_3070',
+    code: '3070',
+    nameBn: 'মুনাফা বণ্টন / লভ্যাংশ (Profit Distribution)',
+    nameEn: 'Profit Distribution',
     accountClass: 'EQUITY',
     normalBalance: 'DEBIT',
     isSystem: true,
@@ -560,6 +580,16 @@ export const DEFAULT_CHART_OF_ACCOUNTS: Account[] = [
     code: '7010',
     nameBn: 'সরকারি প্রণোদনা/ভর্তুকি (Government Subsidy)',
     nameEn: 'Government Subsidy',
+    accountClass: 'OTHER_INCOME',
+    normalBalance: 'CREDIT',
+    isSystem: true,
+    isActive: true
+  },
+  {
+    id: 'acc_7020',
+    code: '7020',
+    nameBn: 'স্থায়ী সম্পদ বিক্রয়জনিত লাভ/ক্ষতি (Gain/Loss on Asset Disposal)',
+    nameEn: 'Gain/Loss on Asset Disposal',
     accountClass: 'OTHER_INCOME',
     normalBalance: 'CREDIT',
     isSystem: true,

@@ -2,8 +2,20 @@ import { validateBalancedLines } from '../accounting/accountingEngine';
 import { DEFAULT_CHART_OF_ACCOUNTS } from '../accounting/defaultAccounts';
 import { getInventoryAssetAccount, getPaymentAccount, CANONICAL_ACCOUNTS } from '../accounting/accountMapping';
 import { generateTransactionNumber, generateUniqueId } from '../utils/idGenerator';
-import { JournalLine, Animal, AnimalEvent, InventoryItem, Party, Sale, Purchase, FishBatch, CropCycle } from '../types';
-import { calculateFishBatchRecordedCosts, calculateCropCycleRecordedCosts, buildFishExpenseCreditLines, buildCropExpenseCreditLines } from '../services/transactionService';
+import { JournalLine, Animal, AnimalEvent, InventoryItem, Party, Sale, Purchase, FishBatch, CropCycle, FixedAsset } from '../types';
+import {
+  calculateFishBatchRecordedCosts,
+  calculateCropCycleRecordedCosts,
+  buildFishExpenseCreditLines,
+  buildCropExpenseCreditLines,
+  calculateAnimalRecordedCosts,
+  buildLivestockCostCreditLines,
+  executeInvestorTransaction,
+  executeInvestorProfitAllocationTransaction,
+  executeInvestorProfitPaymentTransaction,
+  executeInvestorCapitalReturnTransaction
+} from '../services/transactionService';
+import { executeAssetDepreciationAtomic, executeFixedAssetDisposalTransaction } from '../accounting/depreciationService';
 
 export interface TestResult {
   success: boolean;
@@ -29,6 +41,10 @@ export class MockTable<T extends { id: string }> {
   async put(item: T): Promise<string> {
     this.store.set(item.id, JSON.parse(JSON.stringify(item)));
     return item.id;
+  }
+
+  async add(item: T): Promise<string> {
+    return this.put(item);
   }
 
   async bulkPut(items: T[]): Promise<void> {
@@ -61,7 +77,19 @@ export class MockTable<T extends { id: string }> {
     return this.store.size;
   }
 
-  where(field: keyof T) {
+  _snapshot(): Map<string, T> {
+    const copy = new Map<string, T>();
+    for (const [k, v] of this.store.entries()) {
+      copy.set(k, JSON.parse(JSON.stringify(v)));
+    }
+    return copy;
+  }
+
+  _restore(snap: Map<string, T>) {
+    this.store = snap;
+  }
+
+  where(field: keyof T | string) {
     return {
       equals: (val: any) => ({
         toArray: async (): Promise<T[]> => {
@@ -69,8 +97,36 @@ export class MockTable<T extends { id: string }> {
         },
         count: async (): Promise<number> => {
           return Array.from(this.store.values()).filter((item) => (item as any)[field] === val).length;
+        },
+        first: async (): Promise<T | undefined> => {
+          return Array.from(this.store.values()).find((item) => (item as any)[field] === val);
         }
       })
+    };
+  }
+
+  orderBy(field: keyof T | string) {
+    return {
+      reverse: () => ({
+        toArray: async (): Promise<T[]> => {
+          const items = await this.toArray();
+          return items.sort((a, b) => String((b as any)[field] || '').localeCompare(String((a as any)[field] || '')));
+        },
+        first: async (): Promise<T | undefined> => {
+          const items = await this.toArray();
+          const sorted = items.sort((a, b) => String((b as any)[field] || '').localeCompare(String((a as any)[field] || '')));
+          return sorted[0];
+        }
+      }),
+      toArray: async (): Promise<T[]> => {
+        const items = await this.toArray();
+        return items.sort((a, b) => String((a as any)[field] || '').localeCompare(String((b as any)[field] || '')));
+      },
+      first: async (): Promise<T | undefined> => {
+        const items = await this.toArray();
+        const sorted = items.sort((a, b) => String((a as any)[field] || '').localeCompare(String((b as any)[field] || '')));
+        return sorted[0];
+      }
     };
   }
 
@@ -107,7 +163,22 @@ export function createMockAgroDatabase() {
     investors: new MockTable<any>(),
     fixedAssets: new MockTable<any>(),
     reminders: new MockTable<any>(),
-    recurringExpenseTemplates: new MockTable<any>()
+    recurringExpenseTemplates: new MockTable<any>(),
+    auditLogs: new MockTable<any>(),
+    closedPeriods: new MockTable<any>(),
+    transaction: async (_mode: string, tables: any[], callback: () => Promise<any>) => {
+      const snapshots = tables.map((t) => ({ table: t, snap: t && t._snapshot ? t._snapshot() : null }));
+      try {
+        return await callback();
+      } catch (err) {
+        for (const { table, snap } of snapshots) {
+          if (table && table._restore && snap) {
+            table._restore(snap);
+          }
+        }
+        throw err;
+      }
+    }
   };
 }
 
@@ -1207,6 +1278,1146 @@ async function runRegressionTestsInternal(): Promise<TestResult> {
       isCropDuplicateBlocked,
       'A crop cycle marked as HARVESTED or CLOSED must be blocked from duplicate harvesting.'
     );
+
+    // ----------------------------------------------------
+    // TEST 23: Full Livestock Accumulated Cost & COGS Lifecycle (Task 6 Verification)
+    // ----------------------------------------------------
+    // 1. Purchase: Animal initial capitalized acquisition
+    const initialPurchaseCost = 50000;
+    const testAnimalCow: Animal = {
+      id: 'COW-TEST-001',
+      tag: 'TAG-COW-001',
+      species: 'CATTLE',
+      breed: 'Holstein Friesian Cross',
+      gender: 'FEMALE',
+      birthDate: '2024-01-10',
+      purchaseDate: '2025-01-15',
+      purchaseCost: initialPurchaseCost,
+      accumulatedFeedCost: 0,
+      accumulatedMedCost: 0,
+      accumulatedLabourCost: 0,
+      otherCosts: 0,
+      totalCost: initialPurchaseCost,
+      currentWeightKg: 350,
+      location: 'Shed-1',
+      status: 'ACTIVE',
+      synced: false
+    };
+
+    const initialBreakdown = calculateAnimalRecordedCosts(testAnimalCow);
+    assert(
+      initialBreakdown.purchaseCost === 50000 &&
+      initialBreakdown.feedCost === 0 &&
+      initialBreakdown.medicineCost === 0 &&
+      initialBreakdown.labourCost === 0 &&
+      initialBreakdown.otherCost === 0 &&
+      initialBreakdown.totalRecordedCost === 50000,
+      'Initial animal cost breakdown must reflect exact initial purchase cost of ৳50,000 without invented costs.'
+    );
+
+    // 2. Production Costs Incurred (Feed, Medicine/Vet, Labour, Other)
+    const feedCostIncurred = 15000;
+    const medCostIncurred = 5000;
+    const labourCostIncurred = 8000;
+    const otherCostIncurred = 2000;
+
+    const raisedAnimalCow: Animal = {
+      ...testAnimalCow,
+      accumulatedFeedCost: feedCostIncurred,
+      accumulatedMedCost: medCostIncurred,
+      accumulatedLabourCost: labourCostIncurred,
+      otherCosts: otherCostIncurred,
+      totalCost: initialPurchaseCost + feedCostIncurred + medCostIncurred + labourCostIncurred + otherCostIncurred, // ৳80,000
+      currentWeightKg: 480
+    };
+
+    // 3. Accumulated Cost Reconciliation
+    const raisedBreakdown = calculateAnimalRecordedCosts(raisedAnimalCow);
+    const expectedAccumulatedCost = 50000 + 15000 + 5000 + 8000 + 2000; // ৳80,000
+
+    assert(
+      raisedBreakdown.totalRecordedCost === expectedAccumulatedCost && raisedBreakdown.totalRecordedCost === 80000,
+      `Livestock accumulated cost must strictly equal sum of Purchase + Feed + Medicine + Labour + Other = ৳80,000 (got ৳${raisedBreakdown.totalRecordedCost}).`
+    );
+    assert(
+      raisedBreakdown.purchaseCost === 50000,
+      'Capitalized purchase cost must be ৳50,000.'
+    );
+    assert(
+      raisedBreakdown.feedCost === 15000,
+      'Accumulated feed cost must reconcile to ৳15,000.'
+    );
+    assert(
+      raisedBreakdown.medicineCost === 5000,
+      'Accumulated medicine/vet cost must reconcile to ৳5,000.'
+    );
+    assert(
+      raisedBreakdown.labourCost === 8000,
+      'Accumulated labour cost must reconcile to ৳8,000.'
+    );
+    assert(
+      raisedBreakdown.otherCost === 2000,
+      'Other production cost must reconcile to ৳2,000.'
+    );
+
+    // 4. Sale & COGS: Sale COGS must use the applicable accumulated cost (৳80,000), not just purchase cost (৳50,000)
+    const cowSalePrice = 120000;
+    const livestockCogsToDerecognize = raisedBreakdown.totalRecordedCost;
+    assert(
+      livestockCogsToDerecognize === 80000 && (livestockCogsToDerecognize as number) !== initialPurchaseCost,
+      `Sale COGS must use the full accumulated cost of ৳80,000, NOT just the initial purchase cost of ৳50,000.`
+    );
+
+    // Generate balanced credit lines for the derecognized cost
+    const livestockCreditLines = await buildLivestockCostCreditLines(
+      raisedAnimalCow,
+      livestockCogsToDerecognize,
+      accounts
+    );
+    const totalCreditsSum = Math.round(
+      livestockCreditLines.reduce((sum, line) => sum + (line.credit || 0), 0) * 100
+    ) / 100;
+
+    assert(
+      totalCreditsSum === livestockCogsToDerecognize,
+      `Total credit lines (৳${totalCreditsSum}) must match the COGS amount (৳${livestockCogsToDerecognize}) exactly.`
+    );
+
+    // Verify credit lines structure reconciles without double-counting
+    const assetCreditLine = livestockCreditLines.find((l) => l.accountCode === CANONICAL_ACCOUNTS.LIVESTOCK_ASSETS);
+    const feedCreditLine = livestockCreditLines.find((l) => l.accountCode === CANONICAL_ACCOUNTS.FEED_EXPENSE);
+    const medCreditLine = livestockCreditLines.find((l) => l.accountCode === CANONICAL_ACCOUNTS.VET_MEDICINE);
+    const labourCreditLine = livestockCreditLines.find((l) => l.accountCode === CANONICAL_ACCOUNTS.FARM_LABOUR_WAGES);
+    const otherCreditLine = livestockCreditLines.find((l) => l.accountCode === CANONICAL_ACCOUNTS.MISCELLANEOUS_EXPENSE);
+
+    assert(
+      Boolean(assetCreditLine) && assetCreditLine?.credit === 50000,
+      'Livestock Asset (1580) must be credited for ৳50,000.'
+    );
+    assert(
+      Boolean(feedCreditLine) && feedCreditLine?.credit === 15000,
+      'Feed Expense (6010) must be credited for ৳15,000 to reconcile raising cost into COGS.'
+    );
+    assert(
+      Boolean(medCreditLine) && medCreditLine?.credit === 5000,
+      'Veterinary & Medicine Expense (6040) must be credited for ৳5,000.'
+    );
+    assert(
+      Boolean(labourCreditLine) && labourCreditLine?.credit === 8000,
+      'Farm Labour Wages (6020) must be credited for ৳8,000.'
+    );
+    assert(
+      Boolean(otherCreditLine) && otherCreditLine?.credit === 2000,
+      'Miscellaneous Production Expense (6090) must be credited for ৳2,000.'
+    );
+
+    // Full Sale Journal Entry Verification
+    const fullSaleJournalLines: JournalLine[] = [
+      // Revenue leg
+      {
+        accountId: 'acc_1010',
+        accountCode: CANONICAL_ACCOUNTS.CASH,
+        accountName: 'নগদ টাকা (Cash on Hand)',
+        debit: cowSalePrice,
+        credit: 0,
+        memo: `পশু বিক্রয়: ${raisedAnimalCow.id}`
+      },
+      {
+        accountId: 'acc_4020',
+        accountCode: CANONICAL_ACCOUNTS.LIVESTOCK_REVENUE,
+        accountName: 'পশু বিক্রয় আয় (Livestock Sales Revenue)',
+        debit: 0,
+        credit: cowSalePrice,
+        memo: `${raisedAnimalCow.breed} বিক্রয় রাজস্ব`
+      },
+      // COGS leg
+      {
+        accountId: 'acc_5020',
+        accountCode: CANONICAL_ACCOUNTS.LIVESTOCK_COGS,
+        accountName: 'Livestock COGS',
+        debit: livestockCogsToDerecognize,
+        credit: 0,
+        memo: `${raisedAnimalCow.breed} পুঞ্জীভূত উৎপাদন ব্যয় (COGS)`
+      },
+      ...livestockCreditLines
+    ];
+
+    const saleCheck = validateBalancedLines(fullSaleJournalLines, accounts);
+    assert(
+      saleCheck.isBalanced,
+      'Full livestock sale journal entry (Revenue + full accumulated COGS) must strictly balance.'
+    );
+
+    // Accounting reconciliation check: No double counting in P&L
+    // Gross Margin = Revenue (120,000) - COGS (80,000) = 40,000
+    // Expenses (Feed 15k, Med 5k, Labour 8k, Other 2k = 30k) are credited 30k upon derecognition,
+    // so net P&L reflects exactly ৳40,000 profit rather than subtracting 30k twice.
+    const netProfit = cowSalePrice - livestockCogsToDerecognize;
+    assert(
+      netProfit === 40000,
+      `Livestock sale net profit must be exactly ৳40,000 (got ৳${netProfit}).`
+    );
+
+    // 5. Write-off Verification with Accumulated Cost
+    const deceasedAnimalCow: Animal = {
+      id: 'COW-TEST-002',
+      tag: 'TAG-COW-002',
+      species: 'CATTLE',
+      breed: 'Sahiwal',
+      gender: 'MALE',
+      birthDate: '2024-03-01',
+      purchaseDate: '2025-02-01',
+      purchaseCost: 30000,
+      accumulatedFeedCost: 10000,
+      accumulatedMedCost: 5000,
+      accumulatedLabourCost: 0,
+      otherCosts: 0,
+      totalCost: 45000,
+      currentWeightKg: 400,
+      location: 'Shed-2',
+      status: 'ACTIVE',
+      synced: false
+    };
+    const deceasedBreakdown = calculateAnimalRecordedCosts(deceasedAnimalCow);
+    assert(
+      deceasedBreakdown.totalRecordedCost === 45000,
+      'Deceased animal total accumulated cost must be ৳45,000.'
+    );
+
+    const writeOffCreditLines = await buildLivestockCostCreditLines(
+      deceasedAnimalCow,
+      deceasedBreakdown.totalRecordedCost,
+      accounts
+    );
+    const writeOffJournalLines: JournalLine[] = [
+      {
+        accountId: 'acc_8020',
+        accountCode: CANONICAL_ACCOUNTS.LIVESTOCK_WRITEOFF,
+        accountName: 'Livestock Write-off',
+        debit: deceasedBreakdown.totalRecordedCost,
+        credit: 0,
+        memo: `পশু অবলোপন (DECEASED): ${deceasedAnimalCow.id} পুঞ্জীভূত ব্যয়`
+      },
+      ...writeOffCreditLines
+    ];
+    const writeOffCheck = validateBalancedLines(writeOffJournalLines, accounts);
+    assert(
+      writeOffCheck.isBalanced,
+      'Livestock write-off journal entry with full accumulated cost must strictly balance.'
+    );
+
+    // 6. Cross-Animal Cost Isolation
+    const isolatedAnimal: Animal = {
+      id: 'GOAT-TEST-001',
+      tag: 'TAG-GOAT-001',
+      species: 'GOAT',
+      breed: 'Black Bengal',
+      gender: 'MALE',
+      birthDate: '2024-05-01',
+      purchaseDate: '2025-03-01',
+      purchaseCost: 8000,
+      accumulatedFeedCost: 2000,
+      accumulatedMedCost: 500,
+      accumulatedLabourCost: 1000,
+      otherCosts: 0,
+      totalCost: 11500,
+      currentWeightKg: 25,
+      location: 'Goat Shed',
+      status: 'ACTIVE',
+      synced: false
+    };
+    const goatBreakdown = calculateAnimalRecordedCosts(isolatedAnimal);
+    assert(
+      goatBreakdown.totalRecordedCost === 11500,
+      'Goat accumulated cost must be isolated at ৳11,500 without interference from cow costs.'
+    );
+    assert(
+      raisedBreakdown.totalRecordedCost === 80000,
+      'Cow accumulated cost must remain strictly ৳80,000 unaffected by other animals.'
+    );
+
+    // 7. Preservation of existing livestock data
+    const legacyAnimalWithoutBreakdown: Animal = {
+      id: 'LEGACY-COW-099',
+      tag: 'TAG-LEGACY-099',
+      species: 'CATTLE',
+      breed: 'Local Deshi',
+      gender: 'FEMALE',
+      birthDate: '2022-01-01',
+      purchaseDate: '2023-01-01',
+      purchaseCost: 25000,
+      accumulatedFeedCost: 0,
+      accumulatedMedCost: 0,
+      accumulatedLabourCost: 0,
+      otherCosts: 0,
+      totalCost: 25000,
+      currentWeightKg: 280,
+      location: 'Shed-1',
+      status: 'ACTIVE',
+      synced: false
+    };
+    const legacyBreakdown = calculateAnimalRecordedCosts(legacyAnimalWithoutBreakdown);
+    assert(
+      legacyBreakdown.totalRecordedCost === 25000 && legacyBreakdown.purchaseCost === 25000,
+      'Existing livestock data without detailed cost breakdown must safely fallback to purchaseCost / totalCost without error.'
+    );
+
+    // ----------------------------------------------------
+    // TEST 24: FIXED ASSET ACCOUNTING ATOMICITY (TASK 7)
+    // ----------------------------------------------------
+    const assetMockDb = createMockAgroDatabase();
+
+    // Populate default accounts into mock db
+    for (const acc of DEFAULT_CHART_OF_ACCOUNTS) {
+      await assetMockDb.accounts.put(acc);
+    }
+    // Cash account
+    await assetMockDb.cashBankAccounts.put({
+      id: 'cb_cash_1',
+      accountType: 'CASH',
+      name: 'নগদ টাকা (Cash on Hand)',
+      currentBalance: 50000,
+      synced: false
+    });
+
+    const testAsset: FixedAsset = {
+      id: 'AST-TEST-001',
+      name: 'পাওয়ার টিলার (Power Tiller)',
+      category: 'MACHINERY',
+      purchaseDate: '2026-01-01',
+      originalCost: 120000,
+      usefulLifeYears: 10,
+      salvageValue: 0,
+      accumulatedDepreciation: 0,
+      currentBookValue: 120000,
+      depreciationRatePercent: 10, // 10% annual -> 1% monthly = 1000/mo
+      lastDepreciationDate: '2026-01-01',
+      status: 'ACTIVE',
+      synced: false
+    };
+    await assetMockDb.fixedAssets.put(testAsset);
+
+    // 1. Normal depreciation
+    const deprResult = await executeAssetDepreciationAtomic(
+      testAsset.id,
+      { currentUserId: 'TESTER_1', targetDate: '2026-03-01' },
+      assetMockDb
+    );
+    assert(
+      deprResult.monthsPosted === 2,
+      'Normal depreciation for Jan to Mar must post exactly 2 monthly periods.'
+    );
+    assert(
+      deprResult.totalDepreciation === 2000,
+      'Depreciation amount for 2 months must equal ৳2,000.'
+    );
+    assert(
+      deprResult.newAccumulatedDepreciation === 2000,
+      'Asset accumulated depreciation must be updated to ৳2,000.'
+    );
+    assert(
+      deprResult.newBookValue === 118000,
+      'Asset book value must be updated to ৳118,000.'
+    );
+
+    const assetAfterDepr = await assetMockDb.fixedAssets.get(testAsset.id);
+    assert(
+      assetAfterDepr?.accumulatedDepreciation === 2000 && assetAfterDepr?.currentBookValue === 118000,
+      'Asset register in database must reflect journal entries in lockstep.'
+    );
+
+    const deprJournalEntries = await assetMockDb.journalEntries.toArray();
+    assert(
+      deprJournalEntries.length === 2,
+      'Exactly 2 journal entries must be written for the 2 depreciation months.'
+    );
+    for (const je of deprJournalEntries) {
+      assert(je.lines.length === 2, 'Depreciation journal entry must contain 2 lines.');
+      assert(je.lines[0].debit === 1000 && je.lines[1].credit === 1000, 'Depreciation journal lines must be balanced.');
+    }
+
+    // 2. Repeated depreciation (duplicate protection)
+    const repeatedDeprResult = await executeAssetDepreciationAtomic(
+      testAsset.id,
+      { currentUserId: 'TESTER_1', targetDate: '2026-03-01' },
+      assetMockDb
+    );
+    assert(
+      repeatedDeprResult.monthsPosted === 0,
+      'Repeated depreciation for the same period must post 0 new entries.'
+    );
+    assert(
+      repeatedDeprResult.totalDepreciation === 0,
+      'Repeated depreciation must post ৳0 total depreciation.'
+    );
+    const journalEntriesAfterRetry = await assetMockDb.journalEntries.toArray();
+    assert(
+      journalEntriesAfterRetry.length === 2,
+      'Repeated depreciation must not create duplicate journal entries.'
+    );
+
+    // 3. Normal Disposal
+    // Carrying value = 120,000 - 2,000 = 118,000.
+    // Sale proceeds = 110,000.
+    // Loss = 110,000 - 118,000 = -8,000.
+    const initialCash = (await assetMockDb.cashBankAccounts.get('cb_cash_1'))?.currentBalance || 0;
+    const disposalResult = await executeFixedAssetDisposalTransaction(
+      {
+        assetId: testAsset.id,
+        disposalDate: '2026-03-15',
+        disposalProceeds: 110000,
+        paymentMethod: 'CASH',
+        disposalReason: 'Upgrading to higher capacity model',
+        currentUserId: 'TESTER_1'
+      },
+      assetMockDb
+    );
+
+    assert(
+      disposalResult.carryingValue === 118000,
+      'Disposal carrying value must be cost (120,000) minus accumulated depreciation (2,000) = ৳118,000.'
+    );
+    assert(
+      disposalResult.gainLoss === -8000,
+      'Loss on disposal must be calculated from carrying value: 110,000 - 118,000 = -৳8,000.'
+    );
+
+    const disposedAsset = await assetMockDb.fixedAssets.get(testAsset.id);
+    assert(
+      disposedAsset?.status === 'DISPOSED',
+      'Disposed asset status must be DISPOSED.'
+    );
+    assert(
+      disposedAsset?.originalCost === 0 &&
+      disposedAsset?.accumulatedDepreciation === 0 &&
+      disposedAsset?.currentBookValue === 0,
+      'Active balance sheet values (cost, accumulated depreciation, book value) must be reset to 0.'
+    );
+    assert(
+      disposedAsset?.disposedOriginalCost === 120000 &&
+      disposedAsset?.disposedAccumulatedDepreciation === 2000 &&
+      disposedAsset?.disposalProceeds === 110000 &&
+      disposedAsset?.gainLossOnDisposal === -8000,
+      'Historical cost, accumulated depreciation, proceeds, and gain/loss must be preserved.'
+    );
+
+    const cashAfterDisposal = (await assetMockDb.cashBankAccounts.get('cb_cash_1'))?.currentBalance || 0;
+    assert(
+      cashAfterDisposal === initialCash + 110000,
+      'Cash balance must be atomically credited with sale proceeds (50,000 + 110,000 = ৳160,000).'
+    );
+
+    const dispJournal = await assetMockDb.journalEntries.get(disposalResult.journalEntryId);
+    assert(
+      Boolean(dispJournal),
+      'Disposal journal entry must exist.'
+    );
+    const dispDebits = dispJournal?.lines.reduce((s: number, l: any) => s + (l.debit || 0), 0);
+    const dispCredits = dispJournal?.lines.reduce((s: number, l: any) => s + (l.credit || 0), 0);
+    assert(
+      dispDebits === 120000 && dispCredits === 120000,
+      'Disposal journal entry debits and credits must balance at exactly original cost (৳120,000).'
+    );
+
+    // 4. Repeated Disposal / Disposal of already disposed asset
+    let repeatedDisposalError = false;
+    try {
+      await executeFixedAssetDisposalTransaction(
+        {
+          assetId: testAsset.id,
+          disposalDate: '2026-03-20',
+          disposalProceeds: 110000,
+          paymentMethod: 'CASH',
+          currentUserId: 'TESTER_1'
+        },
+        assetMockDb
+      );
+    } catch (err: any) {
+      repeatedDisposalError = true;
+      assert(
+        err.message.includes('ইতোমধ্যে অপসারিত') || err.message.includes('already disposed'),
+        'Repeated disposal must fail with clear already-disposed message.'
+      );
+    }
+    assert(repeatedDisposalError, 'Calling disposal on an already disposed asset must be rejected.');
+
+    // 5. Failure / Rollback consistency
+    const assetForRollback: FixedAsset = {
+      id: 'AST-TEST-ROLLBACK',
+      name: 'জেনারেটর (Generator)',
+      category: 'MACHINERY',
+      purchaseDate: '2026-01-01',
+      originalCost: 50000,
+      usefulLifeYears: 5,
+      salvageValue: 0,
+      accumulatedDepreciation: 0,
+      currentBookValue: 50000,
+      depreciationRatePercent: 20,
+      lastDepreciationDate: '2026-01-01',
+      status: 'ACTIVE',
+      synced: false
+    };
+    await assetMockDb.fixedAssets.put(assetForRollback);
+    const cashBeforeFailedDisposal = (await assetMockDb.cashBankAccounts.get('cb_cash_1'))?.currentBalance || 0;
+    const journalCountBeforeFailed = (await assetMockDb.journalEntries.toArray()).length;
+
+    // Simulate disposal into closed period (respect closed periods requirement)
+    await assetMockDb.closedPeriods.put({
+      id: 'cp_2026_01',
+      endDate: '2026-01-31',
+      closedAt: '2026-02-01T00:00:00Z',
+      synced: false
+    });
+
+    let rollbackErrorCaught = false;
+    try {
+      await executeFixedAssetDisposalTransaction(
+        {
+          assetId: assetForRollback.id,
+          disposalDate: '2026-01-15', // inside closed period!
+          disposalProceeds: 40000,
+          paymentMethod: 'CASH',
+          currentUserId: 'TESTER_1'
+        },
+        assetMockDb
+      );
+    } catch (err: any) {
+      rollbackErrorCaught = true;
+      assert(
+        err.message.includes('সীমাবদ্ধতা') || err.message.includes('closed'),
+        'Disposal inside closed period must throw closed period restriction error.'
+      );
+    }
+    assert(rollbackErrorCaught, 'Closed period check must throw and abort disposal.');
+
+    // Verify atomic rollback
+    const assetAfterFailedDisposal = await assetMockDb.fixedAssets.get(assetForRollback.id);
+    assert(
+      assetAfterFailedDisposal?.status === 'ACTIVE',
+      'Asset status must remain ACTIVE after aborted disposal transaction.'
+    );
+    assert(
+      assetAfterFailedDisposal?.originalCost === 50000,
+      'Asset original cost must remain ৳50,000 unaffected after rollback.'
+    );
+    const cashAfterFailedDisposal = (await assetMockDb.cashBankAccounts.get('cb_cash_1'))?.currentBalance || 0;
+    assert(
+      cashAfterFailedDisposal === cashBeforeFailedDisposal,
+      'Cash balance must not change on aborted disposal transaction.'
+    );
+    const journalCountAfterFailed = (await assetMockDb.journalEntries.toArray()).length;
+    assert(
+      journalCountAfterFailed === journalCountBeforeFailed,
+      'No journal entry must remain after aborted disposal transaction.'
+    );
+
+    // Also test depreciation rollback consistency on simulated failure
+    const assetDeprRollback: FixedAsset = {
+      id: 'AST-DEPR-ROLLBACK',
+      name: 'সৌর প্যানেল (Solar Panel)',
+      category: 'EQUIPMENT',
+      purchaseDate: '2026-01-01',
+      originalCost: 60000,
+      usefulLifeYears: 5,
+      salvageValue: 0,
+      accumulatedDepreciation: 0,
+      currentBookValue: 60000,
+      depreciationRatePercent: 20,
+      lastDepreciationDate: '2026-01-01',
+      status: 'ACTIVE',
+      synced: false
+    };
+    await assetMockDb.fixedAssets.put(assetDeprRollback);
+    const journalCountBeforeDeprFail = (await assetMockDb.journalEntries.toArray()).length;
+
+    // Simulate failure during transaction by passing invalid or sabotaged update
+    let deprFailCaught = false;
+    try {
+      await assetMockDb.transaction(
+        'rw',
+        [assetMockDb.fixedAssets, assetMockDb.journalEntries, assetMockDb.accounts, assetMockDb.auditLogs, assetMockDb.closedPeriods],
+        async () => {
+          // Post normal depreciation
+          await executeAssetDepreciationAtomic(
+            assetDeprRollback.id,
+            { currentUserId: 'TESTER_1', targetDate: '2026-03-01' },
+            assetMockDb
+          );
+          // Intentionally throw midway before completing batch
+          throw new Error('Simulated mid-transaction failure for depreciation rollback test');
+        }
+      );
+    } catch (err: any) {
+      deprFailCaught = true;
+      assert(err.message.includes('Simulated mid-transaction failure'), 'Simulated failure caught.');
+    }
+    assert(deprFailCaught, 'Depreciation transaction must catch simulated failure.');
+
+    const assetAfterDeprFail = await assetMockDb.fixedAssets.get(assetDeprRollback.id);
+    assert(
+      assetAfterDeprFail?.accumulatedDepreciation === 0,
+      'Asset accumulated depreciation must roll back to 0 on failure.'
+    );
+    assert(
+      assetAfterDeprFail?.lastDepreciationDate === '2026-01-01',
+      'Asset lastDepreciationDate must roll back to 2026-01-01 on failure.'
+    );
+    const journalCountAfterDeprFail = (await assetMockDb.journalEntries.toArray()).length;
+    assert(
+      journalCountAfterDeprFail === journalCountBeforeDeprFail,
+      'All journal entries posted during aborted depreciation must be completely rolled back.'
+    );
+
+    // -------------------------------------------------------------------------
+    // TASK 8: INVESTOR ACCOUNTING MODEL VERIFICATION (SLEEPING PARTNER)
+    // -------------------------------------------------------------------------
+    const invMockDb = createMockAgroDatabase();
+    await invMockDb.accounts.bulkPut(DEFAULT_CHART_OF_ACCOUNTS);
+    const invBankId = 'bank_acc_inv_1';
+    await invMockDb.cashBankAccounts.put({
+      id: invBankId,
+      accountName: 'ইসলামী ব্যাংক বাংলাদেশ (Islami Bank)',
+      accountType: 'BANK',
+      accountNumber: 'IBBL-001',
+      currentBalance: 50000,
+      isActive: true,
+      synced: false
+    });
+
+    // STEP 1: Investor Capital Contributed
+    // Investor: "রহিম পার্টনার" (Sleeping partner), capital ৳100,000, profit share 40% (working partner 60%)
+    const contribRes = await executeInvestorTransaction(
+      {
+        investorName: 'রহিম পার্টনার',
+        contribution: 100000,
+        profitShare: 40,
+        profitSharingRatio: 40,
+        targetAccountId: invBankId,
+        currentUserId: 'usr_owner',
+        phone: '01711000000',
+        date: '2026-01-10'
+      },
+      invMockDb
+    );
+
+    assert(!!contribRes.investor && !!contribRes.journalEntryId, 'Contribution transaction must succeed.');
+    const invAfterContrib = await invMockDb.investors.get(contribRes.investor.id);
+    assert(invAfterContrib?.capitalContributed === 100000, 'Capital contributed must be 100,000.');
+    assert(invAfterContrib?.currentCapitalBalance === 100000, 'Current capital balance must be 100,000.');
+    assert(invAfterContrib?.profitSharingRatio === 40, 'Agreed profit sharing ratio must be 40%.');
+    assert(invAfterContrib?.workingPartnerShareRatio === 60, 'Working partner share ratio must be 60%.');
+    assert(invAfterContrib?.totalProfitAllocated === 0, 'Initial profit allocated must be 0.');
+    assert(invAfterContrib?.profitPayable === 0, 'Initial profit payable must be 0.');
+    assert(invAfterContrib?.totalProfitPaid === 0, 'Initial profit paid must be 0.');
+    assert(invAfterContrib?.totalCapitalReturned === 0, 'Initial capital returned must be 0.');
+
+    // GL Rule 1: Capital is NOT revenue
+    // Check Journal Entry: Dr 1030 Bank, Cr 3020 Investor Capital
+    const contribJournal = await invMockDb.journalEntries.get(contribRes.journalEntryId);
+    assert(contribJournal !== undefined, 'Contribution journal entry must exist.');
+    const contribDrBank = contribJournal.lines.find((l: any) => l.accountCode === '1030' && l.debit === 100000);
+    const contribCrCap = contribJournal.lines.find((l: any) => l.accountCode === '3020' && l.credit === 100000);
+    const hasRevenueLine = contribJournal.lines.some((l: any) => l.accountCode.startsWith('4'));
+    const hasInterestLine = contribJournal.lines.some((l: any) => l.accountCode === '8010' || l.accountCode === '7010');
+    assert(!!contribDrBank && !!contribCrCap, 'Contribution must Dr 1030 Bank and Cr 3020 Investor Capital.');
+    assert(!hasRevenueLine, 'Rule: Capital contribution is NOT revenue (no 4000 accounts).');
+    assert(!hasInterestLine, 'Rule: No interest-bearing logic or expense for investor capital.');
+
+    // Check Bank balance: 50,000 + 100,000 = 150,000
+    const bankAfterContrib = await invMockDb.cashBankAccounts.get(invBankId);
+    assert(bankAfterContrib?.currentBalance === 150000, 'Bank balance must increase by 100,000 to 150,000.');
+
+    // STEP 2: Actual Profit Allocated
+    // Business earns actual net profit of ৳50,000.
+    // Investor gets 40% agreed share of actual profit: ৳20,000.
+    const allocRes = await executeInvestorProfitAllocationTransaction(
+      {
+        investorId: invAfterContrib.id,
+        actualBusinessProfit: 50000,
+        allocationDate: '2026-06-30',
+        notes: '২০২৬ অর্ধ-বার্ষিক প্রকৃত নীট মুনাফা বণ্টন',
+        currentUserId: 'usr_owner'
+      },
+      invMockDb
+    );
+
+    assert(allocRes.allocatedProfit === 20000, 'Allocated profit must equal 40% of 50,000 = 20,000.');
+    const invAfterAlloc = await invMockDb.investors.get(invAfterContrib.id);
+    assert(invAfterAlloc?.totalProfitAllocated === 20000, 'totalProfitAllocated must be 20,000.');
+    assert(invAfterAlloc?.profitPayable === 20000, 'profitPayable must be 20,000.');
+
+    // GL Rule 2: Profit share is NOT operating expense
+    // Check Journal Entry: Dr 3070 Profit Distribution / 3050 Retained Earnings (Equity), Cr 2050 Investor Profit Payable (Liability)
+    const allocJournal = await invMockDb.journalEntries.get(allocRes.journalEntryId);
+    assert(allocJournal !== undefined, 'Allocation journal entry must exist.');
+    const allocDrRetained = allocJournal.lines.find((l: any) => (l.accountCode === '3070' || l.accountCode === '3050') && l.debit === 20000);
+    const allocCrPayable = allocJournal.lines.find((l: any) => l.accountCode === '2050' && l.credit === 20000);
+    const hasOpExpenseLine = allocJournal.lines.some((l: any) => l.accountCode.startsWith('5') || l.accountCode.startsWith('6'));
+    assert(!!allocDrRetained && !!allocCrPayable, 'Profit allocation must Dr 3070 Profit Distribution/3050 Retained Earnings and Cr 2050 Investor Profit Payable.');
+    assert(!hasOpExpenseLine, 'Rule: Profit share allocation is NOT an operating expense (no 5000/6000 accounts).');
+
+    // STEP 3: Investor Profit Payable verification
+    // Current payable must be strictly 20,000 and separated from capital (100,000)
+    assert(invAfterAlloc?.profitPayable === 20000, 'Investor profit payable must be 20,000.');
+    assert(invAfterAlloc?.currentCapitalBalance === 100000, 'Investor capital balance remains 100,000 unchanged by profit allocation.');
+
+    // STEP 4: Profit Actually Paid
+    // Pay ৳15,000 of the ৳20,000 payable profit from the Bank account
+    const payRes = await executeInvestorProfitPaymentTransaction(
+      {
+        investorId: invAfterAlloc.id,
+        amount: 15000,
+        sourceAccountId: invBankId,
+        paymentDate: '2026-07-05',
+        notes: 'লভ্যাংশ আংশিক পরিশোধ',
+        currentUserId: 'usr_owner'
+      },
+      invMockDb
+    );
+
+    assert(payRes.paidAmount === 15000, 'Paid amount must be 15,000.');
+    const invAfterPay = await invMockDb.investors.get(invAfterAlloc.id);
+    assert(invAfterPay?.totalProfitPaid === 15000, 'totalProfitPaid must be 15,000.');
+    assert(invAfterPay?.profitPayable === 5000, 'Remaining profitPayable must be 5,000.');
+
+    // GL Rule 3: Profit payment reduces liability and cash/bank, NOT operating expense
+    const payJournal = await invMockDb.journalEntries.get(payRes.journalEntryId);
+    assert(payJournal !== undefined, 'Profit payment journal entry must exist.');
+    const payDrPayable = payJournal.lines.find((l: any) => l.accountCode === '2050' && l.debit === 15000);
+    const payCrBank = payJournal.lines.find((l: any) => l.accountCode === '1030' && l.credit === 15000);
+    const hasPayOpExpense = payJournal.lines.some((l: any) => l.accountCode.startsWith('5') || l.accountCode.startsWith('6'));
+    assert(!!payDrPayable && !!payCrBank, 'Profit payment must Dr 2050 Profit Payable and Cr 1030 Bank.');
+    assert(!hasPayOpExpense, 'Rule: Profit payment is NOT an operating expense.');
+
+    // Bank balance should decrease by 15,000: 150,000 - 15,000 = 135,000
+    const bankAfterPay = await invMockDb.cashBankAccounts.get(invBankId);
+    assert(bankAfterPay?.currentBalance === 135000, 'Bank balance must decrease to 135,000.');
+
+    // Overpayment prevention check: trying to pay ৳10,000 when only ৳5,000 is payable must fail
+    let overpayCaught = false;
+    try {
+      await executeInvestorProfitPaymentTransaction(
+        {
+          investorId: invAfterAlloc.id,
+          amount: 10000,
+          sourceAccountId: invBankId,
+          paymentDate: '2026-07-06',
+          currentUserId: 'usr_owner'
+        },
+        invMockDb
+      );
+    } catch (err: any) {
+      overpayCaught = true;
+      assert(err.message.includes('পাওনা লভ্যাংশের চেয়ে বেশি পরিশোধ করা সম্ভব নয়'), 'Overpayment must be rejected.');
+    }
+    assert(overpayCaught, 'Attempting to pay more than profitPayable must fail.');
+
+    // STEP 5: Capital Returned
+    // Return ৳30,000 capital from the Bank account
+    const retRes = await executeInvestorCapitalReturnTransaction(
+      {
+        investorId: invAfterAlloc.id,
+        amount: 30000,
+        sourceAccountId: invBankId,
+        returnDate: '2026-08-01',
+        notes: 'মূলধন আংশিক ফেরত',
+        currentUserId: 'usr_owner'
+      },
+      invMockDb
+    );
+
+    assert(retRes.returnedAmount === 30000, 'Returned capital amount must be 30,000.');
+    const invAfterRet = await invMockDb.investors.get(invAfterAlloc.id);
+    assert(invAfterRet?.totalCapitalReturned === 30000, 'totalCapitalReturned must be 30,000.');
+    assert(invAfterRet?.currentCapitalBalance === 70000, 'currentCapitalBalance must be 70,000 (100k - 30k).');
+
+    // GL Rule 4: Capital return is NOT operating expense
+    // Check Journal Entry: Dr 3020 Investor Capital (Equity reduction), Cr 1030 Bank
+    const retJournal = await invMockDb.journalEntries.get(retRes.journalEntryId);
+    assert(retJournal !== undefined, 'Capital return journal entry must exist.');
+    const retDrCap = retJournal.lines.find((l: any) => l.accountCode === '3020' && l.debit === 30000);
+    const retCrBank = retJournal.lines.find((l: any) => l.accountCode === '1030' && l.credit === 30000);
+    const hasRetOpExpense = retJournal.lines.some((l: any) => l.accountCode.startsWith('5') || l.accountCode.startsWith('6'));
+    assert(!!retDrCap && !!retCrBank, 'Capital return must Dr 3020 Investor Capital and Cr 1030 Bank.');
+    assert(!hasRetOpExpense, 'Rule: Capital return is NOT an operating expense.');
+
+    // Bank balance should decrease by 30,000: 135,000 - 30,000 = 105,000
+    const bankAfterRet = await invMockDb.cashBankAccounts.get(invBankId);
+    assert(bankAfterRet?.currentBalance === 105000, 'Bank balance must decrease to 105,000.');
+
+    // Over-return prevention check: trying to return ৳80,000 when currentCapitalBalance is ৳70,000 must fail
+    let overReturnCaught = false;
+    try {
+      await executeInvestorCapitalReturnTransaction(
+        {
+          investorId: invAfterAlloc.id,
+          amount: 80000,
+          sourceAccountId: invBankId,
+          returnDate: '2026-08-02',
+          currentUserId: 'usr_owner'
+        },
+        invMockDb
+      );
+    } catch (err: any) {
+      overReturnCaught = true;
+      assert(err.message.includes('মূলধন ফেরতের পরিমাণ বিদ্যমান মূলধনের চেয়ে বেশি হতে পারে না'), 'Over-return must be rejected.');
+    }
+    assert(overReturnCaught, 'Attempting to return more than currentCapitalBalance must fail.');
+
+    // Closed period protection check:
+    await invMockDb.closedPeriods.put({
+      id: 'cp_2026_h1',
+      endDate: '2026-06-30',
+      synced: false
+    });
+
+    let closedPeriodCaught = false;
+    try {
+      await executeInvestorProfitAllocationTransaction(
+        {
+          investorId: invAfterAlloc.id,
+          actualBusinessProfit: 10000,
+          allocationDate: '2026-05-01', // Before closed period end date 2026-06-30
+          currentUserId: 'usr_owner'
+        },
+        invMockDb
+      );
+    } catch (err: any) {
+      closedPeriodCaught = true;
+      assert(err.message.includes('বন্ধ হিসাবকালের'), 'Closed period protection triggered.');
+    }
+    assert(closedPeriodCaught, 'Closed period must block profit allocation in closed period.');
+
+    // =========================================================================
+    // TASK 9: SEPARATE VERIFICATION 1 — PROFIT ALLOCATION (VERIFY ALLOCATION SEPARATELY)
+    // User Scenario:
+    // Profit = ৳200,000; Working partner = 60%; Investor = 40% -> Investor profit = ৳80,000.
+    // Flow: Finalized profit → allocation → investor payable
+    // Allocation: Dr Profit Distribution / appropriate equity account, Cr Investor Profit Payable
+    // =========================================================================
+    const allocTestDb = createMockAgroDatabase();
+    for (const acc of DEFAULT_CHART_OF_ACCOUNTS) {
+      await allocTestDb.accounts.put(acc);
+    }
+    const allocBankAcc = {
+      id: 'cb_alloc_bank',
+      accountType: 'BANK',
+      name: 'ইসলামী ব্যাংক বাংলাদেশ',
+      currentBalance: 500000,
+      synced: false
+    };
+    await allocTestDb.cashBankAccounts.put(allocBankAcc);
+
+    // Create Sleeping Partner with Capital ৳150,000 and 40% profit share
+    const testInv = await executeInvestorTransaction(
+      {
+        investorName: 'তারেক জামান (স্লিপিং পার্টনার)',
+        contribution: 150000,
+        profitShare: 40,
+        profitSharingRatio: 40,
+        targetAccountId: allocBankAcc.id,
+        currentUserId: 'usr_owner',
+        phone: '01819000000',
+        date: '2026-01-01'
+      },
+      allocTestDb
+    );
+
+    // Rule check: Never guarantee profit (reject profit <= 0)
+    let negativeProfitCaught = false;
+    try {
+      await executeInvestorProfitAllocationTransaction(
+        {
+          investorId: testInv.investor.id,
+          finalizedDistributableProfit: -50000,
+          allocationDate: '2026-06-30',
+          currentUserId: 'usr_owner'
+        },
+        allocTestDb
+      );
+    } catch (err: any) {
+      negativeProfitCaught = true;
+      assert(err.message.includes('চূড়ান্ত বণ্টনযোগ্য প্রকৃত মুনাফা অবশ্যই ০ এর বেশি হতে হবে'), 'Negative or zero profit allocation must be rejected.');
+    }
+    assert(negativeProfitCaught, 'Allocation with non-positive profit must fail (Never guarantee profit).');
+
+    // Rule check: Execute valid allocation with Profit = ৳200,000
+    // Working partner = 60% (৳120,000), Investor = 40% (৳80,000)
+    const task9AllocRes = await executeInvestorProfitAllocationTransaction(
+      {
+        investorId: testInv.investor.id,
+        finalizedDistributableProfit: 200000,
+        allocationDate: '2026-06-30',
+        allocationReference: 'ALLOC-2026-Q2',
+        notes: '২০২৬ দ্বিতীয় প্রান্তিকের প্রকৃত চূড়ান্ত মুনাফা বণ্টন',
+        currentUserId: 'usr_owner'
+      },
+      allocTestDb
+    );
+
+    // Verify calculated shares
+    assert(task9AllocRes.allocatedProfit === 80000, 'Investor profit share must be strictly ৳80,000 (40% of ৳200,000).');
+    assert(task9AllocRes.workingPartnerShare === 120000, 'Working partner profit share must be strictly ৳120,000 (60% of ৳200,000).');
+    assert(task9AllocRes.profitSharingRatio === 40, 'Agreed profit sharing ratio must be 40%.');
+    assert(task9AllocRes.workingPartnerRatio === 60, 'Working partner ratio must be 60%.');
+
+    // Verify investor state after allocation
+    const invAfterTask9Alloc = await allocTestDb.investors.get(testInv.investor.id);
+    assert(invAfterTask9Alloc?.totalProfitAllocated === 80000, 'totalProfitAllocated must be updated to ৳80,000.');
+    assert(invAfterTask9Alloc?.profitPayable === 80000, 'profitPayable must be updated to ৳80,000.');
+    // Ensure capital is strictly untouched
+    assert(invAfterTask9Alloc?.currentCapitalBalance === 150000, 'Investor capital must remain completely separate and unchanged (৳150,000).');
+
+    // Verify Allocation Journal Entry:
+    // Dr Profit Distribution (3070) or appropriate equity account (3050)
+    // Cr Investor Profit Payable (2050)
+    const task9AllocJournal = await allocTestDb.journalEntries.get(task9AllocRes.journalEntryId);
+    assert(task9AllocJournal !== undefined, 'Allocation journal entry must exist.');
+    const allocDebitLine = task9AllocJournal.lines.find(
+      (l: any) => (l.accountCode === '3070' || l.accountCode === '3050') && l.debit === 80000
+    );
+    const allocCreditPayable = task9AllocJournal.lines.find(
+      (l: any) => l.accountCode === '2050' && l.credit === 80000
+    );
+    assert(!!allocDebitLine, 'Allocation must Debit Profit Distribution (3070) or Retained Earnings (3050) for ৳80,000.');
+    assert(!!allocCreditPayable, 'Allocation must Credit Investor Profit Payable (2050) for ৳80,000.');
+
+    // Rule: Profit share is NOT operating expense, NOT revenue, NO interest
+    const hasOpExpense = task9AllocJournal.lines.some((l: any) => l.accountCode.startsWith('5') || l.accountCode.startsWith('6'));
+    const hasRevenue = task9AllocJournal.lines.some((l: any) => l.accountCode.startsWith('4'));
+    const hasInterest = task9AllocJournal.lines.some((l: any) => l.accountCode === '8010' || l.accountCode === '7010');
+    assert(!hasOpExpense, 'Rule: Profit allocation must NEVER use operating expense accounts (5000/6000).');
+    assert(!hasRevenue, 'Rule: Profit allocation must NEVER use revenue accounts (4000).');
+    assert(!hasInterest, 'Rule: Profit allocation must NEVER use interest accounts.');
+
+    // Rule: Prevent duplicate allocation
+    let duplicateAllocCaught = false;
+    try {
+      await executeInvestorProfitAllocationTransaction(
+        {
+          investorId: testInv.investor.id,
+          finalizedDistributableProfit: 200000,
+          allocationDate: '2026-06-30',
+          allocationReference: 'ALLOC-2026-Q2', // Same reference
+          currentUserId: 'usr_owner'
+        },
+        allocTestDb
+      );
+    } catch (err: any) {
+      duplicateAllocCaught = true;
+      assert(err.message.includes('লভ্যাংশ বণ্টন ইতোমধ্যে সম্পন্ন হয়েছে'), 'Duplicate allocation must be prevented.');
+    }
+    assert(duplicateAllocCaught, 'Duplicate profit allocation must be rejected.');
+
+    // Rule: Respect closed periods on allocation
+    await allocTestDb.closedPeriods.put({
+      id: 'cp_alloc_2026_q2',
+      endDate: '2026-06-30',
+      netProfitTransferred: 200000,
+      synced: false
+    });
+    let allocInClosedPeriodCaught = false;
+    try {
+      await executeInvestorProfitAllocationTransaction(
+        {
+          investorId: testInv.investor.id,
+          finalizedDistributableProfit: 50000,
+          allocationDate: '2026-06-15', // Falls in closed period
+          allocationReference: 'ALLOC-CLOSED-TEST',
+          currentUserId: 'usr_owner'
+        },
+        allocTestDb
+      );
+    } catch (err: any) {
+      allocInClosedPeriodCaught = true;
+      assert(err.message.includes('বন্ধ হিসাবকালের'), 'Allocation in closed period must be prevented.');
+    }
+    assert(allocInClosedPeriodCaught, 'Closed period must block profit allocation.');
+
+    // =========================================================================
+    // TASK 9: SEPARATE VERIFICATION 2 — PROFIT PAYMENT (VERIFY PAYMENT SEPARATELY)
+    // Flow: investor payable → actual payment
+    // Payment: Dr Investor Profit Payable (2050), Cr Cash/Bank (1010/1030)
+    // =========================================================================
+    const payTestDb = createMockAgroDatabase();
+    for (const acc of DEFAULT_CHART_OF_ACCOUNTS) {
+      await payTestDb.accounts.put(acc);
+    }
+    const payBankAcc = {
+      id: 'cb_pay_bank',
+      accountType: 'BANK',
+      name: 'ডাচ বাংলা ব্যাংক',
+      currentBalance: 300000,
+      synced: false
+    };
+    await payTestDb.cashBankAccounts.put(payBankAcc);
+
+    // Create investor with initial ৳80,000 profit payable from finalized profits
+    const payInv = {
+      id: 'inv_pay_test_1',
+      name: 'জামাল পার্টনার',
+      phone: '01711223344',
+      sharePercentage: 40,
+      profitSharingRatio: 40,
+      workingPartnerShareRatio: 60,
+      capitalAmount: 100000,
+      capitalContributed: 100000,
+      currentCapitalBalance: 100000,
+      totalProfitAllocated: 80000,
+      profitPayable: 80000,
+      totalProfitPaid: 0,
+      totalCapitalReturned: 0,
+      drawings: 0,
+      currentBalance: 100000,
+      synced: false
+    };
+    await payTestDb.investors.put(payInv);
+
+    // Rule: Do not pay more than allocated
+    // Attempting to pay ৳85,000 when payable is ৳80,000 must fail
+    let overpaymentCaught = false;
+    try {
+      await executeInvestorProfitPaymentTransaction(
+        {
+          investorId: payInv.id,
+          amount: 85000,
+          sourceAccountId: payBankAcc.id,
+          paymentDate: '2026-07-10',
+          currentUserId: 'usr_owner'
+        },
+        payTestDb
+      );
+    } catch (err: any) {
+      overpaymentCaught = true;
+      assert(err.message.includes('পাওনা লভ্যাংশের চেয়ে বেশি পরিশোধ করা সম্ভব নয়'), 'Paying more than allocated payable must be rejected.');
+    }
+    assert(overpaymentCaught, 'Payment exceeding profitPayable must be rejected.');
+
+    // Valid Payment Part 1: Pay partial ৳50,000 of the ৳80,000 payable
+    const payPart1Res = await executeInvestorProfitPaymentTransaction(
+      {
+        investorId: payInv.id,
+        amount: 50000,
+        sourceAccountId: payBankAcc.id,
+        paymentDate: '2026-07-10',
+        paymentReference: 'PAY-REF-001',
+        notes: 'লভ্যাংশ প্রথম কিস্তি পরিশোধ',
+        currentUserId: 'usr_owner'
+      },
+      payTestDb
+    );
+
+    assert(payPart1Res.paidAmount === 50000, 'Paid amount must be ৳50,000.');
+    assert(payPart1Res.remainingPayable === 30000, 'Remaining payable must be ৳30,000 (80k - 50k).');
+
+    // Verify investor balances after partial payment
+    const invAfterPay1 = await payTestDb.investors.get(payInv.id);
+    assert(invAfterPay1?.totalProfitPaid === 50000, 'totalProfitPaid must be ৳50,000.');
+    assert(invAfterPay1?.profitPayable === 30000, 'profitPayable must be ৳30,000.');
+    assert(invAfterPay1?.currentCapitalBalance === 100000, 'Capital balance must remain ৳100,000 completely untouched.');
+
+    // Verify Payment 1 Journal Entry:
+    // Dr Investor Profit Payable (2050)
+    // Cr Bank (1030)
+    const pay1Journal = await payTestDb.journalEntries.get(payPart1Res.journalEntryId);
+    assert(pay1Journal !== undefined, 'Payment journal entry must exist.');
+    const pay1DrPayable = pay1Journal.lines.find((l: any) => l.accountCode === '2050' && l.debit === 50000);
+    const pay1CrBank = pay1Journal.lines.find((l: any) => l.accountCode === '1030' && l.credit === 50000);
+    assert(!!pay1DrPayable, 'Payment must Debit Investor Profit Payable (2050) for ৳50,000.');
+    assert(!!pay1CrBank, 'Payment must Credit Bank (1030) for ৳50,000.');
+
+    // Rule: Profit payment is NOT an operating expense
+    const pay1HasOpExpense = pay1Journal.lines.some((l: any) => l.accountCode.startsWith('5') || l.accountCode.startsWith('6'));
+    assert(!pay1HasOpExpense, 'Rule: Profit payment must NEVER be charged as an operating expense.');
+
+    // Verify Bank balance: 300,000 - 50,000 = 250,000
+    const bankAfterPay1 = await payTestDb.cashBankAccounts.get(payBankAcc.id);
+    assert(bankAfterPay1?.currentBalance === 250000, 'Bank balance must decrease to ৳250,000.');
+
+    // Rule: Prevent duplicate payment
+    let duplicatePayCaught = false;
+    try {
+      await executeInvestorProfitPaymentTransaction(
+        {
+          investorId: payInv.id,
+          amount: 50000,
+          sourceAccountId: payBankAcc.id,
+          paymentDate: '2026-07-10',
+          paymentReference: 'PAY-REF-001', // Same reference
+          currentUserId: 'usr_owner'
+        },
+        payTestDb
+      );
+    } catch (err: any) {
+      duplicatePayCaught = true;
+      assert(err.message.includes('লভ্যাংশ পরিশোধ ইতোমধ্যে সম্পন্ন হয়েছে'), 'Duplicate payment must be rejected.');
+    }
+    assert(duplicatePayCaught, 'Duplicate payment must be prevented.');
+
+    // Valid Payment Part 2: Pay remaining ৳30,000
+    const payPart2Res = await executeInvestorProfitPaymentTransaction(
+      {
+        investorId: payInv.id,
+        amount: 30000,
+        sourceAccountId: payBankAcc.id,
+        paymentDate: '2026-07-15',
+        paymentReference: 'PAY-REF-002',
+        notes: 'লভ্যাংশ অবশিষ্ট সম্পূর্ণ পরিশোধ',
+        currentUserId: 'usr_owner'
+      },
+      payTestDb
+    );
+
+    assert(payPart2Res.paidAmount === 30000, 'Paid amount must be ৳30,000.');
+    assert(payPart2Res.remainingPayable === 0, 'Remaining payable must be strictly ৳0.');
+
+    const invAfterPay2 = await payTestDb.investors.get(payInv.id);
+    assert(invAfterPay2?.totalProfitPaid === 80000, 'totalProfitPaid must be ৳80,000.');
+    assert(invAfterPay2?.profitPayable === 0, 'profitPayable must be 0.');
+
+    // Attempting further payment when payable is 0 must fail
+    let zeroPayableCaught = false;
+    try {
+      await executeInvestorProfitPaymentTransaction(
+        {
+          investorId: payInv.id,
+          amount: 5000,
+          sourceAccountId: payBankAcc.id,
+          paymentDate: '2026-07-20',
+          currentUserId: 'usr_owner'
+        },
+        payTestDb
+      );
+    } catch (err: any) {
+      zeroPayableCaught = true;
+      assert(err.message.includes('কোনো বকেয়া বা প্রদেয় লভ্যাংশ নেই'), 'Payment with zero payable balance must be rejected.');
+    }
+    assert(zeroPayableCaught, 'Payment when profitPayable is 0 must fail.');
+
+    // Rule: Respect closed periods on payment
+    await payTestDb.closedPeriods.put({
+      id: 'cp_pay_2026_q2',
+      endDate: '2026-06-30',
+      netProfitTransferred: 200000,
+      synced: false
+    });
+    let payInClosedPeriodCaught = false;
+    try {
+      await executeInvestorProfitPaymentTransaction(
+        {
+          investorId: payInv.id,
+          amount: 1000,
+          sourceAccountId: payBankAcc.id,
+          paymentDate: '2026-06-15', // In closed period
+          currentUserId: 'usr_owner'
+        },
+        payTestDb
+      );
+    } catch (err: any) {
+      payInClosedPeriodCaught = true;
+      assert(err.message.includes('বন্ধ হিসাবকালের'), 'Payment in closed period must be prevented.');
+    }
+    assert(payInClosedPeriodCaught, 'Closed period must block profit payment.');
 
   } catch (error: any) {
     failures.push(`CRITICAL RUNTIME ERROR: ${error.message}`);

@@ -6,7 +6,9 @@ import {
   getInventoryAssetAccount,
   getRevenueAndCogsAccounts,
   getLoanLiabilityAccount,
-  getInvestorCapitalAccount
+  getInvestorCapitalAccount,
+  getInvestorProfitPayableAccount,
+  getProfitDistributionAccount
 } from '../accounting/accountMapping';
 import { postJournalEntry, validateBalancedLines } from '../accounting/accountingEngine';
 import { generateDisplayNumber, generateTransactionNumber, generateUniqueId, safeInsert } from '../utils/idGenerator';
@@ -22,6 +24,7 @@ import {
   VoucherType,
   JournalLine,
   Animal,
+  AnimalCostBreakdown,
   AnimalEvent,
   AnimalStatus,
   FishBatch,
@@ -632,74 +635,118 @@ export async function executeLoanTransaction(params: {
 /**
  * Atomic Execution of Investor Capital Contribution
  */
-export async function executeInvestorTransaction(params: {
-  investorName: string;
-  contribution: number;
-  profitShare: number;
-  targetAccountId: string;
-  currentUserId: string;
-  phone?: string;
-  annualInterestRatePercent?: number;
-  termMonths?: number;
-}): Promise<{ investor: Investor; journalEntryId: string }> {
-  return await db.transaction(
+/**
+ * Atomic Execution of Investor Capital Contribution (Sleeping Partner Model)
+ * - Capital is NOT revenue: Credits 3020 Investor Capital (Equity)
+ * - Debits 1010 Cash or 1030 Bank (Asset)
+ * - Stores agreed profit sharing ratio
+ * - No interest or amortization schedule
+ */
+export async function executeInvestorTransaction(
+  params: {
+    investorId?: string;
+    investorName: string;
+    contribution: number;
+    profitShare?: number;
+    profitSharingRatio?: number;
+    targetAccountId: string;
+    currentUserId: string;
+    phone?: string;
+    annualInterestRatePercent?: number; // legacy ignored in non-interest model
+    termMonths?: number; // legacy ignored in non-interest model
+    date?: string;
+    notes?: string;
+  },
+  dbInstance: any = db
+): Promise<{ investor: Investor; journalEntryId: string }> {
+  return await dbInstance.transaction(
     'rw',
     [
-      db.journalEntries,
-      db.investors,
-      db.cashBankAccounts,
-      db.accounts,
-      db.auditLogs,
-      db.closedPeriods
+      dbInstance.journalEntries,
+      dbInstance.investors,
+      dbInstance.cashBankAccounts,
+      dbInstance.accounts,
+      dbInstance.auditLogs,
+      dbInstance.closedPeriods
     ],
     async () => {
       const {
+        investorId,
         investorName,
         contribution,
-        profitShare,
+        profitShare = 0,
+        profitSharingRatio,
         targetAccountId,
         currentUserId,
         phone,
-        annualInterestRatePercent,
-        termMonths
+        date,
+        notes
       } = params;
 
       if (contribution <= 0) {
         throw new Error('Contribution amount must be strictly greater than 0.');
       }
 
-      let targetAcc = await db.cashBankAccounts.get(targetAccountId);
+      const dateStr = date || new Date().toISOString().split('T')[0];
+
+      // Closed period validation
+      if (dbInstance.closedPeriods) {
+        const closedPeriods = await dbInstance.closedPeriods.toArray();
+        const isClosed = closedPeriods.some((cp: any) => cp.endDate >= dateStr);
+        if (isClosed) {
+          throw new Error(`সীমাবদ্ধতা: ${dateStr} তারিখটি ইতোমধ্যে বন্ধ হিসাবকালের (Closed Period) অন্তর্ভুক্ত।`);
+        }
+      }
+
+      let targetAcc = await dbInstance.cashBankAccounts.get(targetAccountId);
       if (!targetAcc) {
-        targetAcc = await db.cashBankAccounts.where('accountType').equals(targetAccountId).first();
+        targetAcc = await dbInstance.cashBankAccounts.where('accountType').equals(targetAccountId).first();
       }
       if (!targetAcc) {
-        targetAcc = await db.cashBankAccounts.toCollection().first();
+        targetAcc = await dbInstance.cashBankAccounts.toCollection?.().first?.();
+      }
+      if (!targetAcc) {
+        targetAcc = (await dbInstance.cashBankAccounts.toArray())[0];
       }
       if (!targetAcc) {
         throw new Error(`Target cash/bank account ${targetAccountId} not found.`);
       }
 
-      const invId = generateUniqueId('inv');
+      const invId = investorId || generateUniqueId('inv');
       const invRef = generateTransactionNumber('INV');
-      const dateStr = new Date().toISOString().split('T')[0];
 
       // Canonical GL Mapping:
       // Dr Cash (1010) or Bank (1030)
-      // Cr 3020 Investor Capital (NEVER 3010 Owner Capital!)
+      // Cr 3020 Investor Capital (Equity - NEVER 4000 Revenue and NEVER 3010 Owner Capital!)
       const assetGlCode = getCashBankAccountGLCode(targetAcc.accountType);
       const equityGlCode = getInvestorCapitalAccount(); // 3020
 
-      const accounts = await db.accounts.toArray();
-      const assetAcc = accounts.find((a) => a.code === assetGlCode) || {
+      const accounts = await dbInstance.accounts.toArray();
+      const assetAcc = accounts.find((a: any) => a.code === assetGlCode) || {
         id: `acc_${assetGlCode}`,
         code: assetGlCode,
-        nameBn: targetAcc.accountName || targetAcc.name || 'ব্যাংক/নগদ তহবিল'
+        nameBn: targetAcc.accountName || targetAcc.name || 'ব্যাংক/নগদ তহবিল',
+        accountClass: 'ASSET',
+        normalBalance: 'DEBIT',
+        isSystem: true,
+        isActive: true
       };
-      const equityAcc = accounts.find((a) => a.code === equityGlCode) || {
+      if (!accounts.some((a: any) => a.code === assetGlCode)) {
+        accounts.push(assetAcc);
+      }
+
+      const equityAcc = accounts.find((a: any) => a.code === equityGlCode) || {
         id: `acc_${equityGlCode}`,
         code: equityGlCode,
-        nameBn: 'বিনিয়োগকারীর মূলধন (Investor Capital)'
+        nameBn: 'বিনিয়োগকারীর মূলধন (Investor Capital)',
+        accountClass: 'EQUITY',
+        normalBalance: 'CREDIT',
+        isSystem: true,
+        isActive: true
       };
+      if (!accounts.some((a: any) => a.code === equityGlCode)) {
+        accounts.push(equityAcc);
+      }
 
       const journalLines: JournalLine[] = [
         {
@@ -737,46 +784,58 @@ export async function executeInvestorTransaction(params: {
       );
 
       // 1. Safe insert journal entry
-      await safeInsert(db.journalEntries, journalEntry, { idPrefix: 'j' });
+      await safeInsert(dbInstance.journalEntries, journalEntry, { idPrefix: 'j' });
 
-      // Generate optional investor return/amortization schedule if terms provided
-      let schedule: any[] | undefined = undefined;
-      if (annualInterestRatePercent !== undefined && annualInterestRatePercent >= 0 && termMonths && termMonths > 0) {
-        schedule = generateAmortizationSchedule(contribution, annualInterestRatePercent, termMonths, dateStr);
-      }
+      // 2. Fetch or initialize investor record
+      const existingInvestor = investorId ? await dbInstance.investors.get(investorId) : undefined;
+      const agreedRatio = profitSharingRatio !== undefined ? profitSharingRatio : profitShare;
+      const workingRatio = Math.max(0, 100 - agreedRatio);
 
-      // 2. Safe insert investor record
+      const totalContributed = Math.round(((existingInvestor?.capitalContributed || existingInvestor?.capitalAmount || 0) + contribution) * 100) / 100;
+      const existingReturned = existingInvestor?.totalCapitalReturned || 0;
+      const currentCapBalance = Math.max(0, totalContributed - existingReturned);
+
       const investorRecord: Investor = {
         id: invId,
         name: investorName.trim(),
-        phone: phone?.trim() || undefined,
-        capitalAmount: contribution,
-        initialCapital: contribution,
-        totalContribution: contribution,
-        totalWithdrawals: 0,
-        drawings: 0,
-        currentBalance: contribution,
-        currentEquityBalance: contribution,
-        sharePercentage: profitShare,
-        profitSharePercentage: profitShare,
-        ownershipPercentage: profitShare,
-        annualInterestRatePercent: annualInterestRatePercent || 0,
-        termMonths: termMonths || undefined,
-        schedule,
-        joinedDate: dateStr,
-        entryDate: dateStr,
+        phone: phone?.trim() || existingInvestor?.phone || undefined,
+        capitalAmount: totalContributed,
+        initialCapital: existingInvestor?.initialCapital ?? contribution,
+        capitalContributed: totalContributed,
+        totalContribution: totalContributed,
+        currentCapitalBalance: currentCapBalance,
+        totalWithdrawals: existingInvestor?.totalWithdrawals || 0,
+        drawings: existingInvestor?.drawings || 0,
+        totalCapitalReturned: existingReturned,
+        currentBalance: currentCapBalance,
+        currentEquityBalance: currentCapBalance,
+        profitSharingRatio: agreedRatio,
+        profitSharePercentage: agreedRatio,
+        sharePercentage: agreedRatio,
+        workingPartnerShareRatio: workingRatio,
+        totalProfitAllocated: existingInvestor?.totalProfitAllocated || 0,
+        profitPayable: existingInvestor?.profitPayable || 0,
+        totalProfitPaid: existingInvestor?.totalProfitPaid || 0,
+        joinedDate: existingInvestor?.joinedDate || dateStr,
+        entryDate: existingInvestor?.entryDate || dateStr,
         status: 'ACTIVE',
+        notes: notes || existingInvestor?.notes,
         synced: false
       };
-      await safeInsert(db.investors, investorRecord, { idPrefix: 'inv' });
+
+      if (existingInvestor) {
+        await dbInstance.investors.put(investorRecord);
+      } else {
+        await safeInsert(dbInstance.investors, investorRecord, { idPrefix: 'inv' });
+      }
 
       // 3. Update target account operational balance
-      await db.cashBankAccounts.update(targetAcc.id, {
-        currentBalance: Math.round((targetAcc.currentBalance + contribution) * 100) / 100
+      await dbInstance.cashBankAccounts.update(targetAcc.id, {
+        currentBalance: Math.round(((targetAcc.currentBalance || 0) + contribution) * 100) / 100
       });
 
       // 4. Audit Log
-      await safeInsert(db.auditLogs, {
+      await safeInsert(dbInstance.auditLogs, {
         id: generateUniqueId('audit'),
         timestamp: new Date().toISOString(),
         userId: currentUserId,
@@ -785,10 +844,642 @@ export async function executeInvestorTransaction(params: {
         module: 'FINANCE',
         recordId: invRef,
         status: 'SUCCESS',
-        details: `বিনিয়োগকারী ${investorName} এর মূলধন জমা (৳${contribution})`
+        details: `বিনিয়োগকারী ${investorName} এর মূলধন জমা (৳${contribution}) - অংশীদারি অনুপাত ${agreedRatio}%`
       });
 
       return { investor: investorRecord, journalEntryId: journalEntry.id };
+    }
+  );
+}
+
+/**
+ * Atomic Execution of Actual Profit Allocation to Investor (Sleeping Partner)
+ * Required flow: Finalized profit → allocation → investor payable → actual payment
+ * - Profit must be calculated from finalized actual distributable profit.
+ * - Formula: Profit * Investor% (e.g. ৳200,000 * 40% = ৳80,000; Working partner = 60%).
+ * - Never calculate profit from investment capital.
+ * - Never guarantee profit (rejects profit <= 0).
+ * - No interest.
+ * - Do not charge investor profit as normal operating expense.
+ * - Allocation GL:
+ *     Dr Profit Distribution (3070 / appropriate equity account)
+ *     Cr Investor Profit Payable (2050)
+ * - Prevents duplicate allocation.
+ * - Respects closed periods.
+ */
+export async function executeInvestorProfitAllocationTransaction(
+  params: {
+    investorId: string;
+    finalizedDistributableProfit?: number; // Finalized actual distributable profit of the farm
+    actualBusinessProfit?: number; // Alias for backwards compatibility
+    allocatedProfit?: number; // Direct agreed share of actual profit
+    closedPeriodId?: string; // Optional: Link to a closed period
+    allocationDate?: string;
+    allocationReference?: string;
+    idempotencyKey?: string;
+    notes?: string;
+    currentUserId: string;
+  },
+  dbInstance: any = db
+): Promise<{
+  investor: Investor;
+  journalEntryId: string;
+  allocatedProfit: number;
+  finalizedProfit: number;
+  workingPartnerShare: number;
+  profitSharingRatio: number;
+  workingPartnerRatio: number;
+}> {
+  return await dbInstance.transaction(
+    'rw',
+    [
+      dbInstance.journalEntries,
+      dbInstance.investors,
+      dbInstance.accounts,
+      dbInstance.auditLogs,
+      dbInstance.closedPeriods
+    ],
+    async () => {
+      const {
+        investorId,
+        finalizedDistributableProfit,
+        actualBusinessProfit,
+        allocatedProfit,
+        closedPeriodId,
+        allocationDate,
+        allocationReference,
+        idempotencyKey,
+        notes,
+        currentUserId
+      } = params;
+      const dateStr = allocationDate || new Date().toISOString().split('T')[0];
+
+      // 1. Closed period validation - respect closed periods
+      if (dbInstance.closedPeriods) {
+        const closedPeriods = await dbInstance.closedPeriods.toArray();
+        const isClosed = closedPeriods.some((cp: any) => cp.endDate >= dateStr);
+        if (isClosed) {
+          throw new Error(`সীমাবদ্ধতা: ${dateStr} তারিখটি ইতোমধ্যে বন্ধ হিসাবকালের (Closed Period) অন্তর্ভুক্ত। বন্ধ হিসাবকালে নতুন বণ্টন দাখিলা দেওয়া যাবে না।`);
+        }
+      }
+
+      // 2. Prevent duplicate allocation
+      const allEntries = await dbInstance.journalEntries.toArray();
+      const isDuplicate = allEntries.some((j: any) => {
+        if (idempotencyKey && (j.reference === idempotencyKey || j.idempotencyKey === idempotencyKey)) return true;
+        if (allocationReference && j.reference === allocationReference) return true;
+        if (closedPeriodId && j.relatedClosedPeriodId === closedPeriodId && j.relatedInvestorId === investorId) return true;
+        return false;
+      });
+      if (isDuplicate) {
+        throw new Error('এই হিসাবকাল বা রেফারেন্সের জন্য লভ্যাংশ বণ্টন ইতোমধ্যে সম্পন্ন হয়েছে (Duplicate profit allocation prevented)।');
+      }
+
+      // 3. Fetch investor
+      const investor = await dbInstance.investors.get(investorId);
+      if (!investor) {
+        throw new Error(`বিনিয়োগকারী পাওয়া যায়নি (Investor not found: ${investorId})।`);
+      }
+
+      const ratio = investor.profitSharingRatio ?? investor.profitSharePercentage ?? investor.sharePercentage ?? 0;
+      if (ratio <= 0) {
+        throw new Error(`বিনিয়োগকারী ${investor.name} এর কোনো নির্ধারিত লভ্যাংশ বণ্টন অনুপাত নেই (Profit sharing ratio must be > 0)।`);
+      }
+      const workingRatio = investor.workingPartnerShareRatio ?? Math.max(0, 100 - ratio);
+
+      // 4. Determine finalized actual distributable profit
+      let effectiveFinalizedProfit = 0;
+      if (closedPeriodId) {
+        const closedPeriod = await dbInstance.closedPeriods.get(closedPeriodId);
+        if (!closedPeriod) {
+          throw new Error(`হিসাবকাল পাওয়া যায়নি (Closed period not found: ${closedPeriodId})।`);
+        }
+        effectiveFinalizedProfit = Number(closedPeriod.netProfitTransferred) || 0;
+      } else if (finalizedDistributableProfit !== undefined) {
+        effectiveFinalizedProfit = Number(finalizedDistributableProfit) || 0;
+      } else if (actualBusinessProfit !== undefined) {
+        effectiveFinalizedProfit = Number(actualBusinessProfit) || 0;
+      }
+
+      // 5. Calculate profit amount (Never calculate from capital, never guarantee profit)
+      let profitAmount: number;
+      if (allocatedProfit !== undefined) {
+        profitAmount = Math.round(allocatedProfit * 100) / 100;
+      } else {
+        if (effectiveFinalizedProfit <= 0) {
+          throw new Error(
+            `চূড়ান্ত বণ্টনযোগ্য প্রকৃত মুনাফা অবশ্যই ০ এর বেশি হতে হবে (Finalized distributable profit must be > 0: ৳${effectiveFinalizedProfit})। কোনো প্রকৃত মুনাফা অর্জিত না হলে বা লোকসান হলে লভ্যাংশ বণ্টন সম্ভব নয় (Never guarantee profit)।`
+          );
+        }
+        // Calculated strictly from finalized actual profit, NEVER from capital
+        profitAmount = Math.round(effectiveFinalizedProfit * (ratio / 100) * 100) / 100;
+      }
+
+      if (profitAmount <= 0) {
+        throw new Error('বণ্টনযোগ্য লভ্যাংশের পরিমাণ অবশ্যই ০ এর বেশি হতে হবে (Allocated profit must be strictly > 0)।');
+      }
+
+      const workingPartnerProfit = effectiveFinalizedProfit > 0
+        ? Math.round(effectiveFinalizedProfit * (workingRatio / 100) * 100) / 100
+        : 0;
+
+      // 6. Canonical GL Mapping:
+      // Profit distribution is NOT an operating expense!
+      // Dr 3070 Profit Distribution (or 3050 Retained Earnings)
+      // Cr 2050 Investor Profit Payable
+      const distGlCode = getProfitDistributionAccount(); // '3070'
+      const payableGlCode = getInvestorProfitPayableAccount(); // '2050'
+
+      const accounts = await dbInstance.accounts.toArray();
+      const distAcc = accounts.find((a: any) => a.code === distGlCode) || {
+        id: `acc_${distGlCode}`,
+        code: distGlCode,
+        nameBn: 'মুনাফা বণ্টন / লভ্যাংশ (Profit Distribution)',
+        accountClass: 'EQUITY',
+        normalBalance: 'DEBIT',
+        isSystem: true,
+        isActive: true
+      };
+      if (!accounts.some((a: any) => a.code === distGlCode)) {
+        accounts.push(distAcc);
+      }
+
+      const payableAcc = accounts.find((a: any) => a.code === payableGlCode) || {
+        id: `acc_${payableGlCode}`,
+        code: payableGlCode,
+        nameBn: 'বিনিয়োগকারীর লভ্যাংশ প্রদেয় (Investor Profit Payable)',
+        accountClass: 'LIABILITY',
+        normalBalance: 'CREDIT',
+        isSystem: true,
+        isActive: true
+      };
+      if (!accounts.some((a: any) => a.code === payableGlCode)) {
+        accounts.push(payableAcc);
+      }
+
+      const journalLines: JournalLine[] = [
+        {
+          accountId: distAcc.id,
+          accountCode: distGlCode,
+          accountName: distAcc.nameBn,
+          debit: profitAmount,
+          credit: 0,
+          memo: `${investor.name} এর মুনাফা বণ্টন (${ratio}% অব ৳${effectiveFinalizedProfit || profitAmount})`
+        },
+        {
+          accountId: payableAcc.id,
+          accountCode: payableGlCode,
+          accountName: payableAcc.nameBn,
+          debit: 0,
+          credit: profitAmount,
+          memo: `বিনিয়োগকারীর প্রদেয় লভ্যাংশ সঞ্চিতি`
+        }
+      ];
+
+      const refNumber = allocationReference || idempotencyKey || generateTransactionNumber('INV-DIST');
+      const voucherNumber = generateTransactionNumber('INV-DIST-V');
+      const journalEntry = await postJournalEntry(
+        {
+          id: generateUniqueId('j_inv_dist'),
+          voucherNumber,
+          voucherType: 'JOURNAL',
+          date: dateStr,
+          narration: `চূড়ান্ত প্রকৃত মুনাফা বণ্টন: ${investor.name} (${ratio}%) ৳${profitAmount} (মোট মুনাফা: ৳${effectiveFinalizedProfit || profitAmount})`,
+          reference: refNumber,
+          lines: journalLines,
+          createdBy: currentUserId,
+          createdAt: new Date().toISOString()
+        },
+        { accounts, skipDbPut: true }
+      );
+
+      // Attach metadata for duplicate prevention
+      if (closedPeriodId) {
+        (journalEntry as any).relatedClosedPeriodId = closedPeriodId;
+      }
+      (journalEntry as any).relatedInvestorId = investorId;
+      if (idempotencyKey) {
+        (journalEntry as any).idempotencyKey = idempotencyKey;
+      }
+
+      await safeInsert(dbInstance.journalEntries, journalEntry, { idPrefix: 'j' });
+
+      // 7. Update investor state
+      const updatedInvestor: Investor = {
+        ...investor,
+        totalProfitAllocated: Math.round(((investor.totalProfitAllocated || 0) + profitAmount) * 100) / 100,
+        profitPayable: Math.round(((investor.profitPayable || 0) + profitAmount) * 100) / 100,
+        lastProfitAllocationDate: dateStr,
+        notes: notes ? (investor.notes ? `${investor.notes}\n${notes}` : notes) : investor.notes,
+        synced: false
+      };
+      await dbInstance.investors.put(updatedInvestor);
+
+      // 8. Audit Log
+      await safeInsert(dbInstance.auditLogs, {
+        id: generateUniqueId('audit'),
+        timestamp: new Date().toISOString(),
+        userId: currentUserId,
+        role: 'OWNER',
+        action: 'INVESTOR_PROFIT_ALLOCATION',
+        module: 'FINANCE',
+        recordId: investor.id,
+        status: 'SUCCESS',
+        details: `বিনিয়োগকারী ${investor.name} এর লভ্যাংশ বণ্টন ৳${profitAmount} (চূড়ান্ত মুনাফা ৳${effectiveFinalizedProfit}, অনুপাত ${ratio}%)`
+      });
+
+      return {
+        investor: updatedInvestor,
+        journalEntryId: journalEntry.id,
+        allocatedProfit: profitAmount,
+        finalizedProfit: effectiveFinalizedProfit,
+        workingPartnerShare: workingPartnerProfit,
+        profitSharingRatio: ratio,
+        workingPartnerRatio: workingRatio
+      };
+    }
+  );
+}
+
+/**
+ * Atomic Execution of Investor Profit Payment (Disbursement of Payable Profit)
+ * Required flow: Finalized profit → allocation → investor payable → actual payment
+ * - Debits 2050 Investor Profit Payable (Liability reduction)
+ * - Credits 1010 Cash or 1030 Bank (Asset reduction)
+ * - Settles investor.profitPayable without touching operating expense.
+ * - Do not pay more than allocated (amount <= investor.profitPayable).
+ * - Prevents duplicate payment.
+ * - Respects closed periods.
+ */
+export async function executeInvestorProfitPaymentTransaction(
+  params: {
+    investorId: string;
+    amount: number;
+    sourceAccountId: string;
+    paymentDate?: string;
+    paymentReference?: string;
+    idempotencyKey?: string;
+    notes?: string;
+    currentUserId: string;
+  },
+  dbInstance: any = db
+): Promise<{ investor: Investor; journalEntryId: string; paidAmount: number; remainingPayable: number }> {
+  return await dbInstance.transaction(
+    'rw',
+    [
+      dbInstance.journalEntries,
+      dbInstance.investors,
+      dbInstance.cashBankAccounts,
+      dbInstance.accounts,
+      dbInstance.auditLogs,
+      dbInstance.closedPeriods
+    ],
+    async () => {
+      const { investorId, amount, sourceAccountId, paymentDate, paymentReference, idempotencyKey, notes, currentUserId } = params;
+      const dateStr = paymentDate || new Date().toISOString().split('T')[0];
+
+      if (amount <= 0) {
+        throw new Error('পরিশোধের পরিমাণ অবশ্যই ০ এর বেশি হতে হবে (Payment amount must be > 0).');
+      }
+
+      // 1. Closed period validation - respect closed periods
+      if (dbInstance.closedPeriods) {
+        const closedPeriods = await dbInstance.closedPeriods.toArray();
+        const isClosed = closedPeriods.some((cp: any) => cp.endDate >= dateStr);
+        if (isClosed) {
+          throw new Error(`সীমাবদ্ধতা: ${dateStr} তারিখটি ইতোমধ্যে বন্ধ হিসাবকালের (Closed Period) অন্তর্ভুক্ত। বন্ধ হিসাবকালে নতুন পরিশোধ দাখিলা দেওয়া যাবে না।`);
+        }
+      }
+
+      // 2. Prevent duplicate payment
+      const allEntries = await dbInstance.journalEntries.toArray();
+      const isDuplicate = allEntries.some((j: any) => {
+        if (idempotencyKey && (j.reference === idempotencyKey || j.idempotencyKey === idempotencyKey)) return true;
+        if (paymentReference && j.reference === paymentReference) return true;
+        return false;
+      });
+      if (isDuplicate) {
+        throw new Error('এই ভাউচার বা রেফারেন্সের জন্য লভ্যাংশ পরিশোধ ইতোমধ্যে সম্পন্ন হয়েছে (Duplicate profit payment prevented)।');
+      }
+
+      // 3. Investor validation & Payable checks
+      const investor = await dbInstance.investors.get(investorId);
+      if (!investor) {
+        throw new Error(`বিনিয়োগকারী পাওয়া যায়নি (Investor not found: ${investorId})।`);
+      }
+
+      const currentPayable = investor.profitPayable || 0;
+      if (currentPayable <= 0) {
+        throw new Error(`এই বিনিয়োগকারীর কোনো বকেয়া বা প্রদেয় লভ্যাংশ নেই (No profit payable to disburse: ৳${currentPayable})।`);
+      }
+      if (amount > currentPayable) {
+        throw new Error(
+          `পাওনা লভ্যাংশের চেয়ে বেশি পরিশোধ করা সম্ভব নয়। বর্তমান প্রদেয় লভ্যাংশ: ৳${currentPayable}, পরিশোধের আবেদন: ৳${amount}।`
+        );
+      }
+
+      // 4. Source Account check
+      let sourceAcc = await dbInstance.cashBankAccounts.get(sourceAccountId);
+      if (!sourceAcc) {
+        sourceAcc = await dbInstance.cashBankAccounts.where('accountType').equals(sourceAccountId).first();
+      }
+      if (!sourceAcc) {
+        sourceAcc = (await dbInstance.cashBankAccounts.toArray())[0];
+      }
+      if (!sourceAcc) {
+        throw new Error(`Source cash/bank account ${sourceAccountId} not found.`);
+      }
+
+      // 5. Canonical GL accounts
+      // Payment is NOT an operating expense!
+      // Dr 2050 Investor Profit Payable (Liability reduction)
+      // Cr 1010 Cash or 1030 Bank (Asset reduction)
+      const assetGlCode = getCashBankAccountGLCode(sourceAcc.accountType);
+      const payableGlCode = getInvestorProfitPayableAccount(); // '2050'
+
+      const accounts = await dbInstance.accounts.toArray();
+      const assetAcc = accounts.find((a: any) => a.code === assetGlCode) || {
+        id: `acc_${assetGlCode}`,
+        code: assetGlCode,
+        nameBn: sourceAcc.accountName || sourceAcc.name || 'ব্যাংক/নগদ তহবিল',
+        accountClass: 'ASSET',
+        normalBalance: 'DEBIT',
+        isSystem: true,
+        isActive: true
+      };
+      if (!accounts.some((a: any) => a.code === assetGlCode)) {
+        accounts.push(assetAcc);
+      }
+
+      const payableAcc = accounts.find((a: any) => a.code === payableGlCode) || {
+        id: `acc_${payableGlCode}`,
+        code: payableGlCode,
+        nameBn: 'বিনিয়োগকারীর লভ্যাংশ প্রদেয় (Investor Profit Payable)',
+        accountClass: 'LIABILITY',
+        normalBalance: 'CREDIT',
+        isSystem: true,
+        isActive: true
+      };
+      if (!accounts.some((a: any) => a.code === payableGlCode)) {
+        accounts.push(payableAcc);
+      }
+
+      const journalLines: JournalLine[] = [
+        {
+          accountId: payableAcc.id,
+          accountCode: payableGlCode,
+          accountName: payableAcc.nameBn,
+          debit: amount,
+          credit: 0,
+          memo: `${investor.name} কে লভ্যাংশ প্রদান`
+        },
+        {
+          accountId: assetAcc.id,
+          accountCode: assetGlCode,
+          accountName: sourceAcc.accountName || sourceAcc.name || assetAcc.nameBn,
+          debit: 0,
+          credit: amount,
+          memo: `লভ্যাংশ পরিশোধ বাবদ তহবিল হ্রাস`
+        }
+      ];
+
+      const refNumber = paymentReference || idempotencyKey || generateTransactionNumber('INV-PAY');
+      const voucherNumber = generateTransactionNumber('INV-PAY-V');
+      const journalEntry = await postJournalEntry(
+        {
+          id: generateUniqueId('j_inv_pay'),
+          voucherNumber,
+          voucherType: 'PAYMENT',
+          date: dateStr,
+          narration: `বিনিয়োগকারীর লভ্যাংশ পরিশোধ: ${investor.name} কে প্রদান ৳${amount}`,
+          reference: refNumber,
+          lines: journalLines,
+          createdBy: currentUserId,
+          createdAt: new Date().toISOString()
+        },
+        { accounts, skipDbPut: true }
+      );
+
+      (journalEntry as any).relatedInvestorId = investorId;
+      if (idempotencyKey) {
+        (journalEntry as any).idempotencyKey = idempotencyKey;
+      }
+
+      await safeInsert(dbInstance.journalEntries, journalEntry, { idPrefix: 'j' });
+
+      // 6. Update source cash/bank operational balance
+      await dbInstance.cashBankAccounts.update(sourceAcc.id, {
+        currentBalance: Math.round(((sourceAcc.currentBalance || 0) - amount) * 100) / 100
+      });
+
+      // 7. Update investor state
+      const remaining = Math.round(Math.max(0, currentPayable - amount) * 100) / 100;
+      const updatedInvestor: Investor = {
+        ...investor,
+        totalProfitPaid: Math.round(((investor.totalProfitPaid || 0) + amount) * 100) / 100,
+        profitPayable: remaining,
+        lastProfitPaymentDate: dateStr,
+        notes: notes ? (investor.notes ? `${investor.notes}\n${notes}` : notes) : investor.notes,
+        synced: false
+      };
+      await dbInstance.investors.put(updatedInvestor);
+
+      // 8. Audit Log
+      await safeInsert(dbInstance.auditLogs, {
+        id: generateUniqueId('audit'),
+        timestamp: new Date().toISOString(),
+        userId: currentUserId,
+        role: 'OWNER',
+        action: 'INVESTOR_PROFIT_PAYMENT',
+        module: 'FINANCE',
+        recordId: investor.id,
+        status: 'SUCCESS',
+        details: `বিনিয়োগকারী ${investor.name} কে লভ্যাংশ পরিশোধ ৳${amount} (অবশিষ্ট প্রদেয়: ৳${remaining})`
+      });
+
+      return {
+        investor: updatedInvestor,
+        journalEntryId: journalEntry.id,
+        paidAmount: amount,
+        remainingPayable: remaining
+      };
+    }
+  );
+}
+
+/**
+ * Atomic Execution of Investor Capital Return (Reduction / Exit)
+ * - Capital return is NOT operating expense:
+ * - Debits 3020 Investor Capital (Equity reduction)
+ * - Credits 1010 Cash or 1030 Bank (Asset reduction)
+ * - Reduces investor.currentCapitalBalance and tracks totalCapitalReturned
+ */
+export async function executeInvestorCapitalReturnTransaction(
+  params: {
+    investorId: string;
+    amount: number;
+    sourceAccountId: string;
+    returnDate?: string;
+    notes?: string;
+    currentUserId: string;
+  },
+  dbInstance: any = db
+): Promise<{ investor: Investor; journalEntryId: string; returnedAmount: number }> {
+  return await dbInstance.transaction(
+    'rw',
+    [
+      dbInstance.journalEntries,
+      dbInstance.investors,
+      dbInstance.cashBankAccounts,
+      dbInstance.accounts,
+      dbInstance.auditLogs,
+      dbInstance.closedPeriods
+    ],
+    async () => {
+      const { investorId, amount, sourceAccountId, returnDate, notes, currentUserId } = params;
+      const dateStr = returnDate || new Date().toISOString().split('T')[0];
+
+      if (amount <= 0) {
+        throw new Error('মূলধন ফেরতের পরিমাণ অবশ্যই ০ এর বেশি হতে হবে (Return amount must be > 0).');
+      }
+
+      // Closed period validation
+      if (dbInstance.closedPeriods) {
+        const closedPeriods = await dbInstance.closedPeriods.toArray();
+        const isClosed = closedPeriods.some((cp: any) => cp.endDate >= dateStr);
+        if (isClosed) {
+          throw new Error(`সীমাবদ্ধতা: ${dateStr} তারিখটি ইতোমধ্যে বন্ধ হিসাবকালের (Closed Period) অন্তর্ভুক্ত।`);
+        }
+      }
+
+      const investor = await dbInstance.investors.get(investorId);
+      if (!investor) {
+        throw new Error(`বিনিয়োগকারী পাওয়া যায়নি (Investor not found: ${investorId})।`);
+      }
+
+      const currentCapital = investor.currentCapitalBalance ?? investor.capitalAmount ?? 0;
+      if (amount > currentCapital) {
+        throw new Error(
+          `মূলধন ফেরতের পরিমাণ বিদ্যমান মূলধনের চেয়ে বেশি হতে পারে না। বর্তমান মূলধন স্থিতি: ৳${currentCapital}, ফেরত আবেদন: ৳${amount}।`
+        );
+      }
+
+      let sourceAcc = await dbInstance.cashBankAccounts.get(sourceAccountId);
+      if (!sourceAcc) {
+        sourceAcc = await dbInstance.cashBankAccounts.where('accountType').equals(sourceAccountId).first();
+      }
+      if (!sourceAcc) {
+        sourceAcc = (await dbInstance.cashBankAccounts.toArray())[0];
+      }
+      if (!sourceAcc) {
+        throw new Error(`Source cash/bank account ${sourceAccountId} not found.`);
+      }
+
+      const assetGlCode = getCashBankAccountGLCode(sourceAcc.accountType);
+      const equityGlCode = getInvestorCapitalAccount(); // '3020'
+
+      const accounts = await dbInstance.accounts.toArray();
+      const assetAcc = accounts.find((a: any) => a.code === assetGlCode) || {
+        id: `acc_${assetGlCode}`,
+        code: assetGlCode,
+        nameBn: sourceAcc.accountName || sourceAcc.name || 'ব্যাংক/নগদ তহবিল',
+        accountClass: 'ASSET',
+        normalBalance: 'DEBIT',
+        isSystem: true,
+        isActive: true
+      };
+      if (!accounts.some((a: any) => a.code === assetGlCode)) {
+        accounts.push(assetAcc);
+      }
+
+      const equityAcc = accounts.find((a: any) => a.code === equityGlCode) || {
+        id: `acc_${equityGlCode}`,
+        code: equityGlCode,
+        nameBn: 'বিনিয়োগকারীর মূলধন (Investor Capital)',
+        accountClass: 'EQUITY',
+        normalBalance: 'CREDIT',
+        isSystem: true,
+        isActive: true
+      };
+      if (!accounts.some((a: any) => a.code === equityGlCode)) {
+        accounts.push(equityAcc);
+      }
+
+      const journalLines: JournalLine[] = [
+        {
+          accountId: equityAcc.id,
+          accountCode: equityGlCode,
+          accountName: equityAcc.nameBn,
+          debit: amount,
+          credit: 0,
+          memo: `${investor.name} এর মূলধন ফেরত`
+        },
+        {
+          accountId: assetAcc.id,
+          accountCode: assetGlCode,
+          accountName: sourceAcc.accountName || sourceAcc.name || assetAcc.nameBn,
+          debit: 0,
+          credit: amount,
+          memo: `মূলধন ফেরত বাবদ তহবিল হ্রাস`
+        }
+      ];
+
+      const voucherNumber = generateTransactionNumber('INV-RET-V');
+      const journalEntry = await postJournalEntry(
+        {
+          id: generateUniqueId('j_inv_ret'),
+          voucherNumber,
+          voucherType: 'PAYMENT',
+          date: dateStr,
+          narration: `বিনিয়োগকারীর মূলধন ফেরত: ${investor.name} কে ফেরত ৳${amount}`,
+          reference: generateTransactionNumber('INV-RET'),
+          lines: journalLines,
+          createdBy: currentUserId,
+          createdAt: new Date().toISOString()
+        },
+        { accounts, skipDbPut: true }
+      );
+
+      await safeInsert(dbInstance.journalEntries, journalEntry, { idPrefix: 'j' });
+
+      // Update source cash/bank operational balance
+      await dbInstance.cashBankAccounts.update(sourceAcc.id, {
+        currentBalance: Math.round(((sourceAcc.currentBalance || 0) - amount) * 100) / 100
+      });
+
+      const newCapBalance = Math.round(Math.max(0, currentCapital - amount) * 100) / 100;
+      const totalReturned = Math.round(((investor.totalCapitalReturned || 0) + amount) * 100) / 100;
+
+      // Update investor state
+      const updatedInvestor: Investor = {
+        ...investor,
+        totalCapitalReturned: totalReturned,
+        currentCapitalBalance: newCapBalance,
+        currentBalance: newCapBalance,
+        currentEquityBalance: newCapBalance,
+        drawings: Math.round(((investor.drawings || 0) + amount) * 100) / 100,
+        totalWithdrawals: Math.round(((investor.totalWithdrawals || 0) + amount) * 100) / 100,
+        lastCapitalReturnDate: dateStr,
+        status: newCapBalance === 0 && (investor.profitPayable || 0) === 0 ? 'EXITED' : investor.status,
+        notes: notes ? (investor.notes ? `${investor.notes}\n${notes}` : notes) : investor.notes,
+        synced: false
+      };
+      await dbInstance.investors.put(updatedInvestor);
+
+      // Audit Log
+      await safeInsert(dbInstance.auditLogs, {
+        id: generateUniqueId('audit'),
+        timestamp: new Date().toISOString(),
+        userId: currentUserId,
+        role: 'OWNER',
+        action: 'INVESTOR_CAPITAL_RETURN',
+        module: 'FINANCE',
+        recordId: investor.id,
+        status: 'SUCCESS',
+        details: `বিনিয়োগকারী ${investor.name} কে মূলধন ফেরত ৳${amount} (অবশিষ্ট মূলধন: ৳${newCapBalance})`
+      });
+
+      return { investor: updatedInvestor, journalEntryId: journalEntry.id, returnedAmount: amount };
     }
   );
 }
@@ -1282,6 +1973,9 @@ export async function executeAnimalEventTransaction(params: {
           } else if (event.eventType === 'TREATMENT') {
             expenseCode = CANONICAL_ACCOUNTS.VET_MEDICINE; // 6040
             expenseName = 'চিকিৎসা ও ওষুধ (Veterinary & Medicine)';
+          } else if ((event.eventType as string) === 'LABOUR') {
+            expenseCode = CANONICAL_ACCOUNTS.FARM_LABOUR_WAGES; // 6020
+            expenseName = 'খামার শ্রমিক মজুরি (Farm Labour Wages)';
           }
 
           const paymentCode = paymentMethod === 'BANK' ? CANONICAL_ACCOUNTS.BANK : CANONICAL_ACCOUNTS.CASH;
@@ -1377,16 +2071,19 @@ export async function executeAnimalEventTransaction(params: {
       await safeInsert(db.animalEvents, eventRecord, { idPrefix: 'evt' });
 
       // Update matching running total on Animal record
-      // accumulatedFeedCost for FEED, accumulatedMedCost for VACCINE/TREATMENT, accumulatedLabourCost stays manual, plus totalCost.
+      // Legitimate accumulated raising costs: Purchase, Feed, Medicine/veterinary, Labour, Other
       const freshAnimal = (await db.animals.get(animal.id)) || animal;
+      const isLabour = (event.eventType as string) === 'LABOUR';
       const newFeed = (freshAnimal.accumulatedFeedCost || 0) + (event.eventType === 'FEED' ? cost : 0);
       const newMed = (freshAnimal.accumulatedMedCost || 0) + (event.eventType === 'VACCINE' || event.eventType === 'TREATMENT' ? cost : 0);
-      const newOther = (freshAnimal.otherCosts || 0) + (event.eventType !== 'FEED' && event.eventType !== 'VACCINE' && event.eventType !== 'TREATMENT' ? cost : 0);
-      const newTotal = (freshAnimal.purchaseCost || 0) + newFeed + newMed + (freshAnimal.accumulatedLabourCost || 0) + newOther;
+      const newLabour = (freshAnimal.accumulatedLabourCost || 0) + (isLabour ? cost : 0);
+      const newOther = (freshAnimal.otherCosts || 0) + (!isLabour && event.eventType !== 'FEED' && event.eventType !== 'VACCINE' && event.eventType !== 'TREATMENT' ? cost : 0);
+      const newTotal = (freshAnimal.purchaseCost || 0) + newFeed + newMed + newLabour + newOther;
 
       const animalUpdates: Partial<Animal> = {
         accumulatedFeedCost: Math.round(newFeed * 100) / 100,
         accumulatedMedCost: Math.round(newMed * 100) / 100,
+        accumulatedLabourCost: Math.round(newLabour * 100) / 100,
         otherCosts: Math.round(newOther * 100) / 100,
         totalCost: Math.round(newTotal * 100) / 100,
         synced: false
@@ -1449,6 +2146,530 @@ export async function executeAnimalEventTransaction(params: {
 }
 
 /**
+ * Calculate legitimate accumulated recorded raising costs for a livestock animal.
+ * Production costs include:
+ * - Purchase (capitalized asset cost)
+ * - Feed (accumulated feed costs)
+ * - Medicine / Veterinary (accumulated medicine & vaccine costs)
+ * - Labour (accumulated labour & wages)
+ * - Other production costs
+ */
+export function calculateAnimalRecordedCosts(animal: Animal): AnimalCostBreakdown {
+  const purchaseCost = Math.max(0, Number(animal.purchaseCost) || 0);
+  const feedCost = Math.max(0, Number(animal.accumulatedFeedCost) || 0);
+  const medicineCost = Math.max(0, Number(animal.accumulatedMedCost) || 0);
+  const labourCost = Math.max(0, Number(animal.accumulatedLabourCost) || 0);
+  const otherCost = Math.max(0, Number(animal.otherCosts) || 0);
+
+  const sumComponents = Math.round(
+    (purchaseCost + feedCost + medicineCost + labourCost + otherCost) * 100
+  ) / 100;
+  const totalCostField = Math.max(0, Number(animal.totalCost) || 0);
+  const totalRecordedCost = sumComponents > 0 ? sumComponents : Math.round(totalCostField * 100) / 100;
+
+  return {
+    purchaseCost,
+    feedCost,
+    medicineCost,
+    labourCost,
+    otherCost,
+    totalRecordedCost
+  };
+}
+
+/**
+ * Builds balanced credit lines for livestock cost derecognition upon sale or write-off.
+ * Reconciles the animal's accumulated costs with accounting without double-counting:
+ * 1. Credits Livestock Assets (1580) for the capitalized portion (purchase cost or existing net 1580 debit).
+ * 2. Credits the corresponding expense accounts (Feed 6010, Vet/Med 6040, Labour 6020, Misc 6090)
+ *    so accumulated raising expenses already in GL are reconciled into COGS (5020) without double counting!
+ */
+export async function buildLivestockCostCreditLines(
+  freshAnimal: Animal,
+  amountToCredit: number,
+  accounts: Account[]
+): Promise<JournalLine[]> {
+  const breakdown = calculateAnimalRecordedCosts(freshAnimal);
+  let remaining = Math.round(amountToCredit * 100) / 100;
+  const creditLines: JournalLine[] = [];
+
+  // Check how much net debit is currently in Livestock Assets (1580) or expense accounts for this animal
+  let netAssetDebit1580 = 0;
+  const glExpenseMap = new Map<string, number>();
+
+  try {
+    const animalEntries = await db.journalEntries
+      .filter((j) => j.reference === freshAnimal.id || (Boolean(j.narration) && j.narration.includes(freshAnimal.id)))
+      .toArray();
+
+    for (const entry of animalEntries) {
+      for (const line of entry.lines) {
+        if (line.accountCode === CANONICAL_ACCOUNTS.LIVESTOCK_ASSETS) {
+          netAssetDebit1580 += (line.debit || 0) - (line.credit || 0);
+        } else if (
+          line.accountCode === CANONICAL_ACCOUNTS.FEED_EXPENSE ||
+          line.accountCode === CANONICAL_ACCOUNTS.VET_MEDICINE ||
+          line.accountCode === CANONICAL_ACCOUNTS.VACCINATION ||
+          line.accountCode === CANONICAL_ACCOUNTS.FARM_LABOUR_WAGES ||
+          line.accountCode === CANONICAL_ACCOUNTS.MISCELLANEOUS_EXPENSE
+        ) {
+          const prev = glExpenseMap.get(line.accountCode) || 0;
+          glExpenseMap.set(line.accountCode, prev + (line.debit || 0) - (line.credit || 0));
+        }
+      }
+    }
+  } catch {
+    // If query unavailable (e.g. testing), safely continue with recorded breakdown
+  }
+
+  // Capitalized portion to derecognize from Livestock Assets (1580)
+  // Derecognize up to existing 1580 net debit, or purchaseCost if no prior GL journal, capped at remaining
+  const assetPortion = Math.min(
+    remaining,
+    Math.max(0, netAssetDebit1580 > 0 ? netAssetDebit1580 : breakdown.purchaseCost)
+  );
+
+  if (assetPortion > 0) {
+    let livestockAssetAcc = accounts.find((a) => a.code === CANONICAL_ACCOUNTS.LIVESTOCK_ASSETS);
+    if (!livestockAssetAcc) {
+      const newAcc: Account = {
+        id: 'acc_1580',
+        code: CANONICAL_ACCOUNTS.LIVESTOCK_ASSETS,
+        nameBn: 'পশুসম্পদ (Livestock & Biological Assets)',
+        nameEn: 'Livestock & Biological Assets',
+        accountClass: 'ASSET',
+        normalBalance: 'DEBIT',
+        isSystem: true,
+        isActive: true
+      };
+      await safeInsert(db.accounts, newAcc, { idPrefix: 'acc' });
+      accounts.push(newAcc);
+      livestockAssetAcc = newAcc;
+    }
+
+    creditLines.push({
+      accountId: livestockAssetAcc.id,
+      accountCode: CANONICAL_ACCOUNTS.LIVESTOCK_ASSETS,
+      accountName: livestockAssetAcc.nameBn || 'পশুসম্পদ (Livestock & Biological Assets)',
+      debit: 0,
+      credit: assetPortion,
+      memo: `${freshAnimal.breed} (ট্যাগ: ${freshAnimal.id}) বিক্রয় বাবদ সম্পদ হিসাব সমন্বয়`
+    });
+
+    remaining = Math.round((remaining - assetPortion) * 100) / 100;
+  }
+
+  // If raising costs remain, credit original expense accounts to avoid double-counting in P&L
+  if (remaining > 0) {
+    // Priority order: match GL debited amounts if known, or breakdown components
+    const expenseDefs = [
+      {
+        code: CANONICAL_ACCOUNTS.FEED_EXPENSE, // 6010
+        nameBn: 'খাদ্য ক্রয় খরচ (Feed Expense)',
+        nameEn: 'Feed Expense',
+        breakdownAmt: breakdown.feedCost,
+        glAmt: glExpenseMap.get(CANONICAL_ACCOUNTS.FEED_EXPENSE) || 0,
+        label: 'খাদ্য ব্যয় সমন্বয়'
+      },
+      {
+        code: CANONICAL_ACCOUNTS.VACCINATION, // 6050
+        nameBn: 'টিকা প্রদান খরচ (Vaccination Expense)',
+        nameEn: 'Vaccination Expense',
+        breakdownAmt: 0,
+        glAmt: glExpenseMap.get(CANONICAL_ACCOUNTS.VACCINATION) || 0,
+        label: 'টিকা ব্যয় সমন্বয়'
+      },
+      {
+        code: CANONICAL_ACCOUNTS.VET_MEDICINE, // 6040
+        nameBn: 'চিকিৎসা ও ওষুধ (Veterinary & Medicine)',
+        nameEn: 'Veterinary & Medicine',
+        breakdownAmt: breakdown.medicineCost,
+        glAmt: glExpenseMap.get(CANONICAL_ACCOUNTS.VET_MEDICINE) || 0,
+        label: 'চিকিৎসা/ওষুধ ব্যয় সমন্বয়'
+      },
+      {
+        code: CANONICAL_ACCOUNTS.FARM_LABOUR_WAGES, // 6020
+        nameBn: 'খামার শ্রমিক মজুরি (Farm Labour Wages)',
+        nameEn: 'Farm Labour Wages',
+        breakdownAmt: breakdown.labourCost,
+        glAmt: glExpenseMap.get(CANONICAL_ACCOUNTS.FARM_LABOUR_WAGES) || 0,
+        label: 'শ্রমিক মজুরি সমন্বয়'
+      },
+      {
+        code: CANONICAL_ACCOUNTS.MISCELLANEOUS_EXPENSE, // 6090
+        nameBn: 'বিবিধ পরিচালন ব্যয় (Miscellaneous Expense)',
+        nameEn: 'Miscellaneous Expense',
+        breakdownAmt: breakdown.otherCost,
+        glAmt: glExpenseMap.get(CANONICAL_ACCOUNTS.MISCELLANEOUS_EXPENSE) || 0,
+        label: 'অন্যান্য উৎপাদন ব্যয় সমন্বয়'
+      }
+    ];
+
+    for (const def of expenseDefs) {
+      if (remaining <= 0) break;
+      const targetAmt = Math.max(def.breakdownAmt, def.glAmt);
+      if (targetAmt > 0) {
+        const allocAmt = Math.min(remaining, targetAmt);
+        if (allocAmt > 0) {
+          let expAcc = accounts.find((a) => a.code === def.code);
+          if (!expAcc) {
+            const newAcc: Account = {
+              id: `acc_${def.code}`,
+              code: def.code,
+              nameBn: def.nameBn,
+              nameEn: def.nameEn,
+              accountClass: 'EXPENSE',
+              normalBalance: 'DEBIT',
+              isSystem: true,
+              isActive: true
+            };
+            await safeInsert(db.accounts, newAcc, { idPrefix: 'acc' });
+            accounts.push(newAcc);
+            expAcc = newAcc;
+          }
+
+          creditLines.push({
+            accountId: expAcc.id,
+            accountCode: def.code,
+            accountName: expAcc.nameBn || def.nameBn,
+            debit: 0,
+            credit: allocAmt,
+            memo: `${freshAnimal.breed} (ট্যাগ: ${freshAnimal.id}): বিক্রিত পশুর উৎপাদন ব্যয় COGS এ সমন্বয় (${def.label})`
+          });
+
+          remaining = Math.round((remaining - allocAmt) * 100) / 100;
+        }
+      }
+    }
+  }
+
+  // Any remaining fraction goes to Miscellaneous Expense (6090)
+  if (remaining > 0) {
+    const miscCode = CANONICAL_ACCOUNTS.MISCELLANEOUS_EXPENSE;
+    let expAcc = accounts.find((a) => a.code === miscCode);
+    if (!expAcc) {
+      const newAcc: Account = {
+        id: `acc_${miscCode}`,
+        code: miscCode,
+        nameBn: 'বিবিধ পরিচালন ব্যয় (Miscellaneous Expense)',
+        nameEn: 'Miscellaneous Expense',
+        accountClass: 'EXPENSE',
+        normalBalance: 'DEBIT',
+        isSystem: true,
+        isActive: true
+      };
+      await safeInsert(db.accounts, newAcc, { idPrefix: 'acc' });
+      accounts.push(newAcc);
+      expAcc = newAcc;
+    }
+
+    creditLines.push({
+      accountId: expAcc.id,
+      accountCode: miscCode,
+      accountName: expAcc.nameBn || 'বিবিধ পরিচালন ব্যয় (Miscellaneous Expense)',
+      debit: 0,
+      credit: remaining,
+      memo: `${freshAnimal.breed} (ট্যাগ: ${freshAnimal.id}): বিক্রিত পশুর বিবিধ উৎপাদন ব্যয় সমন্বয়`
+    });
+    remaining = 0;
+  }
+
+  return creditLines;
+}
+
+export interface LivestockProductionCostParams {
+  animalId: string;
+  costType: 'FEED' | 'MEDICINE' | 'LABOUR' | 'OTHER';
+  amount: number;
+  date?: string;
+  paymentMethod?: 'CASH' | 'BANK' | 'INVENTORY';
+  bankAccountId?: string;
+  feedItemId?: string;
+  feedQuantityUsed?: number;
+  notes?: string;
+  currentUserId: string;
+}
+
+/**
+ * Atomic Execution of Recording Livestock Production Costs (Feed, Medicine, Labour, Other)
+ * Reconciles directly with double-entry accounting and updates the animal's accumulated cost breakdown.
+ */
+export async function executeLivestockProductionCostTransaction(
+  params: LivestockProductionCostParams
+): Promise<{ updatedAnimal: Animal; journalEntryId?: string; voucherNumber?: string }> {
+  return await db.transaction(
+    'rw',
+    [
+      db.animals,
+      db.animalEvents,
+      db.inventoryItems,
+      db.stockMovements,
+      db.journalEntries,
+      db.accounts,
+      db.cashBankAccounts,
+      db.auditLogs
+    ],
+    async () => {
+      const {
+        animalId,
+        costType,
+        amount,
+        date = new Date().toISOString().split('T')[0],
+        paymentMethod = 'CASH',
+        bankAccountId,
+        feedItemId,
+        feedQuantityUsed,
+        notes,
+        currentUserId
+      } = params;
+
+      const cleanAmount = Math.round(Math.max(0, amount) * 100) / 100;
+      if (cleanAmount <= 0) {
+        throw new Error('উৎপাদন ব্যয়ের পরিমাণ ০ এর বেশি হতে হবে।');
+      }
+
+      const freshAnimal = await db.animals.get(animalId);
+      if (!freshAnimal) {
+        throw new Error(`পশু খুঁজে পাওয়া যায়নি (ID: ${animalId})`);
+      }
+
+      if (['SOLD', 'DECEASED', 'TRANSFERRED', 'STOLEN'].includes(freshAnimal.status)) {
+        throw new Error(`বিক্রিত বা অপসারণকৃত পশুর (${freshAnimal.status}) উৎপাদন ব্যয় যুক্ত করা যাবে না।`);
+      }
+
+      const accounts = await db.accounts.toArray();
+      let journalEntryId: string | undefined;
+      let voucherNumber: string | undefined;
+
+      if (paymentMethod === 'INVENTORY' && feedItemId) {
+        const freshItem = await db.inventoryItems.get(feedItemId);
+        if (!freshItem) {
+          throw new Error('নির্বাচিত খাদ্য আইটেম খুঁজে পাওয়া যায়নি!');
+        }
+        const qtyUsed = Math.max(0, feedQuantityUsed || 0);
+        if (qtyUsed > 0 && freshItem.currentStock < qtyUsed) {
+          throw new Error(`পর্যাপ্ত খাদ্য মজুদ নেই! বর্তমান মজুদ: ${freshItem.currentStock} ${freshItem.unit}`);
+        }
+
+        const feedExpAcc = accounts.find((a) => a.code === CANONICAL_ACCOUNTS.FEED_EXPENSE) || {
+          id: `acc_${CANONICAL_ACCOUNTS.FEED_EXPENSE}`,
+          code: CANONICAL_ACCOUNTS.FEED_EXPENSE,
+          nameBn: 'খাদ্য ক্রয় খরচ (Feed Expense)'
+        };
+        const feedAssetAcc = accounts.find((a) => a.code === CANONICAL_ACCOUNTS.FEED_INVENTORY) || {
+          id: `acc_${CANONICAL_ACCOUNTS.FEED_INVENTORY}`,
+          code: CANONICAL_ACCOUNTS.FEED_INVENTORY,
+          nameBn: 'খাদ্য মজুদ (Feed Inventory Asset)'
+        };
+
+        const journalLines: JournalLine[] = [
+          {
+            accountId: feedExpAcc.id,
+            accountCode: CANONICAL_ACCOUNTS.FEED_EXPENSE,
+            accountName: feedExpAcc.nameBn,
+            debit: cleanAmount,
+            credit: 0,
+            memo: `${freshAnimal.breed} (${freshAnimal.id}) খাদ্য ব্যবহার ব্যয়`
+          },
+          {
+            accountId: feedAssetAcc.id,
+            accountCode: CANONICAL_ACCOUNTS.FEED_INVENTORY,
+            accountName: feedAssetAcc.nameBn,
+            debit: 0,
+            credit: cleanAmount,
+            memo: `${freshItem.nameBn} মজুদ হ্রাস (${qtyUsed} ${freshItem.unit})`
+          }
+        ];
+
+        voucherNumber = generateTransactionNumber('EVV');
+        const journalEntry = await postJournalEntry(
+          {
+            id: generateUniqueId('j_prod_cost'),
+            voucherNumber,
+            voucherType: 'JOURNAL',
+            date,
+            narration: `গবাদিপশু ${freshAnimal.id} (${freshAnimal.breed}): খাদ্য উপাদান ব্যবহার ব্যয় (মজুদ হ্রাস)`,
+            reference: freshAnimal.id,
+            lines: journalLines,
+            createdBy: currentUserId,
+            createdAt: new Date().toISOString()
+          },
+          { accounts, skipDbPut: true }
+        );
+        await safeInsert(db.journalEntries, journalEntry, { idPrefix: 'j' });
+        journalEntryId = journalEntry.id;
+
+        if (qtyUsed > 0) {
+          const newStock = Math.max(0, Math.round((freshItem.currentStock - qtyUsed) * 100) / 100);
+          await db.inventoryItems.update(freshItem.id, {
+            currentStock: newStock,
+            synced: false
+          });
+
+          await safeInsert(db.stockMovements, {
+            id: generateUniqueId('stk'),
+            date,
+            itemId: freshItem.id,
+            movementType: 'CONSUMPTION',
+            quantity: qtyUsed,
+            unitCost: qtyUsed > 0 ? Math.round((cleanAmount / qtyUsed) * 100) / 100 : 0,
+            totalValue: cleanAmount,
+            referenceId: freshAnimal.id,
+            notes: `${freshAnimal.breed} (${freshAnimal.id}) খাদ্য খরচ বাবদ মজুদ হ্রাস`,
+            synced: false
+          });
+        }
+      } else {
+        // Cash or Bank Payment
+        let expenseCode: string = CANONICAL_ACCOUNTS.MISCELLANEOUS_EXPENSE;
+        let expenseName = 'বিবিধ পরিচালন ব্যয় (Miscellaneous Expense)';
+
+        if (costType === 'FEED') {
+          expenseCode = CANONICAL_ACCOUNTS.FEED_EXPENSE; // 6010
+          expenseName = 'খাদ্য ক্রয় খরচ (Feed Expense)';
+        } else if (costType === 'MEDICINE') {
+          expenseCode = CANONICAL_ACCOUNTS.VET_MEDICINE; // 6040
+          expenseName = 'চিকিৎসা ও ওষুধ (Veterinary & Medicine)';
+        } else if (costType === 'LABOUR') {
+          expenseCode = CANONICAL_ACCOUNTS.FARM_LABOUR_WAGES; // 6020
+          expenseName = 'খামার শ্রমিক মজুরি (Farm Labour Wages)';
+        }
+
+        const paymentCode = paymentMethod === 'BANK' ? CANONICAL_ACCOUNTS.BANK : CANONICAL_ACCOUNTS.CASH;
+        const paymentName = paymentMethod === 'BANK' ? 'ব্যাংক হিসাব (Bank Accounts)' : 'নগদ টাকা (Cash on Hand)';
+
+        const expenseAcc = accounts.find((a) => a.code === expenseCode) || {
+          id: `acc_${expenseCode}`,
+          code: expenseCode,
+          nameBn: expenseName
+        };
+        const paymentAcc = accounts.find((a) => a.code === paymentCode) || {
+          id: `acc_${paymentCode}`,
+          code: paymentCode,
+          nameBn: paymentName
+        };
+
+        const journalLines: JournalLine[] = [
+          {
+            accountId: expenseAcc.id,
+            accountCode: expenseCode,
+            accountName: expenseAcc.nameBn || expenseName,
+            debit: cleanAmount,
+            credit: 0,
+            memo: `${freshAnimal.id} (${freshAnimal.breed}) - ${costType} ব্যয়`
+          },
+          {
+            accountId: paymentAcc.id,
+            accountCode: paymentCode,
+            accountName: paymentAcc.nameBn || paymentName,
+            debit: 0,
+            credit: cleanAmount,
+            memo: `পশুর উৎপাদন ব্যয় পরিশোধ (${costType})`
+          }
+        ];
+
+        const check = validateBalancedLines(journalLines, accounts);
+        if (!check.isBalanced) {
+          throw new Error('জাবেদা দাখিলা ভারসাম্যহীন! উৎপাদন ব্যয় সংরক্ষণ বাতিল করা হলো।');
+        }
+
+        voucherNumber = generateTransactionNumber('EVV');
+        const journalEntry = await postJournalEntry(
+          {
+            id: generateUniqueId('j_prod_cost'),
+            voucherNumber,
+            voucherType: 'PAYMENT',
+            date,
+            narration: `গবাদিপশু ${freshAnimal.id} (${freshAnimal.breed}): ${costType} উৎপাদন ব্যয়${notes ? ` (${notes})` : ''}`,
+            reference: freshAnimal.id,
+            lines: journalLines,
+            createdBy: currentUserId,
+            createdAt: new Date().toISOString()
+          },
+          { accounts, skipDbPut: true }
+        );
+        await safeInsert(db.journalEntries, journalEntry, { idPrefix: 'j' });
+        journalEntryId = journalEntry.id;
+
+        // Update operational cash/bank account balance
+        if (paymentMethod === 'CASH') {
+          const cashAcc = await db.cashBankAccounts.where('accountType').equals('CASH').first();
+          if (cashAcc) {
+            await db.cashBankAccounts.update(cashAcc.id, {
+              currentBalance: Math.round((cashAcc.currentBalance - cleanAmount) * 100) / 100
+            });
+          }
+        } else if (paymentMethod === 'BANK') {
+          let bankAcc: CashBankAccount | undefined;
+          if (bankAccountId) bankAcc = await db.cashBankAccounts.get(bankAccountId);
+          if (!bankAcc) bankAcc = await db.cashBankAccounts.where('accountType').equals('BANK').first();
+          if (bankAcc) {
+            await db.cashBankAccounts.update(bankAcc.id, {
+              currentBalance: Math.round((bankAcc.currentBalance - cleanAmount) * 100) / 100
+            });
+          }
+        }
+      }
+
+      // Record event
+      const eventId = generateUniqueId('evt');
+      const eventTypeMap: Record<string, 'FEED' | 'TREATMENT' | 'LABOUR' | 'OTHER'> = {
+        FEED: 'FEED',
+        MEDICINE: 'TREATMENT',
+        LABOUR: 'LABOUR',
+        OTHER: 'OTHER'
+      };
+      const animalEvent: AnimalEvent = {
+        id: eventId,
+        animalId: freshAnimal.id,
+        eventType: eventTypeMap[costType] || 'OTHER',
+        date,
+        cost: cleanAmount,
+        feedItemId,
+        feedQuantityUsed,
+        details: notes || `উৎপাদন ব্যয় (${costType}): ৳${cleanAmount}`,
+        journalEntryId,
+        synced: false
+      };
+      await safeInsert(db.animalEvents, animalEvent, { idPrefix: 'evt' });
+
+      // Update animal accumulated costs
+      const newFeed = (freshAnimal.accumulatedFeedCost || 0) + (costType === 'FEED' ? cleanAmount : 0);
+      const newMed = (freshAnimal.accumulatedMedCost || 0) + (costType === 'MEDICINE' ? cleanAmount : 0);
+      const newLabour = (freshAnimal.accumulatedLabourCost || 0) + (costType === 'LABOUR' ? cleanAmount : 0);
+      const newOther = (freshAnimal.otherCosts || 0) + (costType === 'OTHER' ? cleanAmount : 0);
+      const newTotal = (freshAnimal.purchaseCost || 0) + newFeed + newMed + newLabour + newOther;
+
+      const updatedAnimal: Animal = {
+        ...freshAnimal,
+        accumulatedFeedCost: Math.round(newFeed * 100) / 100,
+        accumulatedMedCost: Math.round(newMed * 100) / 100,
+        accumulatedLabourCost: Math.round(newLabour * 100) / 100,
+        otherCosts: Math.round(newOther * 100) / 100,
+        totalCost: Math.round(newTotal * 100) / 100,
+        synced: false
+      };
+      await db.animals.put(updatedAnimal);
+
+      // Audit Log
+      await safeInsert(db.auditLogs, {
+        id: generateUniqueId('audit'),
+        timestamp: new Date().toISOString(),
+        userId: currentUserId,
+        role: 'OWNER',
+        action: 'PRODUCTION_COST_RECORDED',
+        module: 'LIVESTOCK',
+        recordId: freshAnimal.id,
+        status: 'SUCCESS',
+        details: `${freshAnimal.id} (${freshAnimal.breed}) এ ${costType} উৎপাদন ব্যয় যুক্ত (৳${cleanAmount})`
+      });
+
+      return { updatedAnimal, journalEntryId, voucherNumber };
+    }
+  );
+}
+
+/**
  * Atomic Execution of Animal Sell or Removal (Sold, Deceased, Transferred, Stolen)
  * If SOLD, auto-posts revenue using the same sales-posting pattern as InventoryCommerceModule.
  */
@@ -1500,8 +2721,9 @@ export async function executeAnimalSaleOrRemovalTransaction(params: {
       }
 
       const cleanPrice = Math.round((salePrice || 0) * 100) / 100;
-      // Original purchase cost ONLY - do NOT include accumulated feed/med/labour costs
-      const costToDerecognize = Math.round((freshAnimal.purchaseCost || 0) * 100) / 100;
+      // Legitimate accumulated raising costs: Purchase + Feed + Medicine/Vet + Labour + Other
+      const costBreakdown = calculateAnimalRecordedCosts(freshAnimal);
+      const costToDerecognize = costBreakdown.totalRecordedCost;
       let saleRecord: Sale | undefined;
       let journalEntryId: string | undefined;
 
@@ -1561,7 +2783,7 @@ export async function executeAnimalSaleOrRemovalTransaction(params: {
 
       // If SOLD:
       // 1. Revenue leg: Debit Cash/Bank, Credit Livestock Revenue (4020)
-      // 2. Cost leg: Debit Livestock COGS (5020), Credit Livestock Assets (1580) for original purchaseCost ONLY
+      // 2. Cost leg: Debit Livestock COGS (5020), Credit Livestock Assets / Expense accounts for total accumulated cost
       if (newStatus === 'SOLD' && (cleanPrice > 0 || costToDerecognize > 0)) {
         const paymentCode = paymentMethod === 'BANK' ? CANONICAL_ACCOUNTS.BANK : CANONICAL_ACCOUNTS.CASH;
         const revenueCode = CANONICAL_ACCOUNTS.LIVESTOCK_REVENUE; // 4020
@@ -1601,26 +2823,19 @@ export async function executeAnimalSaleOrRemovalTransaction(params: {
           );
         }
 
-        // COGS & Asset Derecognition (original purchaseCost only)
+        // COGS & Cost Derecognition (legitimate accumulated raising costs)
         if (costToDerecognize > 0) {
-          journalLines.push(
-            {
-              accountId: livestockCogsAcc.id,
-              accountCode: CANONICAL_ACCOUNTS.LIVESTOCK_COGS,
-              accountName: livestockCogsAcc.nameBn || 'বিক্রিত পশুর অধিগ্রহণ/উৎপাদন ব্যয় (Livestock COGS)',
-              debit: costToDerecognize,
-              credit: 0,
-              memo: `${freshAnimal.breed} (ট্যাগ: ${freshAnimal.id}) মূল ক্রয়মূল্য খরচ (COGS)`
-            },
-            {
-              accountId: livestockAssetAcc.id,
-              accountCode: CANONICAL_ACCOUNTS.LIVESTOCK_ASSETS,
-              accountName: livestockAssetAcc.nameBn || 'পশুসম্পদ (Livestock & Biological Assets)',
-              debit: 0,
-              credit: costToDerecognize,
-              memo: `${freshAnimal.breed} (ট্যাগ: ${freshAnimal.id}) বিক্রয় বাবদ সম্পদ হিসাব সমন্বয়`
-            }
-          );
+          journalLines.push({
+            accountId: livestockCogsAcc.id,
+            accountCode: CANONICAL_ACCOUNTS.LIVESTOCK_COGS,
+            accountName: livestockCogsAcc.nameBn || 'বিক্রিত পশুর অধিগ্রহণ/উৎপাদন ব্যয় (Livestock COGS)',
+            debit: costToDerecognize,
+            credit: 0,
+            memo: `${freshAnimal.breed} (ট্যাগ: ${freshAnimal.id}) পুঞ্জীভূত উৎপাদন ব্যয় (COGS)`
+          });
+
+          const creditLines = await buildLivestockCostCreditLines(freshAnimal, costToDerecognize, accounts);
+          journalLines.push(...creditLines);
         }
 
         // Double check balance
@@ -1633,13 +2848,17 @@ export async function executeAnimalSaleOrRemovalTransaction(params: {
         const invoiceNumber = generateTransactionNumber('SAL');
         const displayNumber = await generateDisplayNumber('SAL', date);
 
+        const costDetailStr = costToDerecognize > 0
+          ? ` (পুঞ্জীভূত মোট ব্যয়: ৳${costToDerecognize} [ক্রয়: ৳${costBreakdown.purchaseCost}, খাদ্য: ৳${costBreakdown.feedCost}, চিকিৎসা: ৳${costBreakdown.medicineCost}, শ্রম: ৳${costBreakdown.labourCost}, অন্যান্য: ৳${costBreakdown.otherCost}])`
+          : '';
+
         const journalEntry = await postJournalEntry(
           {
             id: generateUniqueId('j_sale'),
             voucherNumber,
             voucherType: 'SALES',
             date,
-            narration: `পশু বিক্রয় চালান: ${customerName || 'সাধারণ ক্রেতা'} এর নিকট ${freshAnimal.id} (${freshAnimal.breed}) বিক্রয়${costToDerecognize > 0 ? ` (মূল ক্রয়মূল্য: ৳${costToDerecognize})` : ''}`,
+            narration: `পশু বিক্রয় চালান: ${customerName || 'সাধারণ ক্রেতা'} এর নিকট ${freshAnimal.id} (${freshAnimal.breed}) বিক্রয়${costDetailStr}`,
             reference: invoiceNumber,
             lines: journalLines,
             createdBy: currentUserId,
@@ -1668,7 +2887,8 @@ export async function executeAnimalSaleOrRemovalTransaction(params: {
                 quantity: 1,
                 unit: 'টি',
                 unitPrice: cleanPrice,
-                lineTotal: cleanPrice
+                lineTotal: cleanPrice,
+                cogsAmount: costToDerecognize
               }
             ],
             subtotal: cleanPrice,
@@ -1676,6 +2896,7 @@ export async function executeAnimalSaleOrRemovalTransaction(params: {
             grandTotal: cleanPrice,
             paidAmount: cleanPrice,
             dueAmount: 0,
+            totalCogs: costToDerecognize,
             paymentMethod,
             bankAccountId,
             journalEntryId: journalEntry.id,
@@ -1705,26 +2926,18 @@ export async function executeAnimalSaleOrRemovalTransaction(params: {
         }
       } else if (['DECEASED', 'STOLEN', 'TRANSFERRED'].includes(newStatus)) {
         // If an animal is marked DECEASED, STOLEN, or TRANSFERRED (not sold):
-        // Debit 'পশুসম্পদ অবলোপন (Livestock Write-off)' (8020), Credit Livestock Assets (1580), for its purchaseCost ONLY
+        // Debit 'পশুসম্পদ অবলোপন (Livestock Write-off)' (8020), Credit Livestock Assets & Expenses, for total accumulated cost
         if (costToDerecognize > 0) {
-          const writeOffLines: JournalLine[] = [
-            {
-              accountId: writeOffAcc.id,
-              accountCode: CANONICAL_ACCOUNTS.LIVESTOCK_WRITEOFF,
-              accountName: writeOffAcc.nameBn || 'পশুসম্পদ অবলোপন (Livestock Write-off)',
-              debit: costToDerecognize,
-              credit: 0,
-              memo: `পশু অবলোপন (${newStatus}): ${freshAnimal.id} (${freshAnimal.breed}) মূল ক্রয়মূল্য`
-            },
-            {
-              accountId: livestockAssetAcc.id,
-              accountCode: CANONICAL_ACCOUNTS.LIVESTOCK_ASSETS,
-              accountName: livestockAssetAcc.nameBn || 'পশুসম্পদ (Livestock & Biological Assets)',
-              debit: 0,
-              credit: costToDerecognize,
-              memo: `${freshAnimal.id} অপসারণ (${newStatus}) বাবদ সম্পদ বহির্গমন`
-            }
-          ];
+          const writeOffDebitLine: JournalLine = {
+            accountId: writeOffAcc.id,
+            accountCode: CANONICAL_ACCOUNTS.LIVESTOCK_WRITEOFF,
+            accountName: writeOffAcc.nameBn || 'পশুসম্পদ অবলোপন (Livestock Write-off)',
+            debit: costToDerecognize,
+            credit: 0,
+            memo: `পশু অবলোপন (${newStatus}): ${freshAnimal.id} (${freshAnimal.breed}) পুঞ্জীভূত ব্যয়`
+          };
+          const creditLines = await buildLivestockCostCreditLines(freshAnimal, costToDerecognize, accounts);
+          const writeOffLines: JournalLine[] = [writeOffDebitLine, ...creditLines];
 
           const check = validateBalancedLines(writeOffLines, accounts);
           if (!check.isBalanced) {
@@ -1732,13 +2945,17 @@ export async function executeAnimalSaleOrRemovalTransaction(params: {
           }
 
           const voucherNumber = generateTransactionNumber('ADJ');
+          const costDetailStr = costToDerecognize > 0
+            ? ` (পুঞ্জীভূত মোট ব্যয়: ৳${costToDerecognize})`
+            : '';
+
           const writeOffEntry = await postJournalEntry(
             {
               id: generateUniqueId('j_writeoff'),
               voucherNumber,
               voucherType: 'ADJUSTMENT',
               date,
-              narration: `পশুসম্পদ অবলোপন দাখিলা (${newStatus}): ${freshAnimal.id} (${freshAnimal.breed}) খামার থেকে অপসারণ বাবদ অবলোপন${notes ? ` [${notes}]` : ''}`,
+              narration: `পশুসম্পদ অবলোপন দাখিলা (${newStatus}): ${freshAnimal.id} (${freshAnimal.breed}) খামার থেকে অপসারণ বাবদ অবলোপন${costDetailStr}${notes ? ` [${notes}]` : ''}`,
               reference: freshAnimal.id,
               lines: writeOffLines,
               createdBy: currentUserId,
@@ -4543,3 +5760,13 @@ export async function executeCropHarvestAndSaleTransaction(
     }
   );
 }
+
+// Fixed Asset Atomic Accounting Operations
+export {
+  executeFixedAssetDisposalTransaction,
+  executeAssetDepreciationAtomic,
+  getAssetGLCode,
+  type FixedAssetDisposalParams,
+  type FixedAssetDisposalResult,
+  type AssetDepreciationAtomicResult
+} from '../accounting/depreciationService';

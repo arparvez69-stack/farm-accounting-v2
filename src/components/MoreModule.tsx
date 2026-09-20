@@ -46,7 +46,7 @@ import { AuditLog, FixedAsset, SystemConfig, UserRole, AppAccessLog, VaccineTemp
 import { getStoredAuthorizedEmails, getAppAccessLogs, logoutOwner } from '../services/authService';
 import { generateTransactionNumber, generateUniqueId, safeInsert } from '../utils/idGenerator';
 import { getLastSyncTime, formatBackupTimestamp } from '../services/exportService';
-import { runAutomatedDepreciation } from '../accounting/depreciationService';
+import { runAutomatedDepreciation, executeFixedAssetDisposalTransaction } from '../accounting/depreciationService';
 import { postJournalEntry } from '../accounting/accountingEngine';
 import { CANONICAL_ACCOUNTS } from '../accounting/accountMapping';
 import { getVaccineTemplates, saveVaccineTemplates, DEFAULT_VACCINE_TEMPLATES } from '../data/vaccineTemplates';
@@ -824,214 +824,24 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
 
     try {
       setSubmittingDisposal(true);
-      const cost = Number(disposingAsset.originalCost || (disposingAsset as any).disposedOriginalCost || 0);
-      const accum = Number(disposingAsset.accumulatedDepreciation || (disposingAsset as any).disposedAccumulatedDepreciation || 0);
-      // Carrying value = cost - accumulated depreciation
-      const carryingValue = Math.round(Math.max(0, cost - accum) * 100) / 100;
       const proceeds = Math.max(0, parseFloat(disposalProceeds) || 0);
-      // Compare with sale proceeds
-      const gainLoss = Math.round((proceeds - carryingValue) * 100) / 100;
       const dateStr = disposalDate || new Date().toISOString().split('T')[0];
 
-      // 1. Ensure Gain/Loss on Asset Disposal account exists; create if missing
-      const accounts = await db.accounts.toArray();
-      let disposalAcc = accounts.find(
-        (a) =>
-          a.code === '7020' ||
-          a.nameEn?.toLowerCase().includes('gain/loss on asset disposal') ||
-          a.nameBn?.includes('Gain/Loss on Asset Disposal')
-      );
-
-      if (!disposalAcc) {
-        disposalAcc = {
-          id: 'acc_7020',
-          code: '7020',
-          nameBn: 'স্থায়ী সম্পদ বিক্রয়জনিত লাভ/ক্ষতি (Gain/Loss on Asset Disposal)',
-          nameEn: 'Gain/Loss on Asset Disposal',
-          accountClass: 'OTHER_INCOME',
-          normalBalance: 'CREDIT',
-          isSystem: true,
-          isActive: true
-        };
-        await safeInsert(db.accounts, disposalAcc, { idPrefix: 'acc' });
-      }
-
-      // 2. Asset Account to Credit (e.g. 1520 Buildings, 1550 Machinery, 1510 Land)
-      const normCat = disposingAsset.category === 'BUILDING' ? 'BUILDINGS' : disposingAsset.category;
-      const assetAccInfo = getAssetAccountInfo(normCat);
-      const assetGLCode = assetAccInfo.code;
-      const assetGLAcc = accounts.find((a) => a.code === assetGLCode) || {
-        id: `acc_${assetGLCode}`,
-        code: assetGLCode,
-        nameBn: assetAccInfo.name
-      };
-
-      // 3. Accumulated Depreciation Account (1590) to Debit
-      const accumGLCode = CANONICAL_ACCOUNTS.ACCUMULATED_DEPRECIATION || '1590';
-      const accumGLAcc = accounts.find((a) => a.code === accumGLCode) || {
-        id: 'acc_1590',
-        code: accumGLCode,
-        nameBn: 'পুঞ্জীভূত অবচয় (Accumulated Depreciation)'
-      };
-
-      // 4. Payment Account (Cash / Bank) to Debit for sale proceeds
-      let paymentCode: string = CANONICAL_ACCOUNTS.CASH;
-      let paymentAccName = 'নগদ টাকা (Cash on Hand)';
-      let receivingBankId: string | undefined;
-
-      if (proceeds > 0) {
-        if (disposalPaymentMethod === 'BANK' && disposalBankAccountId) {
-          paymentCode = CANONICAL_ACCOUNTS.BANK;
-          const bAcc = await db.cashBankAccounts.get(disposalBankAccountId);
-          paymentAccName = bAcc?.name || 'ব্যাংক হিসাব (Bank Accounts)';
-          receivingBankId = disposalBankAccountId;
-        } else {
-          paymentCode = CANONICAL_ACCOUNTS.CASH;
-          const cashAcc = await db.cashBankAccounts.where('accountType').equals('CASH').first();
-          receivingBankId = cashAcc?.id;
-        }
-      }
-
-      const paymentAcc = accounts.find((a) => a.code === paymentCode) || {
-        id: `acc_${paymentCode}`,
-        code: paymentCode,
-        nameBn: paymentAccName
-      };
-
-      // 5. Balanced Journal Lines for Fixed Asset Disposal:
-      // Dr Cash/Bank for Proceeds (if > 0)
-      // Dr Accumulated Depreciation (1590) to derecognize
-      // Dr Gain/Loss on Asset Disposal (if loss)
-      // Cr Fixed Asset (Asset GL) for original cost
-      // Cr Gain/Loss on Asset Disposal (if gain)
-      const lines: JournalLine[] = [];
-
-      if (proceeds > 0) {
-        lines.push({
-          accountId: paymentAcc.id,
-          accountCode: paymentCode,
-          accountName: paymentAcc.nameBn || paymentAccName,
-          debit: proceeds,
-          credit: 0,
-          memo: `${disposingAsset.name} স্থায়ী সম্পদ বিক্রয়লব্ধ প্রাপ্তি`
-        });
-      }
-
-      if (accum > 0) {
-        lines.push({
-          accountId: accumGLAcc.id,
-          accountCode: accumGLCode,
-          accountName: accumGLAcc.nameBn,
-          debit: accum,
-          credit: 0,
-          memo: `${disposingAsset.name} পুঞ্জীভূত অবচয় অবলোপন`
-        });
-      }
-
-      if (gainLoss > 0) {
-        // Gain on Disposal -> Credit Gain/Loss account
-        lines.push({
-          accountId: disposalAcc.id,
-          accountCode: disposalAcc.code,
-          accountName: disposalAcc.nameBn,
-          debit: 0,
-          credit: gainLoss,
-          memo: `${disposingAsset.name} সম্পদ বিক্রয়জনিত লাভ (Gain on Asset Disposal)`
-        });
-      } else if (gainLoss < 0) {
-        // Loss on Disposal -> Debit Gain/Loss account
-        const lossAmount = Math.abs(gainLoss);
-        lines.push({
-          accountId: disposalAcc.id,
-          accountCode: disposalAcc.code,
-          accountName: disposalAcc.nameBn,
-          debit: lossAmount,
-          credit: 0,
-          memo: `${disposingAsset.name} সম্পদ বিক্রয়জনিত ক্ষতি (Loss on Asset Disposal)`
-        });
-      }
-
-      // Credit Fixed Asset GL account to remove historical cost
-      lines.push({
-        accountId: assetGLAcc.id,
-        accountCode: assetGLCode,
-        accountName: assetGLAcc.nameBn || assetAccInfo.name,
-        debit: 0,
-        credit: cost,
-        memo: `${disposingAsset.name} স্থায়ী সম্পদ হিসাব হতে অবলোপন`
-      });
-
-      const voucherNumber = generateTransactionNumber('DISP');
-      const entryId = generateUniqueId('j_disp');
-
-      await postJournalEntry(
-        {
-          id: entryId,
-          voucherNumber,
-          voucherType: 'JOURNAL',
-          date: dateStr,
-          narration: `স্থায়ী সম্পদ অপসারণ/বিক্রয়: ${disposingAsset.name} (${disposingAsset.id}), বিক্রয়মূল্য: ৳${proceeds}, পুস্তক মূল্য: ৳${carryingValue}, ${gainLoss >= 0 ? `লাভ: ৳${gainLoss}` : `ক্ষতি: ৳${Math.abs(gainLoss)}`}${disposalReason ? ` [মন্তব্য: ${disposalReason}]` : ''}`,
-          reference: disposingAsset.id,
-          lines,
-          createdBy: currentUserId,
-          createdAt: new Date().toISOString()
-        },
-        { accounts }
-      );
-
-      // Update receiving Cash/Bank balance
-      if (proceeds > 0 && receivingBankId) {
-        const cbAcc = await db.cashBankAccounts.get(receivingBankId);
-        if (cbAcc) {
-          await db.cashBankAccounts.update(receivingBankId, {
-            currentBalance: Math.round((cbAcc.currentBalance + proceeds) * 100) / 100,
-            synced: false
-          });
-        }
-      }
-
-      // Update Fixed Asset record: mark DISPOSED and clear active cost and accumulated depreciation from active Balance Sheet totals
-      await db.fixedAssets.update(disposingAsset.id, {
-        status: 'DISPOSED',
-        originalCost: 0,
-        accumulatedDepreciation: 0,
-        currentBookValue: 0,
+      const res = await executeFixedAssetDisposalTransaction({
+        assetId: disposingAsset.id,
         disposalDate: dateStr,
         disposalProceeds: proceeds,
-        gainLossOnDisposal: gainLoss,
-        disposalJournalId: entryId,
-        disposedOriginalCost: cost,
-        disposedAccumulatedDepreciation: accum,
-        synced: false
-      } as any);
-
-      // Audit Log
-      await safeInsert(db.auditLogs, {
-        id: generateUniqueId('audit'),
-        timestamp: new Date().toISOString(),
-        userId: currentUserId,
-        role: 'OWNER',
-        action: 'DELETE',
-        module: 'ASSETS',
-        recordId: disposingAsset.id,
-        status: 'SUCCESS',
-        details: JSON.stringify({
-          action: 'ASSET_DISPOSED',
-          assetId: disposingAsset.id,
-          name: disposingAsset.name,
-          cost,
-          accumulatedDepreciation: accum,
-          carryingValue,
-          saleProceeds: proceeds,
-          gainLoss,
-          voucherNumber,
-          date: dateStr
-        }),
-        synced: false
+        paymentMethod: disposalPaymentMethod,
+        bankAccountId: disposalPaymentMethod === 'BANK' ? disposalBankAccountId : undefined,
+        disposalReason: disposalReason.trim() || undefined,
+        currentUserId
       });
 
       setDisposingAsset(null);
-      triggerSuccessAnimation('স্থায়ী সম্পদ সফলভাবে অপসারিত হয়েছে!', `${disposingAsset.name} (পুস্তক মূল্য: ৳${carryingValue})`);
+      triggerSuccessAnimation(
+        'স্থায়ী সম্পদ সফলভাবে অপসারিত হয়েছে!',
+        `${disposingAsset.name} (পুস্তক মূল্য: ৳${res.carryingValue})`
+      );
       await loadData();
     } catch (err: any) {
       alert(err.message || 'সম্পদ অপসারণ করতে ত্রুটি হয়েছে।');

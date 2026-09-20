@@ -147,10 +147,19 @@ export interface Animal {
   synced?: boolean;
 }
 
+export interface AnimalCostBreakdown {
+  purchaseCost: number;
+  feedCost: number;
+  medicineCost: number;
+  labourCost: number;
+  otherCost: number;
+  totalRecordedCost: number;
+}
+
 export interface AnimalEvent {
   id: string;
   animalId: string;
-  eventType: 'FEED' | 'VACCINE' | 'TREATMENT' | 'WEIGHT' | 'MILK' | 'BREEDING' | 'MORTALITY';
+  eventType: 'FEED' | 'VACCINE' | 'TREATMENT' | 'WEIGHT' | 'MILK' | 'BREEDING' | 'MORTALITY' | 'LABOUR' | 'OTHER';
   date: string;
   cost: number;
   feedItemId?: string;
@@ -519,32 +528,60 @@ export interface Investor {
   phone?: string;
   entryDate?: string;
   joinedDate?: string;
+
+  // 1. Investor Capital Contributed & Balance
   initialCapital?: number;
   capitalAmount?: number;
-  sharePercentage?: number;
-  drawings?: number;
-  currentBalance?: number;
+  capitalContributed?: number;
   totalContribution?: number;
   additionalCapital?: number;
+
+  // 2. Agreed Profit-Sharing Ratio (Sleeping Partner vs Working Partner)
+  profitSharingRatio?: number; // e.g. 40 (for 40%)
+  profitSharePercentage?: number; // e.g. 40
+  sharePercentage?: number; // e.g. 40
+  workingPartnerShareRatio?: number; // e.g. 60 (for 60%)
+
+  // 3. Actual Profit Allocated
+  totalProfitAllocated?: number;
+  lastProfitAllocationDate?: string;
+
+  // 4. Investor Profit Payable
+  profitPayable?: number;
+
+  // 5. Profit Actually Paid
+  totalProfitPaid?: number;
+  lastProfitPaymentDate?: string;
+
+  // 6. Capital Returned
+  totalCapitalReturned?: number;
+  currentCapitalBalance?: number;
   withdrawals?: number;
   totalWithdrawals?: number;
+  drawings?: number;
+  lastCapitalReturnDate?: string;
+
+  // Net Equity Balances
   netCapital?: number;
+  currentBalance?: number;
   currentEquityBalance?: number;
-  ownershipPct?: number;
-  ownershipPercentage?: number;
-  profitSharingPct?: number;
-  profitSharePercentage?: number;
+
+  status: 'ACTIVE' | 'EXITED';
+  notes?: string;
+  synced?: boolean;
+
+  // Legacy / optional fields for backwards compatibility
   annualInterestRatePercent?: number;
   termMonths?: number;
   schedule?: AmortizationScheduleItem[];
+  ownershipPct?: number;
+  ownershipPercentage?: number;
+  profitSharingPct?: number;
   allocationMethod?:
     | 'OWNERSHIP_BASED'
     | 'CAPITAL_BASED'
     | 'TIME_WEIGHTED'
     | 'AGREEMENT_BASED';
-  status: 'ACTIVE' | 'EXITED';
-  notes?: string;
-  synced?: boolean;
 }
 
 export type SalesInvoice = Sale;
@@ -575,6 +612,14 @@ export interface FixedAsset {
   paymentMethod?: 'CASH' | 'BANK' | 'CREDIT';
   supplierId?: string;
   bankAccountId?: string;
+  status?: 'ACTIVE' | 'DISPOSED';
+  disposalDate?: string;
+  disposalProceeds?: number;
+  gainLossOnDisposal?: number;
+  disposalJournalId?: string;
+  disposedOriginalCost?: number;
+  disposedAccumulatedDepreciation?: number;
+  disposalReason?: string;
   synced?: boolean;
 }
 

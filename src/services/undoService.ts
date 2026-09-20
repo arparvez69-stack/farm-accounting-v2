@@ -114,16 +114,20 @@ export async function executeUndo(action: UndoableAction): Promise<{ success: bo
       if (freshAnimal) {
         const feedCost = action.eventType === 'FEED' ? action.cost : 0;
         const medCost = (action.eventType === 'VACCINE' || action.eventType === 'TREATMENT') ? action.cost : 0;
-        const otherCost = (action.eventType !== 'FEED' && action.eventType !== 'VACCINE' && action.eventType !== 'TREATMENT') ? action.cost : 0;
+        const isLabour = (action.eventType as string) === 'LABOUR';
+        const labourCost = isLabour ? action.cost : 0;
+        const otherCost = (!isLabour && action.eventType !== 'FEED' && action.eventType !== 'VACCINE' && action.eventType !== 'TREATMENT') ? action.cost : 0;
 
         const newFeed = Math.max(0, (freshAnimal.accumulatedFeedCost || 0) - feedCost);
         const newMed = Math.max(0, (freshAnimal.accumulatedMedCost || 0) - medCost);
+        const newLabour = Math.max(0, (freshAnimal.accumulatedLabourCost || 0) - labourCost);
         const newOther = Math.max(0, (freshAnimal.otherCosts || 0) - otherCost);
-        const newTotal = Math.max(0, (freshAnimal.purchaseCost || 0) + newFeed + newMed + (freshAnimal.accumulatedLabourCost || 0) + newOther);
+        const newTotal = Math.max(0, (freshAnimal.purchaseCost || 0) + newFeed + newMed + newLabour + newOther);
 
         await db.animals.update(freshAnimal.id, {
           accumulatedFeedCost: Math.round(newFeed * 100) / 100,
           accumulatedMedCost: Math.round(newMed * 100) / 100,
+          accumulatedLabourCost: Math.round(newLabour * 100) / 100,
           otherCosts: Math.round(newOther * 100) / 100,
           totalCost: Math.round(newTotal * 100) / 100,
           synced: false

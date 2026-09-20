@@ -16,12 +16,16 @@ import {
   ArrowDownCircle,
   ArrowUpCircle,
   History,
-  X
+  X,
+  Plus,
+  ArrowUpRight
 } from 'lucide-react';
 import { db } from '../db/indexedDb';
 import {
   executeContraTransferTransaction,
   executeInvestorTransaction,
+  executeInvestorProfitAllocationTransaction,
+  executeInvestorProfitPaymentTransaction,
   executeLoanTransaction,
   executeLoanRepaymentTransaction,
   executeOwnerCapitalTransaction,
@@ -114,6 +118,20 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
   const [investorAnnualRate, setInvestorAnnualRate] = useState('');
   const [investorTermMonths, setInvestorTermMonths] = useState('');
   const [investorDestinationAcc, setInvestorDestinationAcc] = useState<'CASH' | 'BANK'>('BANK');
+
+  // Profit Allocation & Payment Modals
+  const [allocatingInvestor, setAllocatingInvestor] = useState<Investor | null>(null);
+  const [finalizedFarmProfit, setFinalizedFarmProfit] = useState('');
+  const [allocationDate, setAllocationDate] = useState(new Date().toISOString().split('T')[0]);
+  const [allocationNotes, setAllocationNotes] = useState('');
+  const [submittingAllocation, setSubmittingAllocation] = useState(false);
+
+  const [payingInvestor, setPayingInvestor] = useState<Investor | null>(null);
+  const [paymentAmount, setPaymentAmount] = useState('');
+  const [paymentSourceAccId, setPaymentSourceAccId] = useState('');
+  const [paymentDate, setPaymentDate] = useState(new Date().toISOString().split('T')[0]);
+  const [paymentNotes, setPaymentNotes] = useState('');
+  const [submittingPayment, setSubmittingPayment] = useState(false);
 
   useEffect(() => {
     loadFinanceData();
@@ -352,6 +370,95 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
       loadFinanceData();
     } catch (err: any) {
       setMsg({ type: 'error', text: err.message || 'বিনিয়োগ সংরক্ষণ ব্যর্থ হয়েছে।' });
+    }
+  };
+
+  // EXECUTE INVESTOR PROFIT ALLOCATION (Dr Profit Distribution 3070, Cr Investor Profit Payable 2050)
+  const handleExecuteProfitAllocation = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!allocatingInvestor) return;
+
+    const profit = parseFloat(finalizedFarmProfit) || 0;
+    if (profit <= 0) {
+      setMsg({ type: 'error', text: 'চূড়ান্ত বণ্টনযোগ্য প্রকৃত মুনাফার পরিমাণ ০ থেকে বেশি হতে হবে।' });
+      return;
+    }
+
+    setSubmittingAllocation(true);
+    try {
+      const res = await executeInvestorProfitAllocationTransaction({
+        investorId: allocatingInvestor.id,
+        finalizedDistributableProfit: profit,
+        allocationDate,
+        notes: allocationNotes,
+        currentUserId
+      });
+
+      setMsg({
+        type: 'success',
+        text: `বিনিয়োগকারী ${res.investor.name} এর লভ্যাংশ ৳${res.allocatedProfit.toLocaleString()} (${res.profitSharingRatio}%) সফলভাবে বণ্টন ও জাবেদায় পোস্ট করা হয়েছে!`
+      });
+      setAllocatingInvestor(null);
+      setFinalizedFarmProfit('');
+      setAllocationNotes('');
+      window.dispatchEvent(new CustomEvent('accounting_entry_posted'));
+      await loadFinanceData();
+    } catch (err: any) {
+      setMsg({ type: 'error', text: `মুনাফা বণ্টন ব্যর্থ হয়েছে: ${err.message}` });
+    } finally {
+      setSubmittingAllocation(false);
+    }
+  };
+
+  // EXECUTE INVESTOR PROFIT PAYMENT (Dr Investor Profit Payable 2050, Cr Cash/Bank 1010/1030)
+  const handleExecuteProfitPayment = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!payingInvestor) return;
+
+    const amt = parseFloat(paymentAmount) || 0;
+    if (amt <= 0) {
+      setMsg({ type: 'error', text: 'পরিশোধের পরিমাণ ০ থেকে বেশি হতে হবে।' });
+      return;
+    }
+    const currentPayable = payingInvestor.profitPayable || 0;
+    if (amt > currentPayable) {
+      setMsg({
+        type: 'error',
+        text: `পাওনা লভ্যাংশের চেয়ে বেশি পরিশোধ করা সম্ভব নয়। বর্তমান প্রদেয়: ৳${currentPayable}`
+      });
+      return;
+    }
+
+    const accId = paymentSourceAccId || accounts[0]?.id;
+    if (!accId) {
+      setMsg({ type: 'error', text: 'পরিশোধের জন্য ক্যাশ বা ব্যাংক হিসাব নির্বাচন করুন।' });
+      return;
+    }
+
+    setSubmittingPayment(true);
+    try {
+      const res = await executeInvestorProfitPaymentTransaction({
+        investorId: payingInvestor.id,
+        amount: amt,
+        sourceAccountId: accId,
+        paymentDate,
+        notes: paymentNotes,
+        currentUserId
+      });
+
+      setMsg({
+        type: 'success',
+        text: `বিনিয়োগকারী ${res.investor.name} কে লভ্যাংশ ৳${amt.toLocaleString()} সফলভাবে পরিশোধ করা হয়েছে (অবশিষ্ট প্রদেয়: ৳${res.remainingPayable.toLocaleString()})!`
+      });
+      setPayingInvestor(null);
+      setPaymentAmount('');
+      setPaymentNotes('');
+      window.dispatchEvent(new CustomEvent('accounting_entry_posted'));
+      await loadFinanceData();
+    } catch (err: any) {
+      setMsg({ type: 'error', text: `লভ্যাংশ পরিশোধ ব্যর্থ হয়েছে: ${err.message}` });
+    } finally {
+      setSubmittingPayment(false);
     }
   };
 
@@ -1224,21 +1331,69 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
                     <span className="font-sans">বিনিয়োগকৃত মূলধন:</span>
                     <span className="font-bold text-[#15803D]">{fmt(inv.capitalAmount)}</span>
                   </div>
-                  <div className="flex justify-between text-gray-600">
-                    <span className="font-sans">উত্তোলন (Drawings):</span>
-                    <span className="text-red-600 font-semibold">{fmt(inv.drawings || 0)}</span>
+                  <div className="flex justify-between text-gray-700">
+                    <span className="font-sans">লভ্যাংশ বণ্টন অনুপাত:</span>
+                    <span className="font-semibold text-sky-700 font-sans">
+                      {inv.profitSharingRatio ?? inv.profitSharePercentage ?? inv.sharePercentage ?? 0}% (ওয়ার্কিং পার্টনার {inv.workingPartnerShareRatio ?? (100 - (inv.profitSharingRatio ?? inv.profitSharePercentage ?? inv.sharePercentage ?? 0))}%)
+                    </span>
                   </div>
-                  <div className="flex justify-between text-gray-900 font-bold pt-1.5 border-t border-gray-200">
-                    <span className="font-sans">বর্তমান ইকুইটি স্থিতি:</span>
-                    <span>{fmt(inv.currentBalance)}</span>
+                  <div className="flex justify-between text-gray-700">
+                    <span className="font-sans">বণ্টনকৃত মোট মুনাফা:</span>
+                    <span className="font-semibold text-emerald-700">{fmt(inv.totalProfitAllocated || 0)}</span>
+                  </div>
+                  <div className="flex justify-between text-gray-700">
+                    <span className="font-sans">পরিশোধিত মোট লভ্যাংশ:</span>
+                    <span className="font-semibold text-blue-700">{fmt(inv.totalProfitPaid || 0)}</span>
+                  </div>
+                  <div className="flex justify-between items-center text-gray-900 font-bold pt-1.5 border-t border-gray-200">
+                    <span className="font-sans">বর্তমান প্রদেয় লভ্যাংশ:</span>
+                    <span className={`px-2 py-0.5 rounded-md font-mono ${
+                      (inv.profitPayable || 0) > 0 ? 'bg-amber-100 text-amber-900 border border-amber-300' : 'bg-gray-100 text-gray-700'
+                    }`}>
+                      {fmt(inv.profitPayable || 0)}
+                    </span>
                   </div>
                 </div>
 
+                {role === 'OWNER' && (
+                  <div className="pt-2 grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAllocatingInvestor(inv);
+                        setFinalizedFarmProfit('');
+                        setAllocationNotes('');
+                      }}
+                      className="py-1.5 px-2 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 text-xs font-bold flex items-center justify-center gap-1 cursor-pointer transition-colors"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>মুনাফা বণ্টন</span>
+                    </button>
+                    <button
+                      type="button"
+                      disabled={!(inv.profitPayable && inv.profitPayable > 0)}
+                      onClick={() => {
+                        setPayingInvestor(inv);
+                        setPaymentAmount(inv.profitPayable ? String(inv.profitPayable) : '');
+                        setPaymentNotes('');
+                      }}
+                      className={`py-1.5 px-2 rounded-lg text-xs font-bold flex items-center justify-center gap-1 transition-colors ${
+                        (inv.profitPayable || 0) > 0
+                          ? 'bg-blue-50 hover:bg-blue-100 text-blue-800 border border-blue-300 cursor-pointer'
+                          : 'bg-gray-100 text-gray-400 border border-gray-200 cursor-not-allowed'
+                      }`}
+                    >
+                      <ArrowUpRight className="w-3.5 h-3.5" />
+                      <span>লভ্যাংশ পরিশোধ</span>
+                    </button>
+                  </div>
+                )}
+
                 {inv.schedule && inv.schedule.length > 0 && (
-                  <div className="pt-2">
+                  <div className="pt-1">
                     <button
                       onClick={() => setSelectedInvestor(inv)}
-                      className="w-full py-1.5 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 text-xs font-semibold flex items-center justify-center gap-1 cursor-pointer"
+                      className="w-full py-1.5 rounded-lg bg-gray-50 hover:bg-gray-100 text-gray-700 border border-gray-200 text-xs font-semibold flex items-center justify-center gap-1 cursor-pointer"
                     >
                       <Eye className="w-3.5 h-3.5" />
                       <span>কিস্তির সূচি দেখুন ({inv.schedule.filter((s) => s.isPaid).length}/{inv.schedule.length})</span>
@@ -1248,6 +1403,236 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
               </div>
             ))}
           </div>
+
+          {/* Modal 1: Profit Allocation */}
+          {allocatingInvestor && (
+            <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 z-50">
+              <div className="bg-white rounded-2xl max-w-lg w-full p-5 sm:p-6 shadow-2xl border border-emerald-100 space-y-4">
+                <div className="flex items-center justify-between border-b pb-3">
+                  <div>
+                    <h3 className="font-bold text-gray-900 text-lg flex items-center gap-2">
+                      <span className="w-2.5 h-2.5 rounded-full bg-emerald-500"></span>
+                      প্রকৃত মুনাফা বণ্টন (Profit Allocation)
+                    </h3>
+                    <p className="text-xs text-gray-600 mt-0.5">
+                      বিনিয়োগকারী: <strong className="text-gray-900">{allocatingInvestor.name}</strong> (অনুপাত: {allocatingInvestor.profitSharingRatio ?? allocatingInvestor.profitSharePercentage ?? allocatingInvestor.sharePercentage ?? 0}%)
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => setAllocatingInvestor(null)}
+                    className="p-1 rounded-lg hover:bg-gray-100 text-gray-500 cursor-pointer"
+                  >
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+
+                <div className="bg-emerald-50/70 border border-emerald-200 rounded-xl p-3 text-xs text-emerald-950 space-y-1">
+                  <p className="font-semibold flex items-center gap-1.5 text-emerald-800">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                    ইসলামিক পার্টনারশিপ / স্লিপিং পার্টনার মডেল:
+                  </p>
+                  <p>• মুনাফা বণ্টন চূড়ান্ত <strong>প্রকৃত নিট মুনাফা</strong> থেকে নির্ধারিত অনুপাত অনুসারে হবে।</p>
+                  <p>• বিনিয়োগকৃত মূলধন থেকে কখনো মুনাফা হিসাব হয় না এবং কোনো নির্দিষ্ট সুদ প্রযোজ্য নয়।</p>
+                  <p>• এটি ফার্মের পরিচালন ব্যয় (Operating Expense) নয়; ইকুইটি মুনাফা বণ্টন ও প্রদেয় দায় (Payable)।</p>
+                </div>
+
+                <form onSubmit={handleExecuteProfitAllocation} className="space-y-3.5 text-sm">
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-700 mb-1">
+                      ফার্মের চূড়ান্ত বণ্টনযোগ্য প্রকৃত নিট মুনাফা (৳) <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      type="number"
+                      min="1"
+                      step="any"
+                      required
+                      placeholder="উদাঃ 200000"
+                      value={finalizedFarmProfit}
+                      onChange={(e) => setFinalizedFarmProfit(e.target.value)}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:outline-hidden font-mono"
+                    />
+                  </div>
+
+                  {Number(finalizedFarmProfit) > 0 && (
+                    <div className="bg-gray-50 border border-gray-200 rounded-xl p-3 space-y-2 text-xs">
+                      <div className="flex justify-between text-gray-700">
+                        <span>বিনিয়োগকারীর প্রাপ্য অংশ ({allocatingInvestor.profitSharingRatio ?? allocatingInvestor.profitSharePercentage ?? allocatingInvestor.sharePercentage ?? 0}%):</span>
+                        <strong className="text-emerald-700 font-mono text-sm">
+                          ৳{Math.round(Number(finalizedFarmProfit) * ((allocatingInvestor.profitSharingRatio ?? allocatingInvestor.profitSharePercentage ?? allocatingInvestor.sharePercentage ?? 0) / 100)).toLocaleString()}
+                        </strong>
+                      </div>
+                      <div className="flex justify-between text-gray-600">
+                        <span>ওয়ার্কিং পার্টনার / নিজস্ব অংশ ({allocatingInvestor.workingPartnerShareRatio ?? (100 - (allocatingInvestor.profitSharingRatio ?? allocatingInvestor.profitSharePercentage ?? allocatingInvestor.sharePercentage ?? 0))}%):</span>
+                        <span className="font-mono">
+                          ৳{Math.round(Number(finalizedFarmProfit) * ((allocatingInvestor.workingPartnerShareRatio ?? (100 - (allocatingInvestor.profitSharingRatio ?? allocatingInvestor.profitSharePercentage ?? allocatingInvestor.sharePercentage ?? 0))) / 100)).toLocaleString()}
+                        </span>
+                      </div>
+                      <div className="pt-2 border-t border-gray-200 text-gray-600 text-[11px] font-mono">
+                        <div>দাখিলা: Dr ৩০৭০ মুনাফা বণ্টন / ইকুইটি ৳{Math.round(Number(finalizedFarmProfit) * ((allocatingInvestor.profitSharingRatio ?? allocatingInvestor.profitSharePercentage ?? allocatingInvestor.sharePercentage ?? 0) / 100)).toLocaleString()}</div>
+                        <div>দাখিলা: Cr ২০৫০ বিনিয়োগকারীর লভ্যাংশ প্রদেয় ৳{Math.round(Number(finalizedFarmProfit) * ((allocatingInvestor.profitSharingRatio ?? allocatingInvestor.profitSharePercentage ?? allocatingInvestor.sharePercentage ?? 0) / 100)).toLocaleString()}</div>
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-semibold text-gray-700 mb-1">তারিখ</label>
+                      <input
+                        type="date"
+                        value={allocationDate}
+                        onChange={(e) => setAllocationDate(e.target.value)}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-xs"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-gray-700 mb-1">মন্তব্য (ঐচ্ছিক)</label>
+                      <input
+                        type="text"
+                        placeholder="উদাঃ ২০২৪ সালের বার্ষিক নিট মুনাফা"
+                        value={allocationNotes}
+                        onChange={(e) => setAllocationNotes(e.target.value)}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-xs"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="flex justify-end gap-2 pt-2 border-t">
+                    <button
+                      type="button"
+                      onClick={() => setAllocatingInvestor(null)}
+                      className="px-4 py-2 rounded-lg border border-gray-300 text-gray-700 text-xs font-semibold hover:bg-gray-50 cursor-pointer"
+                    >
+                      বাতিল
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={submittingAllocation}
+                      className="px-4 py-2 rounded-lg bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-bold cursor-pointer disabled:opacity-50"
+                    >
+                      {submittingAllocation ? 'বণ্টন হচ্ছে...' : 'মুনাফা বণ্টন নিশ্চিত করুন'}
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          )}
+
+          {/* Modal 2: Profit Payment */}
+          {payingInvestor && (
+            <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 z-50">
+              <div className="bg-white rounded-2xl max-w-lg w-full p-5 sm:p-6 shadow-2xl border border-blue-100 space-y-4">
+                <div className="flex items-center justify-between border-b pb-3">
+                  <div>
+                    <h3 className="font-bold text-gray-900 text-lg flex items-center gap-2">
+                      <span className="w-2.5 h-2.5 rounded-full bg-blue-500"></span>
+                      লভ্যাংশ পরিশোধ (Profit Payment)
+                    </h3>
+                    <p className="text-xs text-gray-600 mt-0.5">
+                      বিনিয়োগকারী: <strong className="text-gray-900">{payingInvestor.name}</strong>
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => setPayingInvestor(null)}
+                    className="p-1 rounded-lg hover:bg-gray-100 text-gray-500 cursor-pointer"
+                  >
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+
+                <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-950 flex justify-between items-center">
+                  <span>বর্তমান বণ্টনকৃত অপরিশোধিত লভ্যাংশ (বকেয়া):</span>
+                  <span className="font-mono font-bold text-base text-amber-900">
+                    ৳{(payingInvestor.profitPayable || 0).toLocaleString()}
+                  </span>
+                </div>
+
+                <form onSubmit={handleExecuteProfitPayment} className="space-y-3.5 text-sm">
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-700 mb-1">
+                      পরিশোধের পরিমাণ (৳) <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      type="number"
+                      min="1"
+                      max={payingInvestor.profitPayable || 0}
+                      step="any"
+                      required
+                      placeholder={`সর্বোচ্চ ৳${payingInvestor.profitPayable || 0}`}
+                      value={paymentAmount}
+                      onChange={(e) => setPaymentAmount(e.target.value)}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-hidden font-mono"
+                    />
+                    <p className="text-[11px] text-gray-500 mt-1">
+                      নিয়ম: বণ্টনকৃত পাওনা লভ্যাংশের চেয়ে বেশি পরিশোধ করা সম্ভব নয় (সর্বোচ্চ: ৳{(payingInvestor.profitPayable || 0).toLocaleString()})।
+                    </p>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-700 mb-1">
+                      তহবিল প্রদানকারী অ্যাকাউন্ট (Source Account) <span className="text-red-500">*</span>
+                    </label>
+                    <select
+                      value={paymentSourceAccId || accounts[0]?.id || ''}
+                      onChange={(e) => setPaymentSourceAccId(e.target.value)}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg text-xs"
+                    >
+                      {accounts.map((acc) => (
+                        <option key={acc.id} value={acc.id}>
+                          {acc.name} ({acc.accountType === 'BANK' ? 'ব্যাংক' : 'ক্যাশ'}) — স্থিতি: ৳{(acc.currentBalance || 0).toLocaleString()}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-semibold text-gray-700 mb-1">পরিশোধের তারিখ</label>
+                      <input
+                        type="date"
+                        value={paymentDate}
+                        onChange={(e) => setPaymentDate(e.target.value)}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-xs"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-gray-700 mb-1">মন্তব্য (ঐচ্ছিক)</label>
+                      <input
+                        type="text"
+                        placeholder="উদাঃ ব্যাংক ট্রান্সফার / চেক"
+                        value={paymentNotes}
+                        onChange={(e) => setPaymentNotes(e.target.value)}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-xs"
+                      />
+                    </div>
+                  </div>
+
+                  {Number(paymentAmount) > 0 && (
+                    <div className="bg-gray-50 border border-gray-200 rounded-xl p-2.5 text-[11px] font-mono text-gray-600">
+                      <div>দাখিলা: Dr ২০৫০ বিনিয়োগকারীর লভ্যাংশ প্রদেয় ৳{Number(paymentAmount).toLocaleString()}</div>
+                      <div>দাখিলা: Cr ১০১০/১০৩০ নগদ বা ব্যাংক তহবিল ৳{Number(paymentAmount).toLocaleString()}</div>
+                    </div>
+                  )}
+
+                  <div className="flex justify-end gap-2 pt-2 border-t">
+                    <button
+                      type="button"
+                      onClick={() => setPayingInvestor(null)}
+                      className="px-4 py-2 rounded-lg border border-gray-300 text-gray-700 text-xs font-semibold hover:bg-gray-50 cursor-pointer"
+                    >
+                      বাতিল
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={submittingPayment}
+                      className="px-4 py-2 rounded-lg bg-blue-700 hover:bg-blue-800 text-white text-xs font-bold cursor-pointer disabled:opacity-50"
+                    >
+                      {submittingPayment ? 'পরিশোধ হচ্ছে...' : 'পরিশোধ নিশ্চিত করুন'}
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          )}
         </div>
       )}
 

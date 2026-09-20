@@ -28,6 +28,7 @@ export const CANONICAL_ACCOUNTS = {
   ACCRUED_WAGES: '2020',
   TAX_VAT_PAYABLE: '2030',
   CUSTOMER_ADVANCES: '2040',
+  INVESTOR_PROFIT_PAYABLE: '2050',
   SHORT_TERM_LOANS: '2110',
   LONG_TERM_LOANS: '2120',
 
@@ -36,6 +37,7 @@ export const CANONICAL_ACCOUNTS = {
   INVESTOR_CAPITAL: '3020',
   OWNER_DRAWINGS: '3040', // Contra-Equity (DEBIT normal balance)
   RETAINED_EARNINGS: '3050',
+  PROFIT_DISTRIBUTION: '3070', // Contra-Equity / Distribution (DEBIT normal balance)
 
   // 4000 Revenue
   FISH_REVENUE: '4010',
@@ -259,6 +261,20 @@ export function getLoanLiabilityAccount(tenureMonths?: number): string {
  */
 export function getInvestorCapitalAccount(): string {
   return CANONICAL_ACCOUNTS.INVESTOR_CAPITAL; // 3020
+}
+
+/**
+ * Maps investor profit payable liability to 2050 Investor Profit Payable
+ */
+export function getInvestorProfitPayableAccount(): string {
+  return CANONICAL_ACCOUNTS.INVESTOR_PROFIT_PAYABLE; // 2050
+}
+
+/**
+ * Maps profit allocation / distribution to Profit Distribution (3070) or Retained Earnings (3050)
+ */
+export function getProfitDistributionAccount(): string {
+  return CANONICAL_ACCOUNTS.PROFIT_DISTRIBUTION || '3070';
 }
 
 /**
