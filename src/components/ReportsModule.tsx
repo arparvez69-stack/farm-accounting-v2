@@ -31,8 +31,18 @@ import {
   X,
   Activity,
   Fish,
-  Sprout
+  Sprout,
+  RefreshCw,
+  ChevronDown,
+  ChevronUp,
+  ShieldCheck,
+  AlertTriangle
 } from 'lucide-react';
+import {
+  FullReconciliationReport,
+  ReconciliationCheck,
+  runAccountingReconciliation
+} from '../accounting/reconciliationService';
 import {
   BalanceSheetReport,
   CashFlowStatementReport,
@@ -310,7 +320,8 @@ type ReportType =
   | 'vatSummary'
   | 'yoyComparison'
   | 'herdSummary'
-  | 'loans';
+  | 'loans'
+  | 'reconciliation';
 
 export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
   const [activeReport, setActiveReport] = useState<ReportType>('pl');
@@ -334,6 +345,12 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
 
   // Cash Flow Report State
   const [cashFlowData, setCashFlowData] = useState<CashFlowReportData | null>(null);
+
+  // Accounting Reconciliation State
+  const [reconciliationReport, setReconciliationReport] = useState<FullReconciliationReport | null>(null);
+  const [reconciliationFilter, setReconciliationFilter] = useState<'ALL' | 'MISMATCH_ONLY'>('ALL');
+  const [expandedReconciliationChecks, setExpandedReconciliationChecks] = useState<Record<string, boolean>>({});
+  const [isReconciling, setIsReconciling] = useState(false);
 
   // VAT Summary State (hidden by default unless toggled ON in Settings)
   const [isVatRegistered, setIsVatRegistered] = useState<boolean>(() => {
@@ -1151,12 +1168,33 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
         await loadYoyComparison();
       } else if (activeReport === 'herdSummary') {
         await loadHerdSummaryReport();
+      } else if (activeReport === 'reconciliation') {
+        await loadReconciliationReport();
       }
     } catch (e) {
       console.error(e);
     } finally {
       setLoading(false);
     }
+  };
+
+  const loadReconciliationReport = async () => {
+    setIsReconciling(true);
+    try {
+      const report = await runAccountingReconciliation(db);
+      setReconciliationReport(report);
+    } catch (e) {
+      console.error('Failed to run accounting reconciliation:', e);
+    } finally {
+      setIsReconciling(false);
+    }
+  };
+
+  const toggleReconciliationCheck = (id: string) => {
+    setExpandedReconciliationChecks((prev) => ({
+      ...prev,
+      [id]: !prev[id]
+    }));
   };
 
   const loadYoyProfitBarChart = async (periods: ClosedPeriod[]) => {
@@ -1946,6 +1984,23 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
 
         <button
           type="button"
+          id="tab-reconciliation-report"
+          onClick={() => {
+            setActiveReport('reconciliation');
+            loadReconciliationReport();
+          }}
+          className={`flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg transition-all cursor-pointer min-h-[42px] text-center text-xs sm:text-[13px] font-bold ${
+            activeReport === 'reconciliation'
+              ? 'bg-rose-700 text-white shadow-xs border border-rose-700'
+              : 'bg-white dark:bg-slate-900/60 text-rose-950 dark:text-rose-300 border border-rose-200/80 dark:border-rose-800 hover:bg-rose-100/80'
+          }`}
+        >
+          <ShieldCheck className="w-4 h-4 shrink-0" />
+          <span>হিসাব নিরীক্ষা ও সমন্বয়</span>
+        </button>
+
+        <button
+          type="button"
           id="tab-ledger-report"
           onClick={() => {
             setActiveReport('ledger');
@@ -2104,7 +2159,7 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
       </div>
 
       {/* Date Range Control (Visible for Financial Reports: pl, balanceSheet, trialBalance, animalProfitability, vatSummary) */}
-      {activeReport !== 'backup' && activeReport !== 'aging' && activeReport !== 'yoyComparison' && (
+      {activeReport !== 'backup' && activeReport !== 'aging' && activeReport !== 'yoyComparison' && activeReport !== 'reconciliation' && (
         <div className="p-4 rounded-2xl bg-white border border-gray-200 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-3">
           <div className="flex items-center gap-2.5">
             <div className="w-9 h-9 rounded-xl bg-teal-50 text-teal-700 border border-teal-100 flex items-center justify-center shrink-0">
@@ -6347,6 +6402,471 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
         )}
       </div>
     )}
+
+      {/* ===================== REPORT: ACCOUNTING RECONCILIATION CHECKS ===================== */}
+      {activeReport === 'reconciliation' && (
+        <div id="accounting-reconciliation-report" className="bg-white border border-gray-200 rounded-2xl p-4 sm:p-6 space-y-5 shadow-xs">
+          {/* Header & Controls */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-gray-100 pb-4">
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="p-1.5 rounded-lg bg-rose-100 text-rose-800">
+                  <ShieldCheck className="w-5 h-5" />
+                </span>
+                <h3 className="text-base sm:text-lg font-bold text-gray-900 tracking-tight">
+                  অভ্যন্তরীণ হিসাব নিরীক্ষা ও সমন্বয় (Accounting Reconciliation)
+                </h3>
+              </div>
+              <p className="text-xs sm:text-[13px] text-gray-500 mt-1">
+                অপারেশনাল সাবলেজার ও সাধারণ খতিয়ান (GL) স্থিতির মধ্যে সমতা ও অসঙ্গতি শনাক্তকরণ অডিট
+              </p>
+            </div>
+
+            <div className="flex items-center gap-2 flex-wrap">
+              {/* Filter Tabs */}
+              <div className="inline-flex rounded-lg border border-gray-200 bg-gray-50 p-0.5 text-xs font-semibold">
+                <button
+                  type="button"
+                  id="reconciliation-filter-all"
+                  onClick={() => setReconciliationFilter('ALL')}
+                  className={`px-3 py-1.5 rounded-md transition-all ${
+                    reconciliationFilter === 'ALL'
+                      ? 'bg-white text-gray-900 shadow-2xs font-bold'
+                      : 'text-gray-500 hover:text-gray-900'
+                  }`}
+                >
+                  সকল ১১টি পরীক্ষা ({reconciliationReport?.checks.length || 11})
+                </button>
+                <button
+                  type="button"
+                  id="reconciliation-filter-mismatch"
+                  onClick={() => setReconciliationFilter('MISMATCH_ONLY')}
+                  className={`px-3 py-1.5 rounded-md transition-all flex items-center gap-1 ${
+                    reconciliationFilter === 'MISMATCH_ONLY'
+                      ? 'bg-rose-600 text-white shadow-2xs font-bold'
+                      : (reconciliationReport?.mismatchCount || 0) > 0
+                        ? 'text-rose-700 hover:text-rose-900 font-bold'
+                        : 'text-gray-500 hover:text-gray-900'
+                  }`}
+                >
+                  <span>শুধুমাত্র অমিল</span>
+                  <span className={`px-1.5 py-0.2 rounded-full text-[10px] ${
+                    reconciliationFilter === 'MISMATCH_ONLY' ? 'bg-white text-rose-700' : 'bg-rose-100 text-rose-800'
+                  }`}>
+                    {reconciliationReport?.mismatchCount || 0}
+                  </span>
+                </button>
+              </div>
+
+              {/* Refresh Button */}
+              <button
+                type="button"
+                id="btn-refresh-reconciliation"
+                onClick={loadReconciliationReport}
+                disabled={isReconciling}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-700 transition-colors disabled:opacity-50"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${isReconciling ? 'animate-spin' : ''}`} />
+                <span>রিফ্রেশ</span>
+              </button>
+            </div>
+          </div>
+
+          {/* KPI Summary Cards */}
+          {reconciliationReport && (
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+              <div className="p-3.5 rounded-xl border border-gray-200 bg-gray-50/60 space-y-1">
+                <span className="text-xs text-gray-500 font-medium block">মোট নিরীক্ষিত ক্ষেত্র</span>
+                <div className="text-xl font-bold text-gray-900 font-mono">
+                  {reconciliationReport.checks.length} টি
+                </div>
+                <div className="text-[11px] text-gray-500 font-sans">সাবলেজার ↔ খতিয়ান মডিউল</div>
+              </div>
+
+              <div className="p-3.5 rounded-xl border border-emerald-200 bg-emerald-50/50 space-y-1">
+                <span className="text-xs text-emerald-700 font-medium block">সম্পূর্ণ মিলেছে (Matched)</span>
+                <div className="text-xl font-bold text-emerald-800 font-mono">
+                  {reconciliationReport.matchedCount} টি
+                </div>
+                <div className="text-[11px] text-emerald-600 font-sans">পার্থক্য শূন্য (৳0.00)</div>
+              </div>
+
+              <div className={`p-3.5 rounded-xl border space-y-1 ${
+                reconciliationReport.mismatchCount > 0
+                  ? 'border-rose-200 bg-rose-50/70 text-rose-800'
+                  : 'border-gray-200 bg-gray-50/40 text-gray-500'
+              }`}>
+                <span className="text-xs font-medium block">অমিল / অসঙ্গতি (Mismatches)</span>
+                <div className={`text-xl font-bold font-mono ${reconciliationReport.mismatchCount > 0 ? 'text-rose-700' : 'text-gray-700'}`}>
+                  {reconciliationReport.mismatchCount} টি
+                </div>
+                <div className="text-[11px] font-sans">
+                  {reconciliationReport.mismatchCount > 0 ? 'সতর্কতা: ব্যবধান শনাক্ত' : 'কোনো অমিল পাওয়া যায়নি'}
+                </div>
+              </div>
+
+              <div className={`p-3.5 rounded-xl border space-y-1 ${
+                reconciliationReport.isAllMatched
+                  ? 'border-teal-200 bg-teal-50/60'
+                  : 'border-amber-200 bg-amber-50/60'
+              }`}>
+                <span className="text-xs text-gray-600 font-medium block">সার্বিক হিসাব স্থিতি</span>
+                <div className="text-base font-bold flex items-center gap-1.5 pt-0.5">
+                  {reconciliationReport.isAllMatched ? (
+                    <>
+                      <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
+                      <span className="text-emerald-800">সম্পূর্ণ সামঞ্জস্যপূর্ণ</span>
+                    </>
+                  ) : (
+                    <>
+                      <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0" />
+                      <span className="text-amber-800">অসঙ্গতি বিদ্যমান</span>
+                    </>
+                  )}
+                </div>
+                <div className="text-[11px] text-gray-500 font-sans">
+                  {reconciliationReport.asOfDate ? `হিসাব নিরীক্ষা তারিখ: ${reconciliationReport.asOfDate}` : 'তাৎক্ষণিক অডিট'}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Audit Notice Alert */}
+          {reconciliationReport && (
+            <div className={`p-3.5 rounded-xl border flex items-start gap-2.5 text-xs leading-relaxed ${
+              reconciliationReport.isAllMatched
+                ? 'bg-emerald-50/70 border-emerald-200 text-emerald-900'
+                : 'bg-amber-50/70 border-amber-200 text-amber-900'
+            }`}>
+              {reconciliationReport.isAllMatched ? (
+                <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+              ) : (
+                <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+              )}
+              <div>
+                <span className="font-bold">
+                  {reconciliationReport.isAllMatched
+                    ? 'অভ্যন্তরীণ নিরীক্ষা বিবরণী: '
+                    : 'মনোযোগ আকর্ষণ: '}
+                </span>
+                {reconciliationReport.isAllMatched
+                  ? 'অপারেশনাল সাবলেজার ও জেনারেল লেজার (GL) সম্পূর্ণরূপে সমন্বিত। কোনো সংশোধনীর প্রয়োজন নেই।'
+                  : `${reconciliationReport.mismatchCount}টি ক্ষেত্রে সাবলেজার ও খতিয়ানের মধ্যে ব্যবধান রয়েছে। অডিট ও নিরীক্ষার সুবিধার্থে নিচের তালিকায় বিস্তারিত ব্যবধান তুলে ধরা হয়েছে।`}
+              </div>
+            </div>
+          )}
+
+          {/* Table of Reconciliation Checks */}
+          {reconciliationReport && (
+            <div className="space-y-3">
+              {/* Desktop Table */}
+              <div className="hidden md:block overflow-x-auto rounded-xl border border-gray-200">
+                <table className="w-full text-left text-[13px] text-gray-800">
+                  <thead className="bg-gray-50 text-gray-600 font-semibold border-b border-gray-200 text-xs">
+                    <tr>
+                      <th className="p-3 w-12 text-center">#</th>
+                      <th className="p-3">অ্যাকাউন্ট / মডিউল (Module & Account)</th>
+                      <th className="p-3 text-right">অপারেশনাল সাবলেজার (Operational)</th>
+                      <th className="p-3 text-right">সাধারণ খতিয়ান স্থিতি (GL Amount)</th>
+                      <th className="p-3 text-right">পার্থক্য (Difference)</th>
+                      <th className="p-3 text-center">নিরীক্ষা ফলাফল (Status)</th>
+                      <th className="p-3 text-center w-20">বিস্তারিত</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100 font-mono">
+                    {reconciliationReport.checks
+                      .filter(check => reconciliationFilter === 'ALL' || !check.isMatched)
+                      .map((c) => {
+                        const isExpanded = !!expandedReconciliationChecks[c.id];
+                        return (
+                          <React.Fragment key={c.id}>
+                            <tr
+                              className={`transition-colors ${
+                                !c.isMatched
+                                  ? 'bg-rose-50/40 hover:bg-rose-50/70'
+                                  : 'hover:bg-gray-50/60'
+                              }`}
+                            >
+                              <td className="p-3 text-center text-xs text-gray-400 font-sans font-semibold">
+                                {c.checkNumber}
+                              </td>
+                              <td className="p-3 font-sans">
+                                <div className="font-bold text-gray-900 text-sm">
+                                  {c.moduleNameBn}
+                                </div>
+                                <div className="text-xs text-gray-500 font-mono flex items-center gap-2 mt-0.5">
+                                  <span>{c.moduleNameEn}</span>
+                                  {c.accountCode && (
+                                    <span className="px-1.5 py-0.2 rounded bg-gray-100 text-gray-600 text-[11px]">
+                                      হিসাব কোড: {c.accountCode}
+                                    </span>
+                                  )}
+                                </div>
+                              </td>
+                              <td className="p-3 text-right text-gray-900 font-bold">
+                                {fmt(c.operationalAmount)}
+                              </td>
+                              <td className="p-3 text-right text-gray-900 font-bold">
+                                {fmt(c.glAmount)}
+                              </td>
+                              <td className="p-3 text-right">
+                                {c.isMatched ? (
+                                  <span className="text-emerald-700 font-bold">৳0.00</span>
+                                ) : (
+                                  <span className="text-rose-700 font-bold bg-rose-100 px-2 py-0.5 rounded">
+                                    {c.difference > 0 ? `+${fmt(c.difference)}` : fmt(c.difference)}
+                                  </span>
+                                )}
+                              </td>
+                              <td className="p-3 text-center font-sans">
+                                {c.isMatched ? (
+                                  <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                                    <span>সমন্বিত</span>
+                                  </span>
+                                ) : (
+                                  <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold bg-rose-50 text-rose-700 border border-rose-200">
+                                    <AlertCircle className="w-3.5 h-3.5 text-rose-600" />
+                                    <span>অমিল</span>
+                                  </span>
+                                )}
+                              </td>
+                              <td className="p-3 text-center font-sans">
+                                {c.subItems && c.subItems.length > 0 ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => toggleReconciliationCheck(c.id)}
+                                    className="p-1 rounded-md text-gray-500 hover:text-gray-800 hover:bg-gray-100 transition-colors"
+                                    title="সাব-আইটেম বিস্তারিত দেখুন"
+                                  >
+                                    {isExpanded ? (
+                                      <ChevronUp className="w-4 h-4 text-gray-700" />
+                                    ) : (
+                                      <ChevronDown className="w-4 h-4 text-gray-700" />
+                                    )}
+                                  </button>
+                                ) : (
+                                  <span className="text-gray-300">-</span>
+                                )}
+                              </td>
+                            </tr>
+
+                            {/* Sub-items Details Row */}
+                            {isExpanded && c.subItems && c.subItems.length > 0 && (
+                              <tr className="bg-gray-50/70 border-t border-gray-100 font-sans">
+                                <td colSpan={7} className="p-4">
+                                  <div className="bg-white rounded-xl border border-gray-200 p-3 space-y-2">
+                                    <div className="text-xs font-bold text-gray-700 flex items-center justify-between">
+                                      <span>সাবলেজার বিশ্লেষণ ও বিভাজন ({c.moduleNameBn}):</span>
+                                      <span className="text-gray-500 font-normal">
+                                        মোট রেকর্ড: {c.subItems.length}টি
+                                      </span>
+                                    </div>
+                                    <div className="overflow-x-auto">
+                                      <table className="w-full text-xs text-left">
+                                        <thead className="bg-gray-50 text-gray-500 border-b border-gray-100">
+                                          <tr>
+                                            <th className="p-2">নাম / বিবরণ</th>
+                                            <th className="p-2">কোড / আইডি</th>
+                                            <th className="p-2 text-right">অপারেশনাল পরিমাণ</th>
+                                            <th className="p-2 text-right">খতিয়ান স্থিতি</th>
+                                            <th className="p-2 text-right">ব্যবধান</th>
+                                            <th className="p-2 text-center">অবস্থা</th>
+                                          </tr>
+                                        </thead>
+                                        <tbody className="divide-y divide-gray-100 font-mono">
+                                          {c.subItems.map((sub, sIdx) => {
+                                            const subDiff = Math.round(((sub.operationalAmount || 0) - (sub.glAmount || 0)) * 100) / 100;
+                                            const subMatched = Math.abs(subDiff) < 0.01;
+                                            return (
+                                              <tr key={sIdx} className="hover:bg-gray-50/50">
+                                                <td className="p-2 font-sans font-medium text-gray-800">
+                                                  {sub.name}
+                                                </td>
+                                                <td className="p-2 text-gray-500 text-[11px]">
+                                                  {sub.code || '-'}
+                                                </td>
+                                                <td className="p-2 text-right text-gray-800">
+                                                  {fmt(sub.operationalAmount)}
+                                                </td>
+                                                <td className="p-2 text-right text-gray-800">
+                                                  {sub.glAmount !== undefined ? fmt(sub.glAmount) : '-'}
+                                                </td>
+                                                <td className="p-2 text-right">
+                                                  {sub.glAmount !== undefined ? (
+                                                    subMatched ? (
+                                                      <span className="text-emerald-700">৳0.00</span>
+                                                    ) : (
+                                                      <span className="text-rose-700 font-bold">
+                                                        {subDiff > 0 ? `+${fmt(subDiff)}` : fmt(subDiff)}
+                                                      </span>
+                                                    )
+                                                  ) : (
+                                                    '-'
+                                                  )}
+                                                </td>
+                                                <td className="p-2 text-center font-sans">
+                                                  {sub.glAmount !== undefined ? (
+                                                    subMatched ? (
+                                                      <span className="px-1.5 py-0.2 rounded text-[10px] bg-emerald-50 text-emerald-700">মিলেছে</span>
+                                                    ) : (
+                                                      <span className="px-1.5 py-0.2 rounded text-[10px] bg-rose-50 text-rose-700 font-bold">অমিল</span>
+                                                    )
+                                                  ) : (
+                                                    <span className="px-1.5 py-0.2 rounded text-[10px] bg-gray-100 text-gray-600">সাবলেজার</span>
+                                                  )}
+                                                </td>
+                                              </tr>
+                                            );
+                                          })}
+                                        </tbody>
+                                      </table>
+                                    </div>
+                                    {c.notes && (
+                                      <p className="text-[11px] text-gray-500 italic mt-1">
+                                        নোট: {c.notes}
+                                      </p>
+                                    )}
+                                  </div>
+                                </td>
+                              </tr>
+                            )}
+                          </React.Fragment>
+                        );
+                      })}
+                  </tbody>
+                  <tfoot className="bg-gray-50 font-bold border-t-2 border-gray-300 font-mono text-xs">
+                    <tr>
+                      <td colSpan={2} className="p-3 font-sans text-gray-900 text-sm">
+                        সর্বমোট সমষ্টি (Total Reconciled Sum):
+                      </td>
+                      <td className="p-3 text-right text-gray-900 text-sm">
+                        {fmt(reconciliationReport.totalOperationalAmount)}
+                      </td>
+                      <td className="p-3 text-right text-gray-900 text-sm">
+                        {fmt(reconciliationReport.totalGlAmount)}
+                      </td>
+                      <td className="p-3 text-right text-sm">
+                        {reconciliationReport.isAllMatched ? (
+                          <span className="text-emerald-700">৳0.00</span>
+                        ) : (
+                          <span className="text-rose-700">
+                            {reconciliationReport.totalDifference > 0
+                              ? `+${fmt(reconciliationReport.totalDifference)}`
+                              : fmt(reconciliationReport.totalDifference)}
+                          </span>
+                        )}
+                      </td>
+                      <td colSpan={2} className="p-3 text-center font-sans text-xs">
+                        {reconciliationReport.isAllMatched ? (
+                          <span className="text-emerald-700 font-bold">✓ সকল ১১টি সঠিক</span>
+                        ) : (
+                          <span className="text-rose-700 font-bold">⚠️ {reconciliationReport.mismatchCount}টি অমিল</span>
+                        )}
+                      </td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+
+              {/* Mobile Card View */}
+              <div className="md:hidden space-y-3">
+                {reconciliationReport.checks
+                  .filter(check => reconciliationFilter === 'ALL' || !check.isMatched)
+                  .map((c) => {
+                    const isExpanded = !!expandedReconciliationChecks[c.id];
+                    return (
+                      <div
+                        key={c.id}
+                        className={`p-3.5 rounded-xl border space-y-3 ${
+                          !c.isMatched
+                            ? 'border-rose-300 bg-rose-50/40'
+                            : 'border-gray-200 bg-white'
+                        }`}
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <div>
+                            <div className="flex items-center gap-1.5">
+                              <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-gray-100 text-gray-600">
+                                #{c.checkNumber}
+                              </span>
+                              <div className="text-sm font-bold text-gray-900 font-sans">
+                                {c.moduleNameBn}
+                              </div>
+                            </div>
+                            <div className="text-xs text-gray-500 font-mono mt-0.5">
+                              {c.accountCode ? `কোড: ${c.accountCode} • ` : ''}{c.moduleNameEn}
+                            </div>
+                          </div>
+                          <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${
+                            c.isMatched
+                              ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                              : 'bg-rose-50 text-rose-700 border border-rose-200'
+                          }`}>
+                            {c.isMatched ? '✓ মিলেছে' : '⚠️ অমিল'}
+                          </span>
+                        </div>
+
+                        <div className="grid grid-cols-3 gap-2 pt-2 border-t border-gray-100 text-xs font-mono">
+                          <div>
+                            <span className="text-[10px] text-gray-500 block font-sans">অপারেশনাল</span>
+                            <span className="font-bold text-gray-800">{fmt(c.operationalAmount)}</span>
+                          </div>
+                          <div>
+                            <span className="text-[10px] text-gray-500 block font-sans">খতিয়ান (GL)</span>
+                            <span className="font-bold text-gray-800">{fmt(c.glAmount)}</span>
+                          </div>
+                          <div className="text-right">
+                            <span className="text-[10px] text-gray-500 block font-sans">পার্থক্য</span>
+                            <span className={`font-bold ${c.isMatched ? 'text-emerald-700' : 'text-rose-700'}`}>
+                              {c.isMatched ? '৳0.00' : (c.difference > 0 ? `+${fmt(c.difference)}` : fmt(c.difference))}
+                            </span>
+                          </div>
+                        </div>
+
+                        {c.subItems && c.subItems.length > 0 && (
+                          <div className="pt-2 border-t border-gray-100">
+                            <button
+                              type="button"
+                              onClick={() => toggleReconciliationCheck(c.id)}
+                              className="w-full flex items-center justify-between text-xs text-gray-600 hover:text-gray-900 font-semibold"
+                            >
+                              <span>উপাদান বিভাজন ({c.subItems.length}টি)</span>
+                              {isExpanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                            </button>
+
+                            {isExpanded && (
+                              <div className="mt-2 space-y-1.5 bg-gray-50 p-2.5 rounded-lg text-xs">
+                                {c.subItems.map((sub, sIdx) => (
+                                  <div key={sIdx} className="flex justify-between items-center text-[11px] py-1 border-b border-gray-200/60 last:border-0">
+                                    <span className="text-gray-700 font-medium">{sub.name}</span>
+                                    <span className="font-mono text-gray-900 font-bold">{fmt(sub.operationalAmount)}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+              </div>
+            </div>
+          )}
+
+          {/* Auditability & Integrity Footer */}
+          <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 text-slate-700 text-xs leading-relaxed space-y-1">
+            <div className="font-bold text-slate-900 flex items-center gap-1.5">
+              <ShieldCheck className="w-4 h-4 text-slate-700" />
+              <span>নিরীক্ষা ও অখণ্ডতা নীতি (Audit & Integrity Policy):</span>
+            </div>
+            <p>
+              ১. এই প্রতিবেদনটি কেবল অসঙ্গতি শনাক্তকরণ ও নিরীক্ষার উদ্দেশ্যে তৈরি। কোনো স্বয়ংক্রিয় সংশোধনী জাবেদা প্রস্তুত করা হয় না।<br />
+              ২. কোনো ঐতিহাসিক লেনদেনের ডাটা পরিবর্তন বা রূপান্তর করা হয় না। যেকোনো অসঙ্গতির ক্ষেত্রে মূল ভাউচার বা খতিয়ান নিরীক্ষা করে কারণ নির্ণয় করা আবশ্যক।
+            </p>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
