@@ -4640,6 +4640,29 @@ export async function executeFishHarvestAndSaleTransaction(
       const cleanMortality = Math.max(0, Number(mortalityCount) || 0);
       const cleanPrice = Math.max(0, Math.round((Number(salePrice) || 0) * 100) / 100);
 
+      if (cleanWeight <= 0 && cleanPrice <= 0) {
+        throw new Error('আহরণের ওজন অথবা বিক্রয়মূল্য অবশ্যই শূন্যের বেশি হতে হবে।');
+      }
+
+      // Prevent duplicate harvest: verify identical harvest transaction was not just processed
+      const duplicateHarvestEntry = await dbInstance.journalEntries
+        .filter((j: any) => {
+          if (j.reference !== freshBatch.id || j.date !== dateStr) return false;
+          return (j.lines || []).some(
+            (l: any) =>
+              (l.accountCode === CANONICAL_ACCOUNTS.FISH_REVENUE && cleanPrice > 0 && l.credit === cleanPrice) ||
+              (l.accountCode === CANONICAL_ACCOUNTS.FISH_COGS && l.memo && l.memo.includes(freshBatch.id))
+          );
+        })
+        .first();
+
+      if (duplicateHarvestEntry) {
+        const timeDiff = Math.abs(Date.now() - new Date(duplicateHarvestEntry.createdAt || '').getTime());
+        if (timeDiff < 15000) {
+          throw new Error(`এই মাছের ব্যাচের জন্য একই আহরণ ও বিক্রয়ের দাখিলা ইতিপূর্বে প্রক্রিয়াধীন হয়েছে (ভাউচার: ${duplicateHarvestEntry.voucherNumber || duplicateHarvestEntry.id})। ডুপ্লিকেট আহরণ প্রতিরোধ করা হয়েছে।`);
+        }
+      }
+
       // Validate payment source if BANK
       let bankAcc: CashBankAccount | undefined;
       if (paymentMethod === 'BANK' && cleanPrice > 0) {
@@ -4721,6 +4744,23 @@ export async function executeFishHarvestAndSaleTransaction(
         await safeInsert(dbInstance.accounts, newAcc, { idPrefix: 'acc' });
         accounts.push(newAcc);
         assetAcc = newAcc;
+      }
+
+      let wipAcc = accounts.find((a: Account) => a.code === CANONICAL_ACCOUNTS.WIP);
+      if (!wipAcc) {
+        const newAcc: Account = {
+          id: 'acc_1054',
+          code: CANONICAL_ACCOUNTS.WIP,
+          nameBn: 'প্রক্রিয়াধীন পণ্য (Work in Progress - WIP)',
+          nameEn: 'Work in Progress (WIP)',
+          accountClass: 'ASSET',
+          normalBalance: 'DEBIT',
+          isSystem: true,
+          isActive: true
+        };
+        await safeInsert(dbInstance.accounts, newAcc, { idPrefix: 'acc' });
+        accounts.push(newAcc);
+        wipAcc = newAcc;
       }
 
       // Step 1: Revenue Recognition Leg (Separate from Production Cost)
@@ -4933,7 +4973,7 @@ export async function executeFishHarvestAndSaleTransaction(
       const net1580 = Math.max(0, Math.round((assetDebits1580 - assetCredits1580) * 100) / 100);
       const net1054 = Math.max(0, Math.round((assetDebits1054 - assetCredits1054) * 100) / 100);
       const targetAssetCode = net1054 > net1580 ? CANONICAL_ACCOUNTS.WIP : CANONICAL_ACCOUNTS.LIVESTOCK_ASSETS;
-      let currentAssetBalance = targetAssetCode === CANONICAL_ACCOUNTS.WIP ? net1054 : net1580;
+      let currentAssetBalance = Math.round((net1580 + net1054) * 100) / 100;
       const targetAssetAcc = accounts.find((a) => a.code === targetAssetCode) || assetAcc;
 
       // Reclassify operating expenses into biological asset / WIP if costs were posted to GL expenses
@@ -5012,7 +5052,7 @@ export async function executeFishHarvestAndSaleTransaction(
       // Proportional cost calculation for partial harvest
       let costToTransfer = remainingCostToTransfer;
       if (isPartial && portionRatio < 1) {
-        const proportionalCost = Math.round(totalRecordedCost * portionRatio * 100) / 100;
+        const proportionalCost = Math.round(remainingCostToTransfer * portionRatio * 100) / 100;
         costToTransfer = Math.min(remainingCostToTransfer, proportionalCost);
       }
 
@@ -5061,14 +5101,44 @@ export async function executeFishHarvestAndSaleTransaction(
           });
         }
 
-        cogsLines.push({
-          accountId: targetAssetCode,
-          accountCode: targetAssetCode,
-          accountName: targetAssetAcc.nameBn || 'পশুসম্পদ ও জৈবিক সম্পদ (Livestock & Biological Assets)',
-          debit: 0,
-          credit: costToTransfer,
-          memo: `মাছের ব্যাচ ${freshBatch.id}: আহরণ ও অবলোপন বাবদ পুঞ্জীভূত উৎপাদন খরচ সমন্বয়`
-        });
+        // Relieve applicable production inventory/WIP/biological asset accounts
+        let reliefRemaining = costToTransfer;
+        if (net1580 > 0 && reliefRemaining > 0) {
+          const relief1580 = Math.min(reliefRemaining, net1580);
+          cogsLines.push({
+            accountId: CANONICAL_ACCOUNTS.LIVESTOCK_ASSETS,
+            accountCode: CANONICAL_ACCOUNTS.LIVESTOCK_ASSETS,
+            accountName: assetAcc.nameBn || 'পশুসম্পদ ও জৈবিক সম্পদ (Livestock & Biological Assets)',
+            debit: 0,
+            credit: relief1580,
+            memo: `মাছের ব্যাচ ${freshBatch.id}: আহরণ ও অবলোপন বাবদ পুঞ্জীভূত জৈবিক সম্পদ সমন্বয়`
+          });
+          reliefRemaining = Math.round((reliefRemaining - relief1580) * 100) / 100;
+        }
+
+        if (net1054 > 0 && reliefRemaining > 0) {
+          const relief1054 = Math.min(reliefRemaining, net1054);
+          cogsLines.push({
+            accountId: CANONICAL_ACCOUNTS.WIP,
+            accountCode: CANONICAL_ACCOUNTS.WIP,
+            accountName: wipAcc?.nameBn || 'প্রক্রিয়াধীন পণ্য (Work in Progress - WIP)',
+            debit: 0,
+            credit: relief1054,
+            memo: `মাছের ব্যাচ ${freshBatch.id}: আহরণ ও অবলোপন বাবদ পুঞ্জীভূত WIP সমন্বয়`
+          });
+          reliefRemaining = Math.round((reliefRemaining - relief1054) * 100) / 100;
+        }
+
+        if (reliefRemaining > 0) {
+          cogsLines.push({
+            accountId: targetAssetCode,
+            accountCode: targetAssetCode,
+            accountName: targetAssetAcc.nameBn || 'পশুসম্পদ ও জৈবিক সম্পদ (Livestock & Biological Assets)',
+            debit: 0,
+            credit: reliefRemaining,
+            memo: `মাছের ব্যাচ ${freshBatch.id}: আহরণ ও অবলোপন বাবদ পুঞ্জীভূত উৎপাদন খরচ সমন্বয়`
+          });
+        }
 
         const cogsCheck = validateBalancedLines(cogsLines, accounts);
         if (!cogsCheck.isBalanced) {
@@ -5102,7 +5172,7 @@ export async function executeFishHarvestAndSaleTransaction(
 
       // Step 3: Requirements - Update batch record.
       // If partial harvest and remaining cost/stock exists, keep batch ACTIVE and retain unsold production.
-      const isStillActive = isPartial && (costToTransfer < remainingCostToTransfer || (params.remainingEstimatedWeightKg !== undefined && params.remainingEstimatedWeightKg > 0));
+      const isStillActive = isPartial && (params.remainingEstimatedWeightKg === undefined || params.remainingEstimatedWeightKg > 0);
 
       freshBatch.harvestWeightKg = Math.round(((freshBatch.harvestWeightKg || 0) + cleanWeight) * 100) / 100;
       freshBatch.mortalityCount = (freshBatch.mortalityCount || 0) + cleanMortality;
@@ -6492,6 +6562,29 @@ export async function executeCropHarvestAndSaleTransaction(
       const cleanYield = Math.max(0, Number(harvestYieldKg) || 0);
       const cleanPrice = Math.max(0, Math.round((Number(salePrice) || 0) * 100) / 100);
 
+      if (cleanYield <= 0 && cleanPrice <= 0) {
+        throw new Error('কর্তনের ফলন অথবা বিক্রয়মূল্য অবশ্যই শূন্যের বেশি হতে হবে।');
+      }
+
+      // Prevent duplicate harvest: verify identical harvest transaction was not just processed
+      const duplicateHarvestEntry = await dbInstance.journalEntries
+        .filter((j: any) => {
+          if (j.reference !== freshCycle.id || j.date !== dateStr) return false;
+          return (j.lines || []).some(
+            (l: any) =>
+              (l.accountCode === CANONICAL_ACCOUNTS.CROP_REVENUE && cleanPrice > 0 && l.credit === cleanPrice) ||
+              (l.accountCode === CANONICAL_ACCOUNTS.CROP_COGS && l.memo && l.memo.includes(freshCycle.id))
+          );
+        })
+        .first();
+
+      if (duplicateHarvestEntry) {
+        const timeDiff = Math.abs(Date.now() - new Date(duplicateHarvestEntry.createdAt || '').getTime());
+        if (timeDiff < 15000) {
+          throw new Error(`এই শস্য চক্রের জন্য একই কর্তন ও বিক্রয়ের দাখিলা ইতিপূর্বে প্রক্রিয়াধীন হয়েছে (ভাউচার: ${duplicateHarvestEntry.voucherNumber || duplicateHarvestEntry.id})। ডুপ্লিকেট কর্তন প্রতিরোধ করা হয়েছে।`);
+        }
+      }
+
       // Validate payment source if BANK
       let bankAcc: CashBankAccount | undefined;
       if (paymentMethod === 'BANK' && cleanPrice > 0) {
@@ -6639,7 +6732,7 @@ export async function executeCropHarvestAndSaleTransaction(
       const net1580 = Math.max(0, Math.round((assetDebits1580 - assetCredits1580) * 100) / 100);
       const targetAssetCode = net1580 > net1054 ? CANONICAL_ACCOUNTS.LIVESTOCK_ASSETS : CANONICAL_ACCOUNTS.WIP;
       const targetAssetAcc = accounts.find((a) => a.code === targetAssetCode) || (targetAssetCode === CANONICAL_ACCOUNTS.WIP ? wipAcc : assetAcc);
-      let currentAssetBalance = targetAssetCode === CANONICAL_ACCOUNTS.LIVESTOCK_ASSETS ? net1580 : net1054;
+      let currentAssetBalance = Math.round((net1054 + net1580) * 100) / 100;
 
       // 3. Reclassify operating expenses into biological asset / WIP if costs were posted to GL expenses
       if (remainingCostToTransfer > currentAssetBalance && expensedDebit > 0) {
@@ -6716,7 +6809,7 @@ export async function executeCropHarvestAndSaleTransaction(
       // Proportional cost calculation for partial harvest
       let costToTransfer = remainingCostToTransfer;
       if (isPartial && portionRatio < 1) {
-        const proportionalCost = Math.round(totalRecordedCost * portionRatio * 100) / 100;
+        const proportionalCost = Math.round(remainingCostToTransfer * portionRatio * 100) / 100;
         costToTransfer = Math.min(remainingCostToTransfer, proportionalCost);
       }
 
@@ -6741,16 +6834,47 @@ export async function executeCropHarvestAndSaleTransaction(
             debit: costToTransfer,
             credit: 0,
             memo: `[COGS_TRANSFER] [${freshCycle.id}] শস্য চক্র ${freshCycle.id} বিক্রিত ফসলের উৎপাদন ব্যয় (COGS)${isPartial ? ' (আংশিক কর্তন)' : ''}`
-          },
-          {
+          }
+        ];
+
+        // Relieve applicable production inventory/WIP/biological asset accounts
+        let reliefRemaining = costToTransfer;
+        if (net1054 > 0 && reliefRemaining > 0) {
+          const relief1054 = Math.min(reliefRemaining, net1054);
+          cogsLines.push({
+            accountId: CANONICAL_ACCOUNTS.WIP,
+            accountCode: CANONICAL_ACCOUNTS.WIP,
+            accountName: wipAcc.nameBn || 'প্রক্রিয়াধীন পণ্য (Work in Progress - WIP)',
+            debit: 0,
+            credit: relief1054,
+            memo: `[COGS_TRANSFER] [${freshCycle.id}] শস্য চক্র ${freshCycle.id} বিক্রয় বাবদ WIP সমাপ্তি সমন্বয়`
+          });
+          reliefRemaining = Math.round((reliefRemaining - relief1054) * 100) / 100;
+        }
+
+        if (net1580 > 0 && reliefRemaining > 0) {
+          const relief1580 = Math.min(reliefRemaining, net1580);
+          cogsLines.push({
+            accountId: CANONICAL_ACCOUNTS.LIVESTOCK_ASSETS,
+            accountCode: CANONICAL_ACCOUNTS.LIVESTOCK_ASSETS,
+            accountName: assetAcc.nameBn || 'পশুসম্পদ ও জৈবিক সম্পদ (Livestock & Biological Assets)',
+            debit: 0,
+            credit: relief1580,
+            memo: `[COGS_TRANSFER] [${freshCycle.id}] শস্য চক্র ${freshCycle.id} বিক্রয় বাবদ জৈবিক সম্পদ সমাপ্তি সমন্বয়`
+          });
+          reliefRemaining = Math.round((reliefRemaining - relief1580) * 100) / 100;
+        }
+
+        if (reliefRemaining > 0) {
+          cogsLines.push({
             accountId: targetAssetCode,
             accountCode: targetAssetCode,
             accountName: targetAssetAcc.nameBn || (targetAssetCode === CANONICAL_ACCOUNTS.WIP ? 'প্রক্রিয়াধীন পণ্য (WIP)' : 'জৈবিক সম্পদ'),
             debit: 0,
-            credit: costToTransfer,
+            credit: reliefRemaining,
             memo: `[COGS_TRANSFER] [${freshCycle.id}] শস্য চক্র ${freshCycle.id} বিক্রয় বাবদ সম্পদে/WIP সমাপ্তি সমন্বয়`
-          }
-        ];
+          });
+        }
 
         const checkCogs = validateBalancedLines(cogsLines, accounts);
         if (!checkCogs.isBalanced) {
@@ -6923,7 +7047,7 @@ export async function executeCropHarvestAndSaleTransaction(
 
       // 7. Update CropCycle record
       // If partial harvest and remaining cost/area exists, keep cycle GROWING and retain unsold crop.
-      const isStillActive = isPartial && (costToTransfer < remainingCostToTransfer || (params.remainingAreaDecimals !== undefined && params.remainingAreaDecimals > 0));
+      const isStillActive = isPartial && (params.remainingAreaDecimals === undefined || params.remainingAreaDecimals > 0);
 
       freshCycle.harvestYieldKg = Math.round(((freshCycle.harvestYieldKg || 0) + cleanYield) * 100) / 100;
       freshCycle.harvestRevenue = Math.round(((freshCycle.harvestRevenue || 0) + cleanPrice) * 100) / 100;

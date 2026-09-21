@@ -4342,18 +4342,77 @@ export const FarmOperationsModule: React.FC<Props> = ({
                 />
               </div>
 
+              {/* Partial Harvest Configuration */}
+              <div className="p-3 bg-blue-50/60 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-900/50 rounded-xl space-y-2.5">
+                <label className="flex items-center gap-2 text-sm font-semibold text-blue-900 dark:text-blue-300 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={harvestFishIsPartial}
+                    onChange={(e) => setHarvestFishIsPartial(e.target.checked)}
+                    className="w-4 h-4 rounded text-blue-600 focus:ring-blue-500 cursor-pointer"
+                  />
+                  <span>আংশিক আহরণ ও বিক্রয় (Partial Harvest)</span>
+                </label>
+                {harvestFishIsPartial && (
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-1 text-xs">
+                    <div>
+                      <label className="block font-medium text-gray-700 dark:text-slate-300 mb-1">আহরণের অনুপাত (%)</label>
+                      <input
+                        type="number"
+                        min="1"
+                        max="99"
+                        value={harvestFishPortionPercentage}
+                        onChange={(e) => setHarvestFishPortionPercentage(e.target.value)}
+                        placeholder="যেমন: ৫০"
+                        className="w-full bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-700 rounded-lg p-2 text-gray-900 dark:text-white"
+                      />
+                    </div>
+                    <div>
+                      <label className="block font-medium text-gray-700 dark:text-slate-300 mb-1">অবশিষ্ট মাছের ওজন (কেজি)</label>
+                      <input
+                        type="number"
+                        step="any"
+                        min="0"
+                        value={harvestFishRemainingWeight}
+                        onChange={(e) => setHarvestFishRemainingWeight(e.target.value)}
+                        placeholder="যেমন: ২০০"
+                        className="w-full bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-700 rounded-lg p-2 text-gray-900 dark:text-white"
+                      />
+                    </div>
+                    <div>
+                      <label className="block font-medium text-gray-700 dark:text-slate-300 mb-1">অবশিষ্ট পোনা সংখ্যা (ঐচ্ছিক)</label>
+                      <input
+                        type="number"
+                        min="0"
+                        value={harvestFishRemainingFingerlings}
+                        onChange={(e) => setHarvestFishRemainingFingerlings(e.target.value)}
+                        placeholder="যেমন: ৮০০"
+                        className="w-full bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-700 rounded-lg p-2 text-gray-900 dark:text-white"
+                      />
+                    </div>
+                    <div className="sm:col-span-3 text-[11px] text-blue-700 dark:text-blue-300">
+                      ℹ️ আংশিক আহরণের ক্ষেত্রে অবশিষ্ট মাছ ও পোনা পুকুরে সক্রিয় থাকবে এবং আনুপাতিক উৎপাদন খরচ জৈবিক সম্পদে বহাল থাকবে।
+                    </div>
+                  </div>
+                )}
+              </div>
+
               {/* Real-time Profit/Loss Preview */}
               {(() => {
                 const totalCost = calculateFishBatchRecordedCosts(harvestFishBatch).totalRecordedCost;
+                const portion = harvestFishIsPartial
+                  ? Math.min(1, Math.max(0.01, (parseFloat(harvestFishPortionPercentage) || 50) / 100))
+                  : 1;
+                const transferredCost = Math.round(totalCost * portion * 100) / 100;
                 const mort = parseInt(harvestFishMortality) || 0;
                 const totalStock = (harvestFishBatch.fingerlingQty && harvestFishBatch.fingerlingQty > 0)
                   ? harvestFishBatch.fingerlingQty
                   : (mort > 0 ? mort : 1);
                 const mortRatio = Math.min(1, Math.max(0, mort / totalStock));
-                const mortCost = mort > 0 ? Math.round(totalCost * mortRatio * 100) / 100 : 0;
-                const cogs = Math.max(0, Math.round((totalCost - mortCost) * 100) / 100);
+                const mortCost = mort > 0 ? Math.round(transferredCost * mortRatio * 100) / 100 : 0;
+                const cogs = Math.max(0, Math.round((transferredCost - mortCost) * 100) / 100);
                 const rev = parseFloat(harvestFishPrice) || 0;
-                const net = rev - totalCost;
+                const net = rev - transferredCost;
                 return (
                   <div className="p-3 bg-gray-50 dark:bg-slate-800/80 rounded-xl border border-gray-200 dark:border-slate-700 space-y-1">
                     <div className="flex justify-between text-gray-600 dark:text-slate-400">
@@ -4368,6 +4427,12 @@ export const FarmOperationsModule: React.FC<Props> = ({
                       <div className="flex justify-between text-rose-600 dark:text-rose-400">
                         <span>মাছের মৃত্যুজনিত ক্ষতি (Mortality Loss 8030):</span>
                         <span className="font-semibold">({fmt(mortCost)})</span>
+                      </div>
+                    )}
+                    {harvestFishIsPartial && (
+                      <div className="flex justify-between text-blue-600 dark:text-blue-400 text-xs">
+                        <span>জৈবিক সম্পদে সংরক্ষিত অবশিষ্ট ব্যয়:</span>
+                        <span className="font-medium">{fmt(Math.max(0, totalCost - transferredCost))}</span>
                       </div>
                     )}
                     <div className="flex justify-between text-sm font-bold pt-1 border-t border-gray-200 dark:border-slate-700">
@@ -4548,10 +4613,58 @@ export const FarmOperationsModule: React.FC<Props> = ({
                 />
               </div>
 
+              {/* Partial Harvest Configuration */}
+              <div className="p-3 bg-amber-50/60 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-900/50 rounded-xl space-y-2.5">
+                <label className="flex items-center gap-2 text-sm font-semibold text-amber-900 dark:text-amber-300 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={harvestCropIsPartial}
+                    onChange={(e) => setHarvestCropIsPartial(e.target.checked)}
+                    className="w-4 h-4 rounded text-amber-600 focus:ring-amber-500 cursor-pointer"
+                  />
+                  <span>আংশিক কর্তন ও বিক্রয় (Partial Harvest)</span>
+                </label>
+                {harvestCropIsPartial && (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1 text-xs">
+                    <div>
+                      <label className="block font-medium text-gray-700 dark:text-slate-300 mb-1">কর্তনের অনুপাত (%)</label>
+                      <input
+                        type="number"
+                        min="1"
+                        max="99"
+                        value={harvestCropPortionPercentage}
+                        onChange={(e) => setHarvestCropPortionPercentage(e.target.value)}
+                        placeholder="যেমন: ৫০"
+                        className="w-full bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-700 rounded-lg p-2 text-gray-900 dark:text-white"
+                      />
+                    </div>
+                    <div>
+                      <label className="block font-medium text-gray-700 dark:text-slate-300 mb-1">অবশিষ্ট জমির পরিমাণ (শতাংশ)</label>
+                      <input
+                        type="number"
+                        step="any"
+                        min="0"
+                        value={harvestCropRemainingArea}
+                        onChange={(e) => setHarvestCropRemainingArea(e.target.value)}
+                        placeholder="যেমন: ২৫"
+                        className="w-full bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-700 rounded-lg p-2 text-gray-900 dark:text-white"
+                      />
+                    </div>
+                    <div className="sm:col-span-2 text-[11px] text-amber-800 dark:text-amber-300">
+                      ℹ️ আংশিক কর্তনের ক্ষেত্রে শস্য চক্রটি 'চলমান (GROWING)' থাকবে এবং অবশিষ্ট জমির আনুপাতিক ব্যয় প্রক্রিয়াধীন পণ্য (WIP) হিসেবে সংরক্ষিত থাকবে।
+                    </div>
+                  </div>
+                )}
+              </div>
+
               {/* Real-time Profit/Loss Preview */}
               {(() => {
                 const recorded = calculateCropCycleRecordedCosts(harvestCropCycle);
-                const cogs = recorded.totalRecordedCost > 0 ? recorded.totalRecordedCost : (harvestCropCycle.totalCost || 0);
+                const totalCost = recorded.totalRecordedCost > 0 ? recorded.totalRecordedCost : (harvestCropCycle.totalCost || 0);
+                const portion = harvestCropIsPartial
+                  ? Math.min(1, Math.max(0.01, (parseFloat(harvestCropPortionPercentage) || 50) / 100))
+                  : 1;
+                const cogs = Math.round(totalCost * portion * 100) / 100;
                 const rev = parseFloat(harvestCropPrice) || 0;
                 const net = rev - cogs;
                 return (
@@ -4561,9 +4674,15 @@ export const FarmOperationsModule: React.FC<Props> = ({
                       <span className="font-semibold text-gray-900 dark:text-white">{fmt(rev)}</span>
                     </div>
                     <div className="flex justify-between text-gray-600 dark:text-slate-400">
-                      <span>মোট চাষ ব্যয় (COGS 5030):</span>
+                      <span>কর্তনকৃত ফসলের উৎপাদন ব্যয় (COGS 5030):</span>
                       <span className="font-semibold text-gray-900 dark:text-white">({fmt(cogs)})</span>
                     </div>
+                    {harvestCropIsPartial && (
+                      <div className="flex justify-between text-amber-700 dark:text-amber-400 text-xs">
+                        <span>প্রক্রিয়াধীন সম্পদে (WIP) সংরক্ষিত ব্যয়:</span>
+                        <span className="font-medium">{fmt(Math.max(0, totalCost - cogs))}</span>
+                      </div>
+                    )}
                     <div className="flex justify-between text-sm font-bold pt-1 border-t border-gray-200 dark:border-slate-700">
                       <span>প্রত্যাশিত নীট লাভ / (ক্ষতি):</span>
                       <span className={net >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}>
