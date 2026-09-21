@@ -1425,3 +1425,509 @@ export async function executeYearEndClosing(params: {
     netProfitTransferred: calculatedNetProfit
   };
 }
+
+/**
+ * Cash Flow Statement (নগদ প্রবাহ বিবরণী)
+ * Built strictly from actual dated accounting transactions (General Ledger journal entries),
+ * adhering to IAS 7 / Bangladesh Accounting Standards (Direct Method):
+ *   Opening cash
+ *   + Operating cash flows
+ *   + Investing cash flows
+ *   + Financing cash flows
+ *   = Closing cash
+ * Reconciled with General Ledger Cash & Bank accounts as of the report end date.
+ */
+export interface CashFlowStatementReport {
+  startDate?: string;
+  endDate?: string;
+  openingCash: number;
+
+  operating: {
+    customerReceipts: number;
+    customerReceiptsCount: number;
+    supplierPayments: number;
+    supplierPaymentsCount: number;
+    operatingExpenses: number;
+    operatingExpensesCount: number;
+    otherOperatingReceipts: number;
+    otherOperatingReceiptsCount: number;
+    totalInflows: number;
+    totalOutflows: number;
+    netOperatingFlow: number;
+  };
+
+  investing: {
+    assetPurchases: number;
+    assetPurchasesCount: number;
+    assetDisposalProceeds: number;
+    assetDisposalProceedsCount: number;
+    totalInflows: number;
+    totalOutflows: number;
+    netInvestingFlow: number;
+  };
+
+  financing: {
+    ownerCapital: number;
+    ownerCapitalCount: number;
+    investorCapital: number;
+    investorCapitalCount: number;
+    loanProceeds: number;
+    loanProceedsCount: number;
+    investorProfitDistributions: number;
+    investorProfitDistributionsCount: number;
+    investorCapitalReturns: number;
+    investorCapitalReturnsCount: number;
+    loanRepayments: number;
+    loanRepaymentsCount: number;
+    ownerDrawings: number;
+    ownerDrawingsCount: number;
+    totalInflows: number;
+    totalOutflows: number;
+    netFinancingFlow: number;
+  };
+
+  totalCashIn: number;
+  totalCashOut: number;
+  netCashFlow: number;
+  closingCash: number;
+
+  // General Ledger Cash & Bank Reconciliation
+  glOpeningCash: number;
+  glClosingCash: number;
+  isReconciled: boolean;
+  reconciliationDiscrepancy: number;
+
+  // Account level GL balances as of report end date
+  accountsBreakdown: {
+    id: string;
+    code: string;
+    nameBn: string;
+    nameEn: string;
+    accountType: string;
+    openingBalance: number;
+    periodInflows: number;
+    periodOutflows: number;
+    balance: number;
+    closingBalance: number;
+  }[];
+}
+
+export async function generateCashFlowStatement(
+  dateRange?: DateRangeFilter,
+  customDb?: any
+): Promise<CashFlowStatementReport> {
+  const dbInstance = customDb || db;
+  const rawAccounts = await dbInstance.accounts.toArray();
+  const accountsByCode = new Map<string, Account>();
+  for (const acc of rawAccounts) {
+    if (!accountsByCode.has(acc.code)) {
+      accountsByCode.set(acc.code, acc);
+    }
+  }
+
+  // Identify all Cash and Bank GL account codes
+  const cashAccountCodes = new Set<string>();
+  for (const acc of accountsByCode.values()) {
+    if (
+      acc.code === '1010' ||
+      acc.code === '1020' ||
+      acc.code === '1030' ||
+      acc.code.startsWith('101') ||
+      acc.code.startsWith('102') ||
+      acc.code.startsWith('103') ||
+      (acc.accountClass === 'ASSET' &&
+        (acc.nameEn?.toLowerCase().includes('cash') ||
+          acc.nameEn?.toLowerCase().includes('bank') ||
+          acc.nameBn?.includes('নগদ') ||
+          acc.nameBn?.includes('ব্যাংক')))
+    ) {
+      cashAccountCodes.add(acc.code);
+    }
+  }
+  cashAccountCodes.add('1010');
+  cashAccountCodes.add('1020');
+  cashAccountCodes.add('1030');
+
+  let allEntries = await dbInstance.journalEntries.toArray();
+  allEntries = allEntries.filter((e: any) => e && Array.isArray(e.lines));
+
+  // 1. Calculate GL Opening Cash as of day before startDate (or 0 if no startDate)
+  let glOpeningCash = 0;
+  const accountOpeningBalances: Record<string, number> = {};
+  for (const code of cashAccountCodes) {
+    accountOpeningBalances[code] = 0;
+  }
+
+  if (dateRange?.startDate) {
+    for (const e of allEntries) {
+      if (e.date && e.date < dateRange.startDate) {
+        for (const l of e.lines) {
+          const c = l.accountCode?.trim();
+          if (c && cashAccountCodes.has(c)) {
+            const dr = Number(l.debit || 0);
+            const cr = Number(l.credit || 0);
+            accountOpeningBalances[c] = (accountOpeningBalances[c] || 0) + (dr - cr);
+            glOpeningCash += (dr - cr);
+          }
+        }
+      }
+    }
+  }
+  glOpeningCash = Math.round(glOpeningCash * 100) / 100;
+  const openingCash = glOpeningCash;
+
+  // 2. Calculate GL Closing Cash as of report endDate
+  let glClosingCash = 0;
+  const accountClosingBalances: Record<string, number> = {};
+  const accountPeriodInflows: Record<string, number> = {};
+  const accountPeriodOutflows: Record<string, number> = {};
+  for (const code of cashAccountCodes) {
+    accountClosingBalances[code] = 0;
+    accountPeriodInflows[code] = 0;
+    accountPeriodOutflows[code] = 0;
+  }
+
+  for (const e of allEntries) {
+    if (!dateRange?.endDate || (e.date && e.date <= dateRange.endDate)) {
+      for (const l of e.lines) {
+        const c = l.accountCode?.trim();
+        if (c && cashAccountCodes.has(c)) {
+          const dr = Number(l.debit || 0);
+          const cr = Number(l.credit || 0);
+          accountClosingBalances[c] = (accountClosingBalances[c] || 0) + (dr - cr);
+          glClosingCash += (dr - cr);
+        }
+      }
+    }
+  }
+  glClosingCash = Math.round(glClosingCash * 100) / 100;
+
+  // 3. Filter entries within the selected date range
+  const inRangeEntries = allEntries.filter((e: any) => {
+    if (!e.date) return false;
+    if (dateRange?.startDate && e.date < dateRange.startDate) return false;
+    if (dateRange?.endDate && e.date > dateRange.endDate) return false;
+    return true;
+  });
+
+  // Track in-period cash inflows and outflows per account
+  for (const e of inRangeEntries) {
+    for (const l of e.lines) {
+      const c = l.accountCode?.trim();
+      if (c && cashAccountCodes.has(c)) {
+        const dr = Number(l.debit || 0);
+        const cr = Number(l.credit || 0);
+        if (dr > 0) accountPeriodInflows[c] = (accountPeriodInflows[c] || 0) + dr;
+        if (cr > 0) accountPeriodOutflows[c] = (accountPeriodOutflows[c] || 0) + cr;
+      }
+    }
+  }
+
+  // Activity accumulators
+  let customerReceipts = 0;
+  let customerReceiptsCount = 0;
+  let otherOperatingReceipts = 0;
+  let otherOperatingReceiptsCount = 0;
+  let supplierPayments = 0;
+  let supplierPaymentsCount = 0;
+  let operatingExpenses = 0;
+  let operatingExpensesCount = 0;
+
+  let assetPurchases = 0;
+  let assetPurchasesCount = 0;
+  let assetDisposalProceeds = 0;
+  let assetDisposalProceedsCount = 0;
+
+  let ownerCapital = 0;
+  let ownerCapitalCount = 0;
+  let investorCapital = 0;
+  let investorCapitalCount = 0;
+  let loanProceeds = 0;
+  let loanProceedsCount = 0;
+  let investorProfitDistributions = 0;
+  let investorProfitDistributionsCount = 0;
+  let investorCapitalReturns = 0;
+  let investorCapitalReturnsCount = 0;
+  let loanRepayments = 0;
+  let loanRepaymentsCount = 0;
+  let ownerDrawings = 0;
+  let ownerDrawingsCount = 0;
+
+  // Process each in-range journal entry exactly once
+  for (const e of inRangeEntries) {
+    const cashLines = e.lines.filter((l: any) => cashAccountCodes.has(l.accountCode?.trim()));
+    if (cashLines.length === 0) {
+      continue; // Non-cash transaction
+    }
+
+    const nonCashLines = e.lines.filter((l: any) => !cashAccountCodes.has(l.accountCode?.trim()));
+
+    // Contra check: transfers purely between cash/bank accounts
+    const isContra =
+      e.voucherType === 'CONTRA' ||
+      nonCashLines.length === 0 ||
+      nonCashLines.every((l: any) => Number(l.debit || 0) === 0 && Number(l.credit || 0) === 0);
+
+    if (isContra) {
+      continue; // Internal movement among cash & cash equivalents; net cash impact is 0
+    }
+
+    const totalCashDr = cashLines.reduce((s: number, l: any) => s + Number(l.debit || 0), 0);
+    const totalCashCr = cashLines.reduce((s: number, l: any) => s + Number(l.credit || 0), 0);
+    const netCashEffect = Math.round((totalCashDr - totalCashCr) * 100) / 100;
+
+    if (netCashEffect === 0) {
+      continue;
+    }
+
+    if (netCashEffect > 0) {
+      // CASH INFLOW
+      const inflowAmount = netCashEffect;
+
+      // Classify Financing Inflows
+      if (
+        nonCashLines.some((l: any) => l.accountCode === '3010' && Number(l.credit || 0) > 0) ||
+        e.voucherNumber?.startsWith('CAP-') ||
+        e.narration?.includes('মালিকের মূলধন')
+      ) {
+        ownerCapital += inflowAmount;
+        ownerCapitalCount++;
+      } else if (
+        nonCashLines.some((l: any) => l.accountCode === '3020' && Number(l.credit || 0) > 0) ||
+        e.voucherNumber?.startsWith('INV-CAP-') ||
+        e.voucherNumber?.startsWith('ICAP-') ||
+        e.narration?.includes('বিনিয়োগকারীর মূলধন') ||
+        e.narration?.includes('Investor capital')
+      ) {
+        investorCapital += inflowAmount;
+        investorCapitalCount++;
+      } else if (
+        nonCashLines.some(
+          (l: any) => (l.accountCode === '2110' || l.accountCode === '2120') && Number(l.credit || 0) > 0
+        ) ||
+        e.voucherNumber?.startsWith('LN-') ||
+        e.narration?.includes('গৃহীত ঋণ') ||
+        e.narration?.includes('Loan disbursement')
+      ) {
+        loanProceeds += inflowAmount;
+        loanProceedsCount++;
+      } else if (
+        // Classify Investing Inflow: Asset Disposal
+        e.voucherType === 'DISPOSAL' ||
+        e.voucherNumber?.startsWith('DISP-') ||
+        e.narration?.includes('স্থায়ী সম্পদ বিক্রয়লব্ধ') ||
+        e.narration?.includes('Asset disposal') ||
+        nonCashLines.some(
+          (l: any) =>
+            l.accountCode === '7020' ||
+            l.accountCode === '1590' ||
+            (l.accountCode.startsWith('15') && Number(l.credit || 0) > 0)
+        )
+      ) {
+        assetDisposalProceeds += inflowAmount;
+        assetDisposalProceedsCount++;
+      } else if (
+        // Classify Operating Inflow: Customer Receipts
+        e.voucherType === 'SALE' ||
+        e.voucherType === 'RECEIPT' ||
+        e.voucherNumber?.startsWith('SL-') ||
+        e.voucherNumber?.startsWith('INV-') ||
+        e.reference?.startsWith('sal_') ||
+        nonCashLines.some(
+          (l: any) =>
+            l.accountCode === '1040' ||
+            l.accountCode === '2040' ||
+            l.accountCode.startsWith('4')
+        )
+      ) {
+        customerReceipts += inflowAmount;
+        customerReceiptsCount++;
+      } else {
+        // Other operating receipts
+        otherOperatingReceipts += inflowAmount;
+        otherOperatingReceiptsCount++;
+      }
+    } else {
+      // CASH OUTFLOW
+      const outflowAmount = Math.abs(netCashEffect);
+
+      // Classify Financing Outflows
+      if (
+        nonCashLines.some((l: any) => l.accountCode === '3040' && Number(l.debit || 0) > 0) ||
+        e.voucherNumber?.startsWith('DRW-') ||
+        e.narration?.includes('উত্তোলন') ||
+        e.narration?.includes('Drawing')
+      ) {
+        ownerDrawings += outflowAmount;
+        ownerDrawingsCount++;
+      } else if (
+        nonCashLines.some((l: any) => l.accountCode === '3020' && Number(l.debit || 0) > 0) ||
+        e.voucherNumber?.startsWith('ICR-') ||
+        e.narration?.includes('মূলধন ফেরত') ||
+        e.narration?.includes('Capital return')
+      ) {
+        investorCapitalReturns += outflowAmount;
+        investorCapitalReturnsCount++;
+      } else if (
+        nonCashLines.some((l: any) => l.accountCode === '2050' && Number(l.debit || 0) > 0) ||
+        e.voucherNumber?.startsWith('IPAY-') ||
+        e.voucherNumber?.startsWith('INV-PAY-') ||
+        e.narration?.includes('লভ্যাংশ প্রদান') ||
+        e.narration?.includes('Profit payment')
+      ) {
+        investorProfitDistributions += outflowAmount;
+        investorProfitDistributionsCount++;
+      } else if (
+        e.voucherNumber?.startsWith('LRP-') ||
+        e.narration?.includes('ঋণ পরিশোধ') ||
+        e.narration?.includes('Loan repayment') ||
+        nonCashLines.some(
+          (l: any) => (l.accountCode === '2110' || l.accountCode === '2120') && Number(l.debit || 0) > 0
+        )
+      ) {
+        loanRepayments += outflowAmount;
+        loanRepaymentsCount++;
+      } else if (
+        // Classify Investing Outflow: Fixed Asset Purchases
+        e.reference?.startsWith('ast_') ||
+        e.voucherNumber?.startsWith('AST-') ||
+        e.narration?.includes('স্থায়ী সম্পদ ক্রয়') ||
+        e.narration?.includes('Fixed asset purchase') ||
+        nonCashLines.some((l: any) => l.accountCode.startsWith('15') && l.accountCode !== '1590' && Number(l.debit || 0) > 0)
+      ) {
+        assetPurchases += outflowAmount;
+        assetPurchasesCount++;
+      } else if (
+        // Classify Operating Outflow: Supplier Payments
+        e.voucherType === 'PURCHASE' ||
+        e.voucherNumber?.startsWith('PUR-') ||
+        e.reference?.startsWith('pur_') ||
+        nonCashLines.some((l: any) => l.accountCode === '2010' || l.accountCode.startsWith('105'))
+      ) {
+        supplierPayments += outflowAmount;
+        supplierPaymentsCount++;
+      } else {
+        // Classify Operating Outflow: Operating Expenses & overhead
+        operatingExpenses += outflowAmount;
+        operatingExpensesCount++;
+      }
+    }
+  }
+
+  // Calculate totals and net flows
+  const totalOperatingInflows = Math.round((customerReceipts + otherOperatingReceipts) * 100) / 100;
+  const totalOperatingOutflows = Math.round((supplierPayments + operatingExpenses) * 100) / 100;
+  const netOperatingFlow = Math.round((totalOperatingInflows - totalOperatingOutflows) * 100) / 100;
+
+  const totalInvestingInflows = Math.round(assetDisposalProceeds * 100) / 100;
+  const totalInvestingOutflows = Math.round(assetPurchases * 100) / 100;
+  const netInvestingFlow = Math.round((totalInvestingInflows - totalInvestingOutflows) * 100) / 100;
+
+  const totalFinancingInflows = Math.round((ownerCapital + investorCapital + loanProceeds) * 100) / 100;
+  const totalFinancingOutflows =
+    Math.round((investorProfitDistributions + investorCapitalReturns + loanRepayments + ownerDrawings) * 100) / 100;
+  const netFinancingFlow = Math.round((totalFinancingInflows - totalFinancingOutflows) * 100) / 100;
+
+  const totalCashIn = Math.round((totalOperatingInflows + totalInvestingInflows + totalFinancingInflows) * 100) / 100;
+  const totalCashOut = Math.round((totalOperatingOutflows + totalInvestingOutflows + totalFinancingOutflows) * 100) / 100;
+  const netCashFlow = Math.round((netOperatingFlow + netInvestingFlow + netFinancingFlow) * 100) / 100;
+
+  const closingCash = Math.round((openingCash + netCashFlow) * 100) / 100;
+  const reconciliationDiscrepancy = Math.round((closingCash - glClosingCash) * 100) / 100;
+  const isReconciled = Math.abs(reconciliationDiscrepancy) < 0.001;
+
+  // Build account-level breakdown as of report end date
+  const accountsBreakdown = Array.from(cashAccountCodes)
+    .map((code) => {
+      const acc = accountsByCode.get(code);
+      const op = Math.round((accountOpeningBalances[code] || 0) * 100) / 100;
+      const inf = Math.round((accountPeriodInflows[code] || 0) * 100) / 100;
+      const outf = Math.round((accountPeriodOutflows[code] || 0) * 100) / 100;
+      const cl = Math.round((accountClosingBalances[code] || 0) * 100) / 100;
+      return {
+        id: acc?.id || `acc_${code}`,
+        code,
+        nameBn:
+          acc?.nameBn ||
+          (code === '1010'
+            ? 'নগদ তহবিল (হাতে নগদ)'
+            : code === '1020'
+            ? 'পেটি ক্যাশ (খুচরা খরচ)'
+            : 'ব্যাংক হিসাব (চলতি/সঞ্চয়ী)'),
+        nameEn:
+          acc?.nameEn ||
+          (code === '1010' ? 'Cash on Hand' : code === '1020' ? 'Petty Cash' : 'Bank Accounts'),
+        accountType: code === '1030' ? 'BANK' : 'CASH',
+        openingBalance: op,
+        periodInflows: inf,
+        periodOutflows: outf,
+        balance: cl,
+        closingBalance: cl
+      };
+    })
+    .filter(
+      (a) =>
+        a.openingBalance !== 0 ||
+        a.periodInflows !== 0 ||
+        a.periodOutflows !== 0 ||
+        a.closingBalance !== 0 ||
+        a.code === '1010' ||
+        a.code === '1030'
+    );
+
+  return {
+    startDate: dateRange?.startDate,
+    endDate: dateRange?.endDate,
+    openingCash,
+    operating: {
+      customerReceipts: Math.round(customerReceipts * 100) / 100,
+      customerReceiptsCount,
+      supplierPayments: Math.round(supplierPayments * 100) / 100,
+      supplierPaymentsCount,
+      operatingExpenses: Math.round(operatingExpenses * 100) / 100,
+      operatingExpensesCount,
+      otherOperatingReceipts: Math.round(otherOperatingReceipts * 100) / 100,
+      otherOperatingReceiptsCount,
+      totalInflows: totalOperatingInflows,
+      totalOutflows: totalOperatingOutflows,
+      netOperatingFlow
+    },
+    investing: {
+      assetPurchases: Math.round(assetPurchases * 100) / 100,
+      assetPurchasesCount,
+      assetDisposalProceeds: Math.round(assetDisposalProceeds * 100) / 100,
+      assetDisposalProceedsCount,
+      totalInflows: totalInvestingInflows,
+      totalOutflows: totalInvestingOutflows,
+      netInvestingFlow
+    },
+    financing: {
+      ownerCapital: Math.round(ownerCapital * 100) / 100,
+      ownerCapitalCount,
+      investorCapital: Math.round(investorCapital * 100) / 100,
+      investorCapitalCount,
+      loanProceeds: Math.round(loanProceeds * 100) / 100,
+      loanProceedsCount,
+      investorProfitDistributions: Math.round(investorProfitDistributions * 100) / 100,
+      investorProfitDistributionsCount,
+      investorCapitalReturns: Math.round(investorCapitalReturns * 100) / 100,
+      investorCapitalReturnsCount,
+      loanRepayments: Math.round(loanRepayments * 100) / 100,
+      loanRepaymentsCount,
+      ownerDrawings: Math.round(ownerDrawings * 100) / 100,
+      ownerDrawingsCount,
+      totalInflows: totalFinancingInflows,
+      totalOutflows: totalFinancingOutflows,
+      netFinancingFlow
+    },
+    totalCashIn,
+    totalCashOut,
+    netCashFlow,
+    closingCash,
+    glOpeningCash,
+    glClosingCash,
+    isReconciled,
+    reconciliationDiscrepancy,
+    accountsBreakdown
+  };
+}

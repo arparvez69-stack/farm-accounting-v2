@@ -26,6 +26,7 @@ import {
   executeInvestorTransaction,
   executeInvestorProfitAllocationTransaction,
   executeInvestorProfitPaymentTransaction,
+  executeInvestorCapitalReturnTransaction,
   executeLoanTransaction,
   executeLoanRepaymentTransaction,
   executeOwnerCapitalTransaction,
@@ -115,11 +116,9 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
   const [investorPhone, setInvestorPhone] = useState('');
   const [investorAmount, setInvestorAmount] = useState('');
   const [investorSharePct, setInvestorSharePct] = useState('');
-  const [investorAnnualRate, setInvestorAnnualRate] = useState('');
-  const [investorTermMonths, setInvestorTermMonths] = useState('');
   const [investorDestinationAcc, setInvestorDestinationAcc] = useState<'CASH' | 'BANK'>('BANK');
 
-  // Profit Allocation & Payment Modals
+  // Profit Allocation, Payment & Capital Return Modals
   const [allocatingInvestor, setAllocatingInvestor] = useState<Investor | null>(null);
   const [finalizedFarmProfit, setFinalizedFarmProfit] = useState('');
   const [allocationDate, setAllocationDate] = useState(new Date().toISOString().split('T')[0]);
@@ -132,6 +131,13 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
   const [paymentDate, setPaymentDate] = useState(new Date().toISOString().split('T')[0]);
   const [paymentNotes, setPaymentNotes] = useState('');
   const [submittingPayment, setSubmittingPayment] = useState(false);
+
+  const [returningCapitalInvestor, setReturningCapitalInvestor] = useState<Investor | null>(null);
+  const [capitalReturnAmount, setCapitalReturnAmount] = useState('');
+  const [capitalReturnSourceAccId, setCapitalReturnSourceAccId] = useState('');
+  const [capitalReturnDate, setCapitalReturnDate] = useState(new Date().toISOString().split('T')[0]);
+  const [capitalReturnNotes, setCapitalReturnNotes] = useState('');
+  const [submittingCapitalReturn, setSubmittingCapitalReturn] = useState(false);
 
   useEffect(() => {
     loadFinanceData();
@@ -336,11 +342,30 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
     e.preventDefault();
     const amt = parseFloat(investorAmount) || 0;
     const share = parseFloat(investorSharePct) || 0;
-    const annualRate = investorAnnualRate ? parseFloat(investorAnnualRate) : undefined;
-    const invMonths = investorTermMonths ? parseInt(investorTermMonths) : undefined;
 
     if (!investorName.trim() || amt <= 0) {
-      setMsg({ type: 'error', text: 'বিনিয়োগকারীর নাম ও বিনিয়োগকৃত মূলধন সঠিকভাবে লিখুন।' });
+      setMsg({ type: 'error', text: 'বিনিয়োগকারীর নাম ও বিনিয়োগকৃত মূলধন সঠিকভাবে লিখুন (মূলধন > ০ হতে হবে)।' });
+      return;
+    }
+
+    if (share <= 0 || share > 100) {
+      setMsg({
+        type: 'error',
+        text: 'চুক্তিভিত্তিক লভ্যাংশ বণ্টন অনুপাত (Profit-sharing ratio) অবশ্যই ০ এর বেশি এবং সর্বোচ্চ ১০০% হতে হবে (> 0 এবং <= 100)।'
+      });
+      return;
+    }
+
+    const activeInvestors = investors.filter((i) => i.status !== 'EXITED');
+    const existingShareTotal = activeInvestors.reduce((sum, i) => {
+      const r = i.profitSharingRatio ?? i.profitSharePercentage ?? i.sharePercentage ?? 0;
+      return sum + r;
+    }, 0);
+    if (existingShareTotal + share > 100) {
+      setMsg({
+        type: 'error',
+        text: `মোট বিনিয়োগকারীদের চুক্তিভিত্তিক লভ্যাংশ অনুপাত ১০০% অতিক্রম করতে পারে না। বর্তমান সক্রিয় বিনিয়োগকারীদের মোট অনুপাত: ${existingShareTotal}%, সর্বোচ্চ অবশিষ্ট অনুপাত: ${100 - existingShareTotal}%।`
+      });
       return;
     }
 
@@ -350,8 +375,7 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
         phone: investorPhone.trim() || undefined,
         contribution: amt,
         profitShare: share,
-        annualInterestRatePercent: annualRate,
-        termMonths: invMonths,
+        profitSharingRatio: share,
         targetAccountId: investorDestinationAcc,
         currentUserId
       });
@@ -361,11 +385,9 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
       setInvestorPhone('');
       setInvestorAmount('');
       setInvestorSharePct('');
-      setInvestorAnnualRate('');
-      setInvestorTermMonths('');
       setMsg({
         type: 'success',
-        text: `বিনিয়োগকারী ${res.investor.name} এর ৳${amt} মূলধন সরাসরি ৩০২০ (Investor Capital) এ পোস্ট করা হয়েছে!`
+        text: `বিনিয়োগকারী ${res.investor.name} এর ৳${amt.toLocaleString()} মূলধন সরাসরি ৩০২০ (Investor Capital) এ ক্রেডিট ও ব্যাংকে ডেবিট করা হয়েছে!`
       });
       loadFinanceData();
     } catch (err: any) {
@@ -459,6 +481,58 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
       setMsg({ type: 'error', text: `লভ্যাংশ পরিশোধ ব্যর্থ হয়েছে: ${err.message}` });
     } finally {
       setSubmittingPayment(false);
+    }
+  };
+
+  // EXECUTE INVESTOR CAPITAL RETURN (Dr 3020 Investor Capital, Cr 1010/1030 Cash/Bank)
+  const handleExecuteCapitalReturn = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!returningCapitalInvestor) return;
+
+    const amt = parseFloat(capitalReturnAmount) || 0;
+    if (amt <= 0) {
+      setMsg({ type: 'error', text: 'মূলধন ফেরতের পরিমাণ ০ থেকে বেশি হতে হবে।' });
+      return;
+    }
+    const currentCapital = returningCapitalInvestor.currentCapitalBalance ?? returningCapitalInvestor.capitalAmount ?? 0;
+    if (amt > currentCapital) {
+      setMsg({
+        type: 'error',
+        text: `বিদ্যমান মূলধনের চেয়ে বেশি ফেরত দেওয়া সম্ভব নয়। বর্তমান মূলধন স্থিতি: ৳${currentCapital.toLocaleString()}`
+      });
+      return;
+    }
+
+    const accId = capitalReturnSourceAccId || accounts[0]?.id;
+    if (!accId) {
+      setMsg({ type: 'error', text: 'মূলধন ফেরতের জন্য ক্যাশ বা ব্যাংক হিসাব নির্বাচন করুন।' });
+      return;
+    }
+
+    setSubmittingCapitalReturn(true);
+    try {
+      const res = await executeInvestorCapitalReturnTransaction({
+        investorId: returningCapitalInvestor.id,
+        amount: amt,
+        sourceAccountId: accId,
+        returnDate: capitalReturnDate,
+        notes: capitalReturnNotes,
+        currentUserId
+      });
+
+      setMsg({
+        type: 'success',
+        text: `বিনিয়োগকারী ${res.investor.name} এর মূলধন ৳${amt.toLocaleString()} সফলভাবে ফেরত ও জাবেদায় পোস্ট করা হয়েছে (অবশিষ্ট মূলধন: ৳${(res.investor.currentCapitalBalance || 0).toLocaleString()})!`
+      });
+      setReturningCapitalInvestor(null);
+      setCapitalReturnAmount('');
+      setCapitalReturnNotes('');
+      window.dispatchEvent(new CustomEvent('accounting_entry_posted'));
+      await loadFinanceData();
+    } catch (err: any) {
+      setMsg({ type: 'error', text: `মূলধন ফেরত ব্যর্থ হয়েছে: ${err.message}` });
+    } finally {
+      setSubmittingCapitalReturn(false);
     }
   };
 
@@ -1180,10 +1254,10 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
             <div>
               <h3 className="text-[16px] font-bold text-gray-900 flex items-center gap-2">
                 <Users className="w-5 h-5 text-[#1E5128]" />
-                <span>বিনিয়োগকারী ও শেয়ারহোল্ডার মূলধন ({investors.length})</span>
+                <span>অংশীদারী বিনিয়োগকারী ও মূলধন হিসাব ({investors.length})</span>
               </h3>
               <p className="text-[13px] text-gray-600 mt-0.5">
-                বিনিয়োগ গ্রহণ: Dr 1010/1030 | শেয়ার মূলধন: Cr 3020 (Investor Capital)
+                স্লিপিং/ক্যাপিটাল পার্টনারশিপ • নিট মুনাফা বণ্টন • মূলধন জমা: Dr 1010/1030 | Cr 3020 Investor Capital
               </p>
             </div>
 
@@ -1200,21 +1274,38 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
 
           {showNewInvestor && (
             <form onSubmit={handleCreateInvestor} className="p-4 bg-[#F8FAFC] border border-gray-300 rounded-xl space-y-3">
-              <div className="font-bold text-[#1E5128] text-[15px]">নতুন বিনিয়োগকারীর মূলধন এন্ট্রি</div>
+              <div className="font-bold text-[#1E5128] text-[15px] flex items-center justify-between">
+                <span>নতুন অংশীদারী বিনিয়োগকারীর মূলধন এন্ট্রি (Investor Capital)</span>
+                <span className="text-xs text-gray-500 font-normal">স্লিপিং/ক্যাপিটাল পার্টনারশিপ মডেল</span>
+              </div>
+
+              {/* Policy Note */}
+              <div className="bg-emerald-50/80 border border-emerald-200 rounded-lg p-3 text-xs text-emerald-950 space-y-1">
+                <div className="font-bold text-emerald-900 flex items-center gap-1.5">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                  অংশীদারিত্ব ও হিসাবরক্ষণ নীতিমালা (Non-Interest Profit Sharing):
+                </div>
+                <div className="text-[12px] text-emerald-800 space-y-0.5 leading-relaxed">
+                  <div>• বিনিয়োগকারী হলেন <strong>স্লিপিং পার্টনার (Capital Partner)</strong>; ফার্মের স্বত্বাধিকারী/ইউজার হলেন <strong>ওয়ার্কিং পার্টনার (Working Partner)</strong>।</div>
+                  <div>• কোনো নির্দিষ্ট সুদ (Interest) বা গ্যারান্টিড রিটার্ন প্রযোজ্য নয়। বিনিয়োগকারী শুধুমাত্র ফার্মের অর্জিত প্রকৃত নিট মুনাফার চুক্তিভিত্তিক অংশ পাবেন।</div>
+                  <div>• বিনিয়োগকৃত মূলধন কোনো বিক্রয় বা রাজস্ব (Revenue) নয়। জাবেদা দাখিলা: <strong>Dr ১০১০/১০৩০ নগদ বা ব্যাংক</strong> | <strong>Cr ৩০২০ বিনিয়োগকারীর মূলধন</strong>।</div>
+                </div>
+              </div>
+
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
                 <div>
-                  <label className="block text-[13px] font-medium text-gray-700 mb-1">বিনিয়োগকারীর পূর্ণ নাম</label>
+                  <label className="block text-[13px] font-medium text-gray-700 mb-1">বিনিয়োগকারীর পূর্ণ নাম <span className="text-red-500">*</span></label>
                   <input
                     type="text"
                     required
-                    placeholder="নাম"
+                    placeholder="উদাঃ মোঃ রহিম হোসেন"
                     value={investorName}
                     onChange={(e) => setInvestorName(e.target.value)}
                     className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900"
                   />
                 </div>
                 <div>
-                  <label className="block text-[13px] font-medium text-gray-700 mb-1">মোবাইল নম্বর</label>
+                  <label className="block text-[13px] font-medium text-gray-700 mb-1">মোবাইল নম্বর (ঐচ্ছিক)</label>
                   <input
                     type="text"
                     placeholder="01XXXXXXXXX"
@@ -1224,71 +1315,54 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
                   />
                 </div>
                 <div>
-                  <label className="block text-[13px] font-medium text-gray-700 mb-1">জমার মাধ্যম</label>
+                  <label className="block text-[13px] font-medium text-gray-700 mb-1">জমার মাধ্যম (হিসাব) <span className="text-red-500">*</span></label>
                   <select
                     value={investorDestinationAcc}
                     onChange={(e) => setInvestorDestinationAcc(e.target.value as any)}
                     className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900"
                   >
-                    <option value="BANK">ব্যাংক জমা (1030)</option>
-                    <option value="CASH">নগদ তহবিল (1010)</option>
+                    <option value="BANK">ব্যাংক জমা (1030 Bank Account)</option>
+                    <option value="CASH">নগদ তহবিল (1010 Cash Account)</option>
                   </select>
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-4 gap-2.5">
-                <div>
-                  <label className="block text-[13px] font-medium text-gray-700 mb-1">বিনিয়োগকৃত মূলধন ৳ (Capital)</label>
-                  <input
-                    type="number"
-                    required
-                    placeholder="৳"
-                    value={investorAmount}
-                    onChange={(e) => setInvestorAmount(e.target.value)}
-                    className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900 font-mono"
-                  />
-                </div>
-                <div>
-                  <label className="block text-[13px] font-medium text-gray-700 mb-1">অংশীদারিত্ব হার (% Share)</label>
-                  <input
-                    type="number"
-                    step="0.1"
-                    placeholder="যেমন: 15%"
-                    value={investorSharePct}
-                    onChange={(e) => setInvestorSharePct(e.target.value)}
-                    className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900"
-                  />
-                </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-[13px] font-medium text-gray-700 mb-1">
-                    বার্ষিক লভ্যাংশ/মুনাফা হার % (ঐচ্ছিক)
+                    বিনিয়োগকৃত মূলধন ৳ (Capital Amount) <span className="text-red-500">*</span>
                   </label>
                   <input
-                    id="investor-annualInterestRatePercent"
-                    name="annualInterestRatePercent"
-                    type="number"
-                    step="0.1"
-                    min="0"
-                    placeholder="যেমন: 10"
-                    value={investorAnnualRate}
-                    onChange={(e) => setInvestorAnnualRate(e.target.value)}
-                    className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900 font-mono"
-                  />
-                </div>
-                <div>
-                  <label className="block text-[13px] font-medium text-gray-700 mb-1">
-                    মেয়াদকাল মাস (ঐচ্ছিক)
-                  </label>
-                  <input
-                    id="investor-termMonths"
-                    name="termMonths"
                     type="number"
                     min="1"
-                    placeholder="যেমন: 12"
-                    value={investorTermMonths}
-                    onChange={(e) => setInvestorTermMonths(e.target.value)}
-                    className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900 font-mono"
+                    step="any"
+                    required
+                    placeholder="যেমন: 100000"
+                    value={investorAmount}
+                    onChange={(e) => setInvestorAmount(e.target.value)}
+                    className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900 font-mono font-bold text-[#1E5128]"
                   />
+                  <span className="text-[11px] text-gray-500 mt-0.5 block">ইকুইটি হিসাব ৩০২০ এ ক্রেডিট হবে (Cr 3020 Investor Capital)</span>
+                </div>
+                <div>
+                  <label className="block text-[13px] font-medium text-gray-700 mb-1">
+                    প্রকৃত মুনাফায় বিনিয়োগকারীর অংশ % (Profit-Sharing Ratio) <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="number"
+                    min="0.1"
+                    max="100"
+                    step="0.1"
+                    required
+                    placeholder="যেমন: 40"
+                    value={investorSharePct}
+                    onChange={(e) => setInvestorSharePct(e.target.value)}
+                    className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900 font-mono font-bold text-sky-700"
+                  />
+                  <div className="text-[11px] text-gray-600 mt-1 flex justify-between bg-sky-50 px-2 py-1 rounded-md border border-sky-200">
+                    <span>স্লিপিং পার্টনার: <strong>{parseFloat(investorSharePct) || 0}%</strong></span>
+                    <span className="font-semibold text-emerald-800">ওয়ার্কিং পার্টনার: {Math.max(0, 100 - (parseFloat(investorSharePct) || 0))}%</span>
+                  </div>
                 </div>
               </div>
 
@@ -1302,7 +1376,7 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-2 rounded-lg bg-[#1E5128] text-white text-[13px] font-bold cursor-pointer min-h-[40px]"
+                  className="px-4 py-2 rounded-lg bg-[#1E5128] text-white text-[13px] font-bold cursor-pointer min-h-[40px] hover:bg-[#173F1F] transition-colors"
                 >
                   মূলধন হিসাবভুক্ত করুন
                 </button>
@@ -1311,97 +1385,140 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
           )}
 
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
-            {investors.map((inv) => (
-              <div
-                key={inv.id}
-                className="p-4 rounded-xl bg-[#F8FAFC] border border-gray-200 space-y-2 shadow-xs"
-              >
-                <div className="flex items-center justify-between">
-                  <div>
-                    <h4 className="font-bold text-gray-900 text-[15px]">{inv.name}</h4>
-                    <p className="text-[12px] text-gray-500">{inv.phone || 'ফোন নেই'}</p>
-                  </div>
-                  <span className="px-2.5 py-1 rounded-full bg-sky-50 text-sky-700 border border-sky-200 font-mono text-xs font-semibold">
-                    {inv.sharePercentage}% শেয়ার
-                  </span>
-                </div>
+            {investors.map((inv) => {
+              const currentCap = inv.currentCapitalBalance ?? inv.capitalAmount ?? 0;
+              const ratio = inv.profitSharingRatio ?? inv.profitSharePercentage ?? inv.sharePercentage ?? 0;
+              const workingRatio = inv.workingPartnerShareRatio ?? Math.max(0, 100 - ratio);
+              const payable = inv.profitPayable || 0;
 
-                <div className="pt-2.5 border-t border-gray-200 space-y-1.5 font-mono text-[13px]">
-                  <div className="flex justify-between text-gray-700">
-                    <span className="font-sans">বিনিয়োগকৃত মূলধন:</span>
-                    <span className="font-bold text-[#15803D]">{fmt(inv.capitalAmount)}</span>
-                  </div>
-                  <div className="flex justify-between text-gray-700">
-                    <span className="font-sans">লভ্যাংশ বণ্টন অনুপাত:</span>
-                    <span className="font-semibold text-sky-700 font-sans">
-                      {inv.profitSharingRatio ?? inv.profitSharePercentage ?? inv.sharePercentage ?? 0}% (ওয়ার্কিং পার্টনার {inv.workingPartnerShareRatio ?? (100 - (inv.profitSharingRatio ?? inv.profitSharePercentage ?? inv.sharePercentage ?? 0))}%)
+              return (
+                <div
+                  key={inv.id}
+                  className="p-4 rounded-xl bg-[#F8FAFC] border border-gray-200 space-y-2.5 shadow-xs"
+                >
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <h4 className="font-bold text-gray-900 text-[15px]">{inv.name}</h4>
+                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                          inv.status === 'EXITED'
+                            ? 'bg-gray-200 text-gray-700'
+                            : 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                        }`}>
+                          {inv.status === 'EXITED' ? 'অব্যাহতিপ্রাপ্ত' : 'সক্রিয় পার্টনার'}
+                        </span>
+                      </div>
+                      <p className="text-[12px] text-gray-500">{inv.phone || 'ফোন নম্বর নেই'}</p>
+                    </div>
+                    <span className="px-2.5 py-1 rounded-full bg-sky-50 text-sky-700 border border-sky-200 font-mono text-xs font-semibold">
+                      {ratio}% মুনাফা অংশ
                     </span>
                   </div>
-                  <div className="flex justify-between text-gray-700">
-                    <span className="font-sans">বণ্টনকৃত মোট মুনাফা:</span>
-                    <span className="font-semibold text-emerald-700">{fmt(inv.totalProfitAllocated || 0)}</span>
-                  </div>
-                  <div className="flex justify-between text-gray-700">
-                    <span className="font-sans">পরিশোধিত মোট লভ্যাংশ:</span>
-                    <span className="font-semibold text-blue-700">{fmt(inv.totalProfitPaid || 0)}</span>
-                  </div>
-                  <div className="flex justify-between items-center text-gray-900 font-bold pt-1.5 border-t border-gray-200">
-                    <span className="font-sans">বর্তমান প্রদেয় লভ্যাংশ:</span>
-                    <span className={`px-2 py-0.5 rounded-md font-mono ${
-                      (inv.profitPayable || 0) > 0 ? 'bg-amber-100 text-amber-900 border border-amber-300' : 'bg-gray-100 text-gray-700'
-                    }`}>
-                      {fmt(inv.profitPayable || 0)}
-                    </span>
-                  </div>
-                </div>
 
-                {role === 'OWNER' && (
-                  <div className="pt-2 grid grid-cols-2 gap-2">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setAllocatingInvestor(inv);
-                        setFinalizedFarmProfit('');
-                        setAllocationNotes('');
-                      }}
-                      className="py-1.5 px-2 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 text-xs font-bold flex items-center justify-center gap-1 cursor-pointer transition-colors"
-                    >
-                      <Plus className="w-3.5 h-3.5" />
-                      <span>মুনাফা বণ্টন</span>
-                    </button>
-                    <button
-                      type="button"
-                      disabled={!(inv.profitPayable && inv.profitPayable > 0)}
-                      onClick={() => {
-                        setPayingInvestor(inv);
-                        setPaymentAmount(inv.profitPayable ? String(inv.profitPayable) : '');
-                        setPaymentNotes('');
-                      }}
-                      className={`py-1.5 px-2 rounded-lg text-xs font-bold flex items-center justify-center gap-1 transition-colors ${
-                        (inv.profitPayable || 0) > 0
-                          ? 'bg-blue-50 hover:bg-blue-100 text-blue-800 border border-blue-300 cursor-pointer'
-                          : 'bg-gray-100 text-gray-400 border border-gray-200 cursor-not-allowed'
-                      }`}
-                    >
-                      <ArrowUpRight className="w-3.5 h-3.5" />
-                      <span>লভ্যাংশ পরিশোধ</span>
-                    </button>
+                  <div className="pt-2.5 border-t border-gray-200 space-y-1.5 font-mono text-[13px]">
+                    <div className="flex justify-between text-gray-700">
+                      <span className="font-sans">বিনিয়োগকৃত মূলধন:</span>
+                      <span className="font-bold text-[#15803D]">{fmt(inv.capitalContributed ?? inv.capitalAmount ?? 0)}</span>
+                    </div>
+                    <div className="flex justify-between text-gray-700">
+                      <span className="font-sans">ফেরতকৃত মূলধন:</span>
+                      <span className="font-semibold text-rose-700">{fmt(inv.totalCapitalReturned || 0)}</span>
+                    </div>
+                    <div className="flex justify-between text-gray-800">
+                      <span className="font-sans font-medium">অবশিষ্ট মূলধন স্থিতি:</span>
+                      <span className="font-bold text-gray-900">{fmt(currentCap)}</span>
+                    </div>
+                    <div className="flex justify-between text-gray-700">
+                      <span className="font-sans">মুনাফা বণ্টন অনুপাত:</span>
+                      <span className="font-semibold text-sky-700 font-sans text-xs">
+                        বিনিয়োগকারী {ratio}% | ওয়ার্কিং পার্টনার {workingRatio}%
+                      </span>
+                    </div>
+                    <div className="flex justify-between text-gray-700">
+                      <span className="font-sans">বণ্টনকৃত মোট প্রকৃত মুনাফা:</span>
+                      <span className="font-semibold text-emerald-700">{fmt(inv.totalProfitAllocated || 0)}</span>
+                    </div>
+                    <div className="flex justify-between text-gray-700">
+                      <span className="font-sans">পরিশোধিত মোট লভ্যাংশ:</span>
+                      <span className="font-semibold text-blue-700">{fmt(inv.totalProfitPaid || 0)}</span>
+                    </div>
+                    <div className="flex justify-between items-center text-gray-900 font-bold pt-1.5 border-t border-gray-200">
+                      <span className="font-sans">বর্তমান প্রদেয় লভ্যাংশ:</span>
+                      <span className={`px-2 py-0.5 rounded-md font-mono ${
+                        payable > 0 ? 'bg-amber-100 text-amber-900 border border-amber-300' : 'bg-gray-100 text-gray-700'
+                      }`}>
+                        {fmt(payable)}
+                      </span>
+                    </div>
                   </div>
-                )}
 
-                {inv.schedule && inv.schedule.length > 0 && (
+                  {role === 'OWNER' && (
+                    <div className="pt-2 grid grid-cols-3 gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setAllocatingInvestor(inv);
+                          setFinalizedFarmProfit('');
+                          setAllocationNotes('');
+                        }}
+                        className="py-1.5 px-2 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 text-xs font-bold flex items-center justify-center gap-1 cursor-pointer transition-colors"
+                        title="ফার্মের প্রকৃত অর্জিত মুনাফা থেকে চুক্তি অনুযায়ী লভ্যাংশ বণ্টন"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        <span>মুনাফা বণ্টন</span>
+                      </button>
+                      <button
+                        type="button"
+                        disabled={payable <= 0}
+                        onClick={() => {
+                          setPayingInvestor(inv);
+                          setPaymentAmount(payable > 0 ? String(payable) : '');
+                          setPaymentNotes('');
+                        }}
+                        className={`py-1.5 px-2 rounded-lg text-xs font-bold flex items-center justify-center gap-1 transition-colors ${
+                          payable > 0
+                            ? 'bg-blue-50 hover:bg-blue-100 text-blue-800 border border-blue-300 cursor-pointer'
+                            : 'bg-gray-100 text-gray-400 border border-gray-200 cursor-not-allowed'
+                        }`}
+                        title="বকেয়া প্রদেয় লভ্যাংশ নগদ বা ব্যাংক থেকে প্রদান"
+                      >
+                        <ArrowUpRight className="w-3.5 h-3.5" />
+                        <span>লভ্যাংশ প্রদান</span>
+                      </button>
+                      <button
+                        type="button"
+                        disabled={currentCap <= 0}
+                        onClick={() => {
+                          setReturningCapitalInvestor(inv);
+                          setCapitalReturnAmount('');
+                          setCapitalReturnNotes('');
+                        }}
+                        className={`py-1.5 px-2 rounded-lg text-xs font-bold flex items-center justify-center gap-1 transition-colors ${
+                          currentCap > 0
+                            ? 'bg-rose-50 hover:bg-rose-100 text-rose-800 border border-rose-300 cursor-pointer'
+                            : 'bg-gray-100 text-gray-400 border border-gray-200 cursor-not-allowed'
+                        }`}
+                        title="বিনিয়োগকারীর মূলধন ফেরত / প্রত্যাহার"
+                      >
+                        <MinusCircle className="w-3.5 h-3.5" />
+                        <span>মূলধন ফেরত</span>
+                      </button>
+                    </div>
+                  )}
+
                   <div className="pt-1">
                     <button
+                      type="button"
                       onClick={() => setSelectedInvestor(inv)}
                       className="w-full py-1.5 rounded-lg bg-gray-50 hover:bg-gray-100 text-gray-700 border border-gray-200 text-xs font-semibold flex items-center justify-center gap-1 cursor-pointer"
                     >
                       <Eye className="w-3.5 h-3.5" />
-                      <span>কিস্তির সূচি দেখুন ({inv.schedule.filter((s) => s.isPaid).length}/{inv.schedule.length})</span>
+                      <span>অংশীদারী হিসাব ও বিবরণ দেখুন</span>
                     </button>
                   </div>
-                )}
-              </div>
-            ))}
+                </div>
+              );
+            })}
           </div>
 
           {/* Modal 1: Profit Allocation */}
@@ -1627,6 +1744,131 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
                       className="px-4 py-2 rounded-lg bg-blue-700 hover:bg-blue-800 text-white text-xs font-bold cursor-pointer disabled:opacity-50"
                     >
                       {submittingPayment ? 'পরিশোধ হচ্ছে...' : 'পরিশোধ নিশ্চিত করুন'}
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          )}
+
+          {/* Modal 3: Capital Return (Dr 3020 Investor Capital, Cr 1010/1030 Cash/Bank) */}
+          {returningCapitalInvestor && (
+            <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 z-50">
+              <div className="bg-white rounded-2xl max-w-lg w-full p-5 sm:p-6 shadow-2xl border border-rose-200 space-y-4">
+                <div className="flex items-center justify-between border-b pb-3">
+                  <div>
+                    <h3 className="font-bold text-gray-900 text-lg flex items-center gap-2">
+                      <span className="w-2.5 h-2.5 rounded-full bg-rose-500"></span>
+                      মূলধন ফেরত (Investor Capital Return)
+                    </h3>
+                    <p className="text-xs text-gray-600 mt-0.5">
+                      বিনিয়োগকারী: <strong className="text-gray-900">{returningCapitalInvestor.name}</strong> | বর্তমান মূলধন স্থিতি: <strong className="text-rose-700">৳{(returningCapitalInvestor.currentCapitalBalance ?? returningCapitalInvestor.capitalAmount ?? 0).toLocaleString()}</strong>
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setReturningCapitalInvestor(null)}
+                    className="p-1 text-gray-400 hover:text-gray-700 rounded-lg hover:bg-gray-100 cursor-pointer"
+                  >
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+
+                <div className="bg-rose-50 border border-rose-200 rounded-xl p-3 text-xs text-rose-900 space-y-1">
+                  <div className="font-semibold text-rose-950">হিসাবরক্ষণ নীতিমালা (Capital Return Accounting):</div>
+                  <div className="text-[12px] text-rose-800">
+                    • মূলধন ফেরত কোনো পরিচালন ব্যয় বা ক্ষতি নয়; এটি ইকুইটি থেকে মূলধনের প্রত্যাহার।
+                    <br />
+                    • জাবেদা দাখিলা: <strong>Dr ৩০২০ বিনিয়োগকারীর মূলধন</strong> (ইকুইটি হ্রাস) | <strong>Cr ১০১০/১০৩০ নগদ বা ব্যাংক তহবিল</strong> (সম্পদ হ্রাস)।
+                    <br />
+                    • বিদ্যমান মূলধন স্থিতির অতিরিক্ত ফেরত দেওয়া যাবে না।
+                  </div>
+                </div>
+
+                <form onSubmit={handleExecuteCapitalReturn} className="space-y-3.5">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-semibold text-gray-700 mb-1">
+                        ফেরতযোগ্য মূলধনের পরিমাণ ৳ <span className="text-red-500">*</span>
+                      </label>
+                      <input
+                        type="number"
+                        step="any"
+                        min="1"
+                        max={returningCapitalInvestor.currentCapitalBalance ?? returningCapitalInvestor.capitalAmount ?? 0}
+                        required
+                        placeholder="৳ পরিমাণ"
+                        value={capitalReturnAmount}
+                        onChange={(e) => setCapitalReturnAmount(e.target.value)}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm font-mono font-bold text-rose-700 focus:ring-2 focus:ring-rose-500 focus:border-rose-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-gray-700 mb-1">
+                        ফেরতের মাধ্যম (উৎস হিসাব) <span className="text-red-500">*</span>
+                      </label>
+                      <select
+                        required
+                        value={capitalReturnSourceAccId}
+                        onChange={(e) => setCapitalReturnSourceAccId(e.target.value)}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-xs"
+                      >
+                        <option value="">হিসাব নির্বাচন করুন...</option>
+                        {accounts.map((acc) => (
+                          <option key={acc.id} value={acc.id}>
+                            {acc.name} ({acc.accountType === 'CASH' ? '1010 নগদ' : '1030 ব্যাংক'} - ব্যালেন্স: {fmt(acc.currentBalance)})
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-semibold text-gray-700 mb-1">ফেরতের তারিখ <span className="text-red-500">*</span></label>
+                      <input
+                        type="date"
+                        required
+                        max={new Date().toISOString().split('T')[0]}
+                        value={capitalReturnDate}
+                        onChange={(e) => setCapitalReturnDate(e.target.value)}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-xs"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-gray-700 mb-1">বিবরণ / নোট (ঐচ্ছিক)</label>
+                      <input
+                        type="text"
+                        placeholder="উদাঃ মূলধন আংশিক বা পূর্ণাঙ্গ প্রত্যাহার"
+                        value={capitalReturnNotes}
+                        onChange={(e) => setCapitalReturnNotes(e.target.value)}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-xs"
+                      />
+                    </div>
+                  </div>
+
+                  {Number(capitalReturnAmount) > 0 && (
+                    <div className="bg-gray-50 border border-gray-200 rounded-xl p-2.5 text-[11px] font-mono text-gray-700 space-y-0.5">
+                      <div className="font-semibold text-gray-900 font-sans">প্রত্যাশিত জাবেদা দাখিলা (Journal Entry Preview):</div>
+                      <div>দাখিলা: Dr ৩০২০ বিনিয়োগকারীর মূলধন (ইকুইটি হ্রাস) ৳{Number(capitalReturnAmount).toLocaleString()}</div>
+                      <div>দাখিলা: Cr ১০১০/১০৩০ নগদ বা ব্যাংক তহবিল (সম্পদ হ্রাস) ৳{Number(capitalReturnAmount).toLocaleString()}</div>
+                    </div>
+                  )}
+
+                  <div className="flex justify-end gap-2 pt-2 border-t">
+                    <button
+                      type="button"
+                      onClick={() => setReturningCapitalInvestor(null)}
+                      className="px-4 py-2 rounded-lg border border-gray-300 text-gray-700 text-xs font-semibold hover:bg-gray-50 cursor-pointer"
+                    >
+                      বাতিল
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={submittingCapitalReturn}
+                      className="px-4 py-2 rounded-lg bg-rose-700 hover:bg-rose-800 text-white text-xs font-bold cursor-pointer disabled:opacity-50"
+                    >
+                      {submittingCapitalReturn ? 'প্রক্রিয়াকরণ হচ্ছে...' : 'মূলধন ফেরত নিশ্চিত করুন'}
                     </button>
                   </div>
                 </form>
@@ -2178,18 +2420,28 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
         </div>
       )}
 
-      {/* ===================== INVESTOR DETAIL & SCHEDULE MODAL ===================== */}
+      {/* ===================== INVESTOR DETAIL & EQUITY SUMMARY MODAL ===================== */}
       {selectedInvestor && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-3 bg-black/50 backdrop-blur-xs overflow-y-auto">
-          <div className="bg-white rounded-2xl max-w-4xl w-full p-5 sm:p-6 shadow-2xl border border-gray-200 space-y-4 my-8 max-h-[90vh] flex flex-col">
+          <div className="bg-white rounded-2xl max-w-2xl w-full p-5 sm:p-6 shadow-2xl border border-gray-200 space-y-4 my-8 max-h-[90vh] flex flex-col">
             <div className="flex items-start justify-between border-b border-gray-100 pb-3 shrink-0">
               <div>
-                <h3 className="text-lg font-bold text-gray-900">{selectedInvestor.name}</h3>
-                <p className="text-xs text-gray-500">
-                  শেয়ার: {selectedInvestor.sharePercentage}% | বিনিয়োগ: {fmt(selectedInvestor.capitalAmount)} | স্থিতি: {fmt(selectedInvestor.currentBalance)}
+                <div className="flex items-center gap-2">
+                  <h3 className="text-lg font-bold text-gray-900">{selectedInvestor.name}</h3>
+                  <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${
+                    selectedInvestor.status === 'EXITED'
+                      ? 'bg-gray-200 text-gray-700'
+                      : 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                  }`}>
+                    {selectedInvestor.status === 'EXITED' ? 'অব্যাহতিপ্রাপ্ত' : 'সক্রিয় পার্টনার'}
+                  </span>
+                </div>
+                <p className="text-xs text-gray-500 mt-0.5">
+                  যোগদানের তারিখ: {selectedInvestor.joinedDate || selectedInvestor.entryDate || 'প্রযোজ্য নয়'} | ফোন: {selectedInvestor.phone || 'নেই'}
                 </p>
               </div>
               <button
+                type="button"
                 onClick={() => setSelectedInvestor(null)}
                 className="p-1.5 rounded-xl text-gray-400 hover:text-gray-700 hover:bg-gray-100 cursor-pointer"
               >
@@ -2197,45 +2449,78 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
               </button>
             </div>
 
-            <div className="overflow-x-auto overflow-y-auto flex-1 rounded-xl border border-gray-200">
-              <table className="w-full text-left text-xs text-gray-800 border-collapse">
-                <thead className="bg-[#F8FAFC] text-gray-700 font-semibold border-b border-gray-200 sticky top-0 z-10">
-                  <tr>
-                    <th className="p-2.5 text-center">কিস্তি #</th>
-                    <th className="p-2.5">তারিখ</th>
-                    <th className="p-2.5 text-right">আসল অংশ</th>
-                    <th className="p-2.5 text-right">মুনাফা/সুদ</th>
-                    <th className="p-2.5 text-right">মোট প্রদেয়</th>
-                    <th className="p-2.5 text-right">অবশিষ্ট মূলধন</th>
-                    <th className="p-2.5 text-center">অবস্থা</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-100">
-                  {selectedInvestor.schedule?.map((item) => (
-                    <tr key={item.installmentNumber} className={item.isPaid ? 'bg-emerald-50/40' : ''}>
-                      <td className="p-2.5 text-center font-bold font-mono">#{item.installmentNumber}</td>
-                      <td className="p-2.5 font-mono">{item.date}</td>
-                      <td className="p-2.5 text-right font-mono">{fmt(item.principalPortion)}</td>
-                      <td className="p-2.5 text-right font-mono">{fmt(item.interestPortion)}</td>
-                      <td className="p-2.5 text-right font-mono font-bold text-[#1E5128]">{fmt(item.totalPayment)}</td>
-                      <td className="p-2.5 text-right font-mono">{fmt(item.remainingBalance)}</td>
-                      <td className="p-2.5 text-center">
-                        {item.isPaid ? (
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-100 text-emerald-800">
-                            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-                            পরিশোধিত
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-amber-50 text-amber-800">
-                            <Clock className="w-3.5 h-3.5 text-amber-600" />
-                            বকেয়া
-                          </span>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+            <div className="overflow-y-auto flex-1 space-y-3.5 pr-1 text-xs">
+              {/* Partnership Model Box */}
+              <div className="bg-emerald-50/70 border border-emerald-200 rounded-xl p-3.5 text-emerald-950 space-y-1.5">
+                <div className="font-bold text-emerald-900 text-sm flex items-center gap-1.5">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                  অংশীদারিত্বের কাঠামো ও মুনাফা বণ্টন নীতি:
+                </div>
+                <div className="grid grid-cols-2 gap-2 pt-1 font-mono text-xs">
+                  <div className="bg-white/80 p-2 rounded-lg border border-emerald-200">
+                    <span className="font-sans text-gray-600 block text-[11px]">স্লিপিং পার্টনার (বিনিয়োগকারী):</span>
+                    <strong className="text-sky-700 text-sm">{selectedInvestor.profitSharingRatio ?? selectedInvestor.profitSharePercentage ?? selectedInvestor.sharePercentage ?? 0}%</strong>
+                  </div>
+                  <div className="bg-white/80 p-2 rounded-lg border border-emerald-200">
+                    <span className="font-sans text-gray-600 block text-[11px]">ওয়ার্কিং পার্টনার (খামার মালিক):</span>
+                    <strong className="text-emerald-800 text-sm">{selectedInvestor.workingPartnerShareRatio ?? Math.max(0, 100 - (selectedInvestor.profitSharingRatio ?? selectedInvestor.profitSharePercentage ?? selectedInvestor.sharePercentage ?? 0))}%</strong>
+                  </div>
+                </div>
+                <p className="text-[11px] text-emerald-800 pt-1">
+                  • কোনো নির্দিষ্ট সুদ বা ঋণের কিস্তি নেই। শুধুমাত্র খামারের অর্জিত প্রকৃত নিট বণ্টনযোগ্য মুনাফা থেকে চুক্তি অনুযায়ী লভ্যাংশ বণ্টন হবে।
+                </p>
+              </div>
+
+              {/* Metrics Grid */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                <div className="bg-gray-50 border border-gray-200 rounded-xl p-2.5">
+                  <span className="text-[11px] text-gray-500 block">মোট মূলধন জমা</span>
+                  <strong className="text-sm font-mono text-[#1E5128]">{fmt(selectedInvestor.capitalContributed ?? selectedInvestor.capitalAmount ?? 0)}</strong>
+                </div>
+                <div className="bg-gray-50 border border-gray-200 rounded-xl p-2.5">
+                  <span className="text-[11px] text-gray-500 block">ফেরতকৃত মূলধন</span>
+                  <strong className="text-sm font-mono text-rose-700">{fmt(selectedInvestor.totalCapitalReturned || 0)}</strong>
+                </div>
+                <div className="bg-gray-50 border border-gray-200 rounded-xl p-2.5">
+                  <span className="text-[11px] text-gray-500 block">অবশিষ্ট মূলধন স্থিতি</span>
+                  <strong className="text-sm font-mono text-gray-900">{fmt(selectedInvestor.currentCapitalBalance ?? selectedInvestor.capitalAmount ?? 0)}</strong>
+                </div>
+                <div className="bg-gray-50 border border-gray-200 rounded-xl p-2.5">
+                  <span className="text-[11px] text-gray-500 block">বর্তমান প্রদেয় লভ্যাংশ</span>
+                  <strong className={`text-sm font-mono ${(selectedInvestor.profitPayable || 0) > 0 ? 'text-amber-700' : 'text-gray-700'}`}>
+                    {fmt(selectedInvestor.profitPayable || 0)}
+                  </strong>
+                </div>
+              </div>
+
+              {/* Profit Accounting Summary */}
+              <div className="bg-white border border-gray-200 rounded-xl p-3.5 space-y-2 font-mono">
+                <div className="font-bold text-gray-900 font-sans text-xs flex items-center justify-between border-b pb-1.5">
+                  <span>প্রকৃত মুনাফা বণ্টন ও পরিশোধ স্থিতি</span>
+                  <span className="text-gray-500 text-[11px]">লেজার ২০৫০ ও ৩০৭০</span>
+                </div>
+                <div className="flex justify-between text-gray-700 text-xs">
+                  <span className="font-sans">বণ্টনকৃত মোট প্রকৃত মুনাফা (Dr 3070, Cr 2050):</span>
+                  <span className="font-bold text-emerald-700">{fmt(selectedInvestor.totalProfitAllocated || 0)}</span>
+                </div>
+                <div className="flex justify-between text-gray-700 text-xs">
+                  <span className="font-sans">পরিশোধিত মোট লভ্যাংশ (Dr 2050, Cr 1010/1030):</span>
+                  <span className="font-bold text-blue-700">{fmt(selectedInvestor.totalProfitPaid || 0)}</span>
+                </div>
+                <div className="flex justify-between text-gray-900 text-xs pt-1.5 border-t border-dashed">
+                  <span className="font-sans font-bold">অবশিষ্ট প্রদেয় লভ্যাংশ দায় (Current Payable):</span>
+                  <span className="font-bold text-amber-800">{fmt(selectedInvestor.profitPayable || 0)}</span>
+                </div>
+              </div>
+
+              {/* Canonical GL Accounting Rules */}
+              <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 text-[11px] font-mono text-slate-700 space-y-1">
+                <div className="font-semibold text-slate-900 font-sans">হিসাবরক্ষণ জাবেদা দাখিলা নির্দেশিকা (Accounting GL Rules):</div>
+                <div>• মূলধন গ্রহণ: Dr 1010/1030 নগদ বা ব্যাংক | Cr 3020 বিনিয়োগকারীর মূলধন (রাজস্ব নয়)</div>
+                <div>• মুনাফা বণ্টন: Dr 3070 মুনাফা বণ্টন | Cr 2050 বিনিয়োগকারীর লভ্যাংশ প্রদেয় (পরিচালন ব্যয় নয়)</div>
+                <div>• লভ্যাংশ প্রদান: Dr 2050 বিনিয়োগকারীর লভ্যাংশ প্রদেয় | Cr 1010/1030 নগদ বা ব্যাংক</div>
+                <div>• মূলধন ফেরত: Dr 3020 বিনিয়োগকারীর মূলধন | Cr 1010/1030 নগদ বা ব্যাংক</div>
+              </div>
             </div>
 
             <div className="flex justify-end pt-2 border-t border-gray-100 shrink-0">

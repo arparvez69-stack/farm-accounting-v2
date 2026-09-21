@@ -727,6 +727,28 @@ export async function executeInvestorTransaction(
         throw new Error('Contribution amount must be strictly greater than 0.');
       }
 
+      const agreedRatio = profitSharingRatio !== undefined ? profitSharingRatio : profitShare;
+      if (typeof agreedRatio !== 'number' || isNaN(agreedRatio) || agreedRatio <= 0 || agreedRatio > 100) {
+        throw new Error('অংশীদারিত্ব/মুনাফা বণ্টন অনুপাত (Profit-sharing ratio) অবশ্যই ০ এর বেশি এবং সর্বোচ্চ ১০০% হতে হবে (> 0 এবং <= 100)।');
+      }
+
+      const invId = investorId || generateUniqueId('inv');
+
+      // Validate total profit-sharing ratio among active investors does not exceed 100%
+      const allInvestors = await dbInstance.investors.toArray();
+      const otherActiveRatios = allInvestors
+        .filter((inv: any) => inv.id !== invId && inv.status !== 'EXITED')
+        .reduce((sum: number, inv: any) => {
+          const r = inv.profitSharingRatio ?? inv.profitSharePercentage ?? inv.sharePercentage ?? 0;
+          return sum + r;
+        }, 0);
+
+      if (otherActiveRatios + agreedRatio > 100) {
+        throw new Error(
+          `মোট লভ্যাংশ বণ্টন অনুপাত ১০০% অতিক্রম করতে পারে না (Total investor profit-sharing ratio cannot exceed 100%)। অন্যান্য সক্রিয় বিনিয়োগকারীদের বিদ্যমান অনুপাত: ${otherActiveRatios}%, প্রস্তাবিত অনুপাত: ${agreedRatio}% (সর্বমোট: ${otherActiveRatios + agreedRatio}%)।`
+        );
+      }
+
       const dateStr = date || new Date().toISOString().split('T')[0];
 
       // Closed period validation
@@ -752,7 +774,6 @@ export async function executeInvestorTransaction(
         throw new Error(`Target cash/bank account ${targetAccountId} not found.`);
       }
 
-      const invId = investorId || generateUniqueId('inv');
       const invRef = generateTransactionNumber('INV');
 
       // Canonical GL Mapping:
@@ -828,7 +849,6 @@ export async function executeInvestorTransaction(
 
       // 2. Fetch or initialize investor record
       const existingInvestor = investorId ? await dbInstance.investors.get(investorId) : undefined;
-      const agreedRatio = profitSharingRatio !== undefined ? profitSharingRatio : profitShare;
       const workingRatio = Math.max(0, 100 - agreedRatio);
 
       const totalContributed = Math.round(((existingInvestor?.capitalContributed || existingInvestor?.capitalAmount || 0) + contribution) * 100) / 100;
@@ -982,8 +1002,10 @@ export async function executeInvestorProfitAllocationTransaction(
       }
 
       const ratio = investor.profitSharingRatio ?? investor.profitSharePercentage ?? investor.sharePercentage ?? 0;
-      if (ratio <= 0) {
-        throw new Error(`বিনিয়োগকারী ${investor.name} এর কোনো নির্ধারিত লভ্যাংশ বণ্টন অনুপাত নেই (Profit sharing ratio must be > 0)।`);
+      if (ratio <= 0 || ratio > 100) {
+        throw new Error(
+          `বিনিয়োগকারী ${investor.name} এর লভ্যাংশ বণ্টন অনুপাত অবৈধ। অনুপাত অবশ্যই ০ এর বেশি এবং সর্বোচ্চ ১০০% হতে হবে (Profit sharing ratio must be > 0 and <= 100: ${ratio}%)।`
+        );
       }
       const workingRatio = investor.workingPartnerShareRatio ?? Math.max(0, 100 - ratio);
 
@@ -1001,18 +1023,35 @@ export async function executeInvestorProfitAllocationTransaction(
         effectiveFinalizedProfit = Number(actualBusinessProfit) || 0;
       }
 
+      if (effectiveFinalizedProfit <= 0) {
+        throw new Error(
+          `চূড়ান্ত বণ্টনযোগ্য প্রকৃত মুনাফা অবশ্যই ০ এর বেশি হতে হবে (Finalized distributable profit must be > 0: ৳${effectiveFinalizedProfit})। কোনো প্রকৃত মুনাফা অর্জিত না হলে বা লোকসান হলে লভ্যাংশ বণ্টন সম্ভব নয় (Never guarantee profit)।`
+        );
+      }
+
+      // Maximum permitted profit share for this investor according to their ratio
+      const permittedShare = Math.round(effectiveFinalizedProfit * (ratio / 100) * 100) / 100;
+
       // 5. Calculate profit amount (Never calculate from capital, never guarantee profit)
       let profitAmount: number;
       if (allocatedProfit !== undefined) {
         profitAmount = Math.round(allocatedProfit * 100) / 100;
-      } else {
-        if (effectiveFinalizedProfit <= 0) {
+        if (profitAmount <= 0) {
+          throw new Error('বণ্টনযোগ্য লভ্যাংশের পরিমাণ অবশ্যই ০ এর বেশি হতে হবে (Allocated profit must be strictly > 0)।');
+        }
+        if (profitAmount > effectiveFinalizedProfit) {
           throw new Error(
-            `চূড়ান্ত বণ্টনযোগ্য প্রকৃত মুনাফা অবশ্যই ০ এর বেশি হতে হবে (Finalized distributable profit must be > 0: ৳${effectiveFinalizedProfit})। কোনো প্রকৃত মুনাফা অর্জিত না হলে বা লোকসান হলে লভ্যাংশ বণ্টন সম্ভব নয় (Never guarantee profit)।`
+            `বণ্টনকৃত মুনাফা প্রকৃত বণ্টনযোগ্য মুনাফার চেয়ে বেশি হতে পারে না (Allocated profit ৳${profitAmount} cannot exceed actual distributable profit ৳${effectiveFinalizedProfit})।`
           );
         }
+        if (profitAmount > permittedShare) {
+          throw new Error(
+            `বণ্টনকৃত মুনাফা অনুমোদিত চুক্তিভিত্তিক লভ্যাংশ কাঠামোর চেয়ে বেশি হতে পারে না (Allocated profit ৳${profitAmount} cannot exceed permitted profit-sharing structure ৳${permittedShare} based on ${ratio}% ratio)।`
+          );
+        }
+      } else {
         // Calculated strictly from finalized actual profit, NEVER from capital
-        profitAmount = Math.round(effectiveFinalizedProfit * (ratio / 100) * 100) / 100;
+        profitAmount = permittedShare;
       }
 
       if (profitAmount <= 0) {
@@ -1020,7 +1059,7 @@ export async function executeInvestorProfitAllocationTransaction(
       }
 
       const workingPartnerProfit = effectiveFinalizedProfit > 0
-        ? Math.round(effectiveFinalizedProfit * (workingRatio / 100) * 100) / 100
+        ? Math.round((effectiveFinalizedProfit - profitAmount) * 100) / 100
         : 0;
 
       // 6. Canonical GL Mapping:

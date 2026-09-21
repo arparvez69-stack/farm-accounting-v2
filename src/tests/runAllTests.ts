@@ -1,4 +1,5 @@
 import { runRegressionTests } from './regressionTests';
+import { runCashFlowAccountingTests } from './testCashFlowAccounting';
 
 async function main() {
   console.log('====================================================');
@@ -6,19 +7,26 @@ async function main() {
   console.log('Including separate verification of Profit Allocation and Profit Payment');
   console.log('====================================================');
 
-  const result = await runRegressionTests();
+  const result1 = await runRegressionTests();
+  const result2 = await runCashFlowAccountingTests();
+
+  const total = result1.total + result2.total;
+  const passed = result1.passed + result2.passed;
+  const failed = result1.failed + result2.failed;
+  const failures = [...result1.failures, ...result2.failures];
+  const success = failed === 0;
 
   console.log('\n====================================================');
   console.log('TEST SUITE RESULTS:');
-  console.log(`Success: ${result.success}`);
-  console.log(`Total assertions: ${result.total}`);
-  console.log(`Passed assertions: ${result.passed}`);
-  console.log(`Failed assertions: ${result.failed}`);
+  console.log(`Success: ${success}`);
+  console.log(`Total assertions: ${total}`);
+  console.log(`Passed assertions: ${passed}`);
+  console.log(`Failed assertions: ${failed}`);
   console.log('====================================================');
 
-  if (result.failures.length > 0) {
+  if (failures.length > 0) {
     console.error('\nFAILURES:');
-    result.failures.forEach((f, idx) => {
+    failures.forEach((f, idx) => {
       console.error(`${idx + 1}. ${f}`);
     });
     process.exit(1);
