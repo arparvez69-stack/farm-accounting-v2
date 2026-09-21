@@ -48,9 +48,12 @@ import { generateTransactionNumber, generateUniqueId, safeInsert } from '../util
 import { getLastSyncTime, formatBackupTimestamp } from '../services/exportService';
 import {
   runAutomatedDepreciation,
+  executeFixedAssetAcquisitionTransaction,
   executeFixedAssetDisposalTransaction,
   hasAssetPostedAccounting,
-  executeEditFixedAssetTransaction
+  executeEditFixedAssetTransaction,
+  getAssetAccountInfo,
+  calculateAssetDepreciationParameters
 } from '../accounting/depreciationService';
 import { postJournalEntry } from '../accounting/accountingEngine';
 import { CANONICAL_ACCOUNTS } from '../accounting/accountMapping';
@@ -440,25 +443,6 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
     }
   };
 
-  const getAssetAccountInfo = (category: string): { code: string; name: string } => {
-    switch (category) {
-      case 'LAND':
-        return { code: CANONICAL_ACCOUNTS.LAND, name: 'জমি ও প্লট (Land & Plots)' };
-      case 'BUILDINGS':
-      case 'BUILDING':
-        return { code: CANONICAL_ACCOUNTS.BUILDINGS, name: 'শেড ও ভবন (Sheds & Buildings)' };
-      case 'PONDS':
-      case 'POND':
-        return { code: CANONICAL_ACCOUNTS.POND_INFRASTRUCTURE, name: 'পুকুর অবকাঠামো (Pond Infrastructure)' };
-      case 'MACHINERY':
-      case 'EQUIPMENT':
-      case 'VEHICLES':
-      case 'VEHICLE':
-      default:
-        return { code: CANONICAL_ACCOUNTS.MACHINERY, name: 'যন্ত্রপাতি ও সরঞ্জাম (Machinery & Equipment)' };
-    }
-  };
-
   const handleAddAsset = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
@@ -469,122 +453,31 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
       const purchaseDateStr = new Date().toISOString().split('T')[0];
       const normCat = assetCategory === 'BUILDING' ? 'BUILDINGS' : assetCategory;
 
-      const item: FixedAsset = {
-        id: generateTransactionNumber('AST'),
-        name: assetName.trim(),
-        category: normCat as any,
-        purchaseDate: purchaseDateStr,
-        originalCost: cost,
-        salvageValue: salvage,
-        usefulLifeYears: life,
-        accumulatedDepreciation: 0,
-        currentBookValue: cost,
-        depreciationRatePercent: rate,
-        lastDepreciationDate: purchaseDateStr,
-        synced: false
-      };
+      const effectiveBankId = assetPaymentMethod === 'BANK' ? (assetSelectedBankAccountId || bankAccountsList[0]?.id) : undefined;
+      const effectiveSupplierId = assetPaymentMethod === 'CREDIT' ? (assetSelectedSupplierId || suppliersList[0]?.id) : undefined;
 
-      if (cost > 0) {
-        const assetAcc = getAssetAccountInfo(item.category);
-        const method = assetPaymentMethod;
-        let paymentCode: string = CANONICAL_ACCOUNTS.CASH;
-        let paymentAccountName = 'নগদ টাকা (Cash on Hand)';
-        let effectiveBankId: string | undefined = undefined;
-        let effectiveSupplierId: string | undefined = undefined;
+      const res = await executeFixedAssetAcquisitionTransaction(
+        {
+          name: assetName.trim(),
+          category: normCat,
+          purchaseDate: purchaseDateStr,
+          originalCost: cost,
+          salvageValue: salvage,
+          usefulLifeYears: life,
+          depreciationRatePercent: rate,
+          paymentMethod: assetPaymentMethod,
+          bankAccountId: effectiveBankId,
+          supplierId: effectiveSupplierId,
+          currentUserId
+        },
+        db
+      );
 
-        if (method === 'BANK') {
-          paymentCode = CANONICAL_ACCOUNTS.BANK;
-          effectiveBankId = assetSelectedBankAccountId || (bankAccountsList[0]?.id);
-          const bAcc = bankAccountsList.find((b) => b.id === effectiveBankId);
-          paymentAccountName = bAcc ? `ব্যাংক হিসাব (${bAcc.name})` : 'ব্যাংক হিসাব (Bank Accounts)';
-        } else if (method === 'CREDIT') {
-          paymentCode = CANONICAL_ACCOUNTS.ACCOUNTS_PAYABLE;
-          effectiveSupplierId = assetSelectedSupplierId || (suppliersList[0]?.id);
-          const sParty = suppliersList.find((s) => s.id === effectiveSupplierId);
-          paymentAccountName = sParty ? `সরবরাহকারীর দেনা (${sParty.name})` : 'সরবরাহকারীর দেনা (Accounts Payable)';
-        }
-
-        const lines: JournalLine[] = [
-          {
-            accountId: assetAcc.code,
-            accountCode: assetAcc.code,
-            accountName: assetAcc.name,
-            debit: cost,
-            credit: 0,
-            memo: `স্থায়ী সম্পদ ক্রয়: ${item.name}`
-          },
-          {
-            accountId: paymentCode,
-            accountCode: paymentCode,
-            accountName: paymentAccountName,
-            debit: 0,
-            credit: cost,
-            memo: method === 'CASH'
-              ? 'সম্পদ ক্রয়ে নগদ পরিশোধ'
-              : method === 'BANK'
-              ? 'সম্পদ ক্রয়ে ব্যাংক পরিশোধ'
-              : 'সম্পদ ক্রয়ে সরবরাহকারীর নিকট দেনা'
-          }
-        ];
-
-        const voucherNumber = generateTransactionNumber(method === 'CREDIT' ? 'JV' : 'PAY');
-        const accounts = await db.accounts.toArray();
-        const jEntry = await postJournalEntry(
-          {
-            id: generateUniqueId('j_ast'),
-            voucherNumber,
-            voucherType: method === 'CREDIT' ? 'JOURNAL' : 'PAYMENT',
-            date: purchaseDateStr,
-            narration: `স্থায়ী সম্পদ ক্রয়: ${item.name} (${assetAcc.name}), ক্রয়মূল্য: ৳${cost}`,
-            reference: item.id,
-            lines,
-            createdBy: currentUserId,
-            createdAt: new Date().toISOString()
-          },
-          { accounts, skipDbPut: true }
-        );
-
-        await safeInsert(db.journalEntries, jEntry, { idPrefix: 'j' });
-
-        // Update Operational Cash/Bank balance or Supplier AP consistently
-        if (method === 'CASH') {
-          const cashAcc = await db.cashBankAccounts.where('accountType').equals('CASH').first();
-          if (cashAcc) {
-            await db.cashBankAccounts.update(cashAcc.id, {
-              currentBalance: Math.round((cashAcc.currentBalance - cost) * 100) / 100,
-              synced: false
-            });
-          }
-        } else if (method === 'BANK' && effectiveBankId) {
-          const bAcc = await db.cashBankAccounts.get(effectiveBankId);
-          if (bAcc) {
-            await db.cashBankAccounts.update(effectiveBankId, {
-              currentBalance: Math.round((bAcc.currentBalance - cost) * 100) / 100,
-              synced: false
-            });
-          }
-        } else if (method === 'CREDIT' && effectiveSupplierId) {
-          const sParty = await db.parties.get(effectiveSupplierId);
-          if (sParty) {
-            await db.parties.update(effectiveSupplierId, {
-              balance: Math.round(((sParty.balance || 0) + cost) * 100) / 100,
-              synced: false
-            });
-          }
-        }
-
-        item.journalEntryId = jEntry.id;
-        item.paymentMethod = method;
-        item.bankAccountId = effectiveBankId;
-        item.supplierId = effectiveSupplierId;
-      }
-
-      await safeInsert(db.fixedAssets, item, { idPrefix: 'ast' });
       setShowAddAsset(false);
       setAssetName('');
       setAssetCost('150000');
       setAssetDepreciationRate('10');
-      triggerSuccessAnimation('স্থায়ী সম্পদ সংরক্ষিত হয়েছে!', item.name);
+      triggerSuccessAnimation('স্থায়ী সম্পদ সংরক্ষিত হয়েছে!', res.asset.name);
       loadData();
     } catch (err: any) {
       alert(err.message);
@@ -1589,8 +1482,14 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
 
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             {assets.map((ast, idx) => {
-              const rate = ast.depreciationRatePercent ?? (ast.usefulLifeYears ? Number((100 / ast.usefulLifeYears).toFixed(1)) : 10);
-              const monthly = Math.round(((ast.originalCost * rate / 100) / 12) * 100) / 100;
+              const deprParams = calculateAssetDepreciationParameters(
+                ast.originalCost,
+                ast.salvageValue,
+                ast.usefulLifeYears,
+                ast.depreciationRatePercent
+              );
+              const rate = deprParams.depreciationRatePercent;
+              const monthly = deprParams.monthlyDepreciation;
               return (
                 <div
                   key={ast.id}

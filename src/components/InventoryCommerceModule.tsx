@@ -27,7 +27,7 @@ import {
 import { jsPDF } from 'jspdf';
 import QRCode from 'qrcode';
 import { db } from '../db/indexedDb';
-import { executePurchaseTransaction, executeSaleTransaction } from '../services/transactionService';
+import { executePurchaseTransaction, executeSaleTransaction, executePaymentTransaction } from '../services/transactionService';
 import { generateTransactionNumber, generateUniqueId, safeInsert } from '../utils/idGenerator';
 import { InventoryItem, Party, PaymentRecord, Purchase, Sale, UserRole, StockMovement, JournalLine, CashBankAccount } from '../types';
 import { HIGH_AMOUNT_CONFIRMATION_THRESHOLD } from '../constants/validation';
@@ -36,14 +36,6 @@ import { triggerSuccessAnimation } from './ui/SuccessAnimation';
 import { postJournalEntry, validateBalancedLines } from '../accounting/accountingEngine';
 import { CANONICAL_ACCOUNTS, getInventoryAssetAccount, getInventoryAccountDetails } from '../accounting/accountMapping';
 import { SearchableSelect, SearchableOption } from './ui';
-
-declare module '../types' {
-  interface PaymentRecord {
-    paymentMethod?: 'CASH' | 'BANK';
-    bankAccountId?: string;
-    journalEntryId?: string;
-  }
-}
 
 const getInventoryOpeningAssetAccount = (category?: string): { code: string; name: string } => {
   const details = getInventoryAccountDetails(category);
@@ -702,6 +694,7 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
   const [paymentMethod, setPaymentMethod] = useState<'CASH' | 'BANK'>('CASH');
   const [paymentBankAccountId, setPaymentBankAccountId] = useState<string>('');
   const [cashBankAccounts, setCashBankAccounts] = useState<CashBankAccount[]>([]);
+  const [isSubmittingPayment, setIsSubmittingPayment] = useState(false);
 
   // Add Item Modal
   const [showAddItem, setShowAddItem] = useState(false);
@@ -1191,7 +1184,7 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
 
   const handleSavePayment = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!paymentModal) return;
+    if (!paymentModal || isSubmittingPayment) return;
 
     const amt = parseFloat(paymentAmount);
     if (isNaN(amt) || amt <= 0) {
@@ -1218,195 +1211,18 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
       return;
     }
 
-    const isSale = paymentModal.parentType === 'SALE';
-    const cashBankAccountCode = method === 'BANK' ? CANONICAL_ACCOUNTS.BANK : CANONICAL_ACCOUNTS.CASH;
-    const cashBankAccountName = method === 'BANK' ? 'ব্যাংক হিসাব (Bank Accounts)' : 'নগদ টাকা (Cash on Hand)';
-    const arCode = CANONICAL_ACCOUNTS.ACCOUNTS_RECEIVABLE;
-    const arName = 'গ্রাহকের নিকট পাওনা (Accounts Receivable)';
-    const apCode = CANONICAL_ACCOUNTS.ACCOUNTS_PAYABLE;
-    const apName = 'সরবরাহকারীর দেনা (Accounts Payable)';
-
-    let journalLines: JournalLine[];
-
-    if (isSale) {
-      // SALE payment: require Cash/Bank source → Dr Cash/Bank, Cr Accounts Receivable
-      journalLines = [
-        {
-          accountId: cashBankAccountCode,
-          accountCode: cashBankAccountCode,
-          accountName: cashBankAccountName,
-          debit: amt,
-          credit: 0,
-          memo: `বিক্রয় চালান ${paymentModal.invoiceNumber}-এর কিস্তি গ্রহণ: ${paymentModal.partyName}`
-        },
-        {
-          accountId: arCode,
-          accountCode: arCode,
-          accountName: arName,
-          debit: 0,
-          credit: amt,
-          memo: `গ্রাহকের দেনা সমন্বয়: ${paymentModal.partyName} (চালান: ${paymentModal.invoiceNumber})`
-        }
-      ];
-    } else {
-      // PURCHASE payment: Dr Accounts Payable, Cr Cash/Bank
-      journalLines = [
-        {
-          accountId: apCode,
-          accountCode: apCode,
-          accountName: apName,
-          debit: amt,
-          credit: 0,
-          memo: `সরবরাহকারী দেনা পরিশোধ: ${paymentModal.partyName} (চালান: ${paymentModal.invoiceNumber})`
-        },
-        {
-          accountId: cashBankAccountCode,
-          accountCode: cashBankAccountCode,
-          accountName: cashBankAccountName,
-          debit: 0,
-          credit: amt,
-          memo: `ক্রয় চালান ${paymentModal.invoiceNumber}-এর কিস্তি পরিশোধ: ${paymentModal.partyName}`
-        }
-      ];
-    }
-
+    setIsSubmittingPayment(true);
     try {
-      // Wrap PaymentRecord insert + Sale/Purchase update + journal posting in one atomic Dexie transaction
-      await db.transaction(
-        'rw',
-        [
-          db.payments,
-          db.sales,
-          db.purchases,
-          db.journalEntries,
-          db.accounts,
-          db.closedPeriods,
-          db.cashBankAccounts,
-          db.parties
-        ],
-        async () => {
-          // 1. Validate balanced lines using validateBalancedLines pattern
-          const accounts = await db.accounts.toArray();
-          const check = validateBalancedLines(journalLines, accounts);
-          if (!check.isBalanced) {
-            throw new Error(`জাবেদা ভারসাম্যহীন! মোট ডেবিট: ৳${check.totalDebit}, মোট ক্রেডিট: ৳${check.totalCredit}`);
-          }
-
-          // 2. Post journal entry using existing postJournalEntry pattern
-          const voucherNumber = generateTransactionNumber(isSale ? 'RV' : 'PV');
-          const journalEntry = await postJournalEntry(
-            {
-              id: generateUniqueId('j_pmt'),
-              voucherNumber,
-              voucherType: isSale ? 'RECEIPT' : 'PAYMENT',
-              date: dateStr,
-              narration: isSale
-                ? `বিক্রয় চালান ${paymentModal.invoiceNumber}-এর কিস্তি আদায় (${paymentModal.partyName}) - ৳${amt}`
-                : `ক্রয় চালান ${paymentModal.invoiceNumber}-এর কিস্তি পরিশোধ (${paymentModal.partyName}) - ৳${amt}`,
-              reference: paymentModal.invoiceNumber,
-              lines: journalLines,
-              createdBy: currentUserId || 'system',
-              createdAt: new Date().toISOString()
-            },
-            { accounts }
-          );
-
-          // 3. Save returned journalEntryId into PaymentRecord
-          const paymentRecord: PaymentRecord = {
-            id: generateUniqueId('pmt'),
-            parentType: paymentModal.parentType,
-            parentId: paymentModal.parentId,
-            amount: amt,
-            date: dateStr,
-            note: paymentNote.trim() || undefined,
-            paymentMethod: method,
-            bankAccountId: paymentBankAccountId || undefined,
-            journalEntryId: journalEntry.id,
-            synced: false
-          };
-
-          await safeInsert(db.payments, paymentRecord, { idPrefix: 'pmt' });
-
-          // 4. Update Sale or Purchase invoice
-          const allPaymentsForParent = await db.payments.where('parentId').equals(paymentModal.parentId).toArray();
-          const totalPaid = allPaymentsForParent.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
-          const invoiceTotal = paymentModal.totalAmount;
-          const newDue = Math.max(0, invoiceTotal - totalPaid);
-          const newStatus = newDue <= 0 ? 'PAID' : (totalPaid > 0 ? 'PARTIAL' : 'DUE');
-
-          if (paymentModal.parentType === 'SALE') {
-            await db.sales.update(paymentModal.parentId, {
-              paidAmount: totalPaid,
-              dueAmount: newDue,
-              status: newStatus,
-              synced: false
-            });
-          } else {
-            await db.purchases.update(paymentModal.parentId, {
-              paidAmount: totalPaid,
-              dueAmount: newDue,
-              status: newStatus,
-              synced: false
-            });
-          }
-
-          // 5. Update operational Cash / Bank account balance consistently
-          if (method === 'CASH') {
-            const cashAcc = await db.cashBankAccounts.where('accountType').equals('CASH').first();
-            if (cashAcc) {
-              const newBal = isSale
-                ? cashAcc.currentBalance + amt
-                : cashAcc.currentBalance - amt;
-              await db.cashBankAccounts.update(cashAcc.id, {
-                currentBalance: Math.round(newBal * 100) / 100,
-                synced: false
-              });
-            }
-          } else if (method === 'BANK') {
-            let bankAcc: CashBankAccount | undefined;
-            if (paymentBankAccountId) {
-              bankAcc = await db.cashBankAccounts.get(paymentBankAccountId);
-            }
-            if (!bankAcc) {
-              bankAcc = await db.cashBankAccounts.where('accountType').equals('BANK').first();
-            }
-            if (bankAcc) {
-              const newBal = isSale
-                ? bankAcc.currentBalance + amt
-                : bankAcc.currentBalance - amt;
-              await db.cashBankAccounts.update(bankAcc.id, {
-                currentBalance: Math.round(newBal * 100) / 100,
-                synced: false
-              });
-            }
-          }
-
-          // 6. Update Customer AR / Supplier AP party balance
-          if (paymentModal.parentType === 'SALE') {
-            const saleRec = await db.sales.get(paymentModal.parentId);
-            if (saleRec?.customerId) {
-              const customerParty = await db.parties.get(saleRec.customerId);
-              if (customerParty) {
-                await db.parties.update(customerParty.id, {
-                  balance: Math.round(((customerParty.balance || 0) - amt) * 100) / 100,
-                  synced: false
-                });
-              }
-            }
-          } else {
-            const purchRec = await db.purchases.get(paymentModal.parentId);
-            if (purchRec?.supplierId) {
-              const supplierParty = await db.parties.get(purchRec.supplierId);
-              if (supplierParty) {
-                await db.parties.update(supplierParty.id, {
-                  balance: Math.round(((supplierParty.balance || 0) - amt) * 100) / 100,
-                  synced: false
-                });
-              }
-            }
-          }
-        }
-      );
+      await executePaymentTransaction({
+        parentType: paymentModal.parentType,
+        parentId: paymentModal.parentId,
+        amount: amt,
+        paymentMethod: method,
+        bankAccountId: paymentBankAccountId || undefined,
+        date: dateStr,
+        note: paymentNote,
+        currentUserId
+      });
 
       setPaymentModal(null);
       setMsg({ type: 'success', text: `৳${amt.toLocaleString()} কিস্তি সফলভাবে সংরক্ষিত হয়েছে!` });
@@ -1418,6 +1234,8 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
     } catch (err: any) {
       console.error(err);
       setMsg({ type: 'error', text: err.message || 'কিস্তি সংরক্ষণে ত্রুটি হয়েছে।' });
+    } finally {
+      setIsSubmittingPayment(false);
     }
   };
 
@@ -3144,9 +2962,10 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                 <button
                   type="submit"
                   id="btn-save-installment"
-                  className="px-4 py-2 rounded-lg bg-amber-700 hover:bg-amber-800 text-white text-xs font-bold cursor-pointer min-h-[40px] shadow-xs"
+                  disabled={isSubmittingPayment}
+                  className="px-4 py-2 rounded-lg bg-amber-700 hover:bg-amber-800 disabled:bg-gray-400 disabled:cursor-not-allowed text-white text-xs font-bold cursor-pointer min-h-[40px] shadow-xs"
                 >
-                  কিস্তি সংরক্ষণ করুন
+                  {isSubmittingPayment ? 'সংরক্ষণ হচ্ছে...' : 'কিস্তি সংরক্ষণ করুন'}
                 </button>
               </div>
             </form>

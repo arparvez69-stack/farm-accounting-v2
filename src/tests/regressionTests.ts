@@ -2,7 +2,7 @@ import { validateBalancedLines } from '../accounting/accountingEngine';
 import { DEFAULT_CHART_OF_ACCOUNTS } from '../accounting/defaultAccounts';
 import { getInventoryAssetAccount, getPaymentAccount, CANONICAL_ACCOUNTS } from '../accounting/accountMapping';
 import { generateTransactionNumber, generateUniqueId } from '../utils/idGenerator';
-import { JournalLine, Animal, AnimalEvent, InventoryItem, Party, Sale, Purchase, FishBatch, CropCycle, FixedAsset, StockMovement, PaymentRecord } from '../types';
+import { JournalLine, JournalEntry, Account, Animal, AnimalEvent, InventoryItem, Party, Sale, Purchase, FishBatch, CropCycle, FixedAsset, StockMovement, PaymentRecord, CashBankAccount } from '../types';
 import {
   calculateFishBatchRecordedCosts,
   calculateCropCycleRecordedCosts,
@@ -23,10 +23,12 @@ import {
   executeProductionReceiptTransaction
 } from '../services/transactionService';
 import {
+  executeFixedAssetAcquisitionTransaction,
   executeAssetDepreciationAtomic,
   executeFixedAssetDisposalTransaction,
   hasAssetPostedAccounting,
-  executeEditFixedAssetTransaction
+  executeEditFixedAssetTransaction,
+  calculateAssetDepreciationParameters
 } from '../accounting/depreciationService';
 
 export interface TestResult {
@@ -3573,6 +3575,1516 @@ async function runRegressionTestsInternal(): Promise<TestResult> {
     // Verify stock is preserved, not clipped to zero, not negative
     const finalSeedItem = await invTestDb.inventoryItems.get(seedItem.id);
     assert(finalSeedItem?.currentStock === 55, 'Item currentStock must remain 55 kg; no silent clipping or negative stock.');
+
+    // =========================================================================
+    // TASK 11: AR/AP PAYMENT VALIDATION, DUPLICATE PREVENTION & SUBLEDGER SYNC
+    // =========================================================================
+    // Create dedicated isolated mock db for Task 11
+    const task11Db = createMockAgroDatabase();
+    for (const acc of accounts) {
+      await task11Db.accounts.put({ ...acc });
+    }
+
+    const t11CashAcc: CashBankAccount = {
+      id: 'cba_t11_cash',
+      name: 'প্রধান ক্যাশ (Main Cash)',
+      accountType: 'CASH',
+      currentBalance: 50000,
+      synced: false
+    };
+    await task11Db.cashBankAccounts.put(t11CashAcc);
+
+    const t11BankAcc: CashBankAccount = {
+      id: 'cba_t11_bank',
+      name: 'ইসলামী ব্যাংক (Islami Bank)',
+      accountType: 'BANK',
+      accountNumber: '205011111111',
+      currentBalance: 100000,
+      synced: false
+    };
+    await task11Db.cashBankAccounts.put(t11BankAcc);
+
+    // -------------------------------------------------------------------------
+    // PART A: Customer Credit Sale + Payment
+    // -------------------------------------------------------------------------
+    const t11Customer: Party = {
+      id: 'pty_t11_cust_01',
+      name: 'আহমেদ ট্রেডার্স (Ahmed Traders)',
+      phone: '01712345678',
+      type: 'CUSTOMER',
+      balance: 0,
+      isActive: true,
+      synced: false
+    };
+    await task11Db.parties.put(t11Customer);
+
+    const t11SaleItem: InventoryItem = {
+      id: 'it_t11_sale_01',
+      code: 'PROD-001',
+      nameBn: 'উন্নত জাতের ডিম (Eggs)',
+      nameEn: 'Grade A Eggs',
+      category: 'FARM_PRODUCT',
+      unit: 'টি',
+      currentStock: 1000,
+      reorderLevel: 100,
+      avgCostPrice: 8,
+      sellingPrice: 12,
+      synced: false
+    };
+    await task11Db.inventoryItems.put(t11SaleItem);
+
+    // 1. Customer Credit Sale: 500 eggs @ ৳12 = ৳6,000 on CREDIT
+    const saleResult = await executeSaleTransaction(
+      {
+        customer: t11Customer,
+        item: t11SaleItem,
+        quantity: 500,
+        unitPrice: 12,
+        paymentMethod: 'CREDIT',
+        currentUserId: 'usr_t11_owner',
+        date: '2026-07-15'
+      },
+      task11Db
+    );
+
+    assert(saleResult.sale !== undefined, 'Customer credit sale must be successfully posted.');
+    assert(saleResult.sale.totalAmount === 6000, 'Sale totalAmount must be ৳6,000.');
+    assert(saleResult.sale.dueAmount === 6000, 'Sale initial dueAmount must be ৳6,000.');
+    assert(saleResult.sale.paidAmount === 0, 'Sale initial paidAmount must be ৳0.');
+    assert(saleResult.sale.status === 'DUE', 'Sale status must be DUE.');
+
+    // Verify GL for credit sale: Dr Accounts Receivable (1020), Cr Sales Revenue (4020/4010)
+    const saleJournal = await task11Db.journalEntries.get(saleResult.journalEntryId);
+    assert(saleJournal !== undefined, 'Sale journal entry must exist.');
+    const saleDrAr = saleJournal.lines.find(
+      (l: any) => l.accountCode === CANONICAL_ACCOUNTS.ACCOUNTS_RECEIVABLE && l.debit === 6000
+    );
+    const saleCrRev = saleJournal.lines.find(
+      (l: any) => (l.accountCode === CANONICAL_ACCOUNTS.LIVESTOCK_REVENUE || l.accountCode === '4010' || l.accountCode === '4020') && l.credit === 6000
+    );
+    assert(!!saleDrAr, 'Credit sale must Debit Accounts Receivable (1020) for ৳6,000.');
+    assert(!!saleCrRev, 'Credit sale must Credit Sales Revenue for ৳6,000.');
+
+    // Verify Customer balance increased by ৳6,000
+    const custAfterCreditSale = await task11Db.parties.get(t11Customer.id);
+    assert(custAfterCreditSale?.balance === 6000, 'Customer balance must increase to ৳6,000 after credit sale.');
+
+    // 2. Overpayment validation: Payment cannot exceed outstanding invoice balance
+    let overpaymentSaleFailed = false;
+    try {
+      await executePaymentTransaction(
+        {
+          parentType: 'SALE',
+          parentId: saleResult.sale.id,
+          amount: 6500, // exceeds ৳6,000 due
+          paymentMethod: 'CASH',
+          date: '2026-07-16',
+          currentUserId: 'usr_t11_owner'
+        },
+        task11Db
+      );
+    } catch (err: any) {
+      overpaymentSaleFailed = true;
+    }
+    assert(overpaymentSaleFailed, 'Overpayment exceeding outstanding sale due MUST be rejected (prevent negative invoice balance).');
+
+    // Verify invoice due remains intact and not negative
+    const saleAfterOverpaymentAttempt = await task11Db.sales.get(saleResult.sale.id);
+    assert(saleAfterOverpaymentAttempt?.dueAmount === 6000, 'Sale dueAmount must remain ৳6,000 after rejected overpayment.');
+    assert(saleAfterOverpaymentAttempt?.paidAmount === 0, 'Sale paidAmount must remain ৳0.');
+
+    // 3. Customer partial payment (৳4,000 via BANK): Dr Bank (1030), Cr Accounts Receivable (1020)
+    const pmtKey1 = 'pmt_key_sale_01';
+    const salePmt1Res = await executePaymentTransaction(
+      {
+        parentType: 'SALE',
+        parentId: saleResult.sale.id,
+        amount: 4000,
+        paymentMethod: 'BANK',
+        bankAccountId: t11BankAcc.id,
+        date: '2026-07-16',
+        note: 'প্রথম কিস্তি পরিশোধ',
+        currentUserId: 'usr_t11_owner',
+        idempotencyKey: pmtKey1
+      },
+      task11Db
+    );
+
+    assert(salePmt1Res.payment.amount === 4000, 'Payment 1 amount must be ৳4,000.');
+    assert(!!salePmt1Res.journalEntryId, 'Payment 1 must store/link journalEntryId.');
+    assert(salePmt1Res.payment.journalEntryId === salePmt1Res.journalEntryId, 'Payment record must link journalEntryId.');
+
+    // Verify GL entry for payment: Dr Bank, Cr AR
+    const t11Pmt1Journal = await task11Db.journalEntries.get(salePmt1Res.journalEntryId);
+    assert(t11Pmt1Journal !== undefined, 'Payment 1 journal entry must exist.');
+    const t11Pmt1DrBank = t11Pmt1Journal.lines.find(
+      (l: any) => l.accountCode === CANONICAL_ACCOUNTS.BANK && l.debit === 4000
+    );
+    const t11Pmt1CrAr = t11Pmt1Journal.lines.find(
+      (l: any) => l.accountCode === CANONICAL_ACCOUNTS.ACCOUNTS_RECEIVABLE && l.credit === 4000
+    );
+    assert(!!t11Pmt1DrBank, 'Customer payment must Debit Bank (1030) for ৳4,000.');
+    assert(!!t11Pmt1CrAr, 'Customer payment must Credit Accounts Receivable (1020) for ৳4,000.');
+
+    // Customer balance must decrease
+    const t11CustAfterPmt1 = await task11Db.parties.get(t11Customer.id);
+    assert(t11CustAfterPmt1?.balance === 2000, 'Customer balance must decrease to ৳2,000 (6000 - 4000).');
+
+    // Invoice status must be PARTIAL and dueAmount ৳2,000
+    const t11SaleAfterPmt1 = await task11Db.sales.get(saleResult.sale.id);
+    assert(t11SaleAfterPmt1?.status === 'PARTIAL', 'Sale status must be PARTIAL.');
+    assert(t11SaleAfterPmt1?.paidAmount === 4000, 'Sale paidAmount must be ৳4,000.');
+    assert(t11SaleAfterPmt1?.dueAmount === 2000, 'Sale dueAmount must be ৳2,000.');
+
+    // 4. Duplicate payment prevention test
+    let duplicatePmtFailed = false;
+    try {
+      await executePaymentTransaction(
+        {
+          parentType: 'SALE',
+          parentId: saleResult.sale.id,
+          amount: 4000,
+          paymentMethod: 'BANK',
+          bankAccountId: t11BankAcc.id,
+          date: '2026-07-16',
+          note: 'প্রথম কিস্তি পরিশোধ',
+          currentUserId: 'usr_t11_owner',
+          idempotencyKey: pmtKey1
+        },
+        task11Db
+      );
+    } catch (err: any) {
+      duplicatePmtFailed = true;
+    }
+    assert(duplicatePmtFailed, 'Duplicate payment posting with same idempotency key or duplicate details MUST be rejected.');
+
+    // 5. Final customer payment (৳2,000 via CASH)
+    const salePmt2Res = await executePaymentTransaction(
+      {
+        parentType: 'SALE',
+        parentId: saleResult.sale.id,
+        amount: 2000,
+        paymentMethod: 'CASH',
+        date: '2026-07-17',
+        note: 'বকেয়া সমাপনী',
+        currentUserId: 'usr_t11_owner'
+      },
+      task11Db
+    );
+
+    assert(salePmt2Res.payment.amount === 2000, 'Payment 2 amount must be ৳2,000.');
+
+    // Customer balance must decrease to 0
+    const custFinal = await task11Db.parties.get(t11Customer.id);
+    assert(custFinal?.balance === 0, 'Customer balance must decrease to ৳0 after full payment.');
+
+    // Invoice status must be PAID and dueAmount 0 (prevent negative)
+    const saleFinal = await task11Db.sales.get(saleResult.sale.id);
+    assert(saleFinal?.status === 'PAID', 'Sale invoice status must be PAID.');
+    assert(saleFinal?.dueAmount === 0, 'Sale dueAmount must be exactly 0 (no negative balance).');
+    assert(saleFinal?.paidAmount === 6000, 'Sale paidAmount must be ৳6,000.');
+
+    // GL AR and Customer subledger must reconcile
+    const t11JournalsAfterSalePmts = await task11Db.journalEntries.toArray();
+    let t11NetGlAr = 0;
+    for (const j of t11JournalsAfterSalePmts) {
+      for (const line of j.lines) {
+        if (line.accountCode === CANONICAL_ACCOUNTS.ACCOUNTS_RECEIVABLE) {
+          t11NetGlAr += (line.debit || 0) - (line.credit || 0);
+        }
+      }
+    }
+    assert(t11NetGlAr === 0, 'Net GL Accounts Receivable must be ৳0 after full settlement.');
+    assert(custFinal?.balance === t11NetGlAr, 'Customer subledger balance and GL Accounts Receivable must reconcile.');
+
+    // -------------------------------------------------------------------------
+    // PART B: Supplier Credit Purchase + Payment
+    // -------------------------------------------------------------------------
+    const t11Supplier: Party = {
+      id: 'pty_t11_supp_01',
+      name: 'আমান ফিড মিলস (Aman Feed Mills)',
+      phone: '01812345678',
+      type: 'SUPPLIER',
+      balance: 0,
+      isActive: true,
+      synced: false
+    };
+    await task11Db.parties.put(t11Supplier);
+
+    const t11PurchItem: InventoryItem = {
+      id: 'it_t11_purch_01',
+      code: 'FEED-002',
+      nameBn: 'লেয়ার ফিড ১ (Layer Feed 1)',
+      nameEn: 'Layer Feed 1',
+      category: 'FEED',
+      unit: 'কেজি',
+      currentStock: 0,
+      reorderLevel: 50,
+      avgCostPrice: 0,
+      sellingPrice: 65,
+      synced: false
+    };
+    await task11Db.inventoryItems.put(t11PurchItem);
+
+    // 1. Supplier Credit Purchase: 200 kg @ ৳50 = ৳10,000 on CREDIT
+    const purchResult = await executePurchaseTransaction(
+      {
+        supplier: t11Supplier,
+        item: t11PurchItem,
+        quantity: 200,
+        unitPrice: 50,
+        paymentMethod: 'CREDIT',
+        currentUserId: 'usr_t11_owner',
+        date: '2026-07-18'
+      },
+      task11Db
+    );
+
+    assert(purchResult.purchase !== undefined, 'Supplier credit purchase must be successfully posted.');
+    assert(purchResult.purchase.grandTotal === 10000, 'Purchase grandTotal must be ৳10,000.');
+    assert(purchResult.purchase.dueAmount === 10000, 'Purchase initial dueAmount must be ৳10,000.');
+    assert(purchResult.purchase.paidAmount === 0, 'Purchase initial paidAmount must be ৳0.');
+    assert(purchResult.purchase.status === 'DUE', 'Purchase status must be DUE.');
+
+    // Verify GL for credit purchase: Dr Inventory (1051/1040), Cr Accounts Payable (2010)
+    const purchJournal = await task11Db.journalEntries.get(purchResult.journalEntryId);
+    assert(purchJournal !== undefined, 'Purchase journal entry must exist.');
+    const purchDrInv = purchJournal.lines.find(
+      (l: any) => (l.accountCode === CANONICAL_ACCOUNTS.FEED_INVENTORY || l.accountCode === '1051' || l.accountCode === '1040') && l.debit === 10000
+    );
+    const purchCrAp = purchJournal.lines.find(
+      (l: any) => l.accountCode === CANONICAL_ACCOUNTS.ACCOUNTS_PAYABLE && l.credit === 10000
+    );
+    assert(!!purchDrInv, 'Credit purchase must Debit Inventory Asset (1051/1040) for ৳10,000.');
+    assert(!!purchCrAp, 'Credit purchase must Credit Accounts Payable (2010) for ৳10,000.');
+
+    // Verify Supplier balance increased by ৳10,000
+    const suppAfterCreditPurch = await task11Db.parties.get(t11Supplier.id);
+    assert(suppAfterCreditPurch?.balance === 10000, 'Supplier balance must increase to ৳10,000 after credit purchase.');
+
+    // 2. Overpayment validation: Payment cannot exceed outstanding invoice balance
+    let overpaymentPurchFailed = false;
+    try {
+      await executePaymentTransaction(
+        {
+          parentType: 'PURCHASE',
+          parentId: purchResult.purchase.id,
+          amount: 11000, // exceeds ৳10,000 due
+          paymentMethod: 'CASH',
+          date: '2026-07-19',
+          currentUserId: 'usr_t11_owner'
+        },
+        task11Db
+      );
+    } catch (err: any) {
+      overpaymentPurchFailed = true;
+    }
+    assert(overpaymentPurchFailed, 'Overpayment exceeding outstanding purchase due MUST be rejected (prevent negative invoice balance).');
+
+    // Verify purchase invoice due remains intact
+    const purchAfterOverpaymentAttempt = await task11Db.purchases.get(purchResult.purchase.id);
+    assert(purchAfterOverpaymentAttempt?.dueAmount === 10000, 'Purchase dueAmount must remain ৳10,000 after rejected overpayment.');
+    assert(purchAfterOverpaymentAttempt?.paidAmount === 0, 'Purchase paidAmount must remain ৳0.');
+
+    // 3. Supplier partial payment (৳6,000 via BANK): Dr Accounts Payable (2010), Cr Bank (1030)
+    const pmtKeyPurch1 = 'pmt_key_purch_01';
+    const purchPmt1Res = await executePaymentTransaction(
+      {
+        parentType: 'PURCHASE',
+        parentId: purchResult.purchase.id,
+        amount: 6000,
+        paymentMethod: 'BANK',
+        bankAccountId: t11BankAcc.id,
+        date: '2026-07-19',
+        note: 'সরবরাহকারী কিস্তি ১',
+        currentUserId: 'usr_t11_owner',
+        idempotencyKey: pmtKeyPurch1
+      },
+      task11Db
+    );
+
+    assert(purchPmt1Res.payment.amount === 6000, 'Purchase payment 1 amount must be ৳6,000.');
+    assert(!!purchPmt1Res.journalEntryId, 'Purchase payment 1 must store/link journalEntryId.');
+    assert(purchPmt1Res.payment.journalEntryId === purchPmt1Res.journalEntryId, 'Payment record must link journalEntryId.');
+
+    // Verify GL entry for purchase payment: Dr AP, Cr Bank
+    const purchPmt1Journal = await task11Db.journalEntries.get(purchPmt1Res.journalEntryId);
+    assert(purchPmt1Journal !== undefined, 'Purchase payment 1 journal entry must exist.');
+    const purchPmt1DrAp = purchPmt1Journal.lines.find(
+      (l: any) => l.accountCode === CANONICAL_ACCOUNTS.ACCOUNTS_PAYABLE && l.debit === 6000
+    );
+    const purchPmt1CrBank = purchPmt1Journal.lines.find(
+      (l: any) => l.accountCode === CANONICAL_ACCOUNTS.BANK && l.credit === 6000
+    );
+    assert(!!purchPmt1DrAp, 'Supplier payment must Debit Accounts Payable (2010) for ৳6,000.');
+    assert(!!purchPmt1CrBank, 'Supplier payment must Credit Bank (1030) for ৳6,000.');
+
+    // Supplier balance must decrease
+    const suppAfterPmt1 = await task11Db.parties.get(t11Supplier.id);
+    assert(suppAfterPmt1?.balance === 4000, 'Supplier balance must decrease to ৳4,000 (10000 - 6000).');
+
+    // Invoice status must be PARTIAL and dueAmount ৳4,000
+    const purchAfterPmt1 = await task11Db.purchases.get(purchResult.purchase.id);
+    assert(purchAfterPmt1?.status === 'PARTIAL', 'Purchase status must be PARTIAL.');
+    assert(purchAfterPmt1?.paidAmount === 6000, 'Purchase paidAmount must be ৳6,000.');
+    assert(purchAfterPmt1?.dueAmount === 4000, 'Purchase dueAmount must be ৳4,000.');
+
+    // 4. Duplicate payment prevention test
+    let duplicatePurchPmtFailed = false;
+    try {
+      await executePaymentTransaction(
+        {
+          parentType: 'PURCHASE',
+          parentId: purchResult.purchase.id,
+          amount: 6000,
+          paymentMethod: 'BANK',
+          bankAccountId: t11BankAcc.id,
+          date: '2026-07-19',
+          note: 'সরবরাহকারী কিস্তি ১',
+          currentUserId: 'usr_t11_owner',
+          idempotencyKey: pmtKeyPurch1
+        },
+        task11Db
+      );
+    } catch (err: any) {
+      duplicatePurchPmtFailed = true;
+    }
+    assert(duplicatePurchPmtFailed, 'Duplicate supplier payment posting MUST be rejected.');
+
+    // 5. Final supplier payment (৳4,000 via CASH)
+    const purchPmt2Res = await executePaymentTransaction(
+      {
+        parentType: 'PURCHASE',
+        parentId: purchResult.purchase.id,
+        amount: 4000,
+        paymentMethod: 'CASH',
+        date: '2026-07-20',
+        note: 'বকেয়া সমাপনী পরিশোধ',
+        currentUserId: 'usr_t11_owner'
+      },
+      task11Db
+    );
+
+    assert(purchPmt2Res.payment.amount === 4000, 'Purchase payment 2 amount must be ৳4,000.');
+
+    // Supplier balance must decrease to 0
+    const suppFinal = await task11Db.parties.get(t11Supplier.id);
+    assert(suppFinal?.balance === 0, 'Supplier balance must decrease to ৳0 after full settlement.');
+
+    // Invoice status must be PAID and dueAmount 0 (prevent negative)
+    const purchFinal = await task11Db.purchases.get(purchResult.purchase.id);
+    assert(purchFinal?.status === 'PAID', 'Purchase invoice status must be PAID.');
+    assert(purchFinal?.dueAmount === 0, 'Purchase dueAmount must be exactly 0 (no negative balance).');
+    assert(purchFinal?.paidAmount === 10000, 'Purchase paidAmount must be ৳10,000.');
+
+    // GL AP and Supplier subledger must reconcile
+    const t11JournalsAfterPurchPmts = await task11Db.journalEntries.toArray();
+    let netGlAp = 0;
+    for (const j of t11JournalsAfterPurchPmts) {
+      for (const line of j.lines) {
+        if (line.accountCode === CANONICAL_ACCOUNTS.ACCOUNTS_PAYABLE) {
+          netGlAp += (line.credit || 0) - (line.debit || 0);
+        }
+      }
+    }
+    assert(netGlAp === 0, 'Net GL Accounts Payable must be ৳0 after full settlement.');
+    assert(suppFinal?.balance === netGlAp, 'Supplier subledger balance and GL Accounts Payable must reconcile.');
+
+    // =========================================================================
+    // TASK 12: FIXED ASSET ACQUISITION ATOMICITY, SUBLEDGER SYNC & ROLLBACK
+    // =========================================================================
+    const task12Db = createMockAgroDatabase();
+    for (const acc of accounts) {
+      await task12Db.accounts.put({ ...acc });
+    }
+
+    // Seed cash account, bank account, and supplier party
+    const t12CashAcc: CashBankAccount = {
+      id: 'cb_cash_t12',
+      name: 'প্রধান ক্যাশ (Main Cash)',
+      accountName: 'প্রধান ক্যাশ (Main Cash)',
+      accountType: 'CASH',
+      currentBalance: 250000,
+      isActive: true,
+      synced: false
+    };
+    await task12Db.cashBankAccounts.put(t12CashAcc);
+
+    const t12BankAcc: CashBankAccount = {
+      id: 'cb_bank_t12',
+      name: 'ইসলামী ব্যাংক হিসাব (Islami Bank A/C)',
+      accountName: 'ইসলামী ব্যাংক হিসাব (Islami Bank A/C)',
+      accountType: 'BANK',
+      bankName: 'Islami Bank Bangladesh Ltd',
+      accountNumber: '205012345678',
+      currentBalance: 500000,
+      isActive: true,
+      synced: false
+    };
+    await task12Db.cashBankAccounts.put(t12BankAcc);
+
+    const t12Supplier: Party = {
+      id: 'party_supp_t12',
+      name: 'মেসার্স কৃষি যন্ত্রপাতি ও সরবরাহকারী (Agro Machinery Corp)',
+      type: 'SUPPLIER',
+      phone: '01711000000',
+      balance: 0,
+      isActive: true,
+      synced: false
+    };
+    await task12Db.parties.put(t12Supplier);
+
+    // -------------------------------------------------------------------------
+    // 1. Successful Acquisition (CASH Payment)
+    // -------------------------------------------------------------------------
+    const cashBefore12 = (await task12Db.cashBankAccounts.get(t12CashAcc.id))?.currentBalance || 0;
+    const acqCashRes = await executeFixedAssetAcquisitionTransaction(
+      {
+        name: 'মিল্কিং মেশিন (Automated Milking Machine)',
+        category: 'MACHINERY',
+        purchaseDate: '2026-07-01',
+        originalCost: 80000,
+        usefulLifeYears: 5,
+        salvageValue: 5000,
+        paymentMethod: 'CASH',
+        currentUserId: 'usr_t12_owner'
+      },
+      task12Db
+    );
+
+    assert(Boolean(acqCashRes.asset?.id), 'Task 12: Cash asset acquisition returned valid asset ID.');
+    assert(Boolean(acqCashRes.journalEntry?.id), 'Task 12: Cash asset acquisition returned valid journal entry ID.');
+    assert(acqCashRes.asset.journalEntryId === acqCashRes.journalEntry.id, 'Task 12: Asset record must link to journalEntryId.');
+    assert(acqCashRes.journalEntry.reference === acqCashRes.asset.id, 'Task 12: Journal entry reference must match asset ID.');
+
+    // Verify Asset Register record
+    const savedCashAsset = await task12Db.fixedAssets.get(acqCashRes.asset.id);
+    assert(savedCashAsset !== undefined, 'Task 12: Fixed Asset must be stored in fixedAssets register.');
+    assert(savedCashAsset?.status === 'ACTIVE', 'Task 12: Fixed Asset status must be ACTIVE.');
+    assert(savedCashAsset?.originalCost === 80000, 'Task 12: Asset originalCost must be ৳80,000.');
+    assert(savedCashAsset?.currentBookValue === 80000, 'Task 12: Asset initial currentBookValue must equal originalCost.');
+    assert(savedCashAsset?.accumulatedDepreciation === 0, 'Task 12: Initial accumulatedDepreciation must be 0.');
+
+    // Verify GL Journal Entry lines (Dr Machinery 1550, Cr Cash 1010)
+    const savedCashJournal = await task12Db.journalEntries.get(acqCashRes.journalEntry.id);
+    assert(savedCashJournal !== undefined, 'Task 12: Journal entry must exist in GL journalEntries table.');
+    assert(savedCashJournal?.totalDebit === 80000, 'Task 12: GL entry totalDebit must equal ৳80,000.');
+    assert(savedCashJournal?.totalCredit === 80000, 'Task 12: GL entry totalCredit must equal ৳80,000.');
+    const machDebitLine = savedCashJournal?.lines.find((l) => l.accountCode === '1550');
+    const cashCreditLine = savedCashJournal?.lines.find((l) => l.accountCode === '1010');
+    assert(machDebitLine?.debit === 80000, 'Task 12: Dr Machinery & Equipment (1550) must be ৳80,000.');
+    assert(cashCreditLine?.credit === 80000, 'Task 12: Cr Cash on Hand (1010) must be ৳80,000.');
+
+    // Verify Cash Subledger deduction
+    const cashAfter12 = (await task12Db.cashBankAccounts.get(t12CashAcc.id))?.currentBalance;
+    assert(cashAfter12 === cashBefore12 - 80000, 'Task 12: Cash balance must be deducted by ৳80,000 (250,000 -> 170,000).');
+
+    // Verify Audit Record
+    const allAudits12 = await task12Db.auditLogs.toArray();
+    const acqAudit1 = allAudits12.find((a) => a.recordId === acqCashRes.asset.id);
+    assert(acqAudit1 !== undefined, 'Task 12: Audit log record must be created for asset acquisition.');
+    assert(acqAudit1?.module === 'ASSETS', 'Task 12: Audit log module must be ASSETS.');
+    assert(acqAudit1?.action === 'CREATE', 'Task 12: Audit log action must be CREATE.');
+
+    // -------------------------------------------------------------------------
+    // 2. Successful Acquisition (BANK Payment)
+    // -------------------------------------------------------------------------
+    const bankBefore12 = (await task12Db.cashBankAccounts.get(t12BankAcc.id))?.currentBalance || 0;
+    const acqBankRes = await executeFixedAssetAcquisitionTransaction(
+      {
+        name: 'আধুনিক ডেইরি শেড (Modern Dairy Shed)',
+        category: 'BUILDINGS',
+        purchaseDate: '2026-07-05',
+        originalCost: 150000,
+        usefulLifeYears: 10,
+        salvageValue: 10000,
+        paymentMethod: 'BANK',
+        bankAccountId: t12BankAcc.id,
+        currentUserId: 'usr_t12_owner'
+      },
+      task12Db
+    );
+
+    assert(Boolean(acqBankRes.asset?.id), 'Task 12: Bank asset acquisition returned valid asset ID.');
+    const savedBankJournal = await task12Db.journalEntries.get(acqBankRes.journalEntry.id);
+    const bldgDebitLine = savedBankJournal?.lines.find((l) => l.accountCode === '1520');
+    const bankCreditLine = savedBankJournal?.lines.find((l) => l.accountCode === '1030');
+    assert(bldgDebitLine?.debit === 150000, 'Task 12: Dr Sheds & Buildings (1520) must be ৳150,000.');
+    assert(bankCreditLine?.credit === 150000, 'Task 12: Cr Bank Accounts (1030) must be ৳150,000.');
+
+    // Verify Bank Subledger deduction
+    const bankAfter12 = (await task12Db.cashBankAccounts.get(t12BankAcc.id))?.currentBalance;
+    assert(bankAfter12 === bankBefore12 - 150000, 'Task 12: Bank balance must be deducted by ৳150,000 (500,000 -> 350,000).');
+
+    // -------------------------------------------------------------------------
+    // 3. Successful Acquisition (CREDIT / Supplier AP)
+    // -------------------------------------------------------------------------
+    const suppBefore12 = (await task12Db.parties.get(t12Supplier.id))?.balance || 0;
+    const acqCreditRes = await executeFixedAssetAcquisitionTransaction(
+      {
+        name: 'বাণিজ্যিক পুকুর অবকাঠামো (Commercial Pond)',
+        category: 'PONDS',
+        purchaseDate: '2026-07-10',
+        originalCost: 120000,
+        usefulLifeYears: 15,
+        salvageValue: 0,
+        paymentMethod: 'CREDIT',
+        supplierId: t12Supplier.id,
+        currentUserId: 'usr_t12_owner'
+      },
+      task12Db
+    );
+
+    assert(Boolean(acqCreditRes.asset?.id), 'Task 12: Credit asset acquisition returned valid asset ID.');
+    const savedCreditJournal = await task12Db.journalEntries.get(acqCreditRes.journalEntry.id);
+    const pondDebitLine = savedCreditJournal?.lines.find((l) => l.accountCode === '1530');
+    const apCreditLine = savedCreditJournal?.lines.find((l) => l.accountCode === '2010');
+    assert(pondDebitLine?.debit === 120000, 'Task 12: Dr Pond Infrastructure (1530) must be ৳120,000.');
+    assert(apCreditLine?.credit === 120000, 'Task 12: Cr Accounts Payable (2010) must be ৳120,000.');
+
+    // Verify Supplier Subledger balance increase
+    const suppAfter12 = (await task12Db.parties.get(t12Supplier.id))?.balance;
+    assert(suppAfter12 === suppBefore12 + 120000, 'Task 12: Supplier AP balance must increase by ৳120,000 (0 -> 120,000).');
+
+    // -------------------------------------------------------------------------
+    // 4. Input Validation & Integrity (No partial records on invalid input)
+    // -------------------------------------------------------------------------
+    let zeroCostRejected = false;
+    try {
+      await executeFixedAssetAcquisitionTransaction(
+        {
+          name: 'অবৈধ শূন্য মূল্যের সম্পদ',
+          category: 'MACHINERY',
+          originalCost: 0,
+          paymentMethod: 'CASH',
+          currentUserId: 'usr_t12_owner'
+        },
+        task12Db
+      );
+    } catch (e) {
+      zeroCostRejected = true;
+    }
+    assert(zeroCostRejected, 'Task 12: Acquisition with zero or negative cost must be rejected.');
+
+    let missingNameRejected = false;
+    try {
+      await executeFixedAssetAcquisitionTransaction(
+        {
+          name: '   ',
+          category: 'MACHINERY',
+          originalCost: 50000,
+          paymentMethod: 'CASH',
+          currentUserId: 'usr_t12_owner'
+        },
+        task12Db
+      );
+    } catch (e) {
+      missingNameRejected = true;
+    }
+    assert(missingNameRejected, 'Task 12: Acquisition with empty name must be rejected.');
+
+    let missingBankRejected = false;
+    try {
+      await executeFixedAssetAcquisitionTransaction(
+        {
+          name: 'জেনারেটর',
+          category: 'MACHINERY',
+          originalCost: 60000,
+          paymentMethod: 'BANK',
+          // bankAccountId missing
+          currentUserId: 'usr_t12_owner'
+        },
+        task12Db
+      );
+    } catch (e) {
+      missingBankRejected = true;
+    }
+    assert(missingBankRejected, 'Task 12: BANK payment method without bankAccountId must be rejected.');
+
+    let missingSupplierRejected = false;
+    try {
+      await executeFixedAssetAcquisitionTransaction(
+        {
+          name: 'ফসল কাটার মেশিন',
+          category: 'MACHINERY',
+          originalCost: 75000,
+          paymentMethod: 'CREDIT',
+          // supplierId missing
+          currentUserId: 'usr_t12_owner'
+        },
+        task12Db
+      );
+    } catch (e) {
+      missingSupplierRejected = true;
+    }
+    assert(missingSupplierRejected, 'Task 12: CREDIT payment method without supplierId must be rejected.');
+
+    // -------------------------------------------------------------------------
+    // 5. Simulated Failure & Rollback Test (Atomicity Guarantee)
+    // -------------------------------------------------------------------------
+    // Capture state immediately prior to rollback test
+    const assetsCountBeforeRollback = (await task12Db.fixedAssets.toArray()).length;
+    const journalsCountBeforeRollback = (await task12Db.journalEntries.toArray()).length;
+    const cashBalBeforeRollback = (await task12Db.cashBankAccounts.get(t12CashAcc.id))?.currentBalance;
+    const auditsCountBeforeRollback = (await task12Db.auditLogs.toArray()).length;
+
+    // Test A: Rollback when an invalid subledger ID causes inner transaction to abort
+    let nonExistentBankCaught = false;
+    try {
+      await executeFixedAssetAcquisitionTransaction(
+        {
+          name: 'অকার্যকর সম্পদ (Non-existent Bank)',
+          category: 'MACHINERY',
+          originalCost: 45000,
+          paymentMethod: 'BANK',
+          bankAccountId: 'cb_non_existent_id',
+          currentUserId: 'usr_t12_owner'
+        },
+        task12Db
+      );
+    } catch (e: any) {
+      nonExistentBankCaught = true;
+    }
+    assert(nonExistentBankCaught, 'Task 12: Acquisition with non-existent bank account must throw.');
+
+    // Assert that no records were created during the failed transaction
+    const assetsCountAfterFailA = (await task12Db.fixedAssets.toArray()).length;
+    const journalsCountAfterFailA = (await task12Db.journalEntries.toArray()).length;
+    assert(assetsCountAfterFailA === assetsCountBeforeRollback, 'Task 12 Rollback A: No asset record created on failed transaction.');
+    assert(journalsCountAfterFailA === journalsCountBeforeRollback, 'Task 12 Rollback A: No journal entry created on failed transaction.');
+
+    // Test B: Full Dexie Transaction Atomic Rollback (simulated mid-flight crash)
+    let simulatedCrashCaught = false;
+    try {
+      await task12Db.transaction(
+        'rw',
+        [
+          task12Db.fixedAssets,
+          task12Db.journalEntries,
+          task12Db.cashBankAccounts,
+          task12Db.parties,
+          task12Db.accounts,
+          task12Db.auditLogs,
+          task12Db.closedPeriods
+        ],
+        async () => {
+          // Perform valid acquisition inside the transaction block
+          await executeFixedAssetAcquisitionTransaction(
+            {
+              name: 'ট্রাক্টর (Tractor to be Rolled Back)',
+              category: 'MACHINERY',
+              purchaseDate: '2026-07-15',
+              originalCost: 65000,
+              paymentMethod: 'CASH',
+              currentUserId: 'usr_t12_owner'
+            },
+            task12Db
+          );
+
+          // Force simulated failure midway to trigger atomic Dexie rollback
+          throw new Error('SIMULATED_TRANSACTION_CRASH_MIDWAY');
+        }
+      );
+    } catch (err: any) {
+      if (err.message?.includes('SIMULATED_TRANSACTION_CRASH_MIDWAY')) {
+        simulatedCrashCaught = true;
+      }
+    }
+
+    assert(simulatedCrashCaught, 'Task 12: Simulated mid-flight crash error was caught.');
+
+    // Verify COMPLETE rollback across all 4 tables:
+    const assetsCountAfterRollback = (await task12Db.fixedAssets.toArray()).length;
+    const journalsCountAfterRollback = (await task12Db.journalEntries.toArray()).length;
+    const cashBalAfterRollback = (await task12Db.cashBankAccounts.get(t12CashAcc.id))?.currentBalance;
+    const auditsCountAfterRollback = (await task12Db.auditLogs.toArray()).length;
+
+    assert(
+      assetsCountAfterRollback === assetsCountBeforeRollback,
+      'Task 12 Atomic Rollback: Fixed Asset register was completely rolled back (count unchanged).'
+    );
+    assert(
+      journalsCountAfterRollback === journalsCountBeforeRollback,
+      'Task 12 Atomic Rollback: GL Journal Entries were completely rolled back (count unchanged).'
+    );
+    assert(
+      cashBalAfterRollback === cashBalBeforeRollback,
+      'Task 12 Atomic Rollback: Cash account balance was restored to original (balance unchanged).'
+    );
+    assert(
+      auditsCountAfterRollback === auditsCountBeforeRollback,
+      'Task 12 Atomic Rollback: Audit log entries were completely rolled back (count unchanged).'
+    );
+
+    // Final Cross-Check: Never leave GL without Asset record or Asset record without GL
+    const finalAssets = await task12Db.fixedAssets.toArray();
+    const finalJournals = await task12Db.journalEntries.toArray();
+
+    for (const ast of finalAssets) {
+      const matchingJournal = finalJournals.find((j) => j.id === ast.journalEntryId || j.reference === ast.id);
+      assert(
+        matchingJournal !== undefined,
+        `Task 12 Integrity: Asset ${ast.id} (${ast.name}) must have a corresponding GL journal entry. Never leave Asset without GL.`
+      );
+    }
+
+    for (const jnl of finalJournals) {
+      if (jnl.reference && jnl.reference.startsWith('AST')) {
+        const matchingAsset = finalAssets.find((a) => a.id === jnl.reference || a.journalEntryId === jnl.id);
+        assert(
+          matchingAsset !== undefined,
+          `Task 12 Integrity: GL Journal ${jnl.id} referencing ${jnl.reference} must have a corresponding Asset record. Never leave GL without Asset.`
+        );
+      }
+    }
+
+    // =========================================================================
+    // TASK 13 — FIX FIXED ASSET DEPRECIATION
+    // =========================================================================
+    // 1. Useful life and depreciation rate must not contradict each other
+    // 2. For straight-line depreciation, derive annual/monthly depreciation consistently from:
+    //    cost, salvage value, useful life
+    // 3. Do not use a 5-year useful life with a contradictory 10% annual rate
+    // 4. Do not depreciate below salvage value
+    // 5. Do not post depreciation twice for the same asset and period
+    // 6. Respect closed periods
+    // 7. Do not silently skip depreciation permanently because a period was closed
+    // 8. Ensure asset register accumulated depreciation and GL accumulated depreciation remain consistent
+
+    // Subtest 13.1: Straight-Line Parameter Derivation & Contradiction Resolution
+    const contradictedParams = calculateAssetDepreciationParameters(100000, 0, 5, 10);
+    assert(
+      contradictedParams.usefulLifeYears === 5 && contradictedParams.depreciationRatePercent === 20,
+      'Task 13: 5-year useful life must not use contradictory 10% rate; rate must be derived as 20%.'
+    );
+    assert(
+      contradictedParams.annualDepreciation === 20000 && contradictedParams.monthlyDepreciation === 1666.67,
+      'Task 13: Annual depreciation for 100k over 5 years must be 20,000 (1,666.67/month), not 10,000.'
+    );
+
+    const straightLineWithSalvage = calculateAssetDepreciationParameters(60000, 12000, 4, 25);
+    assert(
+      straightLineWithSalvage.depreciableBase === 48000,
+      'Task 13: Depreciable base must be original cost (60,000) minus salvage value (12,000) = 48,000.'
+    );
+    assert(
+      straightLineWithSalvage.annualDepreciation === 12000,
+      'Task 13: Annual depreciation must be 48,000 / 4 years = 12,000/year.'
+    );
+    assert(
+      straightLineWithSalvage.monthlyDepreciation === 1000,
+      'Task 13: Monthly depreciation must be 12,000 / 12 = 1,000/month.'
+    );
+
+    // Setup fresh isolated in-memory DB for Task 13 end-to-end testing
+    const task13Db: any = {
+      fixedAssets: new MockTable<FixedAsset>(),
+      journalEntries: new MockTable<JournalEntry>(),
+      accounts: new MockTable<Account>(),
+      auditLogs: new MockTable<any>(),
+      closedPeriods: new MockTable<any>(),
+      cashBankAccounts: new MockTable<any>(),
+      parties: new MockTable<any>(),
+      transaction: async (_mode: string, tables: any[], callback: () => Promise<any>) => {
+        const snapshots = tables.map((t) => ({ table: t, snap: t && t._snapshot ? t._snapshot() : null }));
+        try {
+          return await callback();
+        } catch (err) {
+          for (const s of snapshots) {
+            if (s.table && s.snap && s.table._restore) {
+              s.table._restore(s.snap);
+            }
+          }
+          throw err;
+        }
+      }
+    };
+
+    // Seed COA Accounts for Depreciation
+    await task13Db.accounts.put({ id: 'acc_6140', code: '6140', nameBn: 'অবচয় খরচ (Depreciation Expense)', category: 'EXPENSE' });
+    await task13Db.accounts.put({ id: 'acc_1590', code: '1590', nameBn: 'পুঞ্জীভূত অবচয় (Accumulated Depreciation)', category: 'ASSET' });
+    await task13Db.accounts.put({ id: 'acc_1530', code: '1530', nameBn: 'যন্ত্রপাতি ও সরঞ্জাম', category: 'ASSET' });
+
+    // Subtest 13.2: Normal Depreciation across multiple open periods
+    const normalAsset: FixedAsset = {
+      id: 'AST-TASK13-NORM',
+      name: 'ধান কাটার যন্ত্র (Harvester)',
+      category: 'MACHINERY',
+      purchaseDate: '2026-01-01',
+      originalCost: 60000,
+      salvageValue: 12000,
+      usefulLifeYears: 4,
+      depreciationRatePercent: 25,
+      accumulatedDepreciation: 0,
+      currentBookValue: 60000,
+      lastDepreciationDate: '2026-01-01',
+      status: 'ACTIVE',
+      synced: false
+    };
+    await task13Db.fixedAssets.put(normalAsset);
+
+    const normalDeprResult = await executeAssetDepreciationAtomic(
+      normalAsset.id,
+      { currentUserId: 'TESTER_13', targetDate: '2026-04-01' },
+      task13Db
+    );
+
+    assert(
+      normalDeprResult.monthsPosted === 3,
+      'Task 13 Normal: Jan 01 to Apr 01 must post exactly 3 monthly periods (Feb, Mar, Apr).'
+    );
+    assert(
+      normalDeprResult.totalDepreciation === 3000,
+      'Task 13 Normal: 3 months at 1,000/mo must total ৳3,000 depreciation.'
+    );
+    assert(
+      normalDeprResult.newAccumulatedDepreciation === 3000,
+      'Task 13 Normal: Asset register accumulated depreciation must be updated to ৳3,000.'
+    );
+    assert(
+      normalDeprResult.newBookValue === 57000,
+      'Task 13 Normal: Asset book value must be updated to ৳57,000 (60,000 - 3,000).'
+    );
+
+    const normalAssetInDb = await task13Db.fixedAssets.get(normalAsset.id);
+    assert(
+      normalAssetInDb?.accumulatedDepreciation === 3000 && normalAssetInDb?.currentBookValue === 57000,
+      'Task 13 Normal: Fixed Asset record in DB must reflect 3,000 accumulated depreciation and 57,000 book value.'
+    );
+
+    // Verify GL consistency (Account 1590 Accumulated Depreciation)
+    const task13Journals = await task13Db.journalEntries.toArray();
+    assert(
+      task13Journals.length === 3,
+      'Task 13 Normal: Exactly 3 GL journal entries must be written for the 3 depreciation periods.'
+    );
+
+    let totalGLAccumulatedCredit = 0;
+    for (const je of task13Journals) {
+      assert(je.lines.length === 2, 'Task 13 Normal: Each depreciation journal entry must contain exactly 2 lines.');
+      const expenseLine = je.lines.find((l: any) => l.accountCode === '6140');
+      const accumLine = je.lines.find((l: any) => l.accountCode === '1590');
+      assert(
+        expenseLine !== undefined && accumLine !== undefined,
+        'Task 13 Normal: Each entry must debit 6140 and credit 1590.'
+      );
+      assert(
+        expenseLine.debit === 1000 && accumLine.credit === 1000,
+        'Task 13 Normal: Each monthly journal entry must be balanced for ৳1,000.'
+      );
+      totalGLAccumulatedCredit += accumLine.credit;
+    }
+
+    assert(
+      totalGLAccumulatedCredit === normalAssetInDb?.accumulatedDepreciation,
+      'Task 13 Integrity: GL Accumulated Depreciation credits (৳3,000) and Asset Register accumulated depreciation (৳3,000) must be 100% consistent.'
+    );
+
+    // Subtest 13.3: Repeated Same-Period Depreciation (Idempotency / Duplicate-Period Protection)
+    const repeatedResult = await executeAssetDepreciationAtomic(
+      normalAsset.id,
+      { currentUserId: 'TESTER_13', targetDate: '2026-04-01' },
+      task13Db
+    );
+    assert(
+      repeatedResult.monthsPosted === 0 && repeatedResult.totalDepreciation === 0,
+      'Task 13 Duplicate Protection: Calling depreciation again for the same period must post 0 entries and ৳0 amount.'
+    );
+    const journalsAfterRetry = await task13Db.journalEntries.toArray();
+    assert(
+      journalsAfterRetry.length === 3,
+      'Task 13 Duplicate Protection: No duplicate GL journal entries may be created on repeat call.'
+    );
+    const assetAfterRetry = await task13Db.fixedAssets.get(normalAsset.id);
+    assert(
+      assetAfterRetry?.accumulatedDepreciation === 3000 && assetAfterRetry?.currentBookValue === 57000,
+      'Task 13 Duplicate Protection: Asset register values must remain intact after duplicate call.'
+    );
+
+    // Subtest 13.4: Final Depreciation (Never Depreciate Below Salvage Value)
+    // Asset cost: 50,000, salvage: 10,000 -> depreciable base = 40,000
+    // Already accumulated: 39,500. Remaining depreciable = 500.
+    // Monthly depreciation rate = 1,000/mo.
+    // Final depreciation must post ONLY 500, not 1,000!
+    const nearFinalAsset: FixedAsset = {
+      id: 'AST-TASK13-FINAL',
+      name: 'সেচ পাম্প (Irrigation Pump)',
+      category: 'MACHINERY',
+      purchaseDate: '2026-01-01',
+      originalCost: 50000,
+      salvageValue: 10000,
+      usefulLifeYears: 4,
+      depreciationRatePercent: 25,
+      accumulatedDepreciation: 39500,
+      currentBookValue: 10500,
+      lastDepreciationDate: '2026-01-01',
+      status: 'ACTIVE',
+      synced: false
+    };
+    await task13Db.fixedAssets.put(nearFinalAsset);
+
+    const finalDeprResult = await executeAssetDepreciationAtomic(
+      nearFinalAsset.id,
+      { currentUserId: 'TESTER_13', targetDate: '2026-02-01' },
+      task13Db
+    );
+
+    assert(
+      finalDeprResult.monthsPosted === 1,
+      'Task 13 Final Depreciation: Final month must post 1 journal entry.'
+    );
+    assert(
+      finalDeprResult.totalDepreciation === 500,
+      'Task 13 Final Depreciation: Final month must only depreciate the remaining ৳500 to reach salvage value, never full ৳1,000.'
+    );
+    assert(
+      finalDeprResult.newAccumulatedDepreciation === 40000,
+      'Task 13 Final Depreciation: Accumulated depreciation must exactly cap at ৳40,000 (cost 50k - salvage 10k).'
+    );
+    assert(
+      finalDeprResult.newBookValue === 10000,
+      'Task 13 Final Depreciation: Book value must equal exactly salvage value (৳10,000), never dropping below salvage value.'
+    );
+
+    const finalAssetInDb = await task13Db.fixedAssets.get(nearFinalAsset.id);
+    assert(
+      finalAssetInDb?.currentBookValue === 10000 && finalAssetInDb?.accumulatedDepreciation === 40000,
+      'Task 13 Final Depreciation: Database asset record must reflect book value at salvage value.'
+    );
+
+    // Call depreciation again when already at salvage value
+    const postFinalResult = await executeAssetDepreciationAtomic(
+      nearFinalAsset.id,
+      { currentUserId: 'TESTER_13', targetDate: '2026-03-01' },
+      task13Db
+    );
+    assert(
+      postFinalResult.monthsPosted === 0 && postFinalResult.totalDepreciation === 0,
+      'Task 13 Final Depreciation: Post-salvage run must post 0 entries.'
+    );
+    assert(
+      postFinalResult.newBookValue === 10000,
+      'Task 13 Final Depreciation: Book value must strictly remain at salvage value.'
+    );
+
+    // Subtest 13.5: Closed Period Handling (Respect Closed Periods & Never Silently Skip)
+    // Setup closed period ending 2026-01-31
+    await task13Db.closedPeriods.put({
+      id: 'cp_task13_jan',
+      endDate: '2026-01-31',
+      closedAt: '2026-02-01T00:00:00Z',
+      synced: false
+    });
+
+    const closedPeriodAsset: FixedAsset = {
+      id: 'AST-TASK13-CLOSED',
+      name: 'ট্রাক্টর (Tractor)',
+      category: 'VEHICLES' as any,
+      purchaseDate: '2025-12-01',
+      originalCost: 120000,
+      salvageValue: 0,
+      usefulLifeYears: 10,
+      depreciationRatePercent: 10,
+      accumulatedDepreciation: 0,
+      currentBookValue: 120000,
+      lastDepreciationDate: '2025-12-01',
+      status: 'ACTIVE',
+      synced: false
+    };
+    await task13Db.fixedAssets.put(closedPeriodAsset);
+
+    // 1. Attempt depreciation targeting a closed period date
+    let closedPeriodBlocked = false;
+    try {
+      await executeAssetDepreciationAtomic(
+        closedPeriodAsset.id,
+        { currentUserId: 'TESTER_13', targetDate: '2026-01-15' },
+        task13Db
+      );
+    } catch (cpErr: any) {
+      closedPeriodBlocked = true;
+      assert(
+        cpErr.message.includes('হিসাবরক্ষণ সীমাবদ্ধতা') || cpErr.message.includes('বন্ধ সময়কাল'),
+        'Task 13 Closed Period: Error message must clearly indicate closed accounting period.'
+      );
+    }
+    assert(
+      closedPeriodBlocked,
+      'Task 13 Closed Period: Running depreciation inside a closed period must be strictly blocked.'
+    );
+
+    // Verify that the blocked attempt DID NOT silently advance lastDepreciationDate or skip depreciation
+    const assetAfterBlocked = await task13Db.fixedAssets.get(closedPeriodAsset.id);
+    assert(
+      assetAfterBlocked?.lastDepreciationDate === '2025-12-01',
+      'Task 13 Closed Period: Blocked closed period attempt must NOT advance lastDepreciationDate or silently skip.'
+    );
+    assert(
+      assetAfterBlocked?.accumulatedDepreciation === 0,
+      'Task 13 Closed Period: Blocked closed period attempt must leave accumulated depreciation unchanged.'
+    );
+
+    // 2. Now run depreciation in an OPEN period (targetDate: 2026-03-01 > 2026-01-31)
+    const openPeriodDeprResult = await executeAssetDepreciationAtomic(
+      closedPeriodAsset.id,
+      { currentUserId: 'TESTER_13', targetDate: '2026-03-01' },
+      task13Db
+    );
+
+    assert(
+      openPeriodDeprResult.monthsPosted === 3,
+      'Task 13 Closed Period: In open period, all 3 months must be posted without permanently skipping any month.'
+    );
+    assert(
+      openPeriodDeprResult.totalDepreciation === 3000,
+      'Task 13 Closed Period: Total depreciation must be 3,000 for the 3 months.'
+    );
+    assert(
+      openPeriodDeprResult.newAccumulatedDepreciation === 3000,
+      'Task 13 Closed Period: Asset register accumulated depreciation must be updated to ৳3,000.'
+    );
+
+    // Verify all GL journal entries written in this run respect closed periods (posting date strictly > 2026-01-31)
+    const assetJournals = (await task13Db.journalEntries.toArray()).filter(
+      (j: any) => j.reference === closedPeriodAsset.id
+    );
+    assert(
+      assetJournals.length === 3,
+      'Task 13 Closed Period: Exactly 3 journal entries posted for the tractor.'
+    );
+    for (const j of assetJournals) {
+      assert(
+        j.date > '2026-01-31',
+        `Task 13 Closed Period: Posting date (${j.date}) must be strictly after closed period end date (2026-01-31). Never post into closed period.`
+      );
+    }
+
+    const assetAfterOpenRun = await task13Db.fixedAssets.get(closedPeriodAsset.id);
+    assert(
+      assetAfterOpenRun?.accumulatedDepreciation === 3000 && assetAfterOpenRun?.currentBookValue === 117000,
+      'Task 13 Closed Period: Final asset register values must be completely consistent with GL.'
+    );
+
+    // =========================================================================
+    // TASK 14: FIXED ASSET DISPOSAL ATOMICITY & RECONCILIATION
+    // =========================================================================
+    const task14Db = createMockAgroDatabase();
+    for (const acc of DEFAULT_CHART_OF_ACCOUNTS) {
+      await task14Db.accounts.put(acc);
+    }
+    await task14Db.cashBankAccounts.put({
+      id: 'cb_cash_t14',
+      name: 'নগদ টাকা (Cash on Hand)',
+      accountName: 'নগদ টাকা (Cash on Hand)',
+      accountType: 'CASH',
+      accountNumber: '1010',
+      currentBalance: 50000,
+      synced: false
+    });
+    await task14Db.cashBankAccounts.put({
+      id: 'cb_bank_t14',
+      name: 'ইসলামী ব্যাংক (Islami Bank)',
+      accountName: 'ইসলামী ব্যাংক (Islami Bank)',
+      accountType: 'BANK',
+      accountNumber: '2050123456',
+      currentBalance: 200000,
+      synced: false
+    });
+
+    // Test Asset A: Gain on Disposal via Bank
+    // Cost: 150,000, Accum: 30,000 => Carrying Value: 120,000. Proceeds: 135,000 => Gain: 15,000.
+    const assetGain: FixedAsset = {
+      id: 'AST-T14-GAIN',
+      name: 'পাওয়ার টিলার (Power Tiller)',
+      category: 'MACHINERY',
+      purchaseDate: '2025-01-01',
+      originalCost: 150000,
+      usefulLifeYears: 5,
+      salvageValue: 0,
+      accumulatedDepreciation: 30000,
+      currentBookValue: 120000,
+      depreciationRatePercent: 20,
+      status: 'ACTIVE',
+      synced: false
+    };
+    await task14Db.fixedAssets.put(assetGain);
+
+    // Initial GL acquisition & depreciation entries for assetGain to simulate full historical lifecycle
+    await task14Db.journalEntries.put({
+      id: 'j_acq_gain',
+      voucherNumber: 'PAY-AST-01',
+      voucherType: 'PAYMENT',
+      date: '2025-01-01',
+      narration: 'Initial purchase of Power Tiller',
+      reference: assetGain.id,
+      lines: [
+        { accountId: 'acc_1550', accountCode: '1550', accountName: 'মেশিনারিজ', debit: 150000, credit: 0 },
+        { accountId: 'acc_1020', accountCode: '1020', accountName: 'ব্যাংক হিসাব', debit: 0, credit: 150000 }
+      ],
+      createdAt: '2025-01-01T00:00:00Z',
+      createdBy: 'ADMIN'
+    });
+    await task14Db.journalEntries.put({
+      id: 'j_depr_gain',
+      voucherNumber: 'JV-DEPR-01',
+      voucherType: 'JOURNAL',
+      date: '2025-12-31',
+      narration: 'Depreciation for Power Tiller',
+      reference: assetGain.id,
+      lines: [
+        { accountId: 'acc_6140', accountCode: '6140', accountName: 'অবচয় খরচ', debit: 30000, credit: 0 },
+        { accountId: 'acc_1590', accountCode: '1590', accountName: 'পুঞ্জীভূত অবচয়', debit: 0, credit: 30000 }
+      ],
+      createdAt: '2025-12-31T00:00:00Z',
+      createdBy: 'ADMIN'
+    });
+
+    const gainDisposalResult = await executeFixedAssetDisposalTransaction(
+      {
+        assetId: assetGain.id,
+        disposalDate: '2026-03-01',
+        disposalProceeds: 135000,
+        paymentMethod: 'BANK',
+        bankAccountId: 'cb_bank_t14',
+        disposalReason: 'Sold to neighboring farm',
+        currentUserId: 'USER_T14'
+      },
+      task14Db
+    );
+
+    assert(
+      gainDisposalResult.carryingValue === 120000,
+      'Task 14 Gain: Carrying value must strictly equal 150,000 - 30,000 = ৳120,000.'
+    );
+    assert(
+      gainDisposalResult.gainLoss === 15000,
+      'Task 14 Gain: Gain must strictly equal 135,000 - 120,000 = ৳15,000.'
+    );
+
+    // Verify Bank Balance updated atomically
+    const bankAfterGain = (await task14Db.cashBankAccounts.get('cb_bank_t14'))?.currentBalance;
+    assert(
+      bankAfterGain === 200000 + 135000,
+      'Task 14 Gain: Bank balance must increase atomically by ৳135,000 to ৳335,000.'
+    );
+
+    // Verify Asset Register update & preserved history
+    const assetGainAfter = await task14Db.fixedAssets.get(assetGain.id);
+    assert(
+      assetGainAfter?.status === 'DISPOSED',
+      'Task 14 Gain: Asset status must be DISPOSED.'
+    );
+    assert(
+      assetGainAfter?.originalCost === 0 &&
+      assetGainAfter?.accumulatedDepreciation === 0 &&
+      assetGainAfter?.currentBookValue === 0,
+      'Task 14 Gain: Active balance sheet values (cost, accum, book value) must be 0.'
+    );
+    assert(
+      assetGainAfter?.disposedOriginalCost === 150000 &&
+      assetGainAfter?.disposedAccumulatedDepreciation === 30000 &&
+      assetGainAfter?.disposalProceeds === 135000 &&
+      assetGainAfter?.gainLossOnDisposal === 15000 &&
+      assetGainAfter?.disposalReason === 'Sold to neighboring farm' &&
+      assetGainAfter?.purchaseDate === '2025-01-01',
+      'Task 14 Gain: Complete historical acquisition and disposal data must be preserved.'
+    );
+
+    // Verify Disposal Journal Entry
+    const gainJournal = await task14Db.journalEntries.get(gainDisposalResult.journalEntryId);
+    assert(Boolean(gainJournal), 'Task 14 Gain: Disposal journal must be stored.');
+    const gainDrBank = gainJournal?.lines.find((l: any) => l.accountCode === '1030')?.debit || 0;
+    const gainDrAccum = gainJournal?.lines.find((l: any) => l.accountCode === '1590')?.debit || 0;
+    const gainCrAsset = gainJournal?.lines.find((l: any) => l.accountCode === '1550')?.credit || 0;
+    const gainCrDisposal = gainJournal?.lines.find((l: any) => l.accountCode === '7020')?.credit || 0;
+    assert(gainDrBank === 135000, 'Task 14 Gain: Debit Bank ৳135,000.');
+    assert(gainDrAccum === 30000, 'Task 14 Gain: Debit Accumulated Depreciation ৳30,000.');
+    assert(gainCrAsset === 150000, 'Task 14 Gain: Credit Machinery Asset ৳150,000.');
+    assert(gainCrDisposal === 15000, 'Task 14 Gain: Credit Gain on Disposal ৳15,000.');
+
+    // Verify Audit record
+    const auditGain = (await task14Db.auditLogs.toArray()).find((a: any) => a.recordId === assetGain.id);
+    assert(Boolean(auditGain), 'Task 14 Gain: Audit log entry must be created atomically.');
+    assert(auditGain?.action === 'DISPOSAL', 'Task 14 Gain: Audit log action must be DISPOSAL.');
+
+    // Test Asset B: Loss on Disposal via Cash
+    // Cost: 80,000, Accum: 20,000 => Carrying Value: 60,000. Proceeds: 45,000 => Loss: -15,000.
+    const assetLoss: FixedAsset = {
+      id: 'AST-T14-LOSS',
+      name: 'পানির পাম্প (Water Pump)',
+      category: 'MACHINERY',
+      purchaseDate: '2025-06-01',
+      originalCost: 80000,
+      usefulLifeYears: 4,
+      salvageValue: 0,
+      accumulatedDepreciation: 20000,
+      currentBookValue: 60000,
+      depreciationRatePercent: 25,
+      status: 'ACTIVE',
+      synced: false
+    };
+    await task14Db.fixedAssets.put(assetLoss);
+    await task14Db.journalEntries.put({
+      id: 'j_acq_loss',
+      voucherNumber: 'PAY-AST-02',
+      voucherType: 'PAYMENT',
+      date: '2025-06-01',
+      narration: 'Initial purchase of Water Pump',
+      reference: assetLoss.id,
+      lines: [
+        { accountId: 'acc_1550', accountCode: '1550', accountName: 'মেশিনারিজ', debit: 80000, credit: 0 },
+        { accountId: 'acc_1010', accountCode: '1010', accountName: 'নগদ টাকা', debit: 0, credit: 80000 }
+      ],
+      createdAt: '2025-06-01T00:00:00Z',
+      createdBy: 'ADMIN'
+    });
+    await task14Db.journalEntries.put({
+      id: 'j_depr_loss',
+      voucherNumber: 'JV-DEPR-02',
+      voucherType: 'JOURNAL',
+      date: '2025-12-31',
+      narration: 'Depreciation for Water Pump',
+      reference: assetLoss.id,
+      lines: [
+        { accountId: 'acc_6140', accountCode: '6140', accountName: 'অবচয় খরচ', debit: 20000, credit: 0 },
+        { accountId: 'acc_1590', accountCode: '1590', accountName: 'পুঞ্জীভূত অবচয়', debit: 0, credit: 20000 }
+      ],
+      createdAt: '2025-12-31T00:00:00Z',
+      createdBy: 'ADMIN'
+    });
+
+    const lossDisposalResult = await executeFixedAssetDisposalTransaction(
+      {
+        assetId: assetLoss.id,
+        disposalDate: '2026-03-02',
+        disposalProceeds: 45000,
+        paymentMethod: 'CASH',
+        disposalReason: 'Motor burned out',
+        currentUserId: 'USER_T14'
+      },
+      task14Db
+    );
+
+    assert(
+      lossDisposalResult.carryingValue === 60000,
+      'Task 14 Loss: Carrying value must strictly equal 80,000 - 20,000 = ৳60,000.'
+    );
+    assert(
+      lossDisposalResult.gainLoss === -15000,
+      'Task 14 Loss: Loss must strictly equal 45,000 - 60,000 = -৳15,000.'
+    );
+
+    // Verify Cash Balance updated atomically
+    const cashAfterLoss = (await task14Db.cashBankAccounts.get('cb_cash_t14'))?.currentBalance;
+    assert(
+      cashAfterLoss === 50000 + 45000,
+      'Task 14 Loss: Cash balance must increase atomically by ৳45,000 to ৳95,000.'
+    );
+
+    // Verify Loss Journal Entry
+    const lossJournal = await task14Db.journalEntries.get(lossDisposalResult.journalEntryId);
+    assert(Boolean(lossJournal), 'Task 14 Loss: Disposal journal must be stored.');
+    const lossDrCash = lossJournal?.lines.find((l: any) => l.accountCode === '1010')?.debit || 0;
+    const lossDrAccum = lossJournal?.lines.find((l: any) => l.accountCode === '1590')?.debit || 0;
+    const lossDrDisposal = lossJournal?.lines.find((l: any) => l.accountCode === '7020')?.debit || 0;
+    const lossCrAsset = lossJournal?.lines.find((l: any) => l.accountCode === '1550')?.credit || 0;
+    assert(lossDrCash === 45000, 'Task 14 Loss: Debit Cash ৳45,000.');
+    assert(lossDrAccum === 20000, 'Task 14 Loss: Debit Accumulated Depreciation ৳20,000.');
+    assert(lossDrDisposal === 15000, 'Task 14 Loss: Debit Loss on Disposal ৳15,000.');
+    assert(lossCrAsset === 80000, 'Task 14 Loss: Credit Machinery Asset ৳80,000.');
+
+    // Test Asset C: Active asset that remains in register for reconciliation
+    const assetRemaining: FixedAsset = {
+      id: 'AST-T14-REMAIN',
+      name: 'ধান মাড়াই কল (Rice Thresher)',
+      category: 'MACHINERY',
+      purchaseDate: '2025-08-01',
+      originalCost: 70000,
+      usefulLifeYears: 5,
+      salvageValue: 5000,
+      accumulatedDepreciation: 7000,
+      currentBookValue: 63000,
+      depreciationRatePercent: 20,
+      status: 'ACTIVE',
+      synced: false
+    };
+    await task14Db.fixedAssets.put(assetRemaining);
+    await task14Db.journalEntries.put({
+      id: 'j_acq_rem',
+      voucherNumber: 'PAY-AST-03',
+      voucherType: 'PAYMENT',
+      date: '2025-08-01',
+      narration: 'Purchase of Rice Thresher',
+      reference: assetRemaining.id,
+      lines: [
+        { accountId: 'acc_1550', accountCode: '1550', accountName: 'মেশিনারিজ', debit: 70000, credit: 0 },
+        { accountId: 'acc_1010', accountCode: '1010', accountName: 'নগদ টাকা', debit: 0, credit: 70000 }
+      ],
+      createdAt: '2025-08-01T00:00:00Z',
+      createdBy: 'ADMIN'
+    });
+    await task14Db.journalEntries.put({
+      id: 'j_depr_rem',
+      voucherNumber: 'JV-DEPR-03',
+      voucherType: 'JOURNAL',
+      date: '2025-12-31',
+      narration: 'Depreciation for Rice Thresher',
+      reference: assetRemaining.id,
+      lines: [
+        { accountId: 'acc_6140', accountCode: '6140', accountName: 'অবচয় খরচ', debit: 7000, credit: 0 },
+        { accountId: 'acc_1590', accountCode: '1590', accountName: 'পুঞ্জীভূত অবচয়', debit: 0, credit: 7000 }
+      ],
+      createdAt: '2025-12-31T00:00:00Z',
+      createdBy: 'ADMIN'
+    });
+
+    // =========================================================================
+    // POST-DISPOSAL RECONCILIATION: ASSET REGISTER VS GENERAL LEDGER
+    // =========================================================================
+    // Calculate General Ledger balances for Asset (1550) and Accumulated Depreciation (1590)
+    const allTask14Journals = await task14Db.journalEntries.toArray();
+    let glAssetCost = 0;
+    let glAccumDepr = 0;
+    for (const j of allTask14Journals) {
+      for (const line of j.lines) {
+        if (line.accountCode === '1550') {
+          glAssetCost += (line.debit || 0) - (line.credit || 0);
+        }
+        if (line.accountCode === '1590') {
+          glAccumDepr += (line.credit || 0) - (line.debit || 0);
+        }
+      }
+    }
+
+    // Calculate Fixed Asset Register active balances
+    const allAssetsInDb = await task14Db.fixedAssets.toArray();
+    const activeAssetsInDb = allAssetsInDb.filter((a: any) => a.status === 'ACTIVE');
+    const registerActiveCost = activeAssetsInDb.reduce((s: number, a: any) => s + (a.originalCost || 0), 0);
+    const registerActiveAccum = activeAssetsInDb.reduce((s: number, a: any) => s + (a.accumulatedDepreciation || 0), 0);
+    const registerActiveBookValue = activeAssetsInDb.reduce((s: number, a: any) => s + (a.currentBookValue || 0), 0);
+
+    assert(
+      glAssetCost === 70000,
+      'Task 14 Reconciliation: GL Asset account 1550 balance must be exactly ৳70,000 after removing disposed assets.'
+    );
+    assert(
+      registerActiveCost === 70000,
+      'Task 14 Reconciliation: Asset register active originalCost sum must be exactly ৳70,000.'
+    );
+    assert(
+      glAssetCost === registerActiveCost,
+      'Task 14 Reconciliation: GL Asset balance and Asset Register cost MUST 100% RECONCILE (diff = ৳0).'
+    );
+
+    assert(
+      glAccumDepr === 7000,
+      'Task 14 Reconciliation: GL Accumulated Depreciation 1590 balance must be exactly ৳7,000.'
+    );
+    assert(
+      registerActiveAccum === 7000,
+      'Task 14 Reconciliation: Asset register active accumulated depreciation must be exactly ৳7,000.'
+    );
+    assert(
+      glAccumDepr === registerActiveAccum,
+      'Task 14 Reconciliation: GL Accum Depr and Asset Register Accum Depr MUST 100% RECONCILE (diff = ৳0).'
+    );
+
+    const glNetBookValue = glAssetCost - glAccumDepr;
+    assert(
+      glNetBookValue === registerActiveBookValue,
+      'Task 14 Reconciliation: GL Net Book Value (৳63,000) must equal Asset Register Net Book Value (৳63,000).'
+    );
+
+    // =========================================================================
+    // PREVENT DISPOSAL OF ALREADY DISPOSED ASSET & REPEATED DISPOSAL REJECTION
+    // =========================================================================
+    let repeatDisposalThrown = false;
+    try {
+      await executeFixedAssetDisposalTransaction(
+        {
+          assetId: assetGain.id, // already disposed above!
+          disposalDate: '2026-03-05',
+          disposalProceeds: 140000,
+          paymentMethod: 'BANK',
+          bankAccountId: 'cb_bank_t14',
+          currentUserId: 'USER_T14'
+        },
+        task14Db
+      );
+    } catch (err: any) {
+      repeatDisposalThrown = true;
+      assert(
+        err.message.includes('ইতোমধ্যে অপসারিত') || err.message.includes('already disposed'),
+        'Task 14: Repeated disposal must fail with clear already-disposed error message.'
+      );
+    }
+    assert(repeatDisposalThrown, 'Task 14: Repeated disposal of assetGain must be strictly rejected.');
+
+    // =========================================================================
+    // CLOSED PERIOD PROTECTION & ATOMIC ROLLBACK
+    // =========================================================================
+    await task14Db.closedPeriods.put({
+      id: 'cp_t14_closed',
+      endDate: '2026-02-28',
+      closedAt: '2026-03-01T00:00:00Z',
+      synced: false
+    });
+
+    const bankBeforeClosedAttempt = (await task14Db.cashBankAccounts.get('cb_bank_t14'))?.currentBalance;
+    const journalCountBeforeClosed = (await task14Db.journalEntries.toArray()).length;
+    const auditCountBeforeClosed = (await task14Db.auditLogs.toArray()).length;
+
+    let closedPeriodDisposalThrown = false;
+    try {
+      await executeFixedAssetDisposalTransaction(
+        {
+          assetId: assetRemaining.id,
+          disposalDate: '2026-02-15', // strictly inside closed period (<= 2026-02-28)
+          disposalProceeds: 60000,
+          paymentMethod: 'BANK',
+          bankAccountId: 'cb_bank_t14',
+          currentUserId: 'USER_T14'
+        },
+        task14Db
+      );
+    } catch (err: any) {
+      closedPeriodDisposalThrown = true;
+      assert(
+        err.message.includes('সীমাবদ্ধতা') || err.message.includes('closed'),
+        'Task 14: Disposal in closed period must be blocked by closed period rule.'
+      );
+    }
+    assert(closedPeriodDisposalThrown, 'Task 14: Closed period disposal attempt must be rejected.');
+
+    // Verify ATOMIC ROLLBACK on rejected disposal:
+    const remainingAssetAfterRollback = await task14Db.fixedAssets.get(assetRemaining.id);
+    assert(
+      remainingAssetAfterRollback?.status === 'ACTIVE',
+      'Task 14 Rollback: Asset status must remain ACTIVE.'
+    );
+    assert(
+      remainingAssetAfterRollback?.originalCost === 70000,
+      'Task 14 Rollback: Asset original cost must remain ৳70,000 unchanged.'
+    );
+    assert(
+      remainingAssetAfterRollback?.accumulatedDepreciation === 7000,
+      'Task 14 Rollback: Asset accumulated depreciation must remain ৳7,000 unchanged.'
+    );
+    const bankAfterRollback = (await task14Db.cashBankAccounts.get('cb_bank_t14'))?.currentBalance;
+    assert(
+      bankAfterRollback === bankBeforeClosedAttempt,
+      'Task 14 Rollback: Bank balance must remain completely untouched on aborted transaction.'
+    );
+    const journalCountAfterRollback = (await task14Db.journalEntries.toArray()).length;
+    assert(
+      journalCountAfterRollback === journalCountBeforeClosed,
+      'Task 14 Rollback: No disposal journal entry may be retained in database.'
+    );
+    const auditCountAfterRollback = (await task14Db.auditLogs.toArray()).length;
+    assert(
+      auditCountAfterRollback === auditCountBeforeClosed,
+      'Task 14 Rollback: No audit log entry may be retained on failed transaction.'
+    );
 
 
   } catch (error: any) {

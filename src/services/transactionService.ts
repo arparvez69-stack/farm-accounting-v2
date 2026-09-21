@@ -7705,6 +7705,11 @@ export async function executeCropHarvestAndSaleTransaction(
  * - For credit purchase payment: Dr Accounts Payable (2010) -> Cr Cash/Bank
  *   Reduces supplier's AP balance in parties table. Reconciles GL AP and supplier balance.
  */
+/**
+ * In-memory concurrency locks to prevent concurrent duplicate payment execution
+ */
+const activePaymentLocks = new Set<string>();
+
 export interface PaymentTransactionParams {
   parentType: 'SALE' | 'PURCHASE';
   parentId: string;
@@ -7714,274 +7719,333 @@ export interface PaymentTransactionParams {
   date?: string;
   note?: string;
   currentUserId?: string;
+  idempotencyKey?: string;
 }
 
 export async function executePaymentTransaction(
   params: PaymentTransactionParams,
   dbInstance: any = db
 ): Promise<{ payment: PaymentRecord; journalEntryId: string; voucherNumber: string }> {
-  return await dbInstance.transaction(
-    'rw',
-    [
-      dbInstance.payments,
-      dbInstance.sales,
-      dbInstance.purchases,
-      dbInstance.journalEntries,
-      dbInstance.accounts,
-      dbInstance.closedPeriods,
-      dbInstance.cashBankAccounts,
-      dbInstance.parties,
-      dbInstance.auditLogs
-    ],
-    async () => {
-      const {
-        parentType,
-        parentId,
-        amount,
-        paymentMethod,
-        bankAccountId,
-        date = new Date().toISOString().split('T')[0],
-        note,
-        currentUserId = 'system'
-      } = params;
+  const { parentId } = params;
+  if (activePaymentLocks.has(parentId)) {
+    throw new Error('এই চালানের একটি পরিশোধ কার্যক্রম বর্তমানে প্রক্রিয়াধীন রয়েছে। ডুপ্লিকেট পোস্টিং প্রতিরোধ করা হয়েছে।');
+  }
+  activePaymentLocks.add(parentId);
 
-      const amt = Math.round(Math.max(0, amount) * 100) / 100;
-      if (amt <= 0) {
-        throw new Error('পরিশোধের পরিমাণ অবশ্যই ০ এর বেশি হতে হবে।');
-      }
+  try {
+    return await dbInstance.transaction(
+      'rw',
+      [
+        dbInstance.payments,
+        dbInstance.sales,
+        dbInstance.purchases,
+        dbInstance.journalEntries,
+        dbInstance.accounts,
+        dbInstance.closedPeriods,
+        dbInstance.cashBankAccounts,
+        dbInstance.parties,
+        dbInstance.auditLogs
+      ],
+      async () => {
+        const {
+          parentType,
+          parentId,
+          amount,
+          paymentMethod,
+          bankAccountId,
+          date = new Date().toISOString().split('T')[0],
+          note,
+          currentUserId = 'system',
+          idempotencyKey
+        } = params;
 
-      const isSale = parentType === 'SALE';
-      let saleRec: Sale | undefined;
-      let purchRec: Purchase | undefined;
-      let partyName = '';
-      let partyId = '';
-      let invoiceNumber = '';
-      let totalAmount = 0;
+        const amt = Math.round(Number(amount) * 100) / 100;
+        if (isNaN(amt) || amt <= 0) {
+          throw new Error('পরিশোধের পরিমাণ অবশ্যই ০ এর বেশি হতে হবে।');
+        }
 
-      if (isSale) {
-        saleRec = await dbInstance.sales.get(parentId);
-        if (!saleRec) throw new Error('বিক্রয় চালান পাওয়া যায়নি।');
-        partyName = saleRec.customerName || 'ক্রেতা';
-        partyId = saleRec.customerId || '';
-        invoiceNumber = saleRec.invoiceNumber;
-        totalAmount = saleRec.grandTotal || saleRec.totalAmount;
-      } else {
-        purchRec = await dbInstance.purchases.get(parentId);
-        if (!purchRec) throw new Error('ক্রয় চালান পাওয়া যায়নি।');
-        partyName = purchRec.supplierName || 'সরবরাহকারী';
-        partyId = purchRec.supplierId || '';
-        invoiceNumber = purchRec.invoiceNumber;
-        totalAmount = purchRec.grandTotal || purchRec.totalAmount;
-      }
+        const isSale = parentType === 'SALE';
+        let saleRec: Sale | undefined;
+        let purchRec: Purchase | undefined;
+        let partyName = '';
+        let partyId = '';
+        let invoiceNumber = '';
+        let totalAmount = 0;
 
-      // Check closed period
-      const closedPeriod = await dbInstance.closedPeriods
-        .filter((p: any) => (p.startDate ? p.startDate <= date : true) && p.endDate >= date)
-        .first();
-      if (closedPeriod) {
-        throw new Error(`হিসাবকাল বন্ধ রয়েছে (${closedPeriod.notes || closedPeriod.endDate})। এই তারিখে নতুন লেনদেন পোস্টিং অনুমোদিত নয়।`);
-      }
+        if (isSale) {
+          saleRec = await dbInstance.sales.get(parentId);
+          if (!saleRec) throw new Error('বিক্রয় চালান পাওয়া যায়নি।');
+          partyName = saleRec.customerName || 'ক্রেতা';
+          partyId = saleRec.customerId || '';
+          invoiceNumber = saleRec.invoiceNumber;
+          totalAmount = Number(saleRec.grandTotal ?? saleRec.totalAmount) || 0;
+        } else {
+          purchRec = await dbInstance.purchases.get(parentId);
+          if (!purchRec) throw new Error('ক্রয় চালান পাওয়া যায়নি।');
+          partyName = purchRec.supplierName || 'সরবরাহকারী';
+          partyId = purchRec.supplierId || '';
+          invoiceNumber = purchRec.invoiceNumber;
+          totalAmount = Number(purchRec.grandTotal ?? purchRec.totalAmount) || 0;
+        }
 
-      const accounts: Account[] = await dbInstance.accounts.toArray();
-      const cashBankAccountCode = paymentMethod === 'BANK' ? CANONICAL_ACCOUNTS.BANK : CANONICAL_ACCOUNTS.CASH;
-      const cashBankAccountName = paymentMethod === 'BANK' ? 'ব্যাংক হিসাব (Bank Accounts)' : 'নগদ তহবিল (Cash on Hand)';
-      const arCode = CANONICAL_ACCOUNTS.ACCOUNTS_RECEIVABLE;
-      const arName = 'প্রাপ্য হিসাব (Accounts Receivable)';
-      const apCode = CANONICAL_ACCOUNTS.ACCOUNTS_PAYABLE;
-      const apName = 'প্রদেয় হিসাব (Accounts Payable)';
+        // 1. Outstanding invoice balance validation: Payment cannot exceed outstanding invoice balance
+        const existingPayments: PaymentRecord[] = await dbInstance.payments.where('parentId').equals(parentId).toArray();
+        const paidFromPayments = existingPayments.reduce((sum: number, p: any) => sum + (Number(p.amount) || 0), 0);
+        const invoiceRecordedPaid = Number(isSale ? saleRec.paidAmount : purchRec.paidAmount) || 0;
+        const priorPaid = Math.max(paidFromPayments, invoiceRecordedPaid);
+        const outstandingDue = Math.max(0, Math.round((totalAmount - priorPaid) * 100) / 100);
 
-      let journalLines: JournalLine[] = [];
-      if (isSale) {
-        // Dr Cash/Bank, Cr Accounts Receivable
-        journalLines = [
-          {
-            accountId: cashBankAccountCode,
-            accountCode: cashBankAccountCode,
-            accountName: cashBankAccountName,
-            debit: amt,
-            credit: 0,
-            memo: `বিক্রয় চালান ${invoiceNumber}-এর কিস্তি গ্রহণ: ${partyName}`
-          },
-          {
-            accountId: arCode,
-            accountCode: arCode,
-            accountName: arName,
-            debit: 0,
-            credit: amt,
-            memo: `গ্রাহকের দেনা সমন্বয়: ${partyName} (চালান: ${invoiceNumber})`
+        if (outstandingDue <= 0) {
+          throw new Error('চালানের সম্পূর্ণ বকেয়া ইতিমধ্যে পরিশোধিত হয়েছে। অতিরিক্ত পরিশোধ অনুমোদিত নয়।');
+        }
+
+        if (amt > outstandingDue + 0.001) {
+          throw new Error(`পরিশোধের পরিমাণ বর্তমান বকেয়ার (৳${outstandingDue}) চেয়ে বেশি হতে পারে না। ঋণাত্মক চালান ব্যালেন্স অনুমোদিত নয়।`);
+        }
+
+        // 2. Prevent duplicate payment posting
+        if (idempotencyKey) {
+          const hasKey = existingPayments.some((p: any) => p.idempotencyKey === idempotencyKey);
+          if (hasKey) {
+            throw new Error('এই কিস্তি পরিশোধটি ইতিমধ্যে সম্পন্ন হয়েছে (ডুপ্লিকেট পেমেন্ট প্রতিরোধ)।');
           }
-        ];
-      } else {
-        // Dr Accounts Payable, Cr Cash/Bank
-        journalLines = [
-          {
-            accountId: apCode,
-            accountCode: apCode,
-            accountName: apName,
-            debit: amt,
-            credit: 0,
-            memo: `সরবরাহকারী দেনা পরিশোধ: ${partyName} (চালান: ${invoiceNumber})`
-          },
-          {
-            accountId: cashBankAccountCode,
-            accountCode: cashBankAccountCode,
-            accountName: cashBankAccountName,
-            debit: 0,
-            credit: amt,
-            memo: `ক্রয় চালান ${invoiceNumber}-এর কিস্তি পরিশোধ: ${partyName}`
+        }
+
+        const now = Date.now();
+        const isDuplicateRecent = existingPayments.some((p: any) => {
+          if (p.amount === amt && p.paymentMethod === paymentMethod && p.date === date) {
+            if (note && note.trim() !== '' && p.note && p.note.trim() === note.trim()) return true;
+            if (p.createdAt) {
+              const createdTime = new Date(p.createdAt).getTime();
+              if (!isNaN(createdTime) && Math.abs(now - createdTime) < 5000) {
+                return true;
+              }
+            }
           }
-        ];
-      }
+          return false;
+        });
 
-      const check = validateBalancedLines(journalLines, accounts);
-      if (!check.isBalanced) {
-        throw new Error(`জাবেদা ভারসাম্যহীন! মোট ডেবিট: ৳${check.totalDebit}, মোট ক্রেডিট: ৳${check.totalCredit}`);
-      }
+        if (isDuplicateRecent) {
+          throw new Error('একই চালানে অনুরুপ পরিশোধ ইতিমধ্যে রেকর্ড করা হয়েছে। ডুপ্লিকেট পেমেন্ট প্রতিরোধ করা হলো।');
+        }
 
-      const voucherNumber = generateTransactionNumber(isSale ? 'RV' : 'PV');
-      const journalEntry = await postJournalEntry(
-        {
-          id: generateUniqueId('j_pmt'),
-          voucherNumber,
-          voucherType: isSale ? 'RECEIPT' : 'PAYMENT',
+        // Check closed period
+        const closedPeriod = await dbInstance.closedPeriods
+          .filter((p: any) => (p.startDate ? p.startDate <= date : true) && p.endDate >= date)
+          .first();
+        if (closedPeriod) {
+          throw new Error(`হিসাবকাল বন্ধ রয়েছে (${closedPeriod.notes || closedPeriod.endDate})। এই তারিখে নতুন লেনদেন পোস্টিং অনুমোদিত নয়।`);
+        }
+
+        const accounts: Account[] = await dbInstance.accounts.toArray();
+        const cashBankAccountCode = paymentMethod === 'BANK' ? CANONICAL_ACCOUNTS.BANK : CANONICAL_ACCOUNTS.CASH;
+        const cashBankAccountName = paymentMethod === 'BANK' ? 'ব্যাংক হিসাব (Bank Accounts)' : 'নগদ তহবিল (Cash on Hand)';
+        const arCode = CANONICAL_ACCOUNTS.ACCOUNTS_RECEIVABLE;
+        const arName = 'প্রাপ্য হিসাব (Accounts Receivable)';
+        const apCode = CANONICAL_ACCOUNTS.ACCOUNTS_PAYABLE;
+        const apName = 'প্রদেয় হিসাব (Accounts Payable)';
+
+        let journalLines: JournalLine[] = [];
+        if (isSale) {
+          // Dr Cash/Bank, Cr Accounts Receivable
+          journalLines = [
+            {
+              accountId: cashBankAccountCode,
+              accountCode: cashBankAccountCode,
+              accountName: cashBankAccountName,
+              debit: amt,
+              credit: 0,
+              memo: `বিক্রয় চালান ${invoiceNumber}-এর কিস্তি গ্রহণ: ${partyName}`
+            },
+            {
+              accountId: arCode,
+              accountCode: arCode,
+              accountName: arName,
+              debit: 0,
+              credit: amt,
+              memo: `গ্রাহকের দেনা সমন্বয়: ${partyName} (চালান: ${invoiceNumber})`
+            }
+          ];
+        } else {
+          // Dr Accounts Payable, Cr Cash/Bank
+          journalLines = [
+            {
+              accountId: apCode,
+              accountCode: apCode,
+              accountName: apName,
+              debit: amt,
+              credit: 0,
+              memo: `সরবরাহকারী দেনা পরিশোধ: ${partyName} (চালান: ${invoiceNumber})`
+            },
+            {
+              accountId: cashBankAccountCode,
+              accountCode: cashBankAccountCode,
+              accountName: cashBankAccountName,
+              debit: 0,
+              credit: amt,
+              memo: `ক্রয় চালান ${invoiceNumber}-এর কিস্তি পরিশোধ: ${partyName}`
+            }
+          ];
+        }
+
+        const check = validateBalancedLines(journalLines, accounts);
+        if (!check.isBalanced) {
+          throw new Error(`জাবেদা ভারসাম্যহীন! মোট ডেবিট: ৳${check.totalDebit}, মোট ক্রেডিট: ৳${check.totalCredit}`);
+        }
+
+        const voucherNumber = generateTransactionNumber(isSale ? 'RV' : 'PV');
+        const journalEntry = await postJournalEntry(
+          {
+            id: generateUniqueId('j_pmt'),
+            voucherNumber,
+            voucherType: isSale ? 'RECEIPT' : 'PAYMENT',
+            date,
+            narration: isSale
+              ? `বিক্রয় চালান ${invoiceNumber}-এর কিস্তি আদায় (${partyName}) - ৳${amt}`
+              : `ক্রয় চালান ${invoiceNumber}-এর কিস্তি পরিশোধ (${partyName}) - ৳${amt}`,
+            reference: invoiceNumber,
+            lines: journalLines,
+            createdBy: currentUserId,
+            createdAt: new Date().toISOString()
+          },
+          { accounts, skipDbPut: true }
+        );
+        await safeInsert(dbInstance.journalEntries, journalEntry, { idPrefix: 'j' });
+
+        // Save PaymentRecord (linking journalEntryId, voucherNumber, idempotencyKey, createdAt)
+        const paymentRecord: PaymentRecord = {
+          id: generateUniqueId('pmt'),
+          parentType,
+          parentId,
+          amount: amt,
           date,
-          narration: isSale
-            ? `বিক্রয় চালান ${invoiceNumber}-এর কিস্তি আদায় (${partyName}) - ৳${amt}`
-            : `ক্রয় চালান ${invoiceNumber}-এর কিস্তি পরিশোধ (${partyName}) - ৳${amt}`,
-          reference: invoiceNumber,
-          lines: journalLines,
-          createdBy: currentUserId,
-          createdAt: new Date().toISOString()
-        },
-        { accounts, skipDbPut: true }
-      );
-      await safeInsert(dbInstance.journalEntries, journalEntry, { idPrefix: 'j' });
-
-      // Save PaymentRecord
-      const paymentRecord: PaymentRecord = {
-        id: generateUniqueId('pmt'),
-        parentType,
-        parentId,
-        amount: amt,
-        date,
-        note: note?.trim() || undefined,
-        paymentMethod,
-        bankAccountId: bankAccountId || undefined,
-        journalEntryId: journalEntry.id,
-        synced: false
-      };
-      await safeInsert(dbInstance.payments, paymentRecord, { idPrefix: 'pmt' });
-
-      // Update Sale or Purchase invoice
-      const allPaymentsForParent = await dbInstance.payments.where('parentId').equals(parentId).toArray();
-      const totalPaid = allPaymentsForParent.reduce((sum: number, p: PaymentRecord) => sum + (Number(p.amount) || 0), 0);
-      const newDue = Math.max(0, Math.round((totalAmount - totalPaid) * 100) / 100);
-      const newStatus = newDue <= 0 ? 'PAID' : (totalPaid > 0 ? 'PARTIAL' : 'DUE');
-
-      if (isSale) {
-        await dbInstance.sales.update(parentId, {
-          paidAmount: totalPaid,
-          dueAmount: newDue,
-          status: newStatus,
+          note: note?.trim() || undefined,
+          paymentMethod,
+          bankAccountId: bankAccountId || undefined,
+          journalEntryId: journalEntry.id,
+          voucherNumber,
+          idempotencyKey: idempotencyKey || undefined,
+          createdAt: new Date().toISOString(),
           synced: false
+        };
+        await safeInsert(dbInstance.payments, paymentRecord, { idPrefix: 'pmt' });
+
+        // Update Sale or Purchase invoice (strictly preventing negative due)
+        const updatedTotalPaid = Math.round((priorPaid + amt) * 100) / 100;
+        const newDue = Math.max(0, Math.round((totalAmount - updatedTotalPaid) * 100) / 100);
+        const newStatus = newDue <= 0 ? 'PAID' : (updatedTotalPaid > 0 ? 'PARTIAL' : 'DUE');
+
+        if (isSale) {
+          await dbInstance.sales.update(parentId, {
+            paidAmount: updatedTotalPaid,
+            dueAmount: newDue,
+            status: newStatus,
+            synced: false
+          });
+        } else {
+          await dbInstance.purchases.update(parentId, {
+            paidAmount: updatedTotalPaid,
+            dueAmount: newDue,
+            status: newStatus,
+            synced: false
+          });
+        }
+
+        // Update operational Cash / Bank account balance
+        if (paymentMethod === 'CASH') {
+          const cashAcc = await dbInstance.cashBankAccounts.where('accountType').equals('CASH').first();
+          if (cashAcc) {
+            const newBal = isSale
+              ? cashAcc.currentBalance + amt
+              : cashAcc.currentBalance - amt;
+            await dbInstance.cashBankAccounts.update(cashAcc.id, {
+              currentBalance: Math.round(newBal * 100) / 100,
+              synced: false
+            });
+          }
+        } else if (paymentMethod === 'BANK') {
+          let bankAcc: CashBankAccount | undefined;
+          if (bankAccountId) {
+            bankAcc = await dbInstance.cashBankAccounts.get(bankAccountId);
+          }
+          if (!bankAcc) {
+            bankAcc = await dbInstance.cashBankAccounts.where('accountType').equals('BANK').first();
+          }
+          if (bankAcc) {
+            const newBal = isSale
+              ? bankAcc.currentBalance + amt
+              : bankAcc.currentBalance - amt;
+            await dbInstance.cashBankAccounts.update(bankAcc.id, {
+              currentBalance: Math.round(newBal * 100) / 100,
+              synced: false
+            });
+          }
+        }
+
+        // Update Customer AR or Supplier AP party subledger
+        if (isSale) {
+          let customerParty: Party | undefined;
+          if (partyId) {
+            customerParty = await dbInstance.parties.get(partyId);
+          }
+          if (!customerParty && partyName) {
+            const allParties: Party[] = await dbInstance.parties.toArray();
+            customerParty = allParties.find(
+              (p: Party) => (p.type === 'CUSTOMER' || p.type === 'BOTH') && p.name.trim().toLowerCase() === partyName.trim().toLowerCase()
+            );
+          }
+          if (customerParty) {
+            const currentPartyBal = Number(customerParty.balance) || 0;
+            const newCustomerBalance = Math.round((currentPartyBal - amt) * 100) / 100;
+            await dbInstance.parties.update(customerParty.id, {
+              balance: newCustomerBalance,
+              synced: false
+            });
+          }
+        } else {
+          let supplierParty: Party | undefined;
+          if (partyId) {
+            supplierParty = await dbInstance.parties.get(partyId);
+          }
+          if (!supplierParty && partyName) {
+            const allParties: Party[] = await dbInstance.parties.toArray();
+            supplierParty = allParties.find(
+              (p: Party) => (p.type === 'SUPPLIER' || p.type === 'BOTH') && p.name.trim().toLowerCase() === partyName.trim().toLowerCase()
+            );
+          }
+          if (supplierParty) {
+            const currentPartyBal = Number(supplierParty.balance) || 0;
+            const newSupplierBalance = Math.round((currentPartyBal - amt) * 100) / 100;
+            await dbInstance.parties.update(supplierParty.id, {
+              balance: newSupplierBalance,
+              synced: false
+            });
+          }
+        }
+
+        // Record Audit Log
+        await safeInsert(dbInstance.auditLogs, {
+          id: generateUniqueId('aud'),
+          timestamp: new Date().toISOString(),
+          userId: currentUserId,
+          role: 'OWNER',
+          action: isSale ? 'SALE_PAYMENT' : 'PURCHASE_PAYMENT',
+          module: 'COMMERCE',
+          recordId: paymentRecord.id,
+          status: 'SUCCESS',
+          details: `${isSale ? 'বিক্রয়' : 'ক্রয়'} চালান ${invoiceNumber}-এর কিস্তি আদায়/পরিশোধ: ৳${amt} (${partyName})`
         });
-      } else {
-        await dbInstance.purchases.update(parentId, {
-          paidAmount: totalPaid,
-          dueAmount: newDue,
-          status: newStatus,
-          synced: false
-        });
+
+        return {
+          payment: paymentRecord,
+          journalEntryId: journalEntry.id,
+          voucherNumber
+        };
       }
-
-      // Update operational Cash / Bank account balance
-      if (paymentMethod === 'CASH') {
-        const cashAcc = await dbInstance.cashBankAccounts.where('accountType').equals('CASH').first();
-        if (cashAcc) {
-          const newBal = isSale
-            ? cashAcc.currentBalance + amt
-            : cashAcc.currentBalance - amt;
-          await dbInstance.cashBankAccounts.update(cashAcc.id, {
-            currentBalance: Math.round(newBal * 100) / 100,
-            synced: false
-          });
-        }
-      } else if (paymentMethod === 'BANK') {
-        let bankAcc: CashBankAccount | undefined;
-        if (bankAccountId) {
-          bankAcc = await dbInstance.cashBankAccounts.get(bankAccountId);
-        }
-        if (!bankAcc) {
-          bankAcc = await dbInstance.cashBankAccounts.where('accountType').equals('BANK').first();
-        }
-        if (bankAcc) {
-          const newBal = isSale
-            ? bankAcc.currentBalance + amt
-            : bankAcc.currentBalance - amt;
-          await dbInstance.cashBankAccounts.update(bankAcc.id, {
-            currentBalance: Math.round(newBal * 100) / 100,
-            synced: false
-          });
-        }
-      }
-
-      // Update Customer AR or Supplier AP party balance
-      if (isSale) {
-        let customerParty: Party | undefined;
-        if (partyId) {
-          customerParty = await dbInstance.parties.get(partyId);
-        }
-        if (!customerParty && partyName) {
-          const allParties: Party[] = await dbInstance.parties.toArray();
-          customerParty = allParties.find(
-            (p: Party) => (p.type === 'CUSTOMER' || p.type === 'BOTH') && p.name.trim().toLowerCase() === partyName.trim().toLowerCase()
-          );
-        }
-        if (customerParty) {
-          await dbInstance.parties.update(customerParty.id, {
-            balance: Math.round(((customerParty.balance || 0) - amt) * 100) / 100,
-            synced: false
-          });
-        }
-      } else {
-        let supplierParty: Party | undefined;
-        if (partyId) {
-          supplierParty = await dbInstance.parties.get(partyId);
-        }
-        if (!supplierParty && partyName) {
-          const allParties: Party[] = await dbInstance.parties.toArray();
-          supplierParty = allParties.find(
-            (p: Party) => (p.type === 'SUPPLIER' || p.type === 'BOTH') && p.name.trim().toLowerCase() === partyName.trim().toLowerCase()
-          );
-        }
-        if (supplierParty) {
-          await dbInstance.parties.update(supplierParty.id, {
-            balance: Math.round(((supplierParty.balance || 0) - amt) * 100) / 100,
-            synced: false
-          });
-        }
-      }
-
-      // Record Audit Log
-      await safeInsert(dbInstance.auditLogs, {
-        id: generateUniqueId('aud'),
-        timestamp: new Date().toISOString(),
-        userId: currentUserId,
-        role: 'OWNER',
-        action: isSale ? 'SALE_PAYMENT' : 'PURCHASE_PAYMENT',
-        module: 'COMMERCE',
-        recordId: paymentRecord.id,
-        status: 'SUCCESS',
-        details: `${isSale ? 'বিক্রয়' : 'ক্রয়'} চালান ${invoiceNumber}-এর কিস্তি আদায়/পরিশোধ: ৳${amt} (${partyName})`
-      });
-
-      return {
-        payment: paymentRecord,
-        journalEntryId: journalEntry.id,
-        voucherNumber
-      };
-    }
-  );
+    );
+  } finally {
+    activePaymentLocks.delete(parentId);
+  }
 }
 
 /**
@@ -8496,11 +8560,15 @@ export async function executeProductionReceiptTransaction(
 
 // Fixed Asset Atomic Accounting Operations
 export {
+  executeFixedAssetAcquisitionTransaction,
   executeFixedAssetDisposalTransaction,
   executeAssetDepreciationAtomic,
   hasAssetPostedAccounting,
   executeEditFixedAssetTransaction,
   getAssetGLCode,
+  getAssetAccountInfo,
+  type FixedAssetAcquisitionParams,
+  type FixedAssetAcquisitionResult,
   type FixedAssetDisposalParams,
   type FixedAssetDisposalResult,
   type AssetDepreciationAtomicResult,

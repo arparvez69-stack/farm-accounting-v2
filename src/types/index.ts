@@ -459,6 +459,12 @@ export interface PaymentRecord {
   amount: number;
   date: string;
   note?: string;
+  paymentMethod?: 'CASH' | 'BANK';
+  bankAccountId?: string;
+  journalEntryId?: string;
+  voucherNumber?: string;
+  idempotencyKey?: string;
+  createdAt?: string;
   synced?: boolean;
 }
 
