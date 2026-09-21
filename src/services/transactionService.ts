@@ -1,6 +1,7 @@
 import { db } from '../db/indexedDb';
 import {
   CANONICAL_ACCOUNTS,
+  INVENTORY_CATEGORY_ACCOUNT_MAP,
   getPaymentAccount,
   getCashBankAccountGLCode,
   getInventoryAssetAccount,
@@ -23,6 +24,7 @@ import {
   Investor,
   CashBankAccount,
   VoucherType,
+  JournalEntry,
   JournalLine,
   Animal,
   AnimalCostBreakdown,
@@ -4559,7 +4561,7 @@ export async function buildFishExpenseCreditLines(
 export interface FishHarvestSaleParams {
   batchId: string;
   harvestWeightKg: number;
-  mortalityCount: number;
+  mortalityCount?: number;
   salePrice: number;
   paymentMethod: 'CASH' | 'BANK' | 'CREDIT';
   bankAccountId?: string;
@@ -4568,6 +4570,10 @@ export interface FishHarvestSaleParams {
   date?: string;
   notes?: string;
   currentUserId: string;
+  isPartialHarvest?: boolean;
+  harvestPortionRatio?: number;
+  remainingEstimatedWeightKg?: number;
+  remainingFingerlingQty?: number;
 }
 
 export async function executeFishHarvestAndSaleTransaction(
@@ -4580,6 +4586,8 @@ export async function executeFishHarvestAndSaleTransaction(
   voucherNumber?: string;
   cogsJournalEntryId?: string;
   cogsVoucherNumber?: string;
+  costTransferred?: number;
+  cogsAmount?: number;
 }> {
   return await dbInstance.transaction(
     'rw',
@@ -4989,15 +4997,31 @@ export async function executeFishHarvestAndSaleTransaction(
       // Verification of source accounting debits specifically linked to THIS batch ID:
       // Never create an accounting entry only because an operational field contains a number.
       // If a cost exists operationally but has no source accounting transaction, report/reject the mismatch instead of inventing a credit.
-      if (remainingCostToTransfer > currentAssetBalance) {
-        const unbackedAmount = Math.round((remainingCostToTransfer - currentAssetBalance) * 100) / 100;
-        throw new Error(
-          `মাছের ব্যাচ ${freshBatch.id} এর উৎপাদন ব্যয়ে অমিল রয়েছে: মোট অপারেশনাল ব্যয় ৳${totalRecordedCost}, কিন্তু সংশ্লিষ্ট অনুমোদিত জাবেদা সম্পদ ব্যালেন্স পাওয়া গেছে মাত্র ৳${currentAssetBalance} (অননুমোদিত বা হিসাবহীন ঘাটতি: ৳${unbackedAmount})। কোনো প্রকৃত হিসাব লেনদেন ছাড়া স্বয়ংক্রিয় ক্রেডিট সৃষ্টি করা নিষিদ্ধ। অনুগ্রহ করে প্রকৃত লেনদেন নথিভুক্ত করুন।`
-        );
+      const isPartial = Boolean(params.isPartialHarvest);
+      let portionRatio = 1;
+      if (isPartial) {
+        if (params.harvestPortionRatio !== undefined && params.harvestPortionRatio > 0) {
+          portionRatio = Math.min(1, Math.max(0.0001, params.harvestPortionRatio));
+        } else if (params.remainingEstimatedWeightKg !== undefined && (cleanWeight + params.remainingEstimatedWeightKg) > 0) {
+          portionRatio = Math.min(1, Math.max(0.0001, cleanWeight / (cleanWeight + params.remainingEstimatedWeightKg)));
+        } else if (freshBatch.currentEstimatedWeightKg && freshBatch.currentEstimatedWeightKg > 0 && cleanWeight > 0) {
+          portionRatio = Math.min(1, Math.max(0.0001, cleanWeight / Math.max(cleanWeight, freshBatch.currentEstimatedWeightKg)));
+        }
       }
 
-      // Each Fish batch has its own accumulated production cost; do not bound by shared GL account 1580
-      const costToTransfer = remainingCostToTransfer;
+      // Proportional cost calculation for partial harvest
+      let costToTransfer = remainingCostToTransfer;
+      if (isPartial && portionRatio < 1) {
+        const proportionalCost = Math.round(totalRecordedCost * portionRatio * 100) / 100;
+        costToTransfer = Math.min(remainingCostToTransfer, proportionalCost);
+      }
+
+      if (costToTransfer > currentAssetBalance) {
+        const unbackedAmount = Math.round((costToTransfer - currentAssetBalance) * 100) / 100;
+        throw new Error(
+          `মাছের ব্যাচ ${freshBatch.id} এর উৎপাদন ব্যয়ে অমিল রয়েছে: স্থানান্তরযোগ্য ব্যয় ৳${costToTransfer}, কিন্তু সংশ্লিষ্ট অনুমোদিত জাবেদা সম্পদ ব্যালেন্স পাওয়া গেছে মাত্র ৳${currentAssetBalance} (অননুমোদিত বা হিসাবহীন ঘাটতি: ৳${unbackedAmount})। কোনো প্রকৃত হিসাব লেনদেন ছাড়া স্বয়ংক্রিয় ক্রেডিট সৃষ্টি করা নিষিদ্ধ। অনুগ্রহ করে প্রকৃত লেনদেন নথিভুক্ত করুন।`
+        );
+      }
 
       let cogsJournalEntryId: string | undefined;
       let cogsVoucherNumber: string | undefined;
@@ -5058,7 +5082,7 @@ export async function executeFishHarvestAndSaleTransaction(
             voucherNumber: cogsVoucherNumber,
             voucherType: 'JOURNAL',
             date: dateStr,
-            narration: `মাছ আহরণকালীন ব্যয় স্থানান্তর: ব্যাচ ${freshBatch.id} - COGS: ৳${harvestedCogs}${mortalityCost > 0 ? `, মৃত্যুজনিত ক্ষতি: ৳${mortalityCost}` : ''}, মোট খালাস: ৳${costToTransfer}`,
+            narration: `মাছ আহরণকালীন ব্যয় স্থানান্তর: ব্যাচ ${freshBatch.id} - COGS: ৳${harvestedCogs}${mortalityCost > 0 ? `, মৃত্যুজনিত ক্ষতি: ৳${mortalityCost}` : ''}, মোট খালাস: ৳${costToTransfer}${isPartial ? ' (আংশিক আহরণ)' : ''}`,
             reference: freshBatch.id,
             lines: cogsLines,
             createdBy: currentUserId,
@@ -5076,12 +5100,32 @@ export async function executeFishHarvestAndSaleTransaction(
         }
       }
 
-      // Step 3: Requirements 10 & 11 - Mark batch as HARVESTED only after accounting operations succeed
-      freshBatch.harvestWeightKg = cleanWeight;
-      freshBatch.mortalityCount = cleanMortality;
-      freshBatch.harvestRevenue = cleanPrice;
+      // Step 3: Requirements - Update batch record.
+      // If partial harvest and remaining cost/stock exists, keep batch ACTIVE and retain unsold production.
+      const isStillActive = isPartial && (costToTransfer < remainingCostToTransfer || (params.remainingEstimatedWeightKg !== undefined && params.remainingEstimatedWeightKg > 0));
+
+      freshBatch.harvestWeightKg = Math.round(((freshBatch.harvestWeightKg || 0) + cleanWeight) * 100) / 100;
+      freshBatch.mortalityCount = (freshBatch.mortalityCount || 0) + cleanMortality;
+      freshBatch.harvestRevenue = Math.round(((freshBatch.harvestRevenue || 0) + cleanPrice) * 100) / 100;
       freshBatch.harvestDate = dateStr;
-      freshBatch.status = 'HARVESTED';
+
+      if (isStillActive) {
+        freshBatch.status = 'ACTIVE';
+        if (params.remainingEstimatedWeightKg !== undefined) {
+          freshBatch.currentEstimatedWeightKg = params.remainingEstimatedWeightKg;
+        } else if (freshBatch.currentEstimatedWeightKg && freshBatch.currentEstimatedWeightKg > cleanWeight) {
+          freshBatch.currentEstimatedWeightKg = Math.max(0, Math.round((freshBatch.currentEstimatedWeightKg - cleanWeight) * 100) / 100);
+        }
+        if (params.remainingFingerlingQty !== undefined) {
+          freshBatch.fingerlingQty = params.remainingFingerlingQty;
+        } else if (cleanMortality > 0 && freshBatch.fingerlingQty) {
+          freshBatch.fingerlingQty = Math.max(0, freshBatch.fingerlingQty - cleanMortality);
+        }
+      } else {
+        freshBatch.status = 'HARVESTED';
+        freshBatch.currentEstimatedWeightKg = 0;
+      }
+
       if (notes) {
         freshBatch.notes = freshBatch.notes ? `${freshBatch.notes} | ${notes.trim()}` : notes.trim();
       }
@@ -5100,7 +5144,7 @@ export async function executeFishHarvestAndSaleTransaction(
           module: 'PRODUCTION',
           recordId: freshBatch.id,
           status: 'SUCCESS',
-          details: `মাছ আহরণ ও বিক্রয় সম্পন্ন: ব্যাচ ${freshBatch.id}, ওজন ${cleanWeight} কেজি, বিক্রয় ৳${cleanPrice}, COGS ৳${harvestedCogs}${mortalityCost > 0 ? `, ক্ষতি ৳${mortalityCost}` : ''}`
+          details: `মাছ আহরণ ও বিক্রয় সম্পন্ন (${isStillActive ? 'আংশিক' : 'সম্পূর্ণ'}): ব্যাচ ${freshBatch.id}, ওজন ${cleanWeight} কেজি, বিক্রয় ৳${cleanPrice}, COGS ৳${harvestedCogs}${mortalityCost > 0 ? `, ক্ষতি ৳${mortalityCost}` : ''}`
         },
         { idPrefix: 'aud' }
       );
@@ -5111,7 +5155,9 @@ export async function executeFishHarvestAndSaleTransaction(
         journalEntryId: revenueJournalEntryId || cogsJournalEntryId,
         voucherNumber: revenueVoucherNumber || cogsVoucherNumber,
         cogsJournalEntryId,
-        cogsVoucherNumber
+        cogsVoucherNumber,
+        costTransferred: costToTransfer,
+        cogsAmount: harvestedCogs
       };
     }
   );
@@ -6380,6 +6426,9 @@ export interface CropHarvestSaleParams {
   date?: string;
   notes?: string;
   currentUserId?: string;
+  isPartialHarvest?: boolean;
+  harvestPortionRatio?: number;
+  remainingAreaDecimals?: number;
 }
 
 export async function executeCropHarvestAndSaleTransaction(
@@ -6653,16 +6702,33 @@ export async function executeCropHarvestAndSaleTransaction(
       // 4. Verification of source accounting debits specifically linked to THIS crop cycle ID:
       // Never create an accounting entry only because an operational field contains a number.
       // If a cost exists operationally but has no source accounting transaction, report/reject the mismatch instead of inventing a credit.
-      if (remainingCostToTransfer > currentAssetBalance) {
-        const unbackedAmount = Math.round((remainingCostToTransfer - currentAssetBalance) * 100) / 100;
+      const isPartial = Boolean(params.isPartialHarvest);
+      let portionRatio = 1;
+      if (isPartial) {
+        if (params.harvestPortionRatio !== undefined && params.harvestPortionRatio > 0) {
+          portionRatio = Math.min(1, Math.max(0.0001, params.harvestPortionRatio));
+        } else if (params.remainingAreaDecimals !== undefined && freshCycle.areaDecimals && freshCycle.areaDecimals > 0) {
+          const harvestedArea = Math.max(0, freshCycle.areaDecimals - params.remainingAreaDecimals);
+          portionRatio = Math.min(1, Math.max(0.0001, harvestedArea / freshCycle.areaDecimals));
+        }
+      }
+
+      // Proportional cost calculation for partial harvest
+      let costToTransfer = remainingCostToTransfer;
+      if (isPartial && portionRatio < 1) {
+        const proportionalCost = Math.round(totalRecordedCost * portionRatio * 100) / 100;
+        costToTransfer = Math.min(remainingCostToTransfer, proportionalCost);
+      }
+
+      if (costToTransfer > currentAssetBalance) {
+        const unbackedAmount = Math.round((costToTransfer - currentAssetBalance) * 100) / 100;
         throw new Error(
-          `শস্য চক্র ${freshCycle.id} এর উৎপাদন ব্যয়ে অমিল রয়েছে: মোট অপারেশনাল ব্যয় ৳${totalRecordedCost}, কিন্তু সংশ্লিষ্ট অনুমোদিত জাবেদা সম্পদ ব্যালেন্স পাওয়া গেছে মাত্র ৳${currentAssetBalance} (অননুমোদিত বা হিসাবহীন ঘাটতি: ৳${unbackedAmount})। কোনো প্রকৃত হিসাব লেনদেন ছাড়া স্বয়ংক্রিয় ক্রেডিট সৃষ্টি করা নিষিদ্ধ। অনুগ্রহ করে প্রকৃত লেনদেন নথিভুক্ত করুন।`
+          `শস্য চক্র ${freshCycle.id} এর উৎপাদন ব্যয়ে অমিল রয়েছে: স্থানান্তরযোগ্য ব্যয় ৳${costToTransfer}, কিন্তু সংশ্লিষ্ট অনুমোদিত জাবেদা সম্পদ ব্যালেন্স পাওয়া গেছে মাত্র ৳${currentAssetBalance} (অননুমোদিত বা হিসাবহীন ঘাটতি: ৳${unbackedAmount})। কোনো প্রকৃত হিসাব লেনদেন ছাড়া স্বয়ংক্রিয় ক্রেডিট সৃষ্টি করা নিষিদ্ধ। অনুগ্রহ করে প্রকৃত লেনদেন নথিভুক্ত করুন।`
         );
       }
 
       // 5. Transfer accumulated cycle cost to Crop COGS (5030).
       // Each Crop cycle has its own accumulated cost; shared WIP account 1054 does not determine cycle cost by itself.
-      const costToTransfer = remainingCostToTransfer;
       let cogsJournalEntryId: string | undefined;
       let cogsVoucherNumber: string | undefined;
 
@@ -6674,7 +6740,7 @@ export async function executeCropHarvestAndSaleTransaction(
             accountName: cropCogsAcc.nameBn || 'বিক্রিত ফসলের উৎপাদন ব্যয় (Crop COGS)',
             debit: costToTransfer,
             credit: 0,
-            memo: `[COGS_TRANSFER] [${freshCycle.id}] শস্য চক্র ${freshCycle.id} বিক্রিত ফসলের উৎপাদন ব্যয় (COGS)`
+            memo: `[COGS_TRANSFER] [${freshCycle.id}] শস্য চক্র ${freshCycle.id} বিক্রিত ফসলের উৎপাদন ব্যয় (COGS)${isPartial ? ' (আংশিক কর্তন)' : ''}`
           },
           {
             accountId: targetAssetCode,
@@ -6698,7 +6764,7 @@ export async function executeCropHarvestAndSaleTransaction(
             voucherNumber: cogsVoucherNumber,
             voucherType: 'JOURNAL',
             date: dateStr,
-            narration: `ফসল কর্তন ও বিক্রয় COGS: চক্র ${freshCycle.id} (${freshCycle.cropName}) - স্থানান্তরিত উৎপাদন ব্যয়: ৳${costToTransfer}`,
+            narration: `ফসল কর্তন ও বিক্রয় COGS: চক্র ${freshCycle.id} (${freshCycle.cropName}) - স্থানান্তরিত উৎপাদন ব্যয়: ৳${costToTransfer}${isPartial ? ' (আংশিক কর্তন)' : ''}`,
             reference: freshCycle.id,
             lines: cogsLines,
             createdBy: currentUserId,
@@ -6856,10 +6922,22 @@ export async function executeCropHarvestAndSaleTransaction(
       }
 
       // 7. Update CropCycle record
-      freshCycle.harvestYieldKg = cleanYield;
-      freshCycle.harvestRevenue = cleanPrice;
+      // If partial harvest and remaining cost/area exists, keep cycle GROWING and retain unsold crop.
+      const isStillActive = isPartial && (costToTransfer < remainingCostToTransfer || (params.remainingAreaDecimals !== undefined && params.remainingAreaDecimals > 0));
+
+      freshCycle.harvestYieldKg = Math.round(((freshCycle.harvestYieldKg || 0) + cleanYield) * 100) / 100;
+      freshCycle.harvestRevenue = Math.round(((freshCycle.harvestRevenue || 0) + cleanPrice) * 100) / 100;
       freshCycle.actualHarvestDate = dateStr;
-      freshCycle.status = 'HARVESTED';
+
+      if (isStillActive) {
+        freshCycle.status = 'GROWING';
+        if (params.remainingAreaDecimals !== undefined) {
+          freshCycle.areaDecimals = params.remainingAreaDecimals;
+        }
+      } else {
+        freshCycle.status = 'HARVESTED';
+      }
+
       freshCycle.synced = false;
       await dbInstance.cropCycles.put(freshCycle);
 
@@ -6875,7 +6953,7 @@ export async function executeCropHarvestAndSaleTransaction(
           module: 'PRODUCTION',
           recordId: freshCycle.id,
           status: 'SUCCESS',
-          details: `ফসল কর্তন ও বিক্রয় সম্পন্ন: চক্র ${freshCycle.id}, ফলন ${cleanYield} কেজি, বিক্রয় ৳${cleanPrice}, স্থানান্তরিত COGS ৳${costToTransfer}`
+          details: `ফসল কর্তন ও বিক্রয় সম্পন্ন (${isStillActive ? 'আংশিক' : 'সম্পূর্ণ'}): চক্র ${freshCycle.id}, ফলন ${cleanYield} কেজি, বিক্রয় ৳${cleanPrice}, স্থানান্তরিত COGS ৳${costToTransfer}`
         },
         { idPrefix: 'aud' }
       );
@@ -7194,10 +7272,17 @@ export interface StockAdjustmentParams {
   currentUserId?: string;
 }
 
+export interface StockAdjustmentResult {
+  updatedItem: InventoryItem;
+  movement: StockMovement;
+  journalEntry?: JournalEntry;
+  journalEntryId?: string;
+}
+
 export async function executeStockAdjustmentTransaction(
   params: StockAdjustmentParams,
   dbInstance: any = db
-): Promise<{ updatedItem: InventoryItem; movement: StockMovement; journalEntryId?: string }> {
+): Promise<StockAdjustmentResult> {
   return await dbInstance.transaction(
     'rw',
     [
@@ -7214,7 +7299,7 @@ export async function executeStockAdjustmentTransaction(
         adjustmentType,
         quantity,
         reason,
-        date = new Date().toISOString().split('T')[0],
+        date,
         currentUserId = 'system'
       } = params;
 
@@ -7223,34 +7308,69 @@ export async function executeStockAdjustmentTransaction(
         throw new Error('সমন্বয়ের পরিমাণ ০ এর বেশি হতে হবে।');
       }
 
+      const todayStr = new Date().toISOString().split('T')[0];
+      const dateStr = date || todayStr;
+      if (dateStr > todayStr) {
+        throw new Error(`সমন্বয়ের তারিখ ভবিষ্যতের হতে পারে না (${todayStr} বা তার পূর্বের তারিখ নির্বাচন করুন)।`);
+      }
+
+      if (dbInstance.closedPeriods) {
+        try {
+          const closedPeriod = await dbInstance.closedPeriods
+            .filter((p: any) => (p.startDate ? p.startDate <= dateStr : true) && p.endDate >= dateStr)
+            .first();
+          if (closedPeriod) {
+            throw new Error(`হিসাবকাল বন্ধ রয়েছে (${closedPeriod.notes || closedPeriod.endDate})। এই তারিখে নতুন লেনদেন পোস্টিং অনুমোদিত নয়।`);
+          }
+        } catch (cpErr: any) {
+          if (cpErr?.message && cpErr.message.includes('হিসাবকাল বন্ধ রয়েছে')) {
+            throw cpErr;
+          }
+        }
+      }
+
       const item = await dbInstance.inventoryItems.get(itemId);
       if (!item) {
         throw new Error('ইনভেন্টরি আইটেম পাওয়া যায়নি।');
       }
 
+      const currentAvailableStock = Number(item.currentStock || 0);
       const isIncrease = adjustmentType === 'INCREASE';
+
+      // Rule: If decrease quantity > available quantity: REJECT the transaction.
+      // Never silently change or clip the requested amount. Prevent negative inventory.
+      if (!isIncrease) {
+        if (cleanQty > currentAvailableStock) {
+          throw new Error(
+            `মজুদ হ্রাস সমন্বয় ত্রুটি: সমন্বয়ের পরিমাণ (${cleanQty} ${item.unit || ''}) বিদ্যমান মজুদের (${currentAvailableStock} ${item.unit || ''}) চেয়ে বেশি হতে পারে না (Decrease quantity exceeds available stock).`
+          );
+        }
+      }
+
       const newStock = isIncrease
-        ? Math.round((item.currentStock + cleanQty) * 100) / 100
-        : Math.max(0, Math.round((item.currentStock - cleanQty) * 100) / 100);
+        ? Math.round((currentAvailableStock + cleanQty) * 100) / 100
+        : Math.round((currentAvailableStock - cleanQty) * 100) / 100;
 
       const effectiveUnitCost = item.avgCostPrice || item.sellingPrice || 0;
       const totalVal = Math.round(cleanQty * effectiveUnitCost * 100) / 100;
 
+      // Update inventory stock (exact quantity delta matches cleanQty)
       await dbInstance.inventoryItems.update(item.id, {
         currentStock: newStock,
         synced: false
       });
 
+      // Record Stock Movement (exact quantity matches cleanQty)
       const movement: StockMovement = {
         id: generateUniqueId('sm'),
-        date,
+        date: dateStr,
         itemId: item.id,
         movementType: 'ADJUSTMENT',
         quantity: cleanQty,
         unitCost: effectiveUnitCost,
         totalValue: totalVal,
         referenceId: item.id,
-        notes: `স্টক সমন্বয় (${isIncrease ? 'বৃদ্ধি' : 'হ্রাস'}): ${reason || ''} - নতুন মজুদ: ${newStock} ${item.unit}`,
+        notes: `স্টক সমন্বয় (${isIncrease ? 'বৃদ্ধি' : 'হ্রাস'}): ${reason || ''} - নতুন মজুদ: ${newStock} ${item.unit || ''}`,
         synced: false
       };
       await safeInsert(dbInstance.stockMovements, movement, { idPrefix: 'sm' });
@@ -7258,6 +7378,7 @@ export async function executeStockAdjustmentTransaction(
       // GL journal entry for inventory adjustment:
       // If increase: Dr Inventory, Cr Other Revenue (4090)
       // If decrease: Dr Inventory Shrinkage/Loss (5090 / 6150), Cr Inventory
+      let journalEntry: JournalEntry | undefined;
       let journalEntryId: string | undefined;
       if (totalVal > 0) {
         const accounts = await dbInstance.accounts.toArray();
@@ -7265,7 +7386,7 @@ export async function executeStockAdjustmentTransaction(
         const invAcc = accounts.find((a: Account) => a.code === invAccountCode) || {
           id: `acc_${invAccountCode}`,
           code: invAccountCode,
-          nameBn: 'মজুদ পণ্য (Inventory)'
+          nameBn: INVENTORY_CATEGORY_ACCOUNT_MAP[invAccountCode]?.nameBn || 'মজুদ পণ্য (Inventory)'
         };
         const gainLossCode = isIncrease ? CANONICAL_ACCOUNTS.OTHER_REVENUE : CANONICAL_ACCOUNTS.OTHER_COGS;
         const gainLossAcc = accounts.find((a: Account) => a.code === gainLossCode) || {
@@ -7273,6 +7394,10 @@ export async function executeStockAdjustmentTransaction(
           code: gainLossCode,
           nameBn: isIncrease ? 'অন্যান্য আয় (Other Revenue)' : 'অন্যান্য সমন্বয় খরচ (Other COGS)'
         };
+
+        const combinedAccounts = [...accounts];
+        if (!combinedAccounts.some((a) => a.code === invAccountCode)) combinedAccounts.push(invAcc as any);
+        if (!combinedAccounts.some((a) => a.code === gainLossCode)) combinedAccounts.push(gainLossAcc as any);
 
         const invLines: JournalLine[] = isIncrease
           ? [
@@ -7282,7 +7407,7 @@ export async function executeStockAdjustmentTransaction(
                 accountName: invAcc.nameBn,
                 debit: totalVal,
                 credit: 0,
-                memo: `স্টক বৃদ্ধি সমন্বয়: ${item.nameBn} (${cleanQty} ${item.unit})`
+                memo: `স্টক বৃদ্ধি সমন্বয়: ${item.nameBn} (${cleanQty} ${item.unit || ''})`
               },
               {
                 accountId: gainLossAcc.id,
@@ -7300,7 +7425,7 @@ export async function executeStockAdjustmentTransaction(
                 accountName: gainLossAcc.nameBn,
                 debit: totalVal,
                 credit: 0,
-                memo: `স্টক ঘাটতি/ক্ষতি সমন্বয়: ${item.nameBn} (${cleanQty} ${item.unit})`
+                memo: `স্টক ঘাটতি/ক্ষতি সমন্বয়: ${item.nameBn} (${cleanQty} ${item.unit || ''})`
               },
               {
                 accountId: invAcc.id,
@@ -7313,19 +7438,19 @@ export async function executeStockAdjustmentTransaction(
             ];
 
         const voucherNumber = generateTransactionNumber('ADJ');
-        const journalEntry = await postJournalEntry(
+        journalEntry = await postJournalEntry(
           {
             id: generateUniqueId('j_adj'),
             voucherNumber,
             voucherType: 'ADJUSTMENT',
-            date,
-            narration: `ইনভেন্টরি সমন্বয়: ${item.nameBn} (${isIncrease ? '+' : '-'}${cleanQty} ${item.unit}) - ${reason || ''}`,
+            date: dateStr,
+            narration: `ইনভেন্টরি সমন্বয়: ${item.nameBn} (${isIncrease ? '+' : '-'}${cleanQty} ${item.unit || ''}) - ${reason || ''}`,
             reference: item.id,
             lines: invLines,
             createdBy: currentUserId,
             createdAt: new Date().toISOString()
           },
-          { accounts, skipDbPut: true }
+          { accounts: combinedAccounts, skipDbPut: true }
         );
         await safeInsert(dbInstance.journalEntries, journalEntry, { idPrefix: 'j' });
         journalEntryId = journalEntry.id;
@@ -7340,12 +7465,13 @@ export async function executeStockAdjustmentTransaction(
         module: 'INVENTORY',
         recordId: item.id,
         status: 'SUCCESS',
-        details: `ইনভেন্টরি সমন্বয়: ${item.nameBn} (${isIncrease ? '+' : '-'}${cleanQty} ${item.unit})`
+        details: `ইনভেন্টরি সমন্বয়: ${item.nameBn} (${isIncrease ? '+' : '-'}${cleanQty} ${item.unit || ''})`
       });
 
       return {
         updatedItem: { ...item, currentStock: newStock },
         movement,
+        journalEntry,
         journalEntryId
       };
     }
@@ -7367,27 +7493,53 @@ export interface ProductionReceiptParams {
   currentUserId?: string;
 }
 
+export interface ProductionReceiptParams {
+  itemId: string;
+  quantity: number;
+  unitCost: number;
+  date?: string;
+  notes?: string;
+  sourceBatchId?: string;
+  sourceAccountCode?: string;
+  currentUserId?: string;
+}
+
+export interface ProductionReceiptResult {
+  updatedItem: InventoryItem;
+  movement: StockMovement;
+  journalEntry?: JournalEntry;
+  journalEntryId?: string;
+  voucherNumber?: string;
+}
+
 export async function executeProductionReceiptTransaction(
   params: ProductionReceiptParams,
   dbInstance: any = db
-): Promise<{ updatedItem: InventoryItem; movement: StockMovement }> {
+): Promise<ProductionReceiptResult> {
+  const txTables: any[] = [
+    dbInstance.inventoryItems,
+    dbInstance.stockMovements,
+    dbInstance.journalEntries,
+    dbInstance.accounts,
+    dbInstance.auditLogs
+  ];
+  if (dbInstance.cropCycles) txTables.push(dbInstance.cropCycles);
+  if (dbInstance.fishBatches) txTables.push(dbInstance.fishBatches);
+  if (dbInstance.animals) txTables.push(dbInstance.animals);
+  if (dbInstance.closedPeriods) txTables.push(dbInstance.closedPeriods);
+
   return await dbInstance.transaction(
     'rw',
-    [
-      dbInstance.inventoryItems,
-      dbInstance.stockMovements,
-      dbInstance.journalEntries,
-      dbInstance.accounts,
-      dbInstance.auditLogs
-    ],
+    txTables,
     async () => {
       const {
         itemId,
         quantity,
         unitCost,
-        date = new Date().toISOString().split('T')[0],
+        date,
         notes,
         sourceBatchId,
+        sourceAccountCode: explicitSourceAccountCode,
         currentUserId = 'system'
       } = params;
 
@@ -7396,12 +7548,37 @@ export async function executeProductionReceiptTransaction(
         throw new Error('উৎপাদন প্রাপ্তির পরিমাণ ০ এর বেশি হতে হবে।');
       }
 
+      if (unitCost <= 0) {
+        throw new Error('উৎপাদন প্রাপ্তির একক খরচ (Unit Cost) ০ এর বেশি হতে হবে।');
+      }
+
+      const todayStr = new Date().toISOString().split('T')[0];
+      const dateStr = date || todayStr;
+      if (dateStr > todayStr) {
+        throw new Error(`উৎপাদন প্রাপ্তির তারিখ ভবিষ্যতের হতে পারে না (${todayStr} বা তার পূর্বের তারিখ নির্বাচন করুন)।`);
+      }
+
+      if (dbInstance.closedPeriods) {
+        try {
+          const closedPeriod = await dbInstance.closedPeriods
+            .filter((p: any) => (p.startDate ? p.startDate <= dateStr : true) && p.endDate >= dateStr)
+            .first();
+          if (closedPeriod) {
+            throw new Error(`হিসাবকাল বন্ধ রয়েছে (${closedPeriod.notes || closedPeriod.endDate})। এই তারিখে নতুন লেনদেন পোস্টিং অনুমোদিত নয়।`);
+          }
+        } catch (cpErr: any) {
+          if (cpErr?.message && cpErr.message.includes('হিসাবকাল বন্ধ রয়েছে')) {
+            throw cpErr;
+          }
+        }
+      }
+
       const item = await dbInstance.inventoryItems.get(itemId);
       if (!item) {
         throw new Error('ইনভেন্টরি আইটেম পাওয়া যায়নি।');
       }
 
-      // Weighted average cost update
+      // Weighted average cost calculation
       const prevStock = Math.max(0, item.currentStock || 0);
       const prevCost = item.avgCostPrice || 0;
       const totalQty = prevStock + cleanQty;
@@ -7409,25 +7586,163 @@ export async function executeProductionReceiptTransaction(
       const newAvgCost = totalQty > 0 ? Math.round((totalCostVal / totalQty) * 100) / 100 : unitCost;
       const lineTotal = Math.round(cleanQty * unitCost * 100) / 100;
 
+      // Update physical inventory subledger
       await dbInstance.inventoryItems.update(item.id, {
         currentStock: totalQty,
         avgCostPrice: newAvgCost,
         synced: false
       });
 
+      // Record Stock Movement with movementType: 'PRODUCTION'
       const movement: StockMovement = {
         id: generateUniqueId('sm'),
-        date,
+        date: dateStr,
         itemId: item.id,
         movementType: 'PRODUCTION',
         quantity: cleanQty,
         unitCost,
         totalValue: lineTotal,
         referenceId: sourceBatchId || item.id,
-        notes: notes || `খামার উৎপাদন থেকে প্রাপ্তি: ${cleanQty} ${item.unit} ${item.nameBn}`,
+        notes: notes || `খামার উৎপাদন থেকে প্রাপ্তি: ${cleanQty} ${item.unit || ''} ${item.nameBn}`,
         synced: false
       };
       await safeInsert(dbInstance.stockMovements, movement, { idPrefix: 'sm' });
+
+      // Determine Destination Inventory Asset Account (Debit)
+      // Feed -> 1051, Seed/Fert -> 1052, Raw Materials -> 1053, Finished Goods -> 1055, Packaging -> 1056
+      let invAccountCode = getInventoryAssetAccount(item.category);
+      if (invAccountCode === CANONICAL_ACCOUNTS.WIP) {
+        invAccountCode = CANONICAL_ACCOUNTS.FINISHED_GOODS; // 1055 Finished Goods
+      }
+
+      // Determine Production / WIP Source Account (Credit)
+      // When production is transferred into inventory, accounting corresponds to production/WIP source.
+      // NEVER artificial Cash/Bank entries.
+      let sourceAccountCode = explicitSourceAccountCode;
+      let sourceBatchLabel = '';
+
+      if (!sourceAccountCode) {
+        if (sourceBatchId) {
+          // 1. Check if sourceBatchId corresponds to a crop cycle (WIP 1054)
+          if (dbInstance.cropCycles) {
+            try {
+              const cycle = await dbInstance.cropCycles.get(sourceBatchId);
+              if (cycle) {
+                sourceAccountCode = CANONICAL_ACCOUNTS.WIP; // 1054
+                sourceBatchLabel = `শস্য চক্র: ${cycle.cropName || ''}`;
+              }
+            } catch {}
+          }
+          // 2. Check if sourceBatchId corresponds to a fish batch (Biological Asset 1580 / WIP 1054)
+          if (!sourceAccountCode && dbInstance.fishBatches) {
+            try {
+              const batch = await dbInstance.fishBatches.get(sourceBatchId);
+              if (batch) {
+                sourceAccountCode = CANONICAL_ACCOUNTS.LIVESTOCK_ASSETS; // 1580 default
+                if (dbInstance.journalEntries) {
+                  try {
+                    const entries = await dbInstance.journalEntries
+                      .filter((j: any) => j.reference === batch.id || (j.lines && j.lines.some((l: any) => l.memo && l.memo.includes(batch.id))))
+                      .toArray();
+                    let d1054 = 0;
+                    let d1580 = 0;
+                    for (const e of entries) {
+                      for (const l of e.lines || []) {
+                        if (l.accountCode === CANONICAL_ACCOUNTS.WIP) d1054 += (l.debit || 0);
+                        if (l.accountCode === CANONICAL_ACCOUNTS.LIVESTOCK_ASSETS) d1580 += (l.debit || 0);
+                      }
+                    }
+                    if (d1054 > d1580) {
+                      sourceAccountCode = CANONICAL_ACCOUNTS.WIP;
+                    }
+                  } catch {}
+                }
+                sourceBatchLabel = `মাছের ব্যাচ: ${batch.species || ''}`;
+              }
+            } catch {}
+          }
+          // 3. Check if sourceBatchId corresponds to an animal (Livestock Asset 1580)
+          if (!sourceAccountCode && dbInstance.animals) {
+            try {
+              const animal = await dbInstance.animals.get(sourceBatchId);
+              if (animal) {
+                sourceAccountCode = CANONICAL_ACCOUNTS.LIVESTOCK_ASSETS; // 1580
+                sourceBatchLabel = `গবাদিপশু: ${animal.tagNumber || animal.name || ''}`;
+              }
+            } catch {}
+          }
+        }
+
+        // Fallback default: Canonical Production WIP Account (1054)
+        if (!sourceAccountCode) {
+          sourceAccountCode = CANONICAL_ACCOUNTS.WIP;
+        }
+      }
+
+      // Fetch accounts from DB or create reliable fallbacks
+      const accounts = await dbInstance.accounts.toArray();
+      const invAcc = accounts.find((a: Account) => a.code === invAccountCode) || {
+        id: `acc_${invAccountCode}`,
+        code: invAccountCode,
+        nameBn: INVENTORY_CATEGORY_ACCOUNT_MAP[invAccountCode]?.nameBn || 'মজুদ পণ্য (Inventory)'
+      };
+
+      const sourceAcc = accounts.find((a: Account) => a.code === sourceAccountCode) || {
+        id: `acc_${sourceAccountCode}`,
+        code: sourceAccountCode,
+        nameBn: sourceAccountCode === CANONICAL_ACCOUNTS.LIVESTOCK_ASSETS
+          ? 'গবাদিপশু ও জৈবিক সম্পদ (Livestock & Biological Assets)'
+          : 'প্রক্রিয়াধীন পণ্য (Work in Progress - WIP)'
+      };
+
+      const combinedAccounts = [...accounts];
+      if (!combinedAccounts.some((a) => a.code === invAccountCode)) combinedAccounts.push(invAcc as any);
+      if (!combinedAccounts.some((a) => a.code === sourceAccountCode)) combinedAccounts.push(sourceAcc as any);
+
+      // Create Balanced GL Journal Lines:
+      // Dr Inventory Asset (1051-1056)
+      // Cr Production/WIP Source (1054 WIP or 1580 Biological Assets)
+      // NO artificial Cash or Bank entries!
+      const journalLines: JournalLine[] = [
+        {
+          accountId: invAcc.id,
+          accountCode: invAccountCode,
+          accountName: invAcc.nameBn,
+          debit: lineTotal,
+          credit: 0,
+          memo: `উৎপাদন প্রাপ্তি: ${item.nameBn} (${cleanQty} ${item.unit || ''} @ ৳${unitCost})`
+        },
+        {
+          accountId: sourceAcc.id,
+          accountCode: sourceAccountCode,
+          accountName: sourceAcc.nameBn,
+          debit: 0,
+          credit: lineTotal,
+          memo: sourceBatchLabel
+            ? `উৎপাদন স্থানান্তর (${sourceBatchLabel}) [${sourceBatchId}]`
+            : sourceBatchId
+            ? `উৎপাদন ব্যয় সমন্বয় [${sourceBatchId}]`
+            : `উৎপাদন ব্যয় সমন্বয় (WIP/উৎপাদন উৎস হতে ইনভেন্টরিতে স্থানান্তর)`
+        }
+      ];
+
+      const voucherNumber = generateTransactionNumber('JRN');
+      const journalEntry = await postJournalEntry(
+        {
+          id: generateUniqueId('j_prd'),
+          voucherNumber,
+          voucherType: 'JOURNAL',
+          date: dateStr,
+          narration: notes || `খামার উৎপাদন হতে ইনভেন্টরিতে স্থানান্তর: ${item.nameBn} (${cleanQty} ${item.unit || ''} @ ৳${unitCost})`,
+          reference: sourceBatchId || item.id,
+          lines: journalLines,
+          createdBy: currentUserId,
+          createdAt: new Date().toISOString()
+        },
+        { accounts: combinedAccounts, skipDbPut: true }
+      );
+
+      await safeInsert(dbInstance.journalEntries, journalEntry, { idPrefix: 'j' });
 
       await safeInsert(dbInstance.auditLogs, {
         id: generateUniqueId('aud'),
@@ -7438,12 +7753,15 @@ export async function executeProductionReceiptTransaction(
         module: 'INVENTORY',
         recordId: item.id,
         status: 'SUCCESS',
-        details: `উৎপাদন প্রাপ্তি: ${item.nameBn} (+${cleanQty} ${item.unit})`
+        details: `উৎপাদন প্রাপ্তি: ${item.nameBn} (+${cleanQty} ${item.unit || ''}, মোট ৳${lineTotal})`
       });
 
       return {
         updatedItem: { ...item, currentStock: totalQty, avgCostPrice: newAvgCost },
-        movement
+        movement,
+        journalEntry,
+        journalEntryId: journalEntry.id,
+        voucherNumber: journalEntry.voucherNumber
       };
     }
   );

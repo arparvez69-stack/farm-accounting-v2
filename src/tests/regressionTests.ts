@@ -3240,6 +3240,36 @@ async function runRegressionTestsInternal(): Promise<TestResult> {
     assert(adjRes.movement.movementType === 'ADJUSTMENT', 'Adjustment movementType must be ADJUSTMENT.');
     assert(adjRes.movement.quantity === 10, 'Adjustment movement quantity must be 10.');
 
+    // Step D.2: Task 7 - Invalid Excessive Decrease Adjustment (exceeding available stock 90 kg)
+    let excessiveDecreaseFailed = false;
+    try {
+      await executeStockAdjustmentTransaction(
+        {
+          itemId: feedItem.id,
+          adjustmentType: 'DECREASE',
+          quantity: 150, // Available is only 90
+          reason: 'অবাস্তব ঘাটতি এন্ট্রি চেষ্টা',
+          date: '2026-07-07',
+          currentUserId: 'usr_owner'
+        },
+        invTestDb
+      );
+    } catch (err: any) {
+      excessiveDecreaseFailed = true;
+      assert(
+        err.message.includes('বেশি হতে পারে না') || err.message.includes('exceeds available stock'),
+        'Excessive decrease must throw error indicating decrease exceeds available stock.'
+      );
+    }
+    assert(excessiveDecreaseFailed, 'Transaction must REJECT decrease adjustment when quantity > available stock.');
+
+    // Verify stock is NOT clipped to zero and remained exactly 90 kg
+    const feedItemAfterExcessive = await invTestDb.inventoryItems.get(feedItem.id);
+    assert(
+      feedItemAfterExcessive?.currentStock === 90,
+      'Operational stock must NOT be clipped or modified on rejected excessive decrease.'
+    );
+
     // Step E: Farm Production Receipt into Inventory (30 kg produced received)
     const receiptRes = await executeProductionReceiptTransaction(
       {
@@ -3276,6 +3306,216 @@ async function runRegressionTestsInternal(): Promise<TestResult> {
     assert(netMovementQty === 120, 'Net subledger movement quantity must sum to 120 kg.');
     const finalItem = await invTestDb.inventoryItems.get(feedItem.id);
     assert(finalItem?.currentStock === netMovementQty, 'Inventory physical stock must strictly equal net subledger movements.');
+
+    // Step E.1: Production Receipt GL Accounting Verification (Task 6)
+    assert(receiptRes.journalEntry !== undefined, 'Production receipt must generate a GL journal entry.');
+    assert(receiptRes.journalEntry?.voucherType === 'JOURNAL', 'Production receipt voucherType must be JOURNAL.');
+    assert(receiptRes.journalEntry?.totalDebit === 1500, 'Production receipt journal totalDebit must be ৳1,500.');
+    assert(receiptRes.journalEntry?.totalCredit === 1500, 'Production receipt journal totalCredit must be ৳1,500.');
+
+    const invLine = receiptRes.journalEntry?.lines.find((l: any) => l.accountCode === '1051');
+    assert(invLine !== undefined, 'Production receipt must contain line for Inventory Asset Account (1051).');
+    assert(invLine?.debit === 1500, 'Production receipt must debit Inventory Asset Account (1051) by ৳1,500.');
+    assert(invLine?.credit === 0, 'Production receipt debit line must have credit 0.');
+
+    const wipLine = receiptRes.journalEntry?.lines.find((l: any) => l.accountCode === '1054');
+    assert(wipLine !== undefined, 'Production receipt must contain line for Production WIP Account (1054).');
+    assert(wipLine?.credit === 1500, 'Production receipt must credit Production WIP Account (1054) by ৳1,500.');
+    assert(wipLine?.debit === 0, 'Production receipt credit line must have debit 0.');
+
+    const hasArtificialCash = receiptRes.journalEntry?.lines.some(
+      (l: any) => l.accountCode === '1010' || l.accountCode === '1030'
+    );
+    assert(!hasArtificialCash, 'Production receipt must NOT create artificial Cash/Bank entries.');
+
+    // Step E.2: Operational inventory value = corresponding accounting value verification
+    const operationalReceiptVal = receiptRes.movement.totalValue;
+    const accountingReceiptVal = invLine?.debit || 0;
+    assert(
+      operationalReceiptVal === accountingReceiptVal,
+      `Operational inventory receipt value (৳${operationalReceiptVal}) must strictly equal corresponding accounting value (৳${accountingReceiptVal}).`
+    );
+
+    // Verify journal entry persistence in DB
+    const savedReceiptJournal = await invTestDb.journalEntries.get(receiptRes.journalEntry!.id);
+    assert(savedReceiptJournal !== undefined, 'Production receipt journal entry must be persisted in database.');
+
+    // Step E.3: Test Production Receipt of Finished Goods from Crop Cycle Production
+    const paddyItem: InventoryItem = {
+      id: generateUniqueId('it_paddy'),
+      code: 'ITM-PDY-01',
+      nameEn: 'Aman Paddy',
+      nameBn: 'আমন ধান (কাটা সম্পন্ন)',
+      category: 'FARM_PRODUCT',
+      unit: 'কেজি',
+      currentStock: 0,
+      avgCostPrice: 0,
+      sellingPrice: 40,
+      reorderLevel: 20,
+      synced: false
+    };
+    await invTestDb.inventoryItems.put(paddyItem);
+
+    const cropCycleProd = {
+      id: 'cycle_paddy_2026',
+      cropName: 'আমন ধান ২০২৬',
+      fieldLocation: 'উত্তর মাঠ',
+      status: 'ACTIVE'
+    };
+    await invTestDb.cropCycles.put(cropCycleProd);
+
+    const paddyReceiptRes = await executeProductionReceiptTransaction(
+      {
+        itemId: paddyItem.id,
+        quantity: 100,
+        unitCost: 28,
+        date: '2026-07-10',
+        sourceBatchId: cropCycleProd.id,
+        notes: 'আমন ধান মাড়াই শেষে গুদামে স্থানান্তর',
+        currentUserId: 'usr_owner'
+      },
+      invTestDb
+    );
+
+    assert(paddyReceiptRes.updatedItem.currentStock === 100, 'Paddy item currentStock must be 100 kg.');
+    assert(paddyReceiptRes.updatedItem.avgCostPrice === 28, 'Paddy item avgCostPrice must be ৳28.');
+    assert(paddyReceiptRes.movement.movementType === 'PRODUCTION', 'Movement must be PRODUCTION.');
+    assert(paddyReceiptRes.movement.totalValue === 2800, 'Operational stock movement totalValue must be ৳2,800 (100 * 28).');
+
+    assert(paddyReceiptRes.journalEntry !== undefined, 'Production receipt must create journal entry.');
+    assert(paddyReceiptRes.journalEntry?.totalDebit === 2800, 'Journal totalDebit must be ৳2,800.');
+    assert(paddyReceiptRes.journalEntry?.totalCredit === 2800, 'Journal totalCredit must be ৳2,800.');
+
+    const finishedGoodsLine = paddyReceiptRes.journalEntry?.lines.find((l: any) => l.accountCode === '1055');
+    assert(finishedGoodsLine !== undefined && finishedGoodsLine.debit === 2800, 'Finished Farm Product must debit 1055 Finished Goods by ৳2,800.');
+
+    const cropWipLine = paddyReceiptRes.journalEntry?.lines.find((l: any) => l.accountCode === '1054');
+    assert(cropWipLine !== undefined && cropWipLine.credit === 2800, 'Production receipt must credit 1054 WIP by ৳2,800.');
+
+    const operationalPaddyVal = paddyReceiptRes.movement.totalValue;
+    const accountingPaddyVal = finishedGoodsLine?.debit || 0;
+    assert(
+      operationalPaddyVal === accountingPaddyVal,
+      `Operational inventory value (৳${operationalPaddyVal}) must strictly equal corresponding accounting value (৳${accountingPaddyVal}).`
+    );
+
+    // =========================================================================
+    // TASK 7 — VERIFY STOCK ADJUSTMENT ACCOUNTING
+    // Tests: (1) increase adjustment, (2) valid decrease, (3) invalid excessive decrease
+    // Must guarantee quantity in Inventory, Stock Movement, GL adjustment are identical
+    // and prevent negative inventory.
+    // =========================================================================
+
+    const seedItem: InventoryItem = {
+      id: generateUniqueId('it_seed'),
+      code: 'ITM-SED-01',
+      nameEn: 'BRRI Dhan 28 Seeds',
+      nameBn: 'ব্রি ধান ২৮ বীজ',
+      category: 'SEED_FERTILIZER',
+      unit: 'কেজি',
+      currentStock: 50,
+      avgCostPrice: 60,
+      sellingPrice: 80,
+      reorderLevel: 10,
+      synced: false
+    };
+    await invTestDb.inventoryItems.put(seedItem);
+
+    // Test Case 1: Increase Adjustment (+25 kg)
+    const seedIncRes = await executeStockAdjustmentTransaction(
+      {
+        itemId: seedItem.id,
+        adjustmentType: 'INCREASE',
+        quantity: 25,
+        reason: 'বাৎসরিক অডিটে অতিরিক্ত উদ্বৃত্ত বীজ পাওয়া গেছে',
+        date: '2026-07-11',
+        currentUserId: 'usr_owner'
+      },
+      invTestDb
+    );
+
+    assert(seedIncRes.updatedItem.currentStock === 75, 'Increase adjustment: stock must increase from 50 to 75 kg.');
+    assert(seedIncRes.movement.movementType === 'ADJUSTMENT', 'Movement type must be ADJUSTMENT.');
+    assert(seedIncRes.movement.quantity === 25, 'Stock movement quantity must be exactly 25.');
+    assert(seedIncRes.movement.totalValue === 1500, 'Stock movement total value must be ৳1,500 (25 * 60).');
+
+    assert(seedIncRes.journalEntry !== undefined, 'Increase adjustment must create GL journal entry.');
+    assert(seedIncRes.journalEntry?.totalDebit === 1500, 'Increase journal totalDebit must be ৳1,500.');
+    assert(seedIncRes.journalEntry?.totalCredit === 1500, 'Increase journal totalCredit must be ৳1,500.');
+
+    const seedInvLine = seedIncRes.journalEntry?.lines.find((l: any) => l.accountCode === '1052');
+    assert(seedInvLine !== undefined && seedInvLine.debit === 1500, 'Increase adjustment must debit Inventory Asset 1052 by ৳1,500.');
+
+    const seedRevLine = seedIncRes.journalEntry?.lines.find((l: any) => l.accountCode === '4090');
+    assert(seedRevLine !== undefined && seedRevLine.credit === 1500, 'Increase adjustment must credit Other Revenue 4090 by ৳1,500.');
+
+    // Verify quantity in Inventory (+25), Stock Movement (25), and GL adjustment (1500 / 60 = 25) are identical
+    const inventoryIncreaseDelta = seedIncRes.updatedItem.currentStock - 50;
+    const movementIncreaseQty = seedIncRes.movement.quantity;
+    const glIncreaseQty = (seedInvLine?.debit || 0) / (seedItem.avgCostPrice || 1);
+    assert(
+      inventoryIncreaseDelta === movementIncreaseQty && movementIncreaseQty === glIncreaseQty,
+      'Quantity in Inventory, Stock Movement, and GL adjustment must be IDENTICAL for increase adjustment.'
+    );
+
+    // Test Case 2: Valid Decrease Adjustment (-20 kg)
+    const seedDecRes = await executeStockAdjustmentTransaction(
+      {
+        itemId: seedItem.id,
+        adjustmentType: 'DECREASE',
+        quantity: 20,
+        reason: 'মেয়াদোত্তীর্ণ বীজ বিনষ্টকরণ',
+        date: '2026-07-12',
+        currentUserId: 'usr_owner'
+      },
+      invTestDb
+    );
+
+    assert(seedDecRes.updatedItem.currentStock === 55, 'Valid decrease: stock must decrease from 75 to 55 kg.');
+    assert(seedDecRes.movement.quantity === 20, 'Movement quantity must be exactly 20.');
+    assert(seedDecRes.movement.totalValue === 1200, 'Movement total value must be ৳1,200 (20 * 60).');
+
+    assert(seedDecRes.journalEntry !== undefined, 'Valid decrease must create GL journal entry.');
+    assert(seedDecRes.journalEntry?.totalDebit === 1200, 'Decrease journal totalDebit must be ৳1,200.');
+    assert(seedDecRes.journalEntry?.totalCredit === 1200, 'Decrease journal totalCredit must be ৳1,200.');
+
+    const seedDecLossLine = seedDecRes.journalEntry?.lines.find((l: any) => l.accountCode === '5090');
+    assert(seedDecLossLine !== undefined && seedDecLossLine.debit === 1200, 'Decrease adjustment must debit Other COGS/Loss 5090 by ৳1,200.');
+
+    const seedDecInvLine = seedDecRes.journalEntry?.lines.find((l: any) => l.accountCode === '1052');
+    assert(seedDecInvLine !== undefined && seedDecInvLine.credit === 1200, 'Decrease adjustment must credit Inventory Asset 1052 by ৳1,200.');
+
+    // Verify quantity in Inventory (-20), Stock Movement (20), and GL adjustment (1200 / 60 = 20) are identical
+    const inventoryDecreaseDelta = 75 - seedDecRes.updatedItem.currentStock;
+    const movementDecreaseQty = seedDecRes.movement.quantity;
+    const glDecreaseQty = (seedDecInvLine?.credit || 0) / (seedItem.avgCostPrice || 1);
+    assert(
+      inventoryDecreaseDelta === movementDecreaseQty && movementDecreaseQty === glDecreaseQty,
+      'Quantity in Inventory, Stock Movement, and GL adjustment must be IDENTICAL for valid decrease adjustment.'
+    );
+
+    // Test Case 3: Invalid Excessive Decrease Adjustment (> 55 kg available)
+    let seedExcessiveFailed = false;
+    try {
+      await executeStockAdjustmentTransaction(
+        {
+          itemId: seedItem.id,
+          adjustmentType: 'DECREASE',
+          quantity: 60, // Available is only 55
+          reason: 'অতিরিক্ত কমানোর চেষ্টা (অবৈধ)',
+          date: '2026-07-12',
+          currentUserId: 'usr_owner'
+        },
+        invTestDb
+      );
+    } catch (err: any) {
+      seedExcessiveFailed = true;
+    }
+    assert(seedExcessiveFailed, 'Invalid excessive decrease adjustment MUST be rejected.');
+
+    // Verify stock is preserved, not clipped to zero, not negative
+    const finalSeedItem = await invTestDb.inventoryItems.get(seedItem.id);
+    assert(finalSeedItem?.currentStock === 55, 'Item currentStock must remain 55 kg; no silent clipping or negative stock.');
 
 
   } catch (error: any) {

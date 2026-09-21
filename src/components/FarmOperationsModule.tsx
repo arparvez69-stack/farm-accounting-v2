@@ -120,6 +120,10 @@ export const FarmOperationsModule: React.FC<Props> = ({
 
   // Fish Harvest & Sale modal states
   const [harvestFishBatch, setHarvestFishBatch] = useState<FishBatch | null>(null);
+  const [harvestFishIsPartial, setHarvestFishIsPartial] = useState(false);
+  const [harvestFishPortionPercentage, setHarvestFishPortionPercentage] = useState('50');
+  const [harvestFishRemainingWeight, setHarvestFishRemainingWeight] = useState('');
+  const [harvestFishRemainingFingerlings, setHarvestFishRemainingFingerlings] = useState('');
   const [harvestFishWeight, setHarvestFishWeight] = useState('');
   const [harvestFishMortality, setHarvestFishMortality] = useState('0');
   const [harvestFishPrice, setHarvestFishPrice] = useState('');
@@ -132,6 +136,9 @@ export const FarmOperationsModule: React.FC<Props> = ({
 
   // Crop Harvest & Sale modal states
   const [harvestCropCycle, setHarvestCropCycle] = useState<CropCycle | null>(null);
+  const [harvestCropIsPartial, setHarvestCropIsPartial] = useState(false);
+  const [harvestCropPortionPercentage, setHarvestCropPortionPercentage] = useState('50');
+  const [harvestCropRemainingArea, setHarvestCropRemainingArea] = useState('');
   const [harvestCropYield, setHarvestCropYield] = useState('');
   const [harvestCropPrice, setHarvestCropPrice] = useState('');
   const [harvestCropPaymentMethod, setHarvestCropPaymentMethod] = useState<'CASH' | 'BANK' | 'CREDIT'>('CASH');
@@ -1335,6 +1342,10 @@ export const FarmOperationsModule: React.FC<Props> = ({
 
   const handleOpenFishHarvest = (batch: FishBatch) => {
     setHarvestFishBatch(batch);
+    setHarvestFishIsPartial(false);
+    setHarvestFishPortionPercentage('50');
+    setHarvestFishRemainingWeight('');
+    setHarvestFishRemainingFingerlings('');
     setHarvestFishWeight(batch.currentEstimatedWeightKg ? String(batch.currentEstimatedWeightKg) : '');
     setHarvestFishMortality(batch.mortalityCount ? String(batch.mortalityCount) : '0');
     setHarvestFishPrice('');
@@ -1367,6 +1378,10 @@ export const FarmOperationsModule: React.FC<Props> = ({
         return;
       }
 
+      const portionRatio = harvestFishIsPartial
+        ? Math.min(1, Math.max(0.01, (parseFloat(harvestFishPortionPercentage) || 50) / 100))
+        : 1;
+
       const result = await executeFishHarvestAndSaleTransaction({
         batchId: harvestFishBatch.id,
         harvestWeightKg: weight,
@@ -1377,15 +1392,21 @@ export const FarmOperationsModule: React.FC<Props> = ({
         customerName: harvestFishCustomer.trim() || undefined,
         date: harvestFishDate,
         notes: harvestFishNotes.trim() || undefined,
-        currentUserId: currentUserId || 'system-user'
+        currentUserId: currentUserId || 'system-user',
+        isPartialHarvest: harvestFishIsPartial,
+        harvestPortionRatio: portionRatio,
+        remainingEstimatedWeightKg: harvestFishIsPartial && harvestFishRemainingWeight ? parseFloat(harvestFishRemainingWeight) : undefined,
+        remainingFingerlingQty: harvestFishIsPartial && harvestFishRemainingFingerlings ? parseInt(harvestFishRemainingFingerlings) : undefined
       });
 
       setHarvestFishBatch(null);
       setMsg({
         type: 'success',
-        text: `মাছের ব্যাচ ${harvestFishBatch.id} আহরণ ও বিক্রয় সম্পন্ন হয়েছে! (ভাউচার: ${result.voucherNumber || 'হালনাগাদ'})`
+        text: `মাছের ব্যাচ ${harvestFishBatch.id} ${harvestFishIsPartial ? 'আংশিক ' : ''}আহরণ ও বিক্রয় সম্পন্ন হয়েছে! (ভাউচার: ${result.voucherNumber || 'হালনাগাদ'})`
       });
-      setFishFilter('COMPLETED');
+      if (!harvestFishIsPartial) {
+        setFishFilter('COMPLETED');
+      }
       loadOpsData();
     } catch (err: any) {
       setMsg({ type: 'error', text: err.message });
@@ -1396,6 +1417,9 @@ export const FarmOperationsModule: React.FC<Props> = ({
 
   const handleOpenCropHarvest = (cycle: CropCycle) => {
     setHarvestCropCycle(cycle);
+    setHarvestCropIsPartial(false);
+    setHarvestCropPortionPercentage('50');
+    setHarvestCropRemainingArea('');
     setHarvestCropYield(cycle.harvestYieldKg ? String(cycle.harvestYieldKg) : '');
     setHarvestCropPrice('');
     setHarvestCropPaymentMethod('CASH');
@@ -1426,6 +1450,10 @@ export const FarmOperationsModule: React.FC<Props> = ({
         return;
       }
 
+      const portionRatio = harvestCropIsPartial
+        ? Math.min(1, Math.max(0.01, (parseFloat(harvestCropPortionPercentage) || 50) / 100))
+        : 1;
+
       const result = await executeCropHarvestAndSaleTransaction({
         cycleId: harvestCropCycle.id,
         harvestYieldKg: yieldKg,
@@ -1435,15 +1463,20 @@ export const FarmOperationsModule: React.FC<Props> = ({
         customerName: harvestCropCustomer.trim() || undefined,
         date: harvestCropDate,
         notes: harvestCropNotes.trim() || undefined,
-        currentUserId: currentUserId || 'system-user'
+        currentUserId: currentUserId || 'system-user',
+        isPartialHarvest: harvestCropIsPartial,
+        harvestPortionRatio: portionRatio,
+        remainingAreaDecimals: harvestCropIsPartial && harvestCropRemainingArea ? parseFloat(harvestCropRemainingArea) : undefined
       });
 
       setHarvestCropCycle(null);
       setMsg({
         type: 'success',
-        text: `শস্য চক্র ${harvestCropCycle.id} কর্তন ও বিক্রয় সম্পন্ন হয়েছে! (ভাউচার: ${result.voucherNumber || 'হালনাগাদ'})`
+        text: `শস্য চক্র ${harvestCropCycle.id} ${harvestCropIsPartial ? 'আংশিক ' : ''}কর্তন ও বিক্রয় সম্পন্ন হয়েছে! (ভাউচার: ${result.voucherNumber || 'হালনাগাদ'})`
       });
-      setCropFilter('COMPLETED');
+      if (!harvestCropIsPartial) {
+        setCropFilter('COMPLETED');
+      }
       loadOpsData();
     } catch (err: any) {
       setMsg({ type: 'error', text: err.message });
