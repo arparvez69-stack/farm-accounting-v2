@@ -2,7 +2,7 @@ import { validateBalancedLines } from '../accounting/accountingEngine';
 import { DEFAULT_CHART_OF_ACCOUNTS } from '../accounting/defaultAccounts';
 import { getInventoryAssetAccount, getPaymentAccount, CANONICAL_ACCOUNTS } from '../accounting/accountMapping';
 import { generateTransactionNumber, generateUniqueId } from '../utils/idGenerator';
-import { JournalLine, Animal, AnimalEvent, InventoryItem, Party, Sale, Purchase, FishBatch, CropCycle, FixedAsset } from '../types';
+import { JournalLine, Animal, AnimalEvent, InventoryItem, Party, Sale, Purchase, FishBatch, CropCycle, FixedAsset, StockMovement, PaymentRecord } from '../types';
 import {
   calculateFishBatchRecordedCosts,
   calculateCropCycleRecordedCosts,
@@ -13,9 +13,21 @@ import {
   executeInvestorTransaction,
   executeInvestorProfitAllocationTransaction,
   executeInvestorProfitPaymentTransaction,
-  executeInvestorCapitalReturnTransaction
+  executeInvestorCapitalReturnTransaction,
+  executeSaleTransaction,
+  executePurchaseTransaction,
+  executePaymentTransaction,
+  executeFishHarvestAndSaleTransaction,
+  executeCropHarvestAndSaleTransaction,
+  executeStockAdjustmentTransaction,
+  executeProductionReceiptTransaction
 } from '../services/transactionService';
-import { executeAssetDepreciationAtomic, executeFixedAssetDisposalTransaction } from '../accounting/depreciationService';
+import {
+  executeAssetDepreciationAtomic,
+  executeFixedAssetDisposalTransaction,
+  hasAssetPostedAccounting,
+  executeEditFixedAssetTransaction
+} from '../accounting/depreciationService';
 
 export interface TestResult {
   success: boolean;
@@ -137,6 +149,9 @@ export class MockTable<T extends { id: string }> {
       },
       count: async (): Promise<number> => {
         return Array.from(this.store.values()).filter(predicate).length;
+      },
+      first: async (): Promise<T | undefined> => {
+        return Array.from(this.store.values()).find(predicate);
       }
     };
   }
@@ -156,6 +171,9 @@ export function createMockAgroDatabase() {
     parties: new MockTable<Party>(),
     purchases: new MockTable<Purchase>(),
     sales: new MockTable<Sale>(),
+    payments: new MockTable<any>(),
+    fishBatches: new MockTable<any>(),
+    cropCycles: new MockTable<any>(),
     journalEntries: new MockTable<any>(),
     cashBankAccounts: new MockTable<any>(),
     bankTransfers: new MockTable<any>(),
@@ -1869,6 +1887,269 @@ async function runRegressionTestsInternal(): Promise<TestResult> {
     );
 
     // -------------------------------------------------------------------------
+    // TASK 11: PROTECT POSTED FIXED-ASSET HISTORY VERIFICATION
+    // -------------------------------------------------------------------------
+    // 1. Draft asset with no posted accounting/depreciation
+    const draftAsset: FixedAsset = {
+      id: 'AST-DRAFT-1',
+      name: 'অস্থায়ী খসড়া পাম্প (Draft Pump)',
+      category: 'MACHINERY',
+      purchaseDate: '2026-04-01',
+      originalCost: 15000,
+      usefulLifeYears: 5,
+      salvageValue: 1000,
+      accumulatedDepreciation: 0,
+      currentBookValue: 15000,
+      depreciationRatePercent: 20,
+      lastDepreciationDate: '2026-04-01',
+      status: 'ACTIVE',
+      synced: false
+    };
+    await assetMockDb.fixedAssets.put(draftAsset);
+
+    const draftCheck = await hasAssetPostedAccounting(draftAsset, assetMockDb);
+    assert(!draftCheck.hasAccounting, 'Draft asset with no posted journals/depreciation must have hasAccounting: false.');
+
+    // Edit unposted draft asset (all fields allowed)
+    const draftEditRes = await executeEditFixedAssetTransaction(
+      {
+        assetId: draftAsset.id,
+        name: 'সংশোধিত পাম্প (Corrected Pump)',
+        category: 'BUILDINGS',
+        purchaseDate: '2026-04-05',
+        originalCost: 18000,
+        usefulLifeYears: 8,
+        salvageValue: 2000,
+        depreciationRatePercent: 12.5,
+        currentUserId: 'TESTER_1'
+      },
+      assetMockDb
+    );
+    assert(draftEditRes.updatedAsset.name === 'সংশোধিত পাম্প (Corrected Pump)', 'Draft asset name should update successfully.');
+    assert(draftEditRes.updatedAsset.originalCost === 18000, 'Draft asset cost should update successfully.');
+    assert(draftEditRes.updatedAsset.category === 'BUILDINGS', 'Draft asset category should update successfully.');
+    assert(draftEditRes.updatedAsset.currentBookValue === 18000, 'Draft asset book value should recalculate cleanly.');
+
+    // 2. Asset with posted depreciation (accounting history exists)
+    const activePostedAsset: FixedAsset = {
+      id: 'AST-POSTED-ACTIVE',
+      name: 'আধুনিক গভীর নলকূপ (Modern Tube-well)',
+      category: 'MACHINERY',
+      purchaseDate: '2026-01-01',
+      originalCost: 120000,
+      usefulLifeYears: 10,
+      salvageValue: 0,
+      accumulatedDepreciation: 2000,
+      currentBookValue: 118000,
+      depreciationRatePercent: 10,
+      lastDepreciationDate: '2026-03-01',
+      journalEntryId: 'j_ast_initial_1',
+      status: 'ACTIVE',
+      synced: false
+    };
+    await assetMockDb.fixedAssets.put(activePostedAsset);
+
+    const postedCheck = await hasAssetPostedAccounting(activePostedAsset, assetMockDb);
+    assert(postedCheck.hasAccounting, 'Asset with accumulated depreciation > 0 must be flagged as having posted accounting.');
+    assert(
+      postedCheck.reason?.includes('অবচয়') || postedCheck.reason?.includes('জাবেদা'),
+      'Posted asset reason must explicitly identify depreciation or GL entries.'
+    );
+
+    // 2a. Safe non-accounting metadata edit (name) on posted asset must succeed
+    const safeNameEditRes = await executeEditFixedAssetTransaction(
+      {
+        assetId: activePostedAsset.id,
+        name: 'আধুনিক গভীর নলকূপ (সংশোধিত নাম)',
+        currentUserId: 'TESTER_1'
+      },
+      assetMockDb
+    );
+    assert(
+      safeNameEditRes.updatedAsset.name === 'আধুনিক গভীর নলকূপ (সংশোধিত নাম)',
+      'Changing asset name/description on posted asset must succeed without altering financial figures.'
+    );
+    assert(
+      safeNameEditRes.updatedAsset.originalCost === 120000,
+      'Original cost of posted asset must remain exactly ৳120,000 intact.'
+    );
+    assert(
+      safeNameEditRes.updatedAsset.accumulatedDepreciation === 2000,
+      'Accumulated depreciation of posted asset must remain exactly ৳2,000 intact.'
+    );
+
+    // 2b. Attempt to alter originalCost on posted asset MUST be blocked
+    let costEditBlocked = false;
+    try {
+      await executeEditFixedAssetTransaction(
+        {
+          assetId: activePostedAsset.id,
+          name: 'আধুনিক গভীর নলকূপ (সংশোধিত নাম)',
+          originalCost: 150000,
+          currentUserId: 'TESTER_1'
+        },
+        assetMockDb
+      );
+    } catch (err: any) {
+      costEditBlocked = true;
+      assert(
+        err.message.includes('হিসাবরক্ষণ সুরক্ষানীতি') || err.message.includes('মূল ক্রয়মূল্য') || err.message.includes('protected'),
+        'Blocked cost edit must produce a protective accounting error message.'
+      );
+    }
+    assert(costEditBlocked, 'Casual alteration of originalCost on posted asset must be strictly blocked.');
+
+    // 2c. Attempt to alter asset category on posted asset MUST be blocked
+    let categoryEditBlocked = false;
+    try {
+      await executeEditFixedAssetTransaction(
+        {
+          assetId: activePostedAsset.id,
+          name: 'আধুনিক গভীর নলকূপ (সংশোধিত নাম)',
+          category: 'LAND',
+          currentUserId: 'TESTER_1'
+        },
+        assetMockDb
+      );
+    } catch (err: any) {
+      categoryEditBlocked = true;
+      assert(
+        err.message.includes('হিসাবরক্ষণ সুরক্ষানীতি') || err.message.includes('ক্যাটাগরি'),
+        'Blocked category edit must produce a protective accounting error message.'
+      );
+    }
+    assert(categoryEditBlocked, 'Casual alteration of asset category on posted asset must be strictly blocked.');
+
+    // 2d. Attempt to alter purchaseDate (acquisition date) on posted asset MUST be blocked
+    let dateEditBlocked = false;
+    try {
+      await executeEditFixedAssetTransaction(
+        {
+          assetId: activePostedAsset.id,
+          name: 'আধুনিক গভীর নলকূপ (সংশোধিত নাম)',
+          purchaseDate: '2025-01-01',
+          currentUserId: 'TESTER_1'
+        },
+        assetMockDb
+      );
+    } catch (err: any) {
+      dateEditBlocked = true;
+      assert(
+        err.message.includes('হিসাবরক্ষণ সুরক্ষানীতি') || err.message.includes('অর্জনের তারিখ'),
+        'Blocked date edit must produce a protective accounting error message.'
+      );
+    }
+    assert(dateEditBlocked, 'Casual alteration of acquisition date on posted asset must be strictly blocked.');
+
+    // 2e. Attempt to alter usefulLifeYears on posted asset MUST be blocked
+    let lifeEditBlocked = false;
+    try {
+      await executeEditFixedAssetTransaction(
+        {
+          assetId: activePostedAsset.id,
+          name: 'আধুনিক গভীর নলকূপ (সংশোধিত নাম)',
+          usefulLifeYears: 20,
+          currentUserId: 'TESTER_1'
+        },
+        assetMockDb
+      );
+    } catch (err: any) {
+      lifeEditBlocked = true;
+      assert(
+        err.message.includes('হিসাবরক্ষণ সুরক্ষানীতি') || err.message.includes('আয়ুষ্কাল'),
+        'Blocked useful life edit must produce a protective accounting error message.'
+      );
+    }
+    assert(lifeEditBlocked, 'Casual alteration of useful life on posted asset must be strictly blocked.');
+
+    // 2f. Attempt to alter salvageValue on posted asset MUST be blocked
+    let salvageEditBlocked = false;
+    try {
+      await executeEditFixedAssetTransaction(
+        {
+          assetId: activePostedAsset.id,
+          name: 'আধুনিক গভীর নলকূপ (সংশোধিত নাম)',
+          salvageValue: 15000,
+          currentUserId: 'TESTER_1'
+        },
+        assetMockDb
+      );
+    } catch (err: any) {
+      salvageEditBlocked = true;
+      assert(
+        err.message.includes('হিসাবরক্ষণ সুরক্ষানীতি') || err.message.includes('ভগ্নাবশেষ মূল্য'),
+        'Blocked salvage value edit must produce a protective accounting error message.'
+      );
+    }
+    assert(salvageEditBlocked, 'Casual alteration of salvage value on posted asset must be strictly blocked.');
+
+    // 2g. Attempt to alter depreciationRatePercent on posted asset MUST be blocked
+    let rateEditBlocked = false;
+    try {
+      await executeEditFixedAssetTransaction(
+        {
+          assetId: activePostedAsset.id,
+          name: 'আধুনিক গভীর নলকূপ (সংশোধিত নাম)',
+          depreciationRatePercent: 25,
+          currentUserId: 'TESTER_1'
+        },
+        assetMockDb
+      );
+    } catch (err: any) {
+      rateEditBlocked = true;
+      assert(
+        err.message.includes('হিসাবরক্ষণ সুরক্ষানীতি') || err.message.includes('অবচয় হার'),
+        'Blocked depreciation rate edit must produce a protective accounting error message.'
+      );
+    }
+    assert(rateEditBlocked, 'Casual alteration of depreciation rate on posted asset must be strictly blocked.');
+
+    // 2h. Confirm asset in DB remains completely unchanged and uncorrupted after rejected attempts
+    const assetFinalCheck = (await assetMockDb.fixedAssets.get(activePostedAsset.id))!;
+    assert(assetFinalCheck.originalCost === 120000, 'Asset original cost in DB must remain ৳120,000.');
+    assert(assetFinalCheck.usefulLifeYears === 10, 'Asset useful life in DB must remain 10 years.');
+    assert(assetFinalCheck.salvageValue === 0, 'Asset salvage value in DB must remain 0.');
+    assert(assetFinalCheck.depreciationRatePercent === 10, 'Asset depreciation rate in DB must remain 10%.');
+    assert(assetFinalCheck.accumulatedDepreciation === 2000, 'Asset accumulated depreciation must remain ৳2,000.');
+    assert(assetFinalCheck.currentBookValue === 118000, 'Asset book value must remain ৳118,000.');
+
+    // 3. Disposed asset is also strictly protected from changes to financial parameters
+    const disposedAssetTask11: FixedAsset = {
+      id: 'AST-DISPOSED-1',
+      name: 'পুরাতন ট্র্যাক্টর (Old Tractor)',
+      category: 'VEHICLES',
+      purchaseDate: '2024-01-01',
+      originalCost: 500000,
+      usefulLifeYears: 5,
+      salvageValue: 50000,
+      accumulatedDepreciation: 400000,
+      currentBookValue: 0,
+      depreciationRatePercent: 20,
+      lastDepreciationDate: '2025-12-31',
+      status: 'DISPOSED',
+      synced: false
+    };
+    await assetMockDb.fixedAssets.put(disposedAssetTask11);
+    const disposedCheck = await hasAssetPostedAccounting(disposedAssetTask11, assetMockDb);
+    assert(disposedCheck.hasAccounting, 'Disposed asset must always be flagged as having posted accounting.');
+
+    let disposedEditBlocked = false;
+    try {
+      await executeEditFixedAssetTransaction(
+        {
+          assetId: disposedAssetTask11.id,
+          name: 'পুরাতন ট্র্যাক্টর',
+          originalCost: 600000,
+          currentUserId: 'TESTER_1'
+        },
+        assetMockDb
+      );
+    } catch {
+      disposedEditBlocked = true;
+    }
+    assert(disposedEditBlocked, 'Editing financial fields on a DISPOSED asset must be blocked.');
+
+    // -------------------------------------------------------------------------
     // TASK 8: INVESTOR ACCOUNTING MODEL VERIFICATION (SLEEPING PARTNER)
     // -------------------------------------------------------------------------
     const invMockDb = createMockAgroDatabase();
@@ -2418,6 +2699,509 @@ async function runRegressionTestsInternal(): Promise<TestResult> {
       assert(err.message.includes('বন্ধ হিসাবকালের'), 'Payment in closed period must be prevented.');
     }
     assert(payInClosedPeriodCaught, 'Closed period must block profit payment.');
+
+    // =========================================================================
+    // TASK 10: AR & INVENTORY SUBLEDGER SYNCHRONIZATION TESTS
+    // =========================================================================
+
+    // -------------------------------------------------------------------------
+    // 1. AR Subledger Sync: Credit Sale and Payment Reconcile with GL
+    // -------------------------------------------------------------------------
+    const arTestDb = createMockAgroDatabase();
+    for (const acc of accounts) {
+      await arTestDb.accounts.put({ ...acc });
+    }
+
+    const arBankAcc = {
+      id: 'cba_ar_bank',
+      name: 'রূপালী ব্যাংক (Rupali Bank)',
+      accountType: 'BANK',
+      accountNumber: '12345678',
+      currentBalance: 100000,
+      synced: false
+    };
+    await arTestDb.cashBankAccounts.put(arBankAcc);
+
+    const arCashAcc = {
+      id: 'cba_ar_cash',
+      name: 'প্রধান ক্যাশ (Main Cash)',
+      accountType: 'CASH',
+      currentBalance: 50000,
+      synced: false
+    };
+    await arTestDb.cashBankAccounts.put(arCashAcc);
+
+    const customerParty: Party = {
+      id: 'pty_cust_01',
+      name: 'মেসার্স রহিম ট্রেডার্স (Rahim Traders)',
+      phone: '01711000000',
+      type: 'CUSTOMER',
+      balance: 0,
+      isActive: true,
+      synced: false
+    };
+    await arTestDb.parties.put(customerParty);
+
+    const fishBatch1: FishBatch = {
+      id: 'fb_task10_01',
+      pondId: 'pond_01',
+      pondName: 'পুকুর ১',
+      species: 'রুই মাছ',
+      stockingDate: '2026-01-15',
+      fingerlingQty: 1000,
+      fingerlingCost: 15000,
+      totalFeedKg: 500,
+      totalFeedCost: 20000,
+      labourCost: 5000,
+      mortalityCount: 5,
+      currentEstimatedWeightKg: 350,
+      status: 'ACTIVE',
+      synced: false
+    };
+    await arTestDb.fishBatches.put(fishBatch1);
+
+    // Execute Fish Harvest and Credit Sale (Dr AR 1040 -> Cr Revenue 4010)
+    const harvestSaleRes = await executeFishHarvestAndSaleTransaction(
+      {
+        batchId: fishBatch1.id,
+        harvestWeightKg: 300,
+        mortalityCount: 10,
+        salePrice: 45000,
+        paymentMethod: 'CREDIT',
+        customerId: customerParty.id,
+        customerName: customerParty.name,
+        date: '2026-07-01',
+        currentUserId: 'usr_owner'
+      },
+      arTestDb
+    );
+
+    assert(harvestSaleRes.sale !== undefined, 'Sale record must be generated for harvest credit sale.');
+    assert(harvestSaleRes.sale?.status === 'DUE', 'Credit sale invoice status must be DUE.');
+    assert(harvestSaleRes.sale?.dueAmount === 45000, 'Credit sale invoice dueAmount must be ৳45,000.');
+    assert(harvestSaleRes.sale?.paidAmount === 0, 'Credit sale invoice paidAmount must be 0.');
+
+    // Verify Customer Party AR balance increased
+    const custAfterSale = await arTestDb.parties.get(customerParty.id);
+    assert(custAfterSale?.balance === 45000, 'Customer AR party balance must increase to ৳45,000 on credit sale.');
+
+    // Verify GL Accounts Receivable (1040) entry
+    const allJournals = await arTestDb.journalEntries.toArray();
+    let totalGlArDebit = 0;
+    let totalGlArCredit = 0;
+    for (const j of allJournals) {
+      for (const line of j.lines) {
+        if (line.accountCode === CANONICAL_ACCOUNTS.ACCOUNTS_RECEIVABLE) {
+          totalGlArDebit += line.debit || 0;
+          totalGlArCredit += line.credit || 0;
+        }
+      }
+    }
+    const netGlAr = totalGlArDebit - totalGlArCredit;
+    assert(netGlAr === 45000, 'GL Accounts Receivable (1040) net balance must be ৳45,000.');
+    assert(custAfterSale?.balance === netGlAr, 'Customer subledger balance must exactly reconcile with GL AR balance.');
+
+    // Execute Payment Part 1 (৳25,000 via BANK: Dr Bank 1030 -> Cr AR 1040)
+    const pmt1Res = await executePaymentTransaction(
+      {
+        parentType: 'SALE',
+        parentId: harvestSaleRes.sale!.id,
+        amount: 25000,
+        paymentMethod: 'BANK',
+        bankAccountId: arBankAcc.id,
+        date: '2026-07-05',
+        note: 'প্রথম কিস্তি আদায়',
+        currentUserId: 'usr_owner'
+      },
+      arTestDb
+    );
+
+    assert(pmt1Res.payment.amount === 25000, 'Payment 1 amount must be ৳25,000.');
+
+    // Verify Customer Party AR balance reduced by ৳25,000
+    const custAfterPmt1 = await arTestDb.parties.get(customerParty.id);
+    assert(custAfterPmt1?.balance === 20000, 'Customer AR party balance must reduce to ৳20,000 (45,000 - 25,000).');
+
+    // Verify Sale invoice status updated to PARTIAL
+    const saleAfterPmt1 = await arTestDb.sales.get(harvestSaleRes.sale!.id);
+    assert(saleAfterPmt1?.status === 'PARTIAL', 'Sale status must be updated to PARTIAL.');
+    assert(saleAfterPmt1?.paidAmount === 25000, 'Sale paidAmount must be ৳25,000.');
+    assert(saleAfterPmt1?.dueAmount === 20000, 'Sale dueAmount must be ৳20,000.');
+
+    // Verify Bank balance increased
+    const bankAfterPmt1 = await arTestDb.cashBankAccounts.get(arBankAcc.id);
+    assert(bankAfterPmt1?.currentBalance === 125000, 'Bank balance must increase to ৳125,000.');
+
+    // Verify GL AR reconciles after Payment 1
+    const pmt1Journal = await arTestDb.journalEntries.get(pmt1Res.journalEntryId);
+    assert(pmt1Journal !== undefined, 'Payment 1 journal entry must exist.');
+    const pmt1DrBank = pmt1Journal.lines.find((l: any) => l.accountCode === CANONICAL_ACCOUNTS.BANK && l.debit === 25000);
+    const pmt1CrAr = pmt1Journal.lines.find((l: any) => l.accountCode === CANONICAL_ACCOUNTS.ACCOUNTS_RECEIVABLE && l.credit === 25000);
+    assert(!!pmt1DrBank, 'Payment 1 must Debit Bank (1030) for ৳25,000.');
+    assert(!!pmt1CrAr, 'Payment 1 must Credit AR (1040) for ৳25,000.');
+
+    const journalsAfterPmt1 = await arTestDb.journalEntries.toArray();
+    let netGlArAfterPmt1 = 0;
+    for (const j of journalsAfterPmt1) {
+      for (const line of j.lines) {
+        if (line.accountCode === CANONICAL_ACCOUNTS.ACCOUNTS_RECEIVABLE) {
+          netGlArAfterPmt1 += (line.debit || 0) - (line.credit || 0);
+        }
+      }
+    }
+    assert(netGlArAfterPmt1 === 20000, 'Net GL AR after payment 1 must be ৳20,000.');
+    assert(custAfterPmt1?.balance === netGlArAfterPmt1, 'Customer AR balance must strictly reconcile with GL AR after Payment 1.');
+
+    // Execute Payment Part 2 (Remaining ৳20,000 via CASH: Dr Cash 1010 -> Cr AR 1040)
+    const pmt2Res = await executePaymentTransaction(
+      {
+        parentType: 'SALE',
+        parentId: harvestSaleRes.sale!.id,
+        amount: 20000,
+        paymentMethod: 'CASH',
+        date: '2026-07-10',
+        note: 'চুড়ান্ত কিস্তি আদায়',
+        currentUserId: 'usr_owner'
+      },
+      arTestDb
+    );
+
+    assert(pmt2Res.payment.amount === 20000, 'Payment 2 amount must be ৳20,000.');
+
+    // Customer Party AR balance must now be strictly 0
+    const custAfterPmt2 = await arTestDb.parties.get(customerParty.id);
+    assert(custAfterPmt2?.balance === 0, 'Customer AR party balance must be strictly ৳0 after full settlement.');
+
+    // Sale invoice status must be PAID
+    const saleAfterPmt2 = await arTestDb.sales.get(harvestSaleRes.sale!.id);
+    assert(saleAfterPmt2?.status === 'PAID', 'Sale invoice status must be PAID after full payment.');
+    assert(saleAfterPmt2?.dueAmount === 0, 'Sale invoice dueAmount must be 0.');
+    assert(saleAfterPmt2?.paidAmount === 45000, 'Sale invoice paidAmount must be ৳45,000.');
+
+    // Cash balance increased
+    const cashAfterPmt2 = await arTestDb.cashBankAccounts.get(arCashAcc.id);
+    assert(cashAfterPmt2?.currentBalance === 70000, 'Cash balance must increase to ৳70,000 (50,000 + 20,000).');
+
+    // Final GL AR balance must be 0, reconciling with customer party balance 0
+    const journalsAfterPmt2 = await arTestDb.journalEntries.toArray();
+    let netGlArFinal = 0;
+    for (const j of journalsAfterPmt2) {
+      for (const line of j.lines) {
+        if (line.accountCode === CANONICAL_ACCOUNTS.ACCOUNTS_RECEIVABLE) {
+          netGlArFinal += (line.debit || 0) - (line.credit || 0);
+        }
+      }
+    }
+    assert(netGlArFinal === 0, 'GL AR net balance must be 0.');
+    assert(custAfterPmt2?.balance === netGlArFinal, 'Customer balance and GL AR must reconcile to 0.');
+
+    // Verify payments list count: exactly 2 payments
+    const paymentsForInvoice = await arTestDb.payments.where('parentId').equals(harvestSaleRes.sale!.id).toArray();
+    assert(paymentsForInvoice.length === 2, 'Exactly 2 payments must be recorded for this invoice.');
+
+    // -------------------------------------------------------------------------
+    // 1b. Crop Credit Sale and Payment Flow (AR Subledger & GL Reconciliation)
+    // -------------------------------------------------------------------------
+    const cropParty: Party = {
+      id: 'pty_cust_crop_01',
+      name: 'ফার্মার্স পাইকারি আড়ত (Farmers Wholesale)',
+      type: 'CUSTOMER',
+      phone: '01711000000',
+      balance: 0,
+      isActive: true,
+      synced: false
+    };
+    await arTestDb.parties.put(cropParty);
+
+    const testCropCycle: CropCycle = {
+      id: 'cc_task10_01',
+      plotId: 'plot_01',
+      plotName: 'উত্তর মাঠ (North Field)',
+      cropName: 'হাইব্রিড ভুট্টা (Hybrid Corn)',
+      cropCategory: 'GRAIN',
+      plantingDate: '2026-03-01',
+      expectedHarvestDate: '2026-07-06',
+      areaDecimals: 50,
+      seedCost: 4000,
+      fertilizerCost: 6000,
+      protectionCost: 2000,
+      labourCost: 3000,
+      irrigationCost: 1500,
+      otherCost: 500,
+      totalCost: 17000,
+      harvestYieldKg: 0,
+      harvestRevenue: 0,
+      internalConsumptionKg: 0,
+      status: 'GROWING',
+      synced: false
+    };
+    await arTestDb.cropCycles.put(testCropCycle);
+
+    // Execute Crop credit sale: ৳35,000 credit
+    const cropSaleRes = await executeCropHarvestAndSaleTransaction(
+      {
+        cycleId: testCropCycle.id,
+        harvestYieldKg: 1000,
+        salePrice: 35000,
+        paymentMethod: 'CREDIT',
+        customerId: cropParty.id,
+        customerName: cropParty.name,
+        date: '2026-07-06',
+        currentUserId: 'usr_owner'
+      },
+      arTestDb
+    );
+
+    assert(cropSaleRes.sale !== undefined, 'Crop sale record must be created.');
+    assert(cropSaleRes.sale?.dueAmount === 35000, 'Crop credit sale dueAmount must be ৳35,000.');
+    assert(cropSaleRes.sale?.status === 'DUE', 'Crop credit sale status must be DUE.');
+
+    // Verify Customer AR balance increased by ৳35,000
+    const cropCustAfterSale = await arTestDb.parties.get(cropParty.id);
+    assert(cropCustAfterSale?.balance === 35000, 'Customer AR balance must increase to ৳35,000 after crop credit sale.');
+
+    // Verify GL AR entry created: Dr AR 1040 ৳35,000 / Cr Crop Revenue 4040 ৳35,000
+    const cropSaleJournal = await arTestDb.journalEntries.get(cropSaleRes.sale!.journalEntryId!);
+    assert(cropSaleJournal !== undefined, 'Crop sale revenue journal entry must exist.');
+    const cropDrArLine = cropSaleJournal.lines.find((l: any) => l.accountCode === CANONICAL_ACCOUNTS.ACCOUNTS_RECEIVABLE && l.debit === 35000);
+    const cropCrRevLine = cropSaleJournal.lines.find((l: any) => l.accountCode === CANONICAL_ACCOUNTS.CROP_REVENUE && l.credit === 35000);
+    assert(cropDrArLine !== undefined, 'Crop credit sale must debit AR (1040) for ৳35,000.');
+    assert(cropCrRevLine !== undefined, 'Crop credit sale must credit Crop Revenue (4040) for ৳35,000.');
+
+    // Execute Full Payment: ৳35,000 via CASH: Dr Cash 1010 -> Cr AR 1040
+    const cropPmtRes = await executePaymentTransaction(
+      {
+        parentType: 'SALE',
+        parentId: cropSaleRes.sale!.id,
+        amount: 35000,
+        paymentMethod: 'CASH',
+        date: '2026-07-07',
+        note: 'সম্পূর্ণ বকেয়া আদায়',
+        currentUserId: 'usr_owner'
+      },
+      arTestDb
+    );
+
+    assert(cropPmtRes.payment.amount === 35000, 'Crop payment amount must be ৳35,000.');
+
+    // Verify Customer Party AR balance reduced to ৳0
+    const cropCustAfterPmt = await arTestDb.parties.get(cropParty.id);
+    assert(cropCustAfterPmt?.balance === 0, 'Customer AR balance must reduce to 0 after full payment.');
+
+    // Verify Sale invoice status updated to PAID
+    const cropSaleAfterPmt = await arTestDb.sales.get(cropSaleRes.sale!.id);
+    assert(cropSaleAfterPmt?.status === 'PAID', 'Crop sale status must be PAID.');
+    assert(cropSaleAfterPmt?.dueAmount === 0, 'Crop sale dueAmount must be 0.');
+    assert(cropSaleAfterPmt?.paidAmount === 35000, 'Crop sale paidAmount must be ৳35,000.');
+
+    // Verify overall AR reconciliation
+    const allArJournals = await arTestDb.journalEntries.toArray();
+    let netGlArOverall = 0;
+    for (const j of allArJournals) {
+      for (const line of j.lines) {
+        if (line.accountCode === CANONICAL_ACCOUNTS.ACCOUNTS_RECEIVABLE) {
+          netGlArOverall += (line.debit || 0) - (line.credit || 0);
+        }
+      }
+    }
+    assert(netGlArOverall === 0, 'All GL AR balances must fully reconcile to 0 after full payments.');
+
+    // -------------------------------------------------------------------------
+    // 2. Inventory Subledger Sync: Purchase, Consumption, Sale, Adjustment, Receipt
+    // -------------------------------------------------------------------------
+    const invTestDb = createMockAgroDatabase();
+    for (const acc of accounts) {
+      await invTestDb.accounts.put({ ...acc });
+    }
+
+    const invCashAcc = {
+      id: 'cba_inv_cash',
+      name: 'প্রধান ক্যাশ (Main Cash)',
+      accountType: 'CASH',
+      currentBalance: 100000,
+      synced: false
+    };
+    await invTestDb.cashBankAccounts.put(invCashAcc);
+
+    const supplierParty: Party = {
+      id: 'pty_supp_01',
+      name: 'ন্যাশনাল ফিড লিমিটেড (National Feed Ltd)',
+      phone: '01811000000',
+      type: 'SUPPLIER',
+      balance: 0,
+      isActive: true,
+      synced: false
+    };
+    await invTestDb.parties.put(supplierParty);
+
+    const buyerParty: Party = {
+      id: 'pty_buyer_01',
+      name: 'লোকাল ডিলার (Local Dealer)',
+      phone: '01911000000',
+      type: 'CUSTOMER',
+      balance: 0,
+      isActive: true,
+      synced: false
+    };
+    await invTestDb.parties.put(buyerParty);
+
+    // Initial Inventory Item (Poultry Feed, stock 0)
+    const feedItem: InventoryItem = {
+      id: 'it_feed_01',
+      code: 'FEED-001',
+      nameBn: 'ব্রয়লার ফিড গ্রোয়ার',
+      nameEn: 'Broiler Feed Grower',
+      category: 'FEED',
+      unit: 'কেজি',
+      currentStock: 0,
+      reorderLevel: 50,
+      avgCostPrice: 0,
+      sellingPrice: 70,
+      synced: false
+    };
+    await invTestDb.inventoryItems.put(feedItem);
+
+    // Step A: Purchase 200 kg @ ৳50/kg (Total ৳10,000)
+    const purchRes = await executePurchaseTransaction(
+      {
+        supplier: supplierParty,
+        item: feedItem,
+        quantity: 200,
+        unitPrice: 50,
+        paymentMethod: 'CASH',
+        date: '2026-07-01',
+        currentUserId: 'usr_owner'
+      },
+      invTestDb
+    );
+
+    assert(purchRes.purchase !== undefined, 'Purchase transaction must succeed.');
+
+    // Verify Inventory Item Stock and Avg Cost updated
+    const itemAfterPurch = await invTestDb.inventoryItems.get(feedItem.id);
+    assert(itemAfterPurch?.currentStock === 200, 'Item currentStock must be 200 kg after purchase.');
+    assert(itemAfterPurch?.avgCostPrice === 50, 'Item avgCostPrice must be ৳50.');
+
+    // Verify StockMovement recorded: exactly 1 PURCHASE movement
+    const movementsAfterPurch = await invTestDb.stockMovements.where('itemId').equals(feedItem.id).toArray();
+    assert(movementsAfterPurch.length === 1, 'Exactly 1 stock movement must exist after purchase.');
+    assert(movementsAfterPurch[0].movementType === 'PURCHASE', 'Movement type must be PURCHASE.');
+    assert(movementsAfterPurch[0].quantity === 200, 'Movement quantity must be 200.');
+    assert(movementsAfterPurch[0].unitCost === 50, 'Movement unitCost must be 50.');
+    assert(movementsAfterPurch[0].totalValue === 10000, 'Movement totalValue must be 10,000.');
+
+    // Step B: Production Consumption (Feed 50 kg used in production)
+    // Decrement stock and record CONSUMPTION movement
+    const cleanConsumeQty = 50;
+    const newStockAfterConsume = itemAfterPurch!.currentStock - cleanConsumeQty;
+    await invTestDb.inventoryItems.update(feedItem.id, {
+      currentStock: newStockAfterConsume,
+      synced: false
+    });
+    const consumeMovement: StockMovement = {
+      id: generateUniqueId('sm_consume'),
+      date: '2026-07-03',
+      itemId: feedItem.id,
+      movementType: 'CONSUMPTION',
+      quantity: cleanConsumeQty,
+      unitCost: itemAfterPurch!.avgCostPrice,
+      totalValue: cleanConsumeQty * itemAfterPurch!.avgCostPrice,
+      referenceId: 'batch_prod_01',
+      notes: 'উৎপাদনে ৫০ কেজি খাদ্য ব্যবহার',
+      synced: false
+    };
+    await invTestDb.stockMovements.put(consumeMovement);
+
+    const itemAfterConsume = await invTestDb.inventoryItems.get(feedItem.id);
+    assert(itemAfterConsume?.currentStock === 150, 'Item currentStock must be 150 kg after consumption.');
+
+    const movementsAfterConsume = await invTestDb.stockMovements.where('itemId').equals(feedItem.id).toArray();
+    assert(movementsAfterConsume.length === 2, 'Exactly 2 stock movements must exist after consumption.');
+    const hasConsumeMov = movementsAfterConsume.some((m: any) => m.movementType === 'CONSUMPTION' && m.quantity === 50);
+    assert(hasConsumeMov, 'CONSUMPTION movement for 50 kg must be recorded.');
+
+    // Step C: Inventory Sale (Sell 50 kg @ ৳70/kg)
+    const saleRes = await executeSaleTransaction(
+      {
+        customer: buyerParty,
+        item: itemAfterConsume!,
+        quantity: 50,
+        unitPrice: 70,
+        paymentMethod: 'CASH',
+        date: '2026-07-05',
+        currentUserId: 'usr_owner'
+      },
+      invTestDb
+    );
+
+    assert(saleRes.sale !== undefined, 'Sale transaction must succeed.');
+
+    // Verify Item Stock after Sale: 150 - 50 = 100 kg
+    const itemAfterSale = await invTestDb.inventoryItems.get(feedItem.id);
+    assert(itemAfterSale?.currentStock === 100, 'Item currentStock must be 100 kg after sale.');
+
+    // Verify StockMovement recorded: exactly 1 SALE movement added
+    const movementsAfterSale = await invTestDb.stockMovements.where('itemId').equals(feedItem.id).toArray();
+    assert(movementsAfterSale.length === 3, 'Exactly 3 stock movements must exist after sale.');
+    const saleMov = movementsAfterSale.find((m: any) => m.movementType === 'SALE');
+    assert(saleMov !== undefined, 'SALE stock movement must be recorded.');
+    assert(saleMov?.quantity === 50, 'Sale movement quantity must be 50.');
+    assert(saleMov?.unitCost === 50, 'Sale movement unitCost (COGS unit) must be 50.');
+
+    // Step D: Inventory Adjustment (10 kg damaged: ADJUSTMENT)
+    const adjRes = await executeStockAdjustmentTransaction(
+      {
+        itemId: feedItem.id,
+        adjustmentType: 'DECREASE',
+        quantity: 10,
+        reason: 'ইঁদুরে বস্তা কেটে নষ্ট করেছে',
+        date: '2026-07-07',
+        currentUserId: 'usr_owner'
+      },
+      invTestDb
+    );
+
+    assert(adjRes.updatedItem.currentStock === 90, 'Item currentStock must be 90 kg after decrease adjustment.');
+    assert(adjRes.movement.movementType === 'ADJUSTMENT', 'Adjustment movementType must be ADJUSTMENT.');
+    assert(adjRes.movement.quantity === 10, 'Adjustment movement quantity must be 10.');
+
+    // Step E: Farm Production Receipt into Inventory (30 kg produced received)
+    const receiptRes = await executeProductionReceiptTransaction(
+      {
+        itemId: feedItem.id,
+        quantity: 30,
+        unitCost: 50,
+        date: '2026-07-09',
+        notes: 'উৎপাদন শাখা হতে প্রাপ্তি',
+        currentUserId: 'usr_owner'
+      },
+      invTestDb
+    );
+
+    assert(receiptRes.updatedItem.currentStock === 120, 'Item currentStock must be 120 kg after production receipt.');
+    assert(receiptRes.movement.movementType === 'PRODUCTION', 'Receipt movementType must be PRODUCTION.');
+    assert(receiptRes.movement.quantity === 30, 'Receipt quantity must be 30.');
+
+    // Subledger Stock Movements Verification:
+    // Total stock = Purchase(200) - Consumption(50) - Sale(50) - Adjustment(10) + Production(30) = 120 kg
+    const allItemMovements = await invTestDb.stockMovements.where('itemId').equals(feedItem.id).toArray();
+    assert(allItemMovements.length === 5, 'Exactly 5 stock movements must be recorded.');
+
+    let netMovementQty = 0;
+    for (const m of allItemMovements) {
+      if (m.movementType === 'PURCHASE' || m.movementType === 'PRODUCTION' || m.movementType === 'OPENING') {
+        netMovementQty += m.quantity;
+      } else if (m.movementType === 'SALE' || m.movementType === 'CONSUMPTION' || m.movementType === 'DAMAGE' || m.movementType === 'WASTE') {
+        netMovementQty -= m.quantity;
+      } else if (m.movementType === 'ADJUSTMENT') {
+        // Decrease was tested
+        netMovementQty -= m.quantity;
+      }
+    }
+    assert(netMovementQty === 120, 'Net subledger movement quantity must sum to 120 kg.');
+    const finalItem = await invTestDb.inventoryItems.get(feedItem.id);
+    assert(finalItem?.currentStock === netMovementQty, 'Inventory physical stock must strictly equal net subledger movements.');
+
 
   } catch (error: any) {
     failures.push(`CRITICAL RUNTIME ERROR: ${error.message}`);

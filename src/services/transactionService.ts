@@ -31,35 +31,40 @@ import {
   CropCycle,
   CropCostBreakdown,
   CropProductionCostParams,
-  StockMovement
+  StockMovement,
+  PaymentRecord
 } from '../types';
 import { generateAmortizationSchedule } from '../accounting/amortizationService';
 
 /**
  * Atomic Execution of Sales Invoice Transaction
  */
-export async function executeSaleTransaction(params: {
-  customer: Party;
-  item: InventoryItem;
-  quantity: number;
-  unitPrice: number;
-  discount?: number;
-  paymentMethod: 'CASH' | 'BANK' | 'CREDIT';
-  bankAccountId?: string;
-  currentUserId: string;
-  date?: string;
-}): Promise<{ sale: Sale; journalEntryId: string }> {
-  return await db.transaction(
+export async function executeSaleTransaction(
+  params: {
+    customer: Party;
+    item: InventoryItem;
+    quantity: number;
+    unitPrice: number;
+    discount?: number;
+    paymentMethod: 'CASH' | 'BANK' | 'CREDIT';
+    bankAccountId?: string;
+    currentUserId: string;
+    date?: string;
+  },
+  dbInstance: any = db
+): Promise<{ sale: Sale; journalEntryId: string }> {
+  return await dbInstance.transaction(
     'rw',
     [
-      db.journalEntries,
-      db.sales,
-      db.inventoryItems,
-      db.parties,
-      db.cashBankAccounts,
-      db.accounts,
-      db.auditLogs,
-      db.closedPeriods
+      dbInstance.journalEntries,
+      dbInstance.sales,
+      dbInstance.inventoryItems,
+      dbInstance.stockMovements,
+      dbInstance.parties,
+      dbInstance.cashBankAccounts,
+      dbInstance.accounts,
+      dbInstance.auditLogs,
+      dbInstance.closedPeriods
     ],
     async () => {
       const { customer, item, quantity, unitPrice, discount = 0, paymentMethod, bankAccountId, currentUserId, date } = params;
@@ -71,7 +76,7 @@ export async function executeSaleTransaction(params: {
       }
 
       // Re-fetch fresh item state inside transaction
-      const freshItem = await db.inventoryItems.get(item.id);
+      const freshItem = await dbInstance.inventoryItems.get(item.id);
       if (!freshItem) {
         throw new Error(`Item ${item.id} not found.`);
       }
@@ -103,7 +108,7 @@ export async function executeSaleTransaction(params: {
       const { revenueCode, cogsCode } = getRevenueAndCogsAccounts(freshItem);
       const inventoryAssetCode = getInventoryAssetAccount(freshItem.category);
 
-      const accounts = await db.accounts.toArray();
+      const accounts = await dbInstance.accounts.toArray();
       const journalLines: JournalLine[] = [
         {
           accountId: paymentAccountCode,
@@ -167,7 +172,7 @@ export async function executeSaleTransaction(params: {
       );
 
       // 1. Safe insert journal entry
-      await safeInsert(db.journalEntries, journalEntry, { idPrefix: 'j' });
+      await safeInsert(dbInstance.journalEntries, journalEntry, { idPrefix: 'j' });
 
       // 2. Safe insert sales invoice
       const saleRecord: Sale = {
@@ -200,49 +205,64 @@ export async function executeSaleTransaction(params: {
         status: paymentMethod === 'CREDIT' ? 'DUE' : 'PAID',
         synced: false
       };
-      await safeInsert(db.sales, saleRecord, { idPrefix: 'sal' });
+      await safeInsert(dbInstance.sales, saleRecord, { idPrefix: 'sal' });
 
       // 3. Deduct Inventory Stock
-      await db.inventoryItems.update(freshItem.id, {
+      await dbInstance.inventoryItems.update(freshItem.id, {
         currentStock: Math.round((freshItem.currentStock - quantity) * 100) / 100,
         synced: false
       });
 
-      // 4. Update Customer AR balance if credit sale
+      // 4. Record StockMovement for SALE
+      const stockMovement: StockMovement = {
+        id: generateUniqueId('sm_sal'),
+        date: dateStr,
+        itemId: freshItem.id,
+        movementType: 'SALE',
+        quantity,
+        unitCost: freshItem.avgCostPrice || unitPrice,
+        totalValue: totalCogs || Math.round(quantity * (freshItem.avgCostPrice || unitPrice) * 100) / 100,
+        referenceId: invoiceNumber,
+        notes: `বিক্রয় চালান ${invoiceNumber}: ${customer.name} কে ${quantity} ${freshItem.unit} ${freshItem.nameBn} বিক্রয়`,
+        synced: false
+      };
+      await safeInsert(dbInstance.stockMovements, stockMovement, { idPrefix: 'sm' });
+
+      // 5. Update Customer AR balance if credit sale
       if (paymentMethod === 'CREDIT') {
-        const freshCustomer = await db.parties.get(customer.id);
+        const freshCustomer = await dbInstance.parties.get(customer.id);
         if (freshCustomer) {
-          await db.parties.update(customer.id, {
+          await dbInstance.parties.update(customer.id, {
             balance: Math.round(((freshCustomer.balance || 0) + totalAmount) * 100) / 100
           });
         }
       }
 
-      // 5. Update Operational Cash / Bank balance consistently with GL
+      // 6. Update Operational Cash / Bank balance consistently with GL
       if (paymentMethod === 'CASH') {
-        const cashAcc = await db.cashBankAccounts.where('accountType').equals('CASH').first();
+        const cashAcc = await dbInstance.cashBankAccounts.where('accountType').equals('CASH').first();
         if (cashAcc) {
-          await db.cashBankAccounts.update(cashAcc.id, {
+          await dbInstance.cashBankAccounts.update(cashAcc.id, {
             currentBalance: Math.round((cashAcc.currentBalance + totalAmount) * 100) / 100
           });
         }
       } else if (paymentMethod === 'BANK') {
         let bankAcc: CashBankAccount | undefined;
         if (bankAccountId) {
-          bankAcc = await db.cashBankAccounts.get(bankAccountId);
+          bankAcc = await dbInstance.cashBankAccounts.get(bankAccountId);
         }
         if (!bankAcc) {
-          bankAcc = await db.cashBankAccounts.where('accountType').equals('BANK').first();
+          bankAcc = await dbInstance.cashBankAccounts.where('accountType').equals('BANK').first();
         }
         if (bankAcc) {
-          await db.cashBankAccounts.update(bankAcc.id, {
+          await dbInstance.cashBankAccounts.update(bankAcc.id, {
             currentBalance: Math.round((bankAcc.currentBalance + totalAmount) * 100) / 100
           });
         }
       }
 
-      // 6. Record Audit Log
-      await safeInsert(db.auditLogs, {
+      // 7. Record Audit Log
+      await safeInsert(dbInstance.auditLogs, {
         id: generateUniqueId('audit'),
         timestamp: new Date().toISOString(),
         userId: currentUserId,
@@ -262,29 +282,33 @@ export async function executeSaleTransaction(params: {
 /**
  * Atomic Execution of Purchase Invoice Transaction
  */
-export async function executePurchaseTransaction(params: {
-  supplier: Party;
-  item: InventoryItem;
-  quantity: number;
-  unitPrice: number;
-  transportCost?: number;
-  discount?: number;
-  paymentMethod: 'CASH' | 'BANK' | 'CREDIT';
-  bankAccountId?: string;
-  currentUserId: string;
-  date?: string;
-}): Promise<{ purchase: Purchase; journalEntryId: string }> {
-  return await db.transaction(
+export async function executePurchaseTransaction(
+  params: {
+    supplier: Party;
+    item: InventoryItem;
+    quantity: number;
+    unitPrice: number;
+    transportCost?: number;
+    discount?: number;
+    paymentMethod: 'CASH' | 'BANK' | 'CREDIT';
+    bankAccountId?: string;
+    currentUserId: string;
+    date?: string;
+  },
+  dbInstance: any = db
+): Promise<{ purchase: Purchase; journalEntryId: string }> {
+  return await dbInstance.transaction(
     'rw',
     [
-      db.journalEntries,
-      db.purchases,
-      db.inventoryItems,
-      db.parties,
-      db.cashBankAccounts,
-      db.accounts,
-      db.auditLogs,
-      db.closedPeriods
+      dbInstance.journalEntries,
+      dbInstance.purchases,
+      dbInstance.inventoryItems,
+      dbInstance.stockMovements,
+      dbInstance.parties,
+      dbInstance.cashBankAccounts,
+      dbInstance.accounts,
+      dbInstance.auditLogs,
+      dbInstance.closedPeriods
     ],
     async () => {
       const { supplier, item, quantity, unitPrice, transportCost = 0, discount = 0, paymentMethod, bankAccountId, currentUserId, date } = params;
@@ -295,7 +319,7 @@ export async function executePurchaseTransaction(params: {
         throw new Error(`ক্রয় চালানের তারিখ ভবিষ্যতের হতে পারে না (${todayStr} বা তার পূর্বের তারিখ নির্বাচন করুন)।`);
       }
 
-      const freshItem = await db.inventoryItems.get(item.id);
+      const freshItem = await dbInstance.inventoryItems.get(item.id);
       if (!freshItem) {
         throw new Error(`Item ${item.id} not found.`);
       }
@@ -319,7 +343,7 @@ export async function executePurchaseTransaction(params: {
       const inventoryAssetCode = getInventoryAssetAccount(freshItem.category);
       const paymentAccountCode = getPaymentAccount(paymentMethod, 'PURCHASE');
 
-      const accounts = await db.accounts.toArray();
+      const accounts = await dbInstance.accounts.toArray();
       const journalLines: JournalLine[] = [
         {
           accountId: inventoryAssetCode,
@@ -364,7 +388,7 @@ export async function executePurchaseTransaction(params: {
       );
 
       // 1. Safe insert journal entry
-      await safeInsert(db.journalEntries, journalEntry, { idPrefix: 'j' });
+      await safeInsert(dbInstance.journalEntries, journalEntry, { idPrefix: 'j' });
 
       // 2. Safe insert purchase invoice
       const purchaseRecord: Purchase = {
@@ -396,55 +420,70 @@ export async function executePurchaseTransaction(params: {
         status: paymentMethod === 'CREDIT' ? 'DUE' : 'PAID',
         synced: false
       };
-      await safeInsert(db.purchases, purchaseRecord, { idPrefix: 'pur' });
+      await safeInsert(dbInstance.purchases, purchaseRecord, { idPrefix: 'pur' });
 
       // 3. Update stock and weighted average cost price
       const newStock = Math.round((freshItem.currentStock + quantity) * 100) / 100;
       const prevTotalCost = (freshItem.currentStock || 0) * (freshItem.avgCostPrice || 0);
       const newAvgCost = newStock > 0 ? Math.round(((prevTotalCost + grandTotal) / newStock) * 100) / 100 : unitPrice;
 
-      await db.inventoryItems.update(freshItem.id, {
+      await dbInstance.inventoryItems.update(freshItem.id, {
         currentStock: newStock,
         avgCostPrice: newAvgCost,
         lastRestockAmount: quantity,
         synced: false
       });
 
-      // 4. Update Supplier AP balance if credit purchase
+      // 4. Record StockMovement for PURCHASE
+      const stockMovement: StockMovement = {
+        id: generateUniqueId('sm_pur'),
+        date: dateStr,
+        itemId: freshItem.id,
+        movementType: 'PURCHASE',
+        quantity,
+        unitCost: unitPrice,
+        totalValue: grandTotal,
+        referenceId: invoiceNumber,
+        notes: `ক্রয় চালান ${invoiceNumber}: ${supplier.name} থেকে ${quantity} ${freshItem.unit} ${freshItem.nameBn} ক্রয়`,
+        synced: false
+      };
+      await safeInsert(dbInstance.stockMovements, stockMovement, { idPrefix: 'sm' });
+
+      // 5. Update Supplier AP balance if credit purchase
       if (paymentMethod === 'CREDIT') {
-        const freshSupplier = await db.parties.get(supplier.id);
+        const freshSupplier = await dbInstance.parties.get(supplier.id);
         if (freshSupplier) {
-          await db.parties.update(supplier.id, {
+          await dbInstance.parties.update(supplier.id, {
             balance: Math.round(((freshSupplier.balance || 0) + grandTotal) * 100) / 100
           });
         }
       }
 
-      // 5. Update Operational Cash / Bank balance consistently with GL
+      // 6. Update Operational Cash / Bank balance consistently with GL
       if (paymentMethod === 'CASH') {
-        const cashAcc = await db.cashBankAccounts.where('accountType').equals('CASH').first();
+        const cashAcc = await dbInstance.cashBankAccounts.where('accountType').equals('CASH').first();
         if (cashAcc) {
-          await db.cashBankAccounts.update(cashAcc.id, {
+          await dbInstance.cashBankAccounts.update(cashAcc.id, {
             currentBalance: Math.round((cashAcc.currentBalance - grandTotal) * 100) / 100
           });
         }
       } else if (paymentMethod === 'BANK') {
         let bankAcc: CashBankAccount | undefined;
         if (bankAccountId) {
-          bankAcc = await db.cashBankAccounts.get(bankAccountId);
+          bankAcc = await dbInstance.cashBankAccounts.get(bankAccountId);
         }
         if (!bankAcc) {
-          bankAcc = await db.cashBankAccounts.where('accountType').equals('BANK').first();
+          bankAcc = await dbInstance.cashBankAccounts.where('accountType').equals('BANK').first();
         }
         if (bankAcc) {
-          await db.cashBankAccounts.update(bankAcc.id, {
+          await dbInstance.cashBankAccounts.update(bankAcc.id, {
             currentBalance: Math.round((bankAcc.currentBalance - grandTotal) * 100) / 100
           });
         }
       }
 
-      // 6. Record Audit Log
-      await safeInsert(db.auditLogs, {
+      // 7. Record Audit Log
+      await safeInsert(dbInstance.auditLogs, {
         id: generateUniqueId('audit'),
         timestamp: new Date().toISOString(),
         userId: currentUserId,
@@ -3949,6 +3988,7 @@ export interface FishHarvestSaleParams {
   salePrice: number;
   paymentMethod: 'CASH' | 'BANK' | 'CREDIT';
   bankAccountId?: string;
+  customerId?: string;
   customerName?: string;
   date?: string;
   notes?: string;
@@ -3956,7 +3996,8 @@ export interface FishHarvestSaleParams {
 }
 
 export async function executeFishHarvestAndSaleTransaction(
-  params: FishHarvestSaleParams
+  params: FishHarvestSaleParams,
+  dbInstance: any = db
 ): Promise<{
   updatedBatch: FishBatch;
   sale?: Sale;
@@ -3965,16 +4006,17 @@ export async function executeFishHarvestAndSaleTransaction(
   cogsJournalEntryId?: string;
   cogsVoucherNumber?: string;
 }> {
-  return await db.transaction(
+  return await dbInstance.transaction(
     'rw',
     [
-      db.fishBatches,
-      db.journalEntries,
-      db.cashBankAccounts,
-      db.accounts,
-      db.sales,
-      db.auditLogs,
-      db.closedPeriods
+      dbInstance.fishBatches,
+      dbInstance.journalEntries,
+      dbInstance.cashBankAccounts,
+      dbInstance.accounts,
+      dbInstance.sales,
+      dbInstance.auditLogs,
+      dbInstance.closedPeriods,
+      dbInstance.parties
     ],
     async () => {
       const {
@@ -3996,14 +4038,14 @@ export async function executeFishHarvestAndSaleTransaction(
         throw new Error(`আহরণ ও বিক্রয়ের তারিখ ভবিষ্যতের হতে পারে না (${todayStr} বা তার পূর্বের তারিখ নির্বাচন করুন)।`);
       }
 
-      const closedPeriod = await db.closedPeriods
-        .filter((p) => (p.startDate ? p.startDate <= dateStr : true) && p.endDate >= dateStr)
+      const closedPeriod = await dbInstance.closedPeriods
+        .filter((p: any) => (p.startDate ? p.startDate <= dateStr : true) && p.endDate >= dateStr)
         .first();
       if (closedPeriod) {
         throw new Error(`হিসাবকাল বন্ধ রয়েছে (${closedPeriod.notes || closedPeriod.endDate})। এই তারিখে নতুন লেনদেন পোস্টিং অনুমোদিত নয়।`);
       }
 
-      const freshBatch = await db.fishBatches.get(batchId);
+      const freshBatch = await dbInstance.fishBatches.get(batchId);
       if (!freshBatch) {
         throw new Error(`মাছের ব্যাচ পাওয়া যায়নি (ID: ${batchId})।`);
       }
@@ -4021,16 +4063,16 @@ export async function executeFishHarvestAndSaleTransaction(
         if (!bankAccountId) {
           throw new Error('ব্যাংক মাধ্যমে বিক্রয়ের জন্য ব্যাংক হিসাব নির্বাচন করা আবশ্যক।');
         }
-        bankAcc = await db.cashBankAccounts.get(bankAccountId);
+        bankAcc = await dbInstance.cashBankAccounts.get(bankAccountId);
         if (!bankAcc) {
           throw new Error('নির্বাচিত ব্যাংক হিসাবটি ডাটাবেজে পাওয়া যায়নি।');
         }
       }
 
-      const accounts = await db.accounts.toArray();
+      const accounts = await dbInstance.accounts.toArray();
 
       // Ensure canonical accounts exist
-      let fishRevAcc = accounts.find((a) => a.code === CANONICAL_ACCOUNTS.FISH_REVENUE);
+      let fishRevAcc = accounts.find((a: Account) => a.code === CANONICAL_ACCOUNTS.FISH_REVENUE);
       if (!fishRevAcc) {
         const newAcc: Account = {
           id: 'acc_4010',
@@ -4042,12 +4084,12 @@ export async function executeFishHarvestAndSaleTransaction(
           isSystem: true,
           isActive: true
         };
-        await safeInsert(db.accounts, newAcc, { idPrefix: 'acc' });
+        await safeInsert(dbInstance.accounts, newAcc, { idPrefix: 'acc' });
         accounts.push(newAcc);
         fishRevAcc = newAcc;
       }
 
-      let fishCogsAcc = accounts.find((a) => a.code === CANONICAL_ACCOUNTS.FISH_COGS);
+      let fishCogsAcc = accounts.find((a: Account) => a.code === CANONICAL_ACCOUNTS.FISH_COGS);
       if (!fishCogsAcc) {
         const newAcc: Account = {
           id: 'acc_5010',
@@ -4059,12 +4101,12 @@ export async function executeFishHarvestAndSaleTransaction(
           isSystem: true,
           isActive: true
         };
-        await safeInsert(db.accounts, newAcc, { idPrefix: 'acc' });
+        await safeInsert(dbInstance.accounts, newAcc, { idPrefix: 'acc' });
         accounts.push(newAcc);
         fishCogsAcc = newAcc;
       }
 
-      let fishMortalityAcc = accounts.find((a) => a.code === CANONICAL_ACCOUNTS.FISH_MORTALITY_LOSS);
+      let fishMortalityAcc = accounts.find((a: Account) => a.code === CANONICAL_ACCOUNTS.FISH_MORTALITY_LOSS);
       if (!fishMortalityAcc) {
         const newAcc: Account = {
           id: 'acc_8030',
@@ -4076,12 +4118,12 @@ export async function executeFishHarvestAndSaleTransaction(
           isSystem: true,
           isActive: true
         };
-        await safeInsert(db.accounts, newAcc, { idPrefix: 'acc' });
+        await safeInsert(dbInstance.accounts, newAcc, { idPrefix: 'acc' });
         accounts.push(newAcc);
         fishMortalityAcc = newAcc;
       }
 
-      let assetAcc = accounts.find((a) => a.code === CANONICAL_ACCOUNTS.LIVESTOCK_ASSETS);
+      let assetAcc = accounts.find((a: Account) => a.code === CANONICAL_ACCOUNTS.LIVESTOCK_ASSETS);
       if (!assetAcc) {
         const newAcc: Account = {
           id: 'acc_1580',
@@ -4093,7 +4135,7 @@ export async function executeFishHarvestAndSaleTransaction(
           isSystem: true,
           isActive: true
         };
-        await safeInsert(db.accounts, newAcc, { idPrefix: 'acc' });
+        await safeInsert(dbInstance.accounts, newAcc, { idPrefix: 'acc' });
         accounts.push(newAcc);
         assetAcc = newAcc;
       }
@@ -4106,7 +4148,7 @@ export async function executeFishHarvestAndSaleTransaction(
 
       if (cleanPrice > 0) {
         const paymentCode = getPaymentAccount(paymentMethod, 'SALE');
-        const paymentAcc = accounts.find((a) => a.code === paymentCode);
+        const paymentAcc = accounts.find((a: Account) => a.code === paymentCode);
 
         const revenueLines: JournalLine[] = [
           {
@@ -4153,23 +4195,64 @@ export async function executeFishHarvestAndSaleTransaction(
           },
           { accounts, skipDbPut: true }
         );
-        await safeInsert(db.journalEntries, revJournalEntry, { idPrefix: 'j' });
+        await safeInsert(dbInstance.journalEntries, revJournalEntry, { idPrefix: 'j' });
         revenueJournalEntryId = revJournalEntry.id;
 
         // Update Cash/Bank account balance
         if (paymentMethod === 'BANK' && bankAcc) {
-          await db.cashBankAccounts.update(bankAcc.id, {
+          await dbInstance.cashBankAccounts.update(bankAcc.id, {
             currentBalance: Math.round((bankAcc.currentBalance + cleanPrice) * 100) / 100,
             synced: false
           });
         } else if (paymentMethod === 'CASH') {
-          const cashAcc = await db.cashBankAccounts.where('accountType').equals('CASH').first();
+          const cashAcc = await dbInstance.cashBankAccounts.where('accountType').equals('CASH').first();
           if (cashAcc) {
-            await db.cashBankAccounts.update(cashAcc.id, {
+            await dbInstance.cashBankAccounts.update(cashAcc.id, {
               currentBalance: Math.round((cashAcc.currentBalance + cleanPrice) * 100) / 100,
               synced: false
             });
           }
+        }
+
+        // Find or create customer party for AR tracking
+        let customerParty: Party | undefined;
+        if (params.customerId) {
+          customerParty = await dbInstance.parties.get(params.customerId);
+        }
+        if (!customerParty && customerName?.trim()) {
+          const trimmedName = customerName.trim().toLowerCase();
+          const allParties: Party[] = await dbInstance.parties.toArray();
+          customerParty = allParties.find(
+            (p: Party) => (p.type === 'CUSTOMER' || p.type === 'BOTH') && p.name.trim().toLowerCase() === trimmedName
+          );
+        }
+        if (!customerParty) {
+          const defaultName = customerName?.trim() || 'সাধারণ ক্রেতা (Local Buyer)';
+          const allParties: Party[] = await dbInstance.parties.toArray();
+          const existingParty = allParties.find((p: Party) => p.name.trim().toLowerCase() === defaultName.toLowerCase());
+          if (existingParty) {
+            customerParty = existingParty;
+          } else {
+            const newParty: Party = {
+              id: generateUniqueId('pty'),
+              type: 'CUSTOMER',
+              name: defaultName,
+              phone: '',
+              balance: 0,
+              isActive: true,
+              synced: false
+            };
+            await safeInsert(dbInstance.parties, newParty, { idPrefix: 'pty' });
+            customerParty = newParty;
+          }
+        }
+
+        // Update Customer AR balance if credit sale
+        if (paymentMethod === 'CREDIT' && customerParty) {
+          await dbInstance.parties.update(customerParty.id, {
+            balance: Math.round(((customerParty.balance || 0) + cleanPrice) * 100) / 100,
+            synced: false
+          });
         }
 
         // Create Sale record
@@ -4179,8 +4262,8 @@ export async function executeFishHarvestAndSaleTransaction(
           invoiceNumber: generateTransactionNumber('SAL'),
           displayNumber: fishDisplayNumber,
           date: dateStr,
-          customerId: 'WALK_IN_CUSTOMER',
-          customerName: customerName?.trim() || 'সাধারণ ক্রেতা (Local Buyer)',
+          customerId: customerParty ? customerParty.id : 'WALK_IN_CUSTOMER',
+          customerName: customerParty ? customerParty.name : (customerName?.trim() || 'সাধারণ ক্রেতা (Local Buyer)'),
           category: 'FISH',
           items: [
             {
@@ -4204,7 +4287,7 @@ export async function executeFishHarvestAndSaleTransaction(
           status: paymentMethod === 'CREDIT' ? 'DUE' : 'PAID',
           synced: false
         };
-        await safeInsert(db.sales, saleRecord, { idPrefix: 'sal' });
+        await safeInsert(dbInstance.sales, saleRecord, { idPrefix: 'sal' });
       }
 
       // Step 2: Production Cost, COGS & Mortality Accounting
@@ -4213,8 +4296,8 @@ export async function executeFishHarvestAndSaleTransaction(
       const totalRecordedCost = recordedCosts.totalRecordedCost;
 
       // Inspect existing journal entries referencing this fish batch
-      const existingEntries = await db.journalEntries
-        .filter((j) => j.reference === freshBatch.id || (j.lines && j.lines.some((l) => l.memo && l.memo.includes(freshBatch.id))))
+      const existingEntries = await dbInstance.journalEntries
+        .filter((j: any) => j.reference === freshBatch.id || (j.lines && j.lines.some((l: any) => l.memo && l.memo.includes(freshBatch.id))))
         .toArray();
 
       // Requirement 6: Do NOT create a second COGS entry for costs already transferred
@@ -4311,7 +4394,7 @@ export async function executeFishHarvestAndSaleTransaction(
               },
               { accounts, skipDbPut: true }
             );
-            await safeInsert(db.journalEntries, integEntry, { idPrefix: 'j' });
+            await safeInsert(dbInstance.journalEntries, integEntry, { idPrefix: 'j' });
             currentAssetBalance = Math.round((currentAssetBalance + missingCapitalization) * 100) / 100;
           }
         }
@@ -4387,13 +4470,13 @@ export async function executeFishHarvestAndSaleTransaction(
           },
           { accounts, skipDbPut: true }
         );
-        await safeInsert(db.journalEntries, cogsEntry, { idPrefix: 'j' });
+        await safeInsert(dbInstance.journalEntries, cogsEntry, { idPrefix: 'j' });
         cogsJournalEntryId = cogsEntry.id;
 
         // If a sale record was created, update its cogsAmount
         if (saleRecord && saleRecord.items && saleRecord.items.length > 0) {
           saleRecord.items[0].cogsAmount = harvestedCogs;
-          await db.sales.put(saleRecord);
+          await dbInstance.sales.put(saleRecord);
         }
       }
 
@@ -4407,11 +4490,11 @@ export async function executeFishHarvestAndSaleTransaction(
         freshBatch.notes = freshBatch.notes ? `${freshBatch.notes} | ${notes.trim()}` : notes.trim();
       }
       freshBatch.synced = false;
-      await db.fishBatches.put(freshBatch);
+      await dbInstance.fishBatches.put(freshBatch);
 
       // Audit Log
       await safeInsert(
-        db.auditLogs,
+        dbInstance.auditLogs,
         {
           id: generateUniqueId('aud'),
           timestamp: new Date().toISOString(),
@@ -5269,6 +5352,7 @@ export interface CropHarvestSaleParams {
   salePrice: number;
   paymentMethod: 'CASH' | 'BANK' | 'CREDIT';
   bankAccountId?: string;
+  customerId?: string;
   customerName?: string;
   date?: string;
   notes?: string;
@@ -5276,18 +5360,20 @@ export interface CropHarvestSaleParams {
 }
 
 export async function executeCropHarvestAndSaleTransaction(
-  params: CropHarvestSaleParams
+  params: CropHarvestSaleParams,
+  dbInstance: any = db
 ): Promise<{ updatedCycle: CropCycle; sale?: Sale; journalEntryId?: string; voucherNumber?: string }> {
-  return await db.transaction(
+  return await dbInstance.transaction(
     'rw',
     [
-      db.cropCycles,
-      db.journalEntries,
-      db.cashBankAccounts,
-      db.accounts,
-      db.sales,
-      db.auditLogs,
-      db.closedPeriods
+      dbInstance.cropCycles,
+      dbInstance.journalEntries,
+      dbInstance.cashBankAccounts,
+      dbInstance.accounts,
+      dbInstance.sales,
+      dbInstance.auditLogs,
+      dbInstance.closedPeriods,
+      dbInstance.parties
     ],
     async () => {
       const {
@@ -5308,14 +5394,14 @@ export async function executeCropHarvestAndSaleTransaction(
         throw new Error(`কর্তন ও বিক্রয়ের তারিখ ভবিষ্যতের হতে পারে না (${todayStr} বা তার পূর্বের তারিখ নির্বাচন করুন)।`);
       }
 
-      const closedPeriod = await db.closedPeriods
-        .filter((p) => (p.startDate ? p.startDate <= dateStr : true) && p.endDate >= dateStr)
+      const closedPeriod = await dbInstance.closedPeriods
+        .filter((p: any) => (p.startDate ? p.startDate <= dateStr : true) && p.endDate >= dateStr)
         .first();
       if (closedPeriod) {
         throw new Error(`হিসাবকাল বন্ধ রয়েছে (${closedPeriod.notes || closedPeriod.endDate})। এই তারিখে নতুন লেনদেন পোস্টিং অনুমোদিত নয়।`);
       }
 
-      const freshCycle = await db.cropCycles.get(cycleId);
+      const freshCycle = await dbInstance.cropCycles.get(cycleId);
       if (!freshCycle) {
         throw new Error(`শস্য চক্র পাওয়া যায়নি (ID: ${cycleId})।`);
       }
@@ -5332,16 +5418,16 @@ export async function executeCropHarvestAndSaleTransaction(
         if (!bankAccountId) {
           throw new Error('ব্যাংক মাধ্যমে বিক্রয়ের জন্য ব্যাংক হিসাব নির্বাচন করা আবশ্যক।');
         }
-        bankAcc = await db.cashBankAccounts.get(bankAccountId);
+        bankAcc = await dbInstance.cashBankAccounts.get(bankAccountId);
         if (!bankAcc) {
           throw new Error('নির্বাচিত ব্যাংক হিসাবটি ডাটাবেজে পাওয়া যায়নি।');
         }
       }
 
-      const accounts = await db.accounts.toArray();
+      const accounts = await dbInstance.accounts.toArray();
 
       // Ensure accounts exist
-      let cropRevAcc = accounts.find((a) => a.code === CANONICAL_ACCOUNTS.CROP_REVENUE);
+      let cropRevAcc = accounts.find((a: any) => a.code === CANONICAL_ACCOUNTS.CROP_REVENUE);
       if (!cropRevAcc) {
         const newAcc: Account = {
           id: 'acc_4040',
@@ -5353,12 +5439,12 @@ export async function executeCropHarvestAndSaleTransaction(
           isSystem: true,
           isActive: true
         };
-        await safeInsert(db.accounts, newAcc, { idPrefix: 'acc' });
+        await safeInsert(dbInstance.accounts, newAcc, { idPrefix: 'acc' });
         accounts.push(newAcc);
         cropRevAcc = newAcc;
       }
 
-      let cropCogsAcc = accounts.find((a) => a.code === CANONICAL_ACCOUNTS.CROP_COGS);
+      let cropCogsAcc = accounts.find((a: any) => a.code === CANONICAL_ACCOUNTS.CROP_COGS);
       if (!cropCogsAcc) {
         const newAcc: Account = {
           id: 'acc_5030',
@@ -5370,12 +5456,12 @@ export async function executeCropHarvestAndSaleTransaction(
           isSystem: true,
           isActive: true
         };
-        await safeInsert(db.accounts, newAcc, { idPrefix: 'acc' });
+        await safeInsert(dbInstance.accounts, newAcc, { idPrefix: 'acc' });
         accounts.push(newAcc);
         cropCogsAcc = newAcc;
       }
 
-      let wipAcc = accounts.find((a) => a.code === CANONICAL_ACCOUNTS.WIP);
+      let wipAcc = accounts.find((a: any) => a.code === CANONICAL_ACCOUNTS.WIP);
       if (!wipAcc) {
         const newAcc: Account = {
           id: 'acc_1054',
@@ -5387,12 +5473,12 @@ export async function executeCropHarvestAndSaleTransaction(
           isSystem: true,
           isActive: true
         };
-        await safeInsert(db.accounts, newAcc, { idPrefix: 'acc' });
+        await safeInsert(dbInstance.accounts, newAcc, { idPrefix: 'acc' });
         accounts.push(newAcc);
         wipAcc = newAcc;
       }
 
-      let assetAcc = accounts.find((a) => a.code === CANONICAL_ACCOUNTS.LIVESTOCK_ASSETS);
+      let assetAcc = accounts.find((a: any) => a.code === CANONICAL_ACCOUNTS.LIVESTOCK_ASSETS);
       if (!assetAcc) {
         const newAcc: Account = {
           id: 'acc_1580',
@@ -5404,7 +5490,7 @@ export async function executeCropHarvestAndSaleTransaction(
           isSystem: true,
           isActive: true
         };
-        await safeInsert(db.accounts, newAcc, { idPrefix: 'acc' });
+        await safeInsert(dbInstance.accounts, newAcc, { idPrefix: 'acc' });
         accounts.push(newAcc);
         assetAcc = newAcc;
       }
@@ -5414,11 +5500,11 @@ export async function executeCropHarvestAndSaleTransaction(
       const totalRecordedCost = recordedCosts.totalRecordedCost;
 
       // 2. Inspect existing journal entries referencing this crop cycle to prevent duplicate GL postings
-      const existingEntries = await db.journalEntries
+      const existingEntries = await dbInstance.journalEntries
         .filter(
-          (j) =>
+          (j: any) =>
             j.reference === freshCycle.id ||
-            (j.lines && j.lines.some((l) => l.memo && l.memo.includes(freshCycle.id)))
+            (j.lines && j.lines.some((l: any) => l.memo && l.memo.includes(freshCycle.id)))
         )
         .toArray();
 
@@ -5526,7 +5612,7 @@ export async function executeCropHarvestAndSaleTransaction(
               },
               { accounts, skipDbPut: true }
             );
-            await safeInsert(db.journalEntries, reclassEntry, { idPrefix: 'j' });
+            await safeInsert(dbInstance.journalEntries, reclassEntry, { idPrefix: 'j' });
             currentAssetBalance = Math.round((currentAssetBalance + totalReclassed) * 100) / 100;
           }
         }
@@ -5566,7 +5652,7 @@ export async function executeCropHarvestAndSaleTransaction(
               },
               { accounts, skipDbPut: true }
             );
-            await safeInsert(db.journalEntries, integEntry, { idPrefix: 'j' });
+            await safeInsert(dbInstance.journalEntries, integEntry, { idPrefix: 'j' });
             currentAssetBalance = Math.round((currentAssetBalance + missingCapitalization) * 100) / 100;
           }
         }
@@ -5618,7 +5704,7 @@ export async function executeCropHarvestAndSaleTransaction(
           },
           { accounts, skipDbPut: true }
         );
-        await safeInsert(db.journalEntries, cogsEntry, { idPrefix: 'j' });
+        await safeInsert(dbInstance.journalEntries, cogsEntry, { idPrefix: 'j' });
         cogsJournalEntryId = cogsEntry.id;
       }
 
@@ -5673,23 +5759,64 @@ export async function executeCropHarvestAndSaleTransaction(
           },
           { accounts, skipDbPut: true }
         );
-        await safeInsert(db.journalEntries, revenueEntry, { idPrefix: 'j' });
+        await safeInsert(dbInstance.journalEntries, revenueEntry, { idPrefix: 'j' });
         revenueJournalEntryId = revenueEntry.id;
 
         // Cash/Bank ledger update
         if (paymentMethod === 'BANK' && bankAcc) {
-          await db.cashBankAccounts.update(bankAcc.id, {
+          await dbInstance.cashBankAccounts.update(bankAcc.id, {
             currentBalance: Math.round((bankAcc.currentBalance + cleanPrice) * 100) / 100,
             synced: false
           });
         } else if (paymentMethod === 'CASH') {
-          const cashAcc = await db.cashBankAccounts.where('accountType').equals('CASH').first();
+          const cashAcc = await dbInstance.cashBankAccounts.where('accountType').equals('CASH').first();
           if (cashAcc) {
-            await db.cashBankAccounts.update(cashAcc.id, {
+            await dbInstance.cashBankAccounts.update(cashAcc.id, {
               currentBalance: Math.round((cashAcc.currentBalance + cleanPrice) * 100) / 100,
               synced: false
             });
           }
+        }
+
+        // Find or create customer party for AR tracking
+        let customerParty: Party | undefined;
+        if (params.customerId) {
+          customerParty = await dbInstance.parties.get(params.customerId);
+        }
+        if (!customerParty && customerName?.trim()) {
+          const trimmedName = customerName.trim().toLowerCase();
+          const allParties: Party[] = await dbInstance.parties.toArray();
+          customerParty = allParties.find(
+            (p: Party) => (p.type === 'CUSTOMER' || p.type === 'BOTH') && p.name.trim().toLowerCase() === trimmedName
+          );
+        }
+        if (!customerParty) {
+          const defaultName = customerName?.trim() || 'সাধারণ ক্রেতা (Local Buyer)';
+          const allParties: Party[] = await dbInstance.parties.toArray();
+          const existingParty = allParties.find((p: Party) => p.name.trim().toLowerCase() === defaultName.toLowerCase());
+          if (existingParty) {
+            customerParty = existingParty;
+          } else {
+            const newParty: Party = {
+              id: generateUniqueId('pty'),
+              type: 'CUSTOMER',
+              name: defaultName,
+              phone: '',
+              balance: 0,
+              isActive: true,
+              synced: false
+            };
+            await safeInsert(dbInstance.parties, newParty, { idPrefix: 'pty' });
+            customerParty = newParty;
+          }
+        }
+
+        // Update Customer AR balance if credit sale
+        if (paymentMethod === 'CREDIT' && customerParty) {
+          await dbInstance.parties.update(customerParty.id, {
+            balance: Math.round(((customerParty.balance || 0) + cleanPrice) * 100) / 100,
+            synced: false
+          });
         }
 
         const cropDisplayNumber = await generateDisplayNumber('SAL', dateStr);
@@ -5698,8 +5825,8 @@ export async function executeCropHarvestAndSaleTransaction(
           invoiceNumber: generateTransactionNumber('SAL'),
           displayNumber: cropDisplayNumber,
           date: dateStr,
-          customerId: 'WALK_IN_CUSTOMER',
-          customerName: customerName?.trim() || 'সাধারণ ক্রেতা (Local Buyer)',
+          customerId: customerParty ? customerParty.id : 'WALK_IN_CUSTOMER',
+          customerName: customerParty ? customerParty.name : (customerName?.trim() || 'সাধারণ ক্রেতা (Local Buyer)'),
           category: 'CROP',
           items: [
             {
@@ -5723,7 +5850,7 @@ export async function executeCropHarvestAndSaleTransaction(
           status: paymentMethod === 'CREDIT' ? 'DUE' : 'PAID',
           synced: false
         };
-        await safeInsert(db.sales, saleRecord, { idPrefix: 'sal' });
+        await safeInsert(dbInstance.sales, saleRecord, { idPrefix: 'sal' });
       }
 
       // 7. Update CropCycle record
@@ -5732,11 +5859,11 @@ export async function executeCropHarvestAndSaleTransaction(
       freshCycle.actualHarvestDate = dateStr;
       freshCycle.status = 'HARVESTED';
       freshCycle.synced = false;
-      await db.cropCycles.put(freshCycle);
+      await dbInstance.cropCycles.put(freshCycle);
 
       // 8. Audit Log
       await safeInsert(
-        db.auditLogs,
+        dbInstance.auditLogs,
         {
           id: generateUniqueId('aud'),
           timestamp: new Date().toISOString(),
@@ -5761,12 +5888,572 @@ export async function executeCropHarvestAndSaleTransaction(
   );
 }
 
+/**
+ * Atomic Execution of Customer / Supplier Invoice Payment
+ * - For credit sale payment: Dr Cash/Bank -> Cr Accounts Receivable (1020)
+ *   Reduces customer's AR balance in parties table. Reconciles GL AR and customer balance.
+ * - For credit purchase payment: Dr Accounts Payable (2010) -> Cr Cash/Bank
+ *   Reduces supplier's AP balance in parties table. Reconciles GL AP and supplier balance.
+ */
+export interface PaymentTransactionParams {
+  parentType: 'SALE' | 'PURCHASE';
+  parentId: string;
+  amount: number;
+  paymentMethod: 'CASH' | 'BANK';
+  bankAccountId?: string;
+  date?: string;
+  note?: string;
+  currentUserId?: string;
+}
+
+export async function executePaymentTransaction(
+  params: PaymentTransactionParams,
+  dbInstance: any = db
+): Promise<{ payment: PaymentRecord; journalEntryId: string; voucherNumber: string }> {
+  return await dbInstance.transaction(
+    'rw',
+    [
+      dbInstance.payments,
+      dbInstance.sales,
+      dbInstance.purchases,
+      dbInstance.journalEntries,
+      dbInstance.accounts,
+      dbInstance.closedPeriods,
+      dbInstance.cashBankAccounts,
+      dbInstance.parties,
+      dbInstance.auditLogs
+    ],
+    async () => {
+      const {
+        parentType,
+        parentId,
+        amount,
+        paymentMethod,
+        bankAccountId,
+        date = new Date().toISOString().split('T')[0],
+        note,
+        currentUserId = 'system'
+      } = params;
+
+      const amt = Math.round(Math.max(0, amount) * 100) / 100;
+      if (amt <= 0) {
+        throw new Error('পরিশোধের পরিমাণ অবশ্যই ০ এর বেশি হতে হবে।');
+      }
+
+      const isSale = parentType === 'SALE';
+      let saleRec: Sale | undefined;
+      let purchRec: Purchase | undefined;
+      let partyName = '';
+      let partyId = '';
+      let invoiceNumber = '';
+      let totalAmount = 0;
+
+      if (isSale) {
+        saleRec = await dbInstance.sales.get(parentId);
+        if (!saleRec) throw new Error('বিক্রয় চালান পাওয়া যায়নি।');
+        partyName = saleRec.customerName || 'ক্রেতা';
+        partyId = saleRec.customerId || '';
+        invoiceNumber = saleRec.invoiceNumber;
+        totalAmount = saleRec.grandTotal || saleRec.totalAmount;
+      } else {
+        purchRec = await dbInstance.purchases.get(parentId);
+        if (!purchRec) throw new Error('ক্রয় চালান পাওয়া যায়নি।');
+        partyName = purchRec.supplierName || 'সরবরাহকারী';
+        partyId = purchRec.supplierId || '';
+        invoiceNumber = purchRec.invoiceNumber;
+        totalAmount = purchRec.grandTotal || purchRec.totalAmount;
+      }
+
+      // Check closed period
+      const closedPeriod = await dbInstance.closedPeriods
+        .filter((p: any) => (p.startDate ? p.startDate <= date : true) && p.endDate >= date)
+        .first();
+      if (closedPeriod) {
+        throw new Error(`হিসাবকাল বন্ধ রয়েছে (${closedPeriod.notes || closedPeriod.endDate})। এই তারিখে নতুন লেনদেন পোস্টিং অনুমোদিত নয়।`);
+      }
+
+      const accounts: Account[] = await dbInstance.accounts.toArray();
+      const cashBankAccountCode = paymentMethod === 'BANK' ? CANONICAL_ACCOUNTS.BANK : CANONICAL_ACCOUNTS.CASH;
+      const cashBankAccountName = paymentMethod === 'BANK' ? 'ব্যাংক হিসাব (Bank Accounts)' : 'নগদ তহবিল (Cash on Hand)';
+      const arCode = CANONICAL_ACCOUNTS.ACCOUNTS_RECEIVABLE;
+      const arName = 'প্রাপ্য হিসাব (Accounts Receivable)';
+      const apCode = CANONICAL_ACCOUNTS.ACCOUNTS_PAYABLE;
+      const apName = 'প্রদেয় হিসাব (Accounts Payable)';
+
+      let journalLines: JournalLine[] = [];
+      if (isSale) {
+        // Dr Cash/Bank, Cr Accounts Receivable
+        journalLines = [
+          {
+            accountId: cashBankAccountCode,
+            accountCode: cashBankAccountCode,
+            accountName: cashBankAccountName,
+            debit: amt,
+            credit: 0,
+            memo: `বিক্রয় চালান ${invoiceNumber}-এর কিস্তি গ্রহণ: ${partyName}`
+          },
+          {
+            accountId: arCode,
+            accountCode: arCode,
+            accountName: arName,
+            debit: 0,
+            credit: amt,
+            memo: `গ্রাহকের দেনা সমন্বয়: ${partyName} (চালান: ${invoiceNumber})`
+          }
+        ];
+      } else {
+        // Dr Accounts Payable, Cr Cash/Bank
+        journalLines = [
+          {
+            accountId: apCode,
+            accountCode: apCode,
+            accountName: apName,
+            debit: amt,
+            credit: 0,
+            memo: `সরবরাহকারী দেনা পরিশোধ: ${partyName} (চালান: ${invoiceNumber})`
+          },
+          {
+            accountId: cashBankAccountCode,
+            accountCode: cashBankAccountCode,
+            accountName: cashBankAccountName,
+            debit: 0,
+            credit: amt,
+            memo: `ক্রয় চালান ${invoiceNumber}-এর কিস্তি পরিশোধ: ${partyName}`
+          }
+        ];
+      }
+
+      const check = validateBalancedLines(journalLines, accounts);
+      if (!check.isBalanced) {
+        throw new Error(`জাবেদা ভারসাম্যহীন! মোট ডেবিট: ৳${check.totalDebit}, মোট ক্রেডিট: ৳${check.totalCredit}`);
+      }
+
+      const voucherNumber = generateTransactionNumber(isSale ? 'RV' : 'PV');
+      const journalEntry = await postJournalEntry(
+        {
+          id: generateUniqueId('j_pmt'),
+          voucherNumber,
+          voucherType: isSale ? 'RECEIPT' : 'PAYMENT',
+          date,
+          narration: isSale
+            ? `বিক্রয় চালান ${invoiceNumber}-এর কিস্তি আদায় (${partyName}) - ৳${amt}`
+            : `ক্রয় চালান ${invoiceNumber}-এর কিস্তি পরিশোধ (${partyName}) - ৳${amt}`,
+          reference: invoiceNumber,
+          lines: journalLines,
+          createdBy: currentUserId,
+          createdAt: new Date().toISOString()
+        },
+        { accounts, skipDbPut: true }
+      );
+      await safeInsert(dbInstance.journalEntries, journalEntry, { idPrefix: 'j' });
+
+      // Save PaymentRecord
+      const paymentRecord: PaymentRecord = {
+        id: generateUniqueId('pmt'),
+        parentType,
+        parentId,
+        amount: amt,
+        date,
+        note: note?.trim() || undefined,
+        paymentMethod,
+        bankAccountId: bankAccountId || undefined,
+        journalEntryId: journalEntry.id,
+        synced: false
+      };
+      await safeInsert(dbInstance.payments, paymentRecord, { idPrefix: 'pmt' });
+
+      // Update Sale or Purchase invoice
+      const allPaymentsForParent = await dbInstance.payments.where('parentId').equals(parentId).toArray();
+      const totalPaid = allPaymentsForParent.reduce((sum: number, p: PaymentRecord) => sum + (Number(p.amount) || 0), 0);
+      const newDue = Math.max(0, Math.round((totalAmount - totalPaid) * 100) / 100);
+      const newStatus = newDue <= 0 ? 'PAID' : (totalPaid > 0 ? 'PARTIAL' : 'DUE');
+
+      if (isSale) {
+        await dbInstance.sales.update(parentId, {
+          paidAmount: totalPaid,
+          dueAmount: newDue,
+          status: newStatus,
+          synced: false
+        });
+      } else {
+        await dbInstance.purchases.update(parentId, {
+          paidAmount: totalPaid,
+          dueAmount: newDue,
+          status: newStatus,
+          synced: false
+        });
+      }
+
+      // Update operational Cash / Bank account balance
+      if (paymentMethod === 'CASH') {
+        const cashAcc = await dbInstance.cashBankAccounts.where('accountType').equals('CASH').first();
+        if (cashAcc) {
+          const newBal = isSale
+            ? cashAcc.currentBalance + amt
+            : cashAcc.currentBalance - amt;
+          await dbInstance.cashBankAccounts.update(cashAcc.id, {
+            currentBalance: Math.round(newBal * 100) / 100,
+            synced: false
+          });
+        }
+      } else if (paymentMethod === 'BANK') {
+        let bankAcc: CashBankAccount | undefined;
+        if (bankAccountId) {
+          bankAcc = await dbInstance.cashBankAccounts.get(bankAccountId);
+        }
+        if (!bankAcc) {
+          bankAcc = await dbInstance.cashBankAccounts.where('accountType').equals('BANK').first();
+        }
+        if (bankAcc) {
+          const newBal = isSale
+            ? bankAcc.currentBalance + amt
+            : bankAcc.currentBalance - amt;
+          await dbInstance.cashBankAccounts.update(bankAcc.id, {
+            currentBalance: Math.round(newBal * 100) / 100,
+            synced: false
+          });
+        }
+      }
+
+      // Update Customer AR or Supplier AP party balance
+      if (isSale) {
+        let customerParty: Party | undefined;
+        if (partyId) {
+          customerParty = await dbInstance.parties.get(partyId);
+        }
+        if (!customerParty && partyName) {
+          const allParties: Party[] = await dbInstance.parties.toArray();
+          customerParty = allParties.find(
+            (p: Party) => (p.type === 'CUSTOMER' || p.type === 'BOTH') && p.name.trim().toLowerCase() === partyName.trim().toLowerCase()
+          );
+        }
+        if (customerParty) {
+          await dbInstance.parties.update(customerParty.id, {
+            balance: Math.round(((customerParty.balance || 0) - amt) * 100) / 100,
+            synced: false
+          });
+        }
+      } else {
+        let supplierParty: Party | undefined;
+        if (partyId) {
+          supplierParty = await dbInstance.parties.get(partyId);
+        }
+        if (!supplierParty && partyName) {
+          const allParties: Party[] = await dbInstance.parties.toArray();
+          supplierParty = allParties.find(
+            (p: Party) => (p.type === 'SUPPLIER' || p.type === 'BOTH') && p.name.trim().toLowerCase() === partyName.trim().toLowerCase()
+          );
+        }
+        if (supplierParty) {
+          await dbInstance.parties.update(supplierParty.id, {
+            balance: Math.round(((supplierParty.balance || 0) - amt) * 100) / 100,
+            synced: false
+          });
+        }
+      }
+
+      // Record Audit Log
+      await safeInsert(dbInstance.auditLogs, {
+        id: generateUniqueId('aud'),
+        timestamp: new Date().toISOString(),
+        userId: currentUserId,
+        role: 'OWNER',
+        action: isSale ? 'SALE_PAYMENT' : 'PURCHASE_PAYMENT',
+        module: 'COMMERCE',
+        recordId: paymentRecord.id,
+        status: 'SUCCESS',
+        details: `${isSale ? 'বিক্রয়' : 'ক্রয়'} চালান ${invoiceNumber}-এর কিস্তি আদায়/পরিশোধ: ৳${amt} (${partyName})`
+      });
+
+      return {
+        payment: paymentRecord,
+        journalEntryId: journalEntry.id,
+        voucherNumber
+      };
+    }
+  );
+}
+
+/**
+ * Atomic Execution of Inventory Stock Adjustment
+ * - Updates inventory item stock
+ * - Records StockMovement of movementType: 'ADJUSTMENT'
+ * - Posts GL journal entry for stock gain or loss to ensure subledger reconciles with GL
+ */
+export interface StockAdjustmentParams {
+  itemId: string;
+  adjustmentType: 'INCREASE' | 'DECREASE';
+  quantity: number;
+  reason?: string;
+  date?: string;
+  currentUserId?: string;
+}
+
+export async function executeStockAdjustmentTransaction(
+  params: StockAdjustmentParams,
+  dbInstance: any = db
+): Promise<{ updatedItem: InventoryItem; movement: StockMovement; journalEntryId?: string }> {
+  return await dbInstance.transaction(
+    'rw',
+    [
+      dbInstance.inventoryItems,
+      dbInstance.stockMovements,
+      dbInstance.journalEntries,
+      dbInstance.accounts,
+      dbInstance.auditLogs,
+      dbInstance.closedPeriods
+    ],
+    async () => {
+      const {
+        itemId,
+        adjustmentType,
+        quantity,
+        reason,
+        date = new Date().toISOString().split('T')[0],
+        currentUserId = 'system'
+      } = params;
+
+      const cleanQty = Math.max(0, quantity);
+      if (cleanQty <= 0) {
+        throw new Error('সমন্বয়ের পরিমাণ ০ এর বেশি হতে হবে।');
+      }
+
+      const item = await dbInstance.inventoryItems.get(itemId);
+      if (!item) {
+        throw new Error('ইনভেন্টরি আইটেম পাওয়া যায়নি।');
+      }
+
+      const isIncrease = adjustmentType === 'INCREASE';
+      const newStock = isIncrease
+        ? Math.round((item.currentStock + cleanQty) * 100) / 100
+        : Math.max(0, Math.round((item.currentStock - cleanQty) * 100) / 100);
+
+      const effectiveUnitCost = item.avgCostPrice || item.sellingPrice || 0;
+      const totalVal = Math.round(cleanQty * effectiveUnitCost * 100) / 100;
+
+      await dbInstance.inventoryItems.update(item.id, {
+        currentStock: newStock,
+        synced: false
+      });
+
+      const movement: StockMovement = {
+        id: generateUniqueId('sm'),
+        date,
+        itemId: item.id,
+        movementType: 'ADJUSTMENT',
+        quantity: cleanQty,
+        unitCost: effectiveUnitCost,
+        totalValue: totalVal,
+        referenceId: item.id,
+        notes: `স্টক সমন্বয় (${isIncrease ? 'বৃদ্ধি' : 'হ্রাস'}): ${reason || ''} - নতুন মজুদ: ${newStock} ${item.unit}`,
+        synced: false
+      };
+      await safeInsert(dbInstance.stockMovements, movement, { idPrefix: 'sm' });
+
+      // GL journal entry for inventory adjustment:
+      // If increase: Dr Inventory, Cr Other Revenue (4090)
+      // If decrease: Dr Inventory Shrinkage/Loss (5090 / 6150), Cr Inventory
+      let journalEntryId: string | undefined;
+      if (totalVal > 0) {
+        const accounts = await dbInstance.accounts.toArray();
+        const invAccountCode = getInventoryAssetAccount(item.category);
+        const invAcc = accounts.find((a: Account) => a.code === invAccountCode) || {
+          id: `acc_${invAccountCode}`,
+          code: invAccountCode,
+          nameBn: 'মজুদ পণ্য (Inventory)'
+        };
+        const gainLossCode = isIncrease ? CANONICAL_ACCOUNTS.OTHER_REVENUE : CANONICAL_ACCOUNTS.OTHER_COGS;
+        const gainLossAcc = accounts.find((a: Account) => a.code === gainLossCode) || {
+          id: `acc_${gainLossCode}`,
+          code: gainLossCode,
+          nameBn: isIncrease ? 'অন্যান্য আয় (Other Revenue)' : 'অন্যান্য সমন্বয় খরচ (Other COGS)'
+        };
+
+        const invLines: JournalLine[] = isIncrease
+          ? [
+              {
+                accountId: invAcc.id,
+                accountCode: invAccountCode,
+                accountName: invAcc.nameBn,
+                debit: totalVal,
+                credit: 0,
+                memo: `স্টক বৃদ্ধি সমন্বয়: ${item.nameBn} (${cleanQty} ${item.unit})`
+              },
+              {
+                accountId: gainLossAcc.id,
+                accountCode: gainLossCode,
+                accountName: gainLossAcc.nameBn,
+                debit: 0,
+                credit: totalVal,
+                memo: `স্টক বৃদ্ধি সমন্বয়: ${item.nameBn}`
+              }
+            ]
+          : [
+              {
+                accountId: gainLossAcc.id,
+                accountCode: gainLossCode,
+                accountName: gainLossAcc.nameBn,
+                debit: totalVal,
+                credit: 0,
+                memo: `স্টক ঘাটতি/ক্ষতি সমন্বয়: ${item.nameBn} (${cleanQty} ${item.unit})`
+              },
+              {
+                accountId: invAcc.id,
+                accountCode: invAccountCode,
+                accountName: invAcc.nameBn,
+                debit: 0,
+                credit: totalVal,
+                memo: `স্টক হ্রাস সমন্বয়: ${item.nameBn}`
+              }
+            ];
+
+        const voucherNumber = generateTransactionNumber('ADJ');
+        const journalEntry = await postJournalEntry(
+          {
+            id: generateUniqueId('j_adj'),
+            voucherNumber,
+            voucherType: 'ADJUSTMENT',
+            date,
+            narration: `ইনভেন্টরি সমন্বয়: ${item.nameBn} (${isIncrease ? '+' : '-'}${cleanQty} ${item.unit}) - ${reason || ''}`,
+            reference: item.id,
+            lines: invLines,
+            createdBy: currentUserId,
+            createdAt: new Date().toISOString()
+          },
+          { accounts, skipDbPut: true }
+        );
+        await safeInsert(dbInstance.journalEntries, journalEntry, { idPrefix: 'j' });
+        journalEntryId = journalEntry.id;
+      }
+
+      await safeInsert(dbInstance.auditLogs, {
+        id: generateUniqueId('aud'),
+        timestamp: new Date().toISOString(),
+        userId: currentUserId,
+        role: 'OWNER',
+        action: 'STOCK_ADJUSTMENT',
+        module: 'INVENTORY',
+        recordId: item.id,
+        status: 'SUCCESS',
+        details: `ইনভেন্টরি সমন্বয়: ${item.nameBn} (${isIncrease ? '+' : '-'}${cleanQty} ${item.unit})`
+      });
+
+      return {
+        updatedItem: { ...item, currentStock: newStock },
+        movement,
+        journalEntryId
+      };
+    }
+  );
+}
+
+/**
+ * Atomic Execution of Farm Production Receipt into Inventory
+ * - Increases stock of InventoryItem with weighted-average cost calculation
+ * - Records StockMovement with movementType: 'PRODUCTION'
+ */
+export interface ProductionReceiptParams {
+  itemId: string;
+  quantity: number;
+  unitCost: number;
+  date?: string;
+  notes?: string;
+  sourceBatchId?: string;
+  currentUserId?: string;
+}
+
+export async function executeProductionReceiptTransaction(
+  params: ProductionReceiptParams,
+  dbInstance: any = db
+): Promise<{ updatedItem: InventoryItem; movement: StockMovement }> {
+  return await dbInstance.transaction(
+    'rw',
+    [
+      dbInstance.inventoryItems,
+      dbInstance.stockMovements,
+      dbInstance.journalEntries,
+      dbInstance.accounts,
+      dbInstance.auditLogs
+    ],
+    async () => {
+      const {
+        itemId,
+        quantity,
+        unitCost,
+        date = new Date().toISOString().split('T')[0],
+        notes,
+        sourceBatchId,
+        currentUserId = 'system'
+      } = params;
+
+      const cleanQty = Math.max(0, quantity);
+      if (cleanQty <= 0) {
+        throw new Error('উৎপাদন প্রাপ্তির পরিমাণ ০ এর বেশি হতে হবে।');
+      }
+
+      const item = await dbInstance.inventoryItems.get(itemId);
+      if (!item) {
+        throw new Error('ইনভেন্টরি আইটেম পাওয়া যায়নি।');
+      }
+
+      // Weighted average cost update
+      const prevStock = Math.max(0, item.currentStock || 0);
+      const prevCost = item.avgCostPrice || 0;
+      const totalQty = prevStock + cleanQty;
+      const totalCostVal = Math.round((prevStock * prevCost + cleanQty * unitCost) * 100) / 100;
+      const newAvgCost = totalQty > 0 ? Math.round((totalCostVal / totalQty) * 100) / 100 : unitCost;
+      const lineTotal = Math.round(cleanQty * unitCost * 100) / 100;
+
+      await dbInstance.inventoryItems.update(item.id, {
+        currentStock: totalQty,
+        avgCostPrice: newAvgCost,
+        synced: false
+      });
+
+      const movement: StockMovement = {
+        id: generateUniqueId('sm'),
+        date,
+        itemId: item.id,
+        movementType: 'PRODUCTION',
+        quantity: cleanQty,
+        unitCost,
+        totalValue: lineTotal,
+        referenceId: sourceBatchId || item.id,
+        notes: notes || `খামার উৎপাদন থেকে প্রাপ্তি: ${cleanQty} ${item.unit} ${item.nameBn}`,
+        synced: false
+      };
+      await safeInsert(dbInstance.stockMovements, movement, { idPrefix: 'sm' });
+
+      await safeInsert(dbInstance.auditLogs, {
+        id: generateUniqueId('aud'),
+        timestamp: new Date().toISOString(),
+        userId: currentUserId,
+        role: 'OWNER',
+        action: 'PRODUCTION_RECEIPT',
+        module: 'INVENTORY',
+        recordId: item.id,
+        status: 'SUCCESS',
+        details: `উৎপাদন প্রাপ্তি: ${item.nameBn} (+${cleanQty} ${item.unit})`
+      });
+
+      return {
+        updatedItem: { ...item, currentStock: totalQty, avgCostPrice: newAvgCost },
+        movement
+      };
+    }
+  );
+}
+
 // Fixed Asset Atomic Accounting Operations
 export {
   executeFixedAssetDisposalTransaction,
   executeAssetDepreciationAtomic,
+  hasAssetPostedAccounting,
+  executeEditFixedAssetTransaction,
   getAssetGLCode,
   type FixedAssetDisposalParams,
   type FixedAssetDisposalResult,
-  type AssetDepreciationAtomicResult
+  type AssetDepreciationAtomicResult,
+  type EditFixedAssetParams,
+  type EditFixedAssetResult
 } from '../accounting/depreciationService';

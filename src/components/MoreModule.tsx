@@ -46,7 +46,12 @@ import { AuditLog, FixedAsset, SystemConfig, UserRole, AppAccessLog, VaccineTemp
 import { getStoredAuthorizedEmails, getAppAccessLogs, logoutOwner } from '../services/authService';
 import { generateTransactionNumber, generateUniqueId, safeInsert } from '../utils/idGenerator';
 import { getLastSyncTime, formatBackupTimestamp } from '../services/exportService';
-import { runAutomatedDepreciation, executeFixedAssetDisposalTransaction } from '../accounting/depreciationService';
+import {
+  runAutomatedDepreciation,
+  executeFixedAssetDisposalTransaction,
+  hasAssetPostedAccounting,
+  executeEditFixedAssetTransaction
+} from '../accounting/depreciationService';
 import { postJournalEntry } from '../accounting/accountingEngine';
 import { CANONICAL_ACCOUNTS } from '../accounting/accountMapping';
 import { getVaccineTemplates, saveVaccineTemplates, DEFAULT_VACCINE_TEMPLATES } from '../data/vaccineTemplates';
@@ -269,6 +274,8 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
   const [editAssetLifeYears, setEditAssetLifeYears] = useState('5');
   const [editAssetSalvage, setEditAssetSalvage] = useState('0');
   const [editAssetDepreciationRate, setEditAssetDepreciationRate] = useState('10');
+  const [editAssetHasAccounting, setEditAssetHasAccounting] = useState(false);
+  const [editAssetAccountingReason, setEditAssetAccountingReason] = useState<string | null>(null);
   const [submittingEditAsset, setSubmittingEditAsset] = useState(false);
   const [deprLoading, setDeprLoading] = useState(false);
   const [deprFeedback, setDeprFeedback] = useState<string | null>(null);
@@ -584,7 +591,7 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
     }
   };
 
-  const handleOpenEditAsset = (ast: FixedAsset) => {
+  const handleOpenEditAsset = async (ast: FixedAsset) => {
     setEditingAsset(ast);
     setEditAssetName(ast.name);
     setEditAssetCategory(ast.category);
@@ -592,6 +599,10 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
     setEditAssetLifeYears(String(ast.usefulLifeYears || 5));
     setEditAssetSalvage(String(ast.salvageValue || 0));
     setEditAssetDepreciationRate(String(ast.depreciationRatePercent || 10));
+
+    const check = await hasAssetPostedAccounting(ast, db);
+    setEditAssetHasAccounting(check.hasAccounting);
+    setEditAssetAccountingReason(check.reason || null);
   };
 
   const handleSaveEditAsset = async (e: React.FormEvent) => {
@@ -600,178 +611,23 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
 
     try {
       setSubmittingEditAsset(true);
-      const oldCost = editingAsset.originalCost || 0;
-      const newCost = parseFloat(editAssetCost) || 0;
-      const diff = Math.round((newCost - oldCost) * 100) / 100;
-      const todayStr = new Date().toISOString().split('T')[0];
-      const normCat = editAssetCategory === 'BUILDING' ? 'BUILDINGS' : editAssetCategory;
-      const assetAcc = getAssetAccountInfo(normCat);
+      const res = await executeEditFixedAssetTransaction(
+        {
+          assetId: editingAsset.id,
+          name: editAssetName,
+          category: editAssetCategory,
+          purchaseDate: editingAsset.purchaseDate,
+          originalCost: parseFloat(editAssetCost) || 0,
+          usefulLifeYears: parseFloat(editAssetLifeYears) || 5,
+          salvageValue: parseFloat(editAssetSalvage) || 0,
+          depreciationRatePercent: parseFloat(editAssetDepreciationRate) || 10,
+          currentUserId
+        },
+        db
+      );
 
-      let newJournalEntryId = editingAsset.journalEntryId;
-
-      if (diff !== 0) {
-        const accounts = await db.accounts.toArray();
-        const method = editingAsset.paymentMethod || 'CASH';
-        let paymentCode: string = CANONICAL_ACCOUNTS.CASH;
-        let paymentAccountName = 'নগদ টাকা (Cash on Hand)';
-
-        if (method === 'BANK') {
-          paymentCode = CANONICAL_ACCOUNTS.BANK;
-          paymentAccountName = 'ব্যাংক হিসাব (Bank Accounts)';
-        } else if (method === 'CREDIT') {
-          paymentCode = CANONICAL_ACCOUNTS.ACCOUNTS_PAYABLE;
-          paymentAccountName = 'সরবরাহকারীর দেনা (Accounts Payable)';
-        }
-
-        if (editingAsset.journalEntryId) {
-          const absDiff = Math.abs(diff);
-          const lines: JournalLine[] = diff > 0
-            ? [
-                {
-                  accountId: assetAcc.code,
-                  accountCode: assetAcc.code,
-                  accountName: assetAcc.name,
-                  debit: absDiff,
-                  credit: 0,
-                  memo: `সম্পদ ${editingAsset.name} ক্রয়মূল্য সমন্বয় বৃদ্ধি`
-                },
-                {
-                  accountId: paymentCode,
-                  accountCode: paymentCode,
-                  accountName: paymentAccountName,
-                  debit: 0,
-                  credit: absDiff,
-                  memo: `সম্পদ ক্রয়মূল্য সমন্বয় পরিশোধ বৃদ্ধি`
-                }
-              ]
-            : [
-                {
-                  accountId: paymentCode,
-                  accountCode: paymentCode,
-                  accountName: paymentAccountName,
-                  debit: absDiff,
-                  credit: 0,
-                  memo: `সম্পদ ক্রয়মূল্য সমন্বয় পরিশোধ হ্রাস`
-                },
-                {
-                  accountId: assetAcc.code,
-                  accountCode: assetAcc.code,
-                  accountName: assetAcc.name,
-                  debit: 0,
-                  credit: absDiff,
-                  memo: `সম্পদ ${editingAsset.name} ক্রয়মূল্য সমন্বয় হ্রাস`
-                }
-              ];
-
-          const adjEntry = await postJournalEntry(
-            {
-              id: generateUniqueId('j_ast_adj'),
-              voucherNumber: generateTransactionNumber('JV'),
-              voucherType: 'JOURNAL',
-              date: todayStr,
-              narration: `স্থায়ী সম্পদ ${editingAsset.name}-এর ক্রয়মূল্য সমন্বয় (${diff > 0 ? 'বৃদ্ধি' : 'হ্রাস'}: ৳${absDiff})`,
-              reference: editingAsset.id,
-              lines,
-              createdBy: currentUserId,
-              createdAt: new Date().toISOString()
-            },
-            { accounts, skipDbPut: true }
-          );
-          await safeInsert(db.journalEntries, adjEntry, { idPrefix: 'j' });
-
-          if (method === 'CASH') {
-            const cashAcc = await db.cashBankAccounts.where('accountType').equals('CASH').first();
-            if (cashAcc) {
-              await db.cashBankAccounts.update(cashAcc.id, {
-                currentBalance: Math.round((cashAcc.currentBalance - diff) * 100) / 100,
-                synced: false
-              });
-            }
-          } else if (method === 'BANK' && editingAsset.bankAccountId) {
-            const bAcc = await db.cashBankAccounts.get(editingAsset.bankAccountId);
-            if (bAcc) {
-              await db.cashBankAccounts.update(editingAsset.bankAccountId, {
-                currentBalance: Math.round((bAcc.currentBalance - diff) * 100) / 100,
-                synced: false
-              });
-            }
-          } else if (method === 'CREDIT' && editingAsset.supplierId) {
-            const supp = await db.parties.get(editingAsset.supplierId);
-            if (supp) {
-              await db.parties.update(editingAsset.supplierId, {
-                balance: Math.round(((supp.balance || 0) + diff) * 100) / 100,
-                synced: false
-              });
-            }
-          }
-        } else if (newCost > 0) {
-          const lines: JournalLine[] = [
-            {
-              accountId: assetAcc.code,
-              accountCode: assetAcc.code,
-              accountName: assetAcc.name,
-              debit: newCost,
-              credit: 0,
-              memo: `স্থায়ী সম্পদ ক্রয়: ${editingAsset.name}`
-            },
-            {
-              accountId: paymentCode,
-              accountCode: paymentCode,
-              accountName: paymentAccountName,
-              debit: 0,
-              credit: newCost,
-              memo: `স্থায়ী সম্পদ ক্রয় পরিশোধ`
-            }
-          ];
-
-          const jEntry = await postJournalEntry(
-            {
-              id: generateUniqueId('j_ast'),
-              voucherNumber: generateTransactionNumber('PAY'),
-              voucherType: 'PAYMENT',
-              date: todayStr,
-              narration: `স্থায়ী সম্পদ ক্রয়: ${editingAsset.name} (${assetAcc.name}), ক্রয়মূল্য: ৳${newCost}`,
-              reference: editingAsset.id,
-              lines,
-              createdBy: currentUserId,
-              createdAt: new Date().toISOString()
-            },
-            { accounts, skipDbPut: true }
-          );
-          await safeInsert(db.journalEntries, jEntry, { idPrefix: 'j' });
-          newJournalEntryId = jEntry.id;
-
-          if (method === 'CASH') {
-            const cashAcc = await db.cashBankAccounts.where('accountType').equals('CASH').first();
-            if (cashAcc) {
-              await db.cashBankAccounts.update(cashAcc.id, {
-                currentBalance: Math.round((cashAcc.currentBalance - newCost) * 100) / 100,
-                synced: false
-              });
-            }
-          }
-        }
-      }
-
-      const life = parseFloat(editAssetLifeYears) || 5;
-      const rate = parseFloat(editAssetDepreciationRate) || (life > 0 ? Number((100 / life).toFixed(2)) : 10);
-      const newBookValue = Math.max(0, Math.round((newCost - (editingAsset.accumulatedDepreciation || 0)) * 100) / 100);
-
-      const updatedFields: Partial<FixedAsset> = {
-        name: editAssetName.trim(),
-        category: normCat as any,
-        originalCost: newCost,
-        salvageValue: parseFloat(editAssetSalvage) || 0,
-        usefulLifeYears: life,
-        depreciationRatePercent: rate,
-        currentBookValue: newBookValue,
-        journalEntryId: newJournalEntryId,
-        synced: false
-      };
-
-      await db.fixedAssets.update(editingAsset.id, updatedFields);
       setEditingAsset(null);
-      triggerSuccessAnimation('স্থায়ী সম্পদ সফলভাবে হালনাগাদ হয়েছে!', editAssetName);
+      triggerSuccessAnimation('স্থায়ী সম্পদ সংরক্ষিত হয়েছে!', res.updatedAsset.name);
       await loadData();
     } catch (err: any) {
       alert(err.message || 'সম্পদ হালনাগাদ করতে ত্রুটি হয়েছে।');
@@ -1883,6 +1739,25 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
                 </div>
 
                 <form onSubmit={handleSaveEditAsset} className="space-y-3">
+                  {editAssetHasAccounting ? (
+                    <div className="p-3 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 rounded-xl text-xs text-amber-900 dark:text-amber-300 flex items-start gap-2">
+                      <span className="text-sm shrink-0 mt-0.5">🔒</span>
+                      <div className="space-y-1">
+                        <p className="font-bold">হিসাবরক্ষণ সুরক্ষানীতি সক্রিয় (Posted Accounting Protected)</p>
+                        <p className="text-[11px] leading-relaxed">
+                          {editAssetAccountingReason || 'এই সম্পদের জন্য সাধারণ খতিয়ানে জাবেদা বা অবচয় হিসাব পোস্ট করা হয়েছে।'}
+                        </p>
+                        <p className="text-[11px] text-amber-800 dark:text-amber-400">
+                          ঐতিহাসিক তথ্যের নির্ভুলতা ও সাধারণ খতিয়ানের সামঞ্জস্য রক্ষার্থে ক্রয়মূল্য, ক্যাটাগরি, অর্জনের তারিখ, আয়ুষ্কাল, ভগ্নাবশেষ মূল্য এবং অবচয় হার পরিবর্তন লক করা হয়েছে। কেবল সম্পদের নাম বা বিবরণ সংশোধন করা যাবে।
+                        </p>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="p-2.5 bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-900 rounded-xl text-xs text-blue-900 dark:text-blue-300">
+                      ℹ️ এই খসড়া সম্পদের কোনো হিসাব বা অবচয় পোস্ট করা হয়নি। সকল তথ্য সংশোধনযোগ্য।
+                    </div>
+                  )}
+
                   <div>
                     <label className="block text-xs font-semibold text-gray-700 dark:text-slate-300 mb-1">
                       সম্পদের নাম
@@ -1899,12 +1774,13 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
                   <div className="grid grid-cols-2 gap-2.5">
                     <div>
                       <label className="block text-xs font-semibold text-gray-700 dark:text-slate-300 mb-1">
-                        ক্যাটাগরি
+                        ক্যাটাগরি {editAssetHasAccounting && <span className="text-amber-600 dark:text-amber-400 text-[10px] font-normal">(লক করা)</span>}
                       </label>
                       <select
                         value={editAssetCategory}
+                        disabled={editAssetHasAccounting}
                         onChange={(e) => setEditAssetCategory(e.target.value as any)}
-                        className="w-full bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-700 rounded-lg p-2.5 text-xs text-gray-900 dark:text-slate-100"
+                        className="w-full bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-700 rounded-lg p-2.5 text-xs text-gray-900 dark:text-slate-100 disabled:bg-gray-100 dark:disabled:bg-slate-800/60 disabled:cursor-not-allowed disabled:text-gray-500 dark:disabled:text-slate-400"
                       >
                         <option value="LAND">জমি ও ভূমি উন্নয়ন (1510)</option>
                         <option value="BUILDINGS">শেড ও খামার ভবন (1520)</option>
@@ -1916,14 +1792,15 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
 
                     <div>
                       <label className="block text-xs font-semibold text-gray-700 dark:text-slate-300 mb-1">
-                        মূল ক্রয়মূল্য (৳)
+                        মূল ক্রয়মূল্য (৳) {editAssetHasAccounting && <span className="text-amber-600 dark:text-amber-400 text-[10px] font-normal">(লক করা)</span>}
                       </label>
                       <input
                         type="number"
                         required
+                        disabled={editAssetHasAccounting}
                         value={editAssetCost}
                         onChange={(e) => setEditAssetCost(e.target.value)}
-                        className="w-full bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-700 rounded-lg p-2.5 text-sm font-mono text-gray-900 dark:text-slate-100"
+                        className="w-full bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-700 rounded-lg p-2.5 text-sm font-mono text-gray-900 dark:text-slate-100 disabled:bg-gray-100 dark:disabled:bg-slate-800/60 disabled:cursor-not-allowed disabled:text-gray-500 dark:disabled:text-slate-400"
                       />
                     </div>
                   </div>
@@ -1931,10 +1808,11 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
                   <div className="grid grid-cols-3 gap-2">
                     <div>
                       <label className="block text-xs font-semibold text-gray-700 dark:text-slate-300 mb-1">
-                        আয়ুষ্কাল (বছর)
+                        আয়ুষ্কাল (বছর) {editAssetHasAccounting && <span className="text-amber-600 dark:text-amber-400 text-[10px] font-normal">(লক)</span>}
                       </label>
                       <input
                         type="number"
+                        disabled={editAssetHasAccounting}
                         value={editAssetLifeYears}
                         onChange={(e) => {
                           const l = parseFloat(e.target.value);
@@ -1943,36 +1821,34 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
                             setEditAssetDepreciationRate((100 / l).toFixed(1));
                           }
                         }}
-                        className="w-full bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-700 rounded-lg p-2 text-xs text-gray-900 dark:text-slate-100"
+                        className="w-full bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-700 rounded-lg p-2 text-xs text-gray-900 dark:text-slate-100 disabled:bg-gray-100 dark:disabled:bg-slate-800/60 disabled:cursor-not-allowed disabled:text-gray-500 dark:disabled:text-slate-400"
                       />
                     </div>
                     <div>
                       <label className="block text-xs font-semibold text-gray-700 dark:text-slate-300 mb-1">
-                        ভগ্নাবশেষ মূল্য (৳)
+                        ভগ্নাবশেষ মূল্য (৳) {editAssetHasAccounting && <span className="text-amber-600 dark:text-amber-400 text-[10px] font-normal">(লক)</span>}
                       </label>
                       <input
                         type="number"
+                        disabled={editAssetHasAccounting}
                         value={editAssetSalvage}
                         onChange={(e) => setEditAssetSalvage(e.target.value)}
-                        className="w-full bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-700 rounded-lg p-2 text-xs text-gray-900 dark:text-slate-100"
+                        className="w-full bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-700 rounded-lg p-2 text-xs text-gray-900 dark:text-slate-100 disabled:bg-gray-100 dark:disabled:bg-slate-800/60 disabled:cursor-not-allowed disabled:text-gray-500 dark:disabled:text-slate-400"
                       />
                     </div>
                     <div>
                       <label className="block text-xs font-semibold text-gray-700 dark:text-slate-300 mb-1">
-                        অবচয় হার (%)
+                        অবচয় হার (%) {editAssetHasAccounting && <span className="text-amber-600 dark:text-amber-400 text-[10px] font-normal">(লক)</span>}
                       </label>
                       <input
                         type="number"
                         step="0.1"
+                        disabled={editAssetHasAccounting}
                         value={editAssetDepreciationRate}
                         onChange={(e) => setEditAssetDepreciationRate(e.target.value)}
-                        className="w-full bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-700 rounded-lg p-2 text-xs text-gray-900 dark:text-slate-100"
+                        className="w-full bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-700 rounded-lg p-2 text-xs text-gray-900 dark:text-slate-100 disabled:bg-gray-100 dark:disabled:bg-slate-800/60 disabled:cursor-not-allowed disabled:text-gray-500 dark:disabled:text-slate-400"
                       />
                     </div>
-                  </div>
-
-                  <div className="p-2.5 bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-900 rounded-xl text-xs text-blue-900 dark:text-blue-300">
-                    ℹ️ ক্রয়মূল্য পরিবর্তন করলে স্বয়ংক্রিয়ভাবে সমন্বয় জাবেদা (Adjusting Journal Entry) দাখিলা হবে এবং ব্যালেন্স শিট সমন্বয় হবে।
                   </div>
 
                   <div className="flex justify-end gap-2 pt-2 border-t border-gray-100 dark:border-slate-800">

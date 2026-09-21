@@ -789,6 +789,266 @@ export async function executeFixedAssetDisposalTransaction(
 }
 
 /**
+ * Normalizes fixed asset category string for reliable comparison.
+ */
+function normalizeCategory(category?: string): string {
+  if (!category) return 'MACHINERY';
+  const c = category.toUpperCase().trim();
+  if (c === 'BUILDING') return 'BUILDINGS';
+  if (c === 'VEHICLE') return 'VEHICLES';
+  if (c === 'POND') return 'PONDS';
+  return c;
+}
+
+/**
+ * Checks whether an asset already has posted accounting entries
+ * (e.g. initial acquisition journal entry, accumulated depreciation,
+ * past depreciation run, or reference in general ledger).
+ */
+export async function hasAssetPostedAccounting(
+  asset: FixedAsset,
+  dbInstance: any = db
+): Promise<{ hasAccounting: boolean; reason?: string }> {
+  // 1. If asset is already disposed, history is permanently locked
+  if (asset.status === 'DISPOSED' || (asset as any).disposalDate || (asset as any).disposalJournalId) {
+    return {
+      hasAccounting: true,
+      reason: 'সম্পদটি ইতিমধ্যে অপসারিত (DISPOSED) করা হয়েছে'
+    };
+  }
+
+  // 2. If accumulated depreciation is recorded
+  if ((asset.accumulatedDepreciation || 0) > 0) {
+    return {
+      hasAccounting: true,
+      reason: `সম্পদের বিপরীতে ৳${(asset.accumulatedDepreciation || 0).toLocaleString()} অবচয় ধার্য ও পোস্ট করা হয়েছে`
+    };
+  }
+
+  // 3. If lastDepreciationDate differs from purchaseDate
+  if (asset.lastDepreciationDate && asset.purchaseDate && asset.lastDepreciationDate !== asset.purchaseDate) {
+    return {
+      hasAccounting: true,
+      reason: `সম্পদের অবচয় হিসাব ইতিমধ্যে কার্যকর রয়েছে (সর্বশেষ অবচয়: ${asset.lastDepreciationDate})`
+    };
+  }
+
+  // 4. If initial acquisition journal entry exists
+  if (asset.journalEntryId) {
+    let jEntry: any;
+    try {
+      if (dbInstance.journalEntries && typeof dbInstance.journalEntries.get === 'function') {
+        jEntry = await dbInstance.journalEntries.get(asset.journalEntryId);
+      }
+    } catch {
+      // ignore
+    }
+    return {
+      hasAccounting: true,
+      reason: jEntry
+        ? `সম্পদ ক্রয়ের জাবেদা দাখিলা (${jEntry.voucherNumber || jEntry.id}) সাধারণ খতিয়ানে পোস্ট করা রয়েছে`
+        : 'সম্পদ ক্রয়ের জাবেদা দাখিলা সাধারণ খতিয়ানে পোস্ট করা রয়েছে'
+    };
+  }
+
+  // 5. Check if any journal entries exist referencing this asset in the General Ledger
+  if (dbInstance.journalEntries) {
+    try {
+      let related: any[] = [];
+      if (typeof dbInstance.journalEntries.filter === 'function') {
+        const q = dbInstance.journalEntries.filter((j: any) => j.reference === asset.id);
+        related = typeof q.toArray === 'function' ? await q.toArray() : await q;
+      } else if (typeof dbInstance.journalEntries.where === 'function') {
+        related = await dbInstance.journalEntries.where('reference').equals(asset.id).toArray();
+      } else if (typeof dbInstance.journalEntries.toArray === 'function') {
+        const all = await dbInstance.journalEntries.toArray();
+        related = all.filter((j: any) => j.reference === asset.id);
+      }
+      if (related && related.length > 0) {
+        return {
+          hasAccounting: true,
+          reason: `সাধারণ খতিয়ানে এই সম্পদের বিপরীতে ${related.length}টি জাবেদা দাখিলা বিদ্যমান রয়েছে`
+        };
+      }
+    } catch {
+      // ignore query error on empty tables
+    }
+  }
+
+  return { hasAccounting: false };
+}
+
+export interface EditFixedAssetParams {
+  assetId: string;
+  name: string;
+  category?: FixedAsset['category'];
+  purchaseDate?: string;
+  originalCost?: number;
+  usefulLifeYears?: number;
+  salvageValue?: number;
+  depreciationRatePercent?: number;
+  photoUrl?: string;
+  notes?: string;
+  currentUserId?: string;
+}
+
+export interface EditFixedAssetResult {
+  updatedAsset: FixedAsset;
+  hasAccounting: boolean;
+  accountingReason?: string;
+}
+
+/**
+ * Safely updates a fixed asset, strictly protecting accounting-critical historical
+ * fields (original cost, asset category, acquisition date, useful life, salvage value,
+ * depreciation method/rate) from casual alteration once accounting or depreciation exists.
+ *
+ * Prevents silent divergence between the Fixed Asset Register and the General Ledger.
+ */
+export async function executeEditFixedAssetTransaction(
+  params: EditFixedAssetParams,
+  dbInstance: any = db
+): Promise<EditFixedAssetResult> {
+  const runInTx = async (): Promise<EditFixedAssetResult> => {
+    const freshAsset = await dbInstance.fixedAssets.get(params.assetId);
+    if (!freshAsset) {
+      throw new Error(`Fixed asset with ID "${params.assetId}" not found.`);
+    }
+
+    if (!params.name || !params.name.trim()) {
+      throw new Error('সম্পদের নাম খালি রাখা যাবে না (Asset name is required).');
+    }
+
+    const accountingCheck = await hasAssetPostedAccounting(freshAsset, dbInstance);
+
+    if (accountingCheck.hasAccounting) {
+      // Check for changes in protected historical fields
+      const violations: string[] = [];
+
+      if (params.originalCost !== undefined && Math.abs(Number(params.originalCost) - (freshAsset.originalCost || 0)) > 0.001) {
+        violations.push(`মূল ক্রয়মূল্য (Original Cost: ৳${freshAsset.originalCost} -> ৳${params.originalCost})`);
+      }
+
+      if (params.category !== undefined && normalizeCategory(params.category) !== normalizeCategory(freshAsset.category)) {
+        violations.push(`ক্যাটাগরি (Category: ${freshAsset.category} -> ${params.category})`);
+      }
+
+      if (params.purchaseDate !== undefined && params.purchaseDate !== freshAsset.purchaseDate) {
+        violations.push(`অর্জনের তারিখ (Acquisition Date: ${freshAsset.purchaseDate} -> ${params.purchaseDate})`);
+      }
+
+      if (params.usefulLifeYears !== undefined && Math.abs(Number(params.usefulLifeYears) - (freshAsset.usefulLifeYears || 0)) > 0.001) {
+        violations.push(`আয়ুষ্কাল (Useful Life: ${freshAsset.usefulLifeYears} বছর -> ${params.usefulLifeYears} বছর)`);
+      }
+
+      if (params.salvageValue !== undefined && Math.abs(Number(params.salvageValue) - (freshAsset.salvageValue || 0)) > 0.001) {
+        violations.push(`ভগ্নাবশেষ মূল্য (Salvage Value: ৳${freshAsset.salvageValue} -> ৳${params.salvageValue})`);
+      }
+
+      if (params.depreciationRatePercent !== undefined && Math.abs(Number(params.depreciationRatePercent) - (freshAsset.depreciationRatePercent || 0)) > 0.001) {
+        violations.push(`অবচয় হার/পদ্ধতি (Depreciation Rate: ${freshAsset.depreciationRatePercent}% -> ${params.depreciationRatePercent}%)`);
+      }
+
+      if (violations.length > 0) {
+        throw new Error(
+          `হিসাবরক্ষণ সুরক্ষানীতি: এই স্থায়ী সম্পদের জন্য ইতিমধ্যে খতিয়ানে হিসাব/অবচয় বিদ্যমান (${accountingCheck.reason})। ঐতিহাসিক তথ্যের বিকৃতি রোধ করতে ${violations.join(', ')} পরিবর্তন করা সম্পূর্ণ নিষিদ্ধ। সাধারণ খতিয়ান ও সম্পদ তালিকার সামঞ্জস্য রক্ষায় পরিবর্তন প্রত্যাখ্যান করা হয়েছে (Posted accounting history is protected).`
+        );
+      }
+
+      // Safe non-financial fields update
+      const updatedAsset: FixedAsset = {
+        ...freshAsset,
+        name: params.name.trim(),
+        ...(params.photoUrl !== undefined ? { photoUrl: params.photoUrl } : {}),
+        ...(params.notes !== undefined ? { notes: params.notes } : {}),
+        synced: false
+      };
+
+      await dbInstance.fixedAssets.put(updatedAsset);
+
+      // Audit Log
+      const auditLog = {
+        id: generateUniqueId('aud_ast_edit'),
+        timestamp: new Date().toISOString(),
+        userId: params.currentUserId || 'system',
+        role: 'ADMIN',
+        action: 'EDIT_FIXED_ASSET_METADATA',
+        details: `স্থায়ী সম্পদ "${freshAsset.name}" (ID: ${freshAsset.id})-এর সাধারণ বিবরণ/নাম হালনাগাদ করা হয়েছে (ঐতিহাসিক হিসাব অপরিবর্তিত রাখা হয়েছে)।`,
+        synced: false
+      };
+      if (dbInstance.auditLogs) {
+        await safeInsert(dbInstance.auditLogs, auditLog, { idPrefix: 'aud' });
+      }
+
+      return {
+        updatedAsset,
+        hasAccounting: true,
+        accountingReason: accountingCheck.reason
+      };
+    }
+
+    // If NO posted accounting exists yet (unposted/draft asset)
+    const newCost = params.originalCost !== undefined ? Number(params.originalCost) : freshAsset.originalCost;
+    const newLife = params.usefulLifeYears !== undefined ? Number(params.usefulLifeYears) : freshAsset.usefulLifeYears;
+    const newSalvage = params.salvageValue !== undefined ? Number(params.salvageValue) : freshAsset.salvageValue;
+    const newRate = params.depreciationRatePercent !== undefined
+      ? Number(params.depreciationRatePercent)
+      : (newLife > 0 ? Number((100 / newLife).toFixed(2)) : freshAsset.depreciationRatePercent);
+    const newCategory = params.category !== undefined ? normalizeCategory(params.category) as any : freshAsset.category;
+    const newPurchaseDate = params.purchaseDate !== undefined ? params.purchaseDate : freshAsset.purchaseDate;
+
+    const updatedAsset: FixedAsset = {
+      ...freshAsset,
+      name: params.name.trim(),
+      category: newCategory,
+      purchaseDate: newPurchaseDate,
+      originalCost: newCost,
+      usefulLifeYears: newLife,
+      salvageValue: newSalvage,
+      depreciationRatePercent: newRate,
+      currentBookValue: Math.max(0, newCost - (freshAsset.accumulatedDepreciation || 0)),
+      ...(params.photoUrl !== undefined ? { photoUrl: params.photoUrl } : {}),
+      ...(params.notes !== undefined ? { notes: params.notes } : {}),
+      synced: false
+    };
+
+    await dbInstance.fixedAssets.put(updatedAsset);
+
+    const auditLog = {
+      id: generateUniqueId('aud_ast_edit'),
+      timestamp: new Date().toISOString(),
+      userId: params.currentUserId || 'system',
+      role: 'ADMIN',
+      action: 'EDIT_UNPOSTED_FIXED_ASSET',
+      details: `খসড়া স্থায়ী সম্পদ "${freshAsset.name}" (ID: ${freshAsset.id})-এর তথ্য হালনাগাদ করা হয়েছে।`,
+      synced: false
+    };
+    if (dbInstance.auditLogs) {
+      await safeInsert(dbInstance.auditLogs, auditLog, { idPrefix: 'aud' });
+    }
+
+    return {
+      updatedAsset,
+      hasAccounting: false
+    };
+  };
+
+  if (dbInstance.transaction) {
+    return await dbInstance.transaction(
+      'rw',
+      [
+        dbInstance.fixedAssets,
+        dbInstance.journalEntries,
+        dbInstance.auditLogs
+      ],
+      runInTx
+    );
+  } else {
+    return await runInTx();
+  }
+}
+
+/**
  * Runs automated depreciation once per application load session.
  */
 export async function runDepreciationOnAppLoad(currentUserId?: string): Promise<DepreciationRunResult | null> {
