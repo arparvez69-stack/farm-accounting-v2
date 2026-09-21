@@ -16,11 +16,13 @@ import 'fake-indexeddb/auto';
 import { db } from '../db/indexedDb';
 import { DEFAULT_CHART_OF_ACCOUNTS } from '../accounting/defaultAccounts';
 import {
+  executeAnimalPurchaseTransaction,
   executeLivestockProductionCostTransaction,
   integrateLivestockProductionCostAccounting,
   reclassifyLivestockExpenseToBiologicalAsset,
   executeAnimalSaleOrRemovalTransaction,
-  calculateAnimalRecordedCosts
+  calculateAnimalRecordedCosts,
+  getAnimalAccumulatedCost
 } from '../services/transactionService';
 import { CANONICAL_ACCOUNTS } from '../accounting/accountMapping';
 import { Animal, Account, CashBankAccount } from '../types';
@@ -483,6 +485,196 @@ export async function runLivestockCostIsolationTest() {
   assert(finalGoat!.status === 'ACTIVE', 'Goat must remain ACTIVE');
   assert(finalGoat!.totalCost === 17500, `Goat total cost must remain ৳17,500 (got ${finalGoat!.totalCost})`);
   console.log('✓ Goat 2 remains untouched and intact at ৳17,500');
+
+  // =========================================================================
+  // 8. TASK 9 COMPREHENSIVE VERIFICATION:
+  // Actual accounting transaction -> production cost -> animal/group cost -> accumulated carrying cost -> sale -> COGS
+  // =========================================================================
+  console.log('\n--- 8. TASK 9 COMPLETE LIFECYCLE: PURCHASE → COSTS → ACCUMULATED COST → SALE → COGS ---');
+
+  // 8.1. Actual accounting transaction: Purchase (executeAnimalPurchaseTransaction)
+  const animal3Id = 'SHP-2026-003';
+  const purchaseResult = await executeAnimalPurchaseTransaction({
+    animalData: {
+      id: animal3Id,
+      tag: 'TAG-SHP-03',
+      species: 'SHEEP',
+      breed: 'Garole Sheep Group',
+      gender: 'FEMALE',
+      birthDate: '2025-06-01',
+      currentWeightKg: 45,
+      location: 'Shed 3'
+    },
+    purchaseCost: 25000,
+    paymentMethod: 'CASH',
+    date: '2026-01-15',
+    currentUserId: 'test-user'
+  });
+
+  assert(purchaseResult.animal.id === animal3Id, 'Purchased animal must be created with ID');
+  assert(purchaseResult.animal.purchaseCost === 25000, 'Purchase cost must be ৳25,000');
+  assert(purchaseResult.animal.totalCost === 25000, 'Total cost must equal purchase cost ৳25,000');
+  assert(purchaseResult.journalEntryId !== undefined, 'Purchase journal entry must be created');
+
+  const purchaseEntry = await db.journalEntries.get(purchaseResult.journalEntryId!);
+  assert(purchaseEntry !== undefined, 'Purchase journal entry must exist in GL');
+  const shpAssetDebit = purchaseEntry!.lines.find((l) => l.accountCode === CANONICAL_ACCOUNTS.LIVESTOCK_ASSETS)?.debit;
+  const shpCashCredit = purchaseEntry!.lines.find((l) => l.accountCode === CANONICAL_ACCOUNTS.CASH)?.credit;
+  assert(shpAssetDebit === 25000, 'Livestock Asset (1580) must be debited ৳25,000 on purchase');
+  assert(shpCashCredit === 25000, 'Cash (1010) must be credited ৳25,000 on purchase');
+  console.log('✓ 8.1 Actual accounting transaction for purchase verified (Dr 1580 ৳25,000 / Cr Cash ৳25,000)');
+
+  // 8.2. Actual production costs via real accounting transactions
+  // Feed: ৳5,000, Medicine: ৳2,000, Labour: ৳3,000, Other: ৳1,000
+  await executeLivestockProductionCostTransaction({
+    animalId: animal3Id,
+    costType: 'FEED',
+    amount: 5000,
+    paymentMethod: 'CASH',
+    date: '2026-02-05',
+    currentUserId: 'test-user'
+  });
+
+  await executeLivestockProductionCostTransaction({
+    animalId: animal3Id,
+    costType: 'MEDICINE',
+    amount: 2000,
+    paymentMethod: 'CASH',
+    date: '2026-02-20',
+    currentUserId: 'test-user'
+  });
+
+  await executeLivestockProductionCostTransaction({
+    animalId: animal3Id,
+    costType: 'LABOUR',
+    amount: 3000,
+    paymentMethod: 'CASH',
+    date: '2026-03-05',
+    currentUserId: 'test-user'
+  });
+
+  await executeLivestockProductionCostTransaction({
+    animalId: animal3Id,
+    costType: 'OTHER',
+    amount: 1000,
+    paymentMethod: 'CASH',
+    date: '2026-03-10',
+    currentUserId: 'test-user'
+  });
+
+  // 8.3. Accumulated cost & carrying cost calculation based only on actual recorded costs
+  const sheepAccumulated = await getAnimalAccumulatedCost(animal3Id);
+  assert(sheepAccumulated.breakdown.purchaseCost === 25000, 'Breakdown purchase cost must be ৳25,000');
+  assert(sheepAccumulated.breakdown.feedCost === 5000, 'Breakdown feed cost must be ৳5,000');
+  assert(sheepAccumulated.breakdown.medicineCost === 2000, 'Breakdown medicine cost must be ৳2,000');
+  assert(sheepAccumulated.breakdown.labourCost === 3000, 'Breakdown labour cost must be ৳3,000');
+  assert(sheepAccumulated.breakdown.otherCost === 1000, 'Breakdown other cost must be ৳1,000');
+  assert(sheepAccumulated.accumulatedCost === 36000, 'Total accumulated cost must be ৳36,000');
+  assert(sheepAccumulated.accountingDebits === 36000, 'Total GL accounting debits must be ৳36,000');
+  assert(sheepAccumulated.isConsistent === true, 'Accounting and operational costs must strictly match');
+  assert(sheepAccumulated.unbackedCost === 0, 'Unbacked cost must be 0');
+  assert(sheepAccumulated.netRemainingCost === 36000, 'Net remaining carrying cost must be ৳36,000');
+  assert(sheepAccumulated.cogsTransferred === 0, 'COGS must NOT be recognized before sale');
+  console.log('✓ 8.2-8.3 Accumulated carrying cost strictly matches GL: ৳36,000 (Purchase 25k + Feed 5k + Med 2k + Labour 3k + Other 1k)');
+
+  // 8.4. Rule Verification: "If operational cost and GL cost disagree, flag/reject the mismatch rather than inventing an accounting entry"
+  const rawSheep = await db.animals.get(animal3Id);
+  rawSheep!.otherCosts = 5000; // Inventing +৳4,000 unbacked operational cost without GL transaction
+  rawSheep!.totalCost = 40000;
+  await db.animals.put(rawSheep!);
+
+  let unbackedSaleFailed = false;
+  try {
+    await executeAnimalSaleOrRemovalTransaction({
+      animalId: animal3Id,
+      newStatus: 'SOLD',
+      salePrice: 50000,
+      paymentMethod: 'CASH',
+      date: '2026-03-25',
+      currentUserId: 'test-user'
+    });
+  } catch (err: any) {
+    unbackedSaleFailed = true;
+    console.log(`✓ 8.4 Mismatch rejected cleanly: "${err.message}"`);
+  }
+  assert(unbackedSaleFailed, 'Sale must be rejected when operational cost exceeds verified GL balance!');
+
+  // Restore sheep to real GL backed numbers
+  rawSheep!.otherCosts = 1000;
+  rawSheep!.totalCost = 36000;
+  await db.animals.put(rawSheep!);
+
+  // 8.5. Sale → COGS: Sale COGS must use the applicable accumulated cost of the animal/group actually sold
+  const sheepSale = await executeAnimalSaleOrRemovalTransaction({
+    animalId: animal3Id,
+    newStatus: 'SOLD',
+    salePrice: 48000,
+    paymentMethod: 'CASH',
+    date: '2026-03-25',
+    customerName: 'Local Livestock Market',
+    currentUserId: 'test-user'
+  });
+
+  assert(sheepSale.updatedAnimal.status === 'SOLD', 'Animal status must be SOLD');
+  assert(sheepSale.journalEntryId !== undefined, 'Sale journal entry must exist');
+
+  const sheepSaleEntry = await db.journalEntries.get(sheepSale.journalEntryId!);
+  assert(sheepSaleEntry !== undefined, 'Sale journal entry must exist in DB');
+
+  let sheepCogs = 0;
+  let sheepRevenue = 0;
+  let sheepAssetRelieved = 0;
+  let sheepFeedRelieved = 0;
+  let sheepMedRelieved = 0;
+  let sheepLabourRelieved = 0;
+  let sheepOtherRelieved = 0;
+
+  for (const line of sheepSaleEntry!.lines) {
+    if (line.accountCode === CANONICAL_ACCOUNTS.LIVESTOCK_COGS) sheepCogs += line.debit;
+    if (line.accountCode === CANONICAL_ACCOUNTS.LIVESTOCK_REVENUE) sheepRevenue += line.credit;
+    if (line.accountCode === CANONICAL_ACCOUNTS.LIVESTOCK_ASSETS) sheepAssetRelieved += line.credit;
+    if (line.accountCode === CANONICAL_ACCOUNTS.FEED_EXPENSE) sheepFeedRelieved += line.credit;
+    if (line.accountCode === CANONICAL_ACCOUNTS.VET_MEDICINE) sheepMedRelieved += line.credit;
+    if (line.accountCode === CANONICAL_ACCOUNTS.FARM_LABOUR_WAGES) sheepLabourRelieved += line.credit;
+    if (line.accountCode === CANONICAL_ACCOUNTS.MISCELLANEOUS_EXPENSE) sheepOtherRelieved += line.credit;
+  }
+
+  assert(sheepRevenue === 48000, `Revenue must be ৳48,000 (got ${sheepRevenue})`);
+  assert(sheepCogs === 36000, `Sale COGS must be ৳36,000 (got ${sheepCogs})`);
+  assert(sheepAssetRelieved === 25000, `Asset (1580) relieved must be ৳25,000 (got ${sheepAssetRelieved})`);
+  assert(sheepFeedRelieved === 5000, `Feed (6010) relieved must be ৳5,000 (got ${sheepFeedRelieved})`);
+  assert(sheepMedRelieved === 2000, `Vet/Medicine (6040) relieved must be ৳2,000 (got ${sheepMedRelieved})`);
+  assert(sheepLabourRelieved === 3000, `Labour (6020) relieved must be ৳3,000 (got ${sheepLabourRelieved})`);
+  assert(sheepOtherRelieved === 1000, `Other (6090) relieved must be ৳1,000 (got ${sheepOtherRelieved})`);
+  console.log('✓ 8.5 Sale recognized Revenue ৳48,000 and full accumulated COGS ৳36,000 without double-counting');
+
+  // 8.6. Rule: "Prevent duplicate COGS"
+  let duplicateSaleBlocked = false;
+  try {
+    await executeAnimalSaleOrRemovalTransaction({
+      animalId: animal3Id,
+      newStatus: 'SOLD',
+      salePrice: 48000,
+      paymentMethod: 'CASH',
+      date: '2026-03-26',
+      currentUserId: 'test-user'
+    });
+  } catch (err: any) {
+    duplicateSaleBlocked = true;
+    console.log(`✓ 8.6 Duplicate sale/COGS blocked: "${err.message}"`);
+  }
+  assert(duplicateSaleBlocked, 'Attempting to sell an already SOLD animal must be rejected');
+
+  // 8.7. Rule: "Preserve historical data"
+  const historyEntries = await db.journalEntries
+    .filter((j) => j.reference === animal3Id || (Boolean(j.narration) && j.narration.includes(animal3Id)))
+    .toArray();
+  assert(historyEntries.length >= 6, `All 6 historical transactions for ${animal3Id} must be preserved (got ${historyEntries.length})`);
+  const cowPreserved = await db.animals.get(animal1Id);
+  const goatPreserved = await db.animals.get(animal2Id);
+  assert(cowPreserved?.status === 'SOLD', 'Cow historical record preserved');
+  assert(goatPreserved?.status === 'ACTIVE' && goatPreserved?.totalCost === 17500, 'Goat active state and cost preserved');
+  console.log('✓ 8.7 Historical transactions, animal records, and audit logs fully preserved');
 
   console.log('====================================================');
   console.log('ALL LIVESTOCK COST ISOLATION & RECLASSIFICATION TESTS PASSED!');

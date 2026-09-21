@@ -1916,6 +1916,163 @@ export async function executeAnimalEventTransaction(params: {
         throw new Error(`কার্যক্রমের তারিখ (${event.date}) পশুর জন্ম তারিখের (${animal.birthDate}) পূর্ববর্তী হতে পারে না।`);
       }
 
+      const freshAnimalForEvent = (await db.animals.get(animal.id)) || animal;
+
+      if (freshAnimalForEvent.status === 'DECEASED') {
+        throw new Error(`গবাদিপশু ${freshAnimalForEvent.id} ইতিপূর্বে মৃত ঘোষণা করা হয়েছে। পুনরায় মৃত্যু বা কার্যক্রম দাখিলা তৈরি করা নিষিদ্ধ।`);
+      }
+      if (['SOLD', 'TRANSFERRED', 'STOLEN'].includes(freshAnimalForEvent.status)) {
+        throw new Error(`অপসারণকৃত বা বিক্রিত পশুর (${freshAnimalForEvent.id} - ${freshAnimalForEvent.status}) নতুন কার্যক্রম বা ব্যয় সংরক্ষণ করা যাবে না।`);
+      }
+
+      // TASK 10: Livestock Mortality Event Handling
+      if (event.eventType === 'MORTALITY') {
+        const pastEntries = await db.journalEntries
+          .filter((j) => j.reference === freshAnimalForEvent.id || (Boolean(j.narration) && j.narration.includes(freshAnimalForEvent.id)))
+          .toArray();
+
+        let alreadyWrittenOff = 0;
+        for (const entry of pastEntries) {
+          for (const line of entry.lines || []) {
+            const isForThis = line.memo ? line.memo.includes(freshAnimalForEvent.id) : (entry.reference === freshAnimalForEvent.id);
+            if (!isForThis) continue;
+            if (line.accountCode === CANONICAL_ACCOUNTS.LIVESTOCK_WRITEOFF || line.accountCode === CANONICAL_ACCOUNTS.LIVESTOCK_MORTALITY_LOSS || line.accountCode === '8020') {
+              alreadyWrittenOff += (line.debit || 0) - (line.credit || 0);
+            }
+          }
+        }
+        if (alreadyWrittenOff > 0) {
+          throw new Error(`গবাদিপশু ${freshAnimalForEvent.id} এর জন্য ইতিপূর্বে ৳${alreadyWrittenOff} মৃত্যুজনিত অবলোপন দাখিলা সম্পন্ন হয়েছে। পুনরায় ডুপ্লিকেট মৃত্যু দাখিলা নিষিদ্ধ।`);
+        }
+
+        const costBreakdown = calculateAnimalRecordedCosts(freshAnimalForEvent);
+        const costToDerecognize = costBreakdown.totalRecordedCost;
+
+        // Verify GL debits to prevent unbacked/invented loss
+        let glAssetDebit1580 = 0;
+        let glExpenseDebit = 0;
+        for (const entry of pastEntries) {
+          for (const line of entry.lines || []) {
+            const isForThis = line.memo ? line.memo.includes(freshAnimalForEvent.id) : (entry.reference === freshAnimalForEvent.id);
+            if (!isForThis) continue;
+            if (line.accountCode === CANONICAL_ACCOUNTS.LIVESTOCK_ASSETS) {
+              glAssetDebit1580 += (line.debit || 0) - (line.credit || 0);
+            } else if (
+              line.accountCode === CANONICAL_ACCOUNTS.FEED_EXPENSE ||
+              line.accountCode === CANONICAL_ACCOUNTS.VET_MEDICINE ||
+              line.accountCode === CANONICAL_ACCOUNTS.VACCINATION ||
+              line.accountCode === CANONICAL_ACCOUNTS.FARM_LABOUR_WAGES ||
+              line.accountCode === CANONICAL_ACCOUNTS.MISCELLANEOUS_EXPENSE
+            ) {
+              glExpenseDebit += (line.debit || 0) - (line.credit || 0);
+            }
+          }
+        }
+
+        const totalAvailableInGl = Math.max(0, Math.round((glAssetDebit1580 + glExpenseDebit) * 100) / 100);
+        if (costToDerecognize > totalAvailableInGl) {
+          const unbackedAmount = Math.round((costToDerecognize - totalAvailableInGl) * 100) / 100;
+          throw new Error(
+            `গবাদিপশু ${freshAnimalForEvent.id} এর মৃত্যুজনিত অবলোপন ব্যয়ে অমিল রয়েছে: মোট অপারেশনাল ব্যয় ৳${costToDerecognize}, কিন্তু সংশ্লিষ্ট অনুমোদিত জাবেদা ব্যালেন্স পাওয়া গেছে মাত্র ৳${totalAvailableInGl} (অননুমোদিত বা হিসাবহীন ঘাটতি: ৳${unbackedAmount})। কোনো প্রকৃত হিসাব লেনদেন ছাড়া স্বয়ংক্রিয় ক্রেডিট সৃষ্টি করা নিষিদ্ধ। অনুগ্রহ করে প্রকৃত লেনদেন নথিভুক্ত করুন।`
+          );
+        }
+
+        let mortalityJournalId: string | undefined;
+        if (costToDerecognize > 0) {
+          const accounts = await db.accounts.toArray();
+          let writeOffAcc = accounts.find((a) => a.code === CANONICAL_ACCOUNTS.LIVESTOCK_MORTALITY_LOSS || a.code === CANONICAL_ACCOUNTS.LIVESTOCK_WRITEOFF);
+          if (!writeOffAcc) {
+            writeOffAcc = {
+              id: `acc_${CANONICAL_ACCOUNTS.LIVESTOCK_MORTALITY_LOSS}`,
+              code: CANONICAL_ACCOUNTS.LIVESTOCK_MORTALITY_LOSS,
+              nameBn: 'পশুসম্পদ অবলোপন ও মৃত্যুজনিত ক্ষতি (Livestock Write-off & Mortality Loss)',
+              nameEn: 'Livestock Write-off & Mortality Loss',
+              accountClass: 'OTHER_EXPENSE',
+              normalBalance: 'DEBIT',
+              isSystem: true,
+              isActive: true
+            };
+            await safeInsert(db.accounts, writeOffAcc);
+          }
+
+          const creditLines = await buildLivestockCostCreditLines(freshAnimalForEvent, costToDerecognize, accounts);
+          const writeOffJournalLines: JournalLine[] = [
+            {
+              accountId: writeOffAcc.id,
+              accountCode: CANONICAL_ACCOUNTS.LIVESTOCK_MORTALITY_LOSS,
+              accountName: writeOffAcc.nameBn || 'পশুসম্পদ অবলোপন ও মৃত্যুজনিত ক্ষতি (Livestock Write-off & Mortality Loss)',
+              debit: costToDerecognize,
+              credit: 0,
+              memo: `পশু মৃত্যুজনিত ক্ষতি (Mortality Loss): ${freshAnimalForEvent.id} (${freshAnimalForEvent.breed}) পুঞ্জীভূত ব্যয়`
+            },
+            ...creditLines
+          ];
+
+          const balanceCheck = validateBalancedLines(writeOffJournalLines, accounts);
+          if (!balanceCheck.isBalanced) {
+            throw new Error(`মৃত্যুজনিত অবলোপন জাবেদা অসন্তুলিত: ডেবিট ৳${balanceCheck.totalDebit}, ক্রেডিট ৳${balanceCheck.totalCredit}। দাখিলা বাতিল করা হলো।`);
+          }
+
+          const voucherNumber = generateTransactionNumber('ADJ');
+          const writeOffEntry = await postJournalEntry(
+            {
+              id: generateUniqueId('je'),
+              date: event.date,
+              voucherType: 'ADJUSTMENT',
+              voucherNumber,
+              reference: freshAnimalForEvent.id,
+              narration: `গবাদিপশু মৃত্যুজনিত ক্ষতি ও অবলোপন (MORTALITY): ${freshAnimalForEvent.id} (${freshAnimalForEvent.breed}) মৃত্যু বাবদ পুঞ্জীভূত ব্যয় অবলোপন (পুঞ্জীভূত মোট ব্যয়: ৳${costToDerecognize})${event.details ? ` [${event.details}]` : ''}`,
+              lines: writeOffJournalLines,
+              createdBy: currentUserId,
+              createdAt: new Date().toISOString()
+            },
+            { accounts, skipDbPut: true }
+          );
+          await safeInsert(db.journalEntries, writeOffEntry, { idPrefix: 'je' });
+          mortalityJournalId = writeOffEntry.id;
+        }
+
+        const eventId = generateUniqueId('evt');
+        const eventRecord: AnimalEvent = {
+          id: eventId,
+          animalId: freshAnimalForEvent.id,
+          eventType: 'MORTALITY',
+          date: event.date,
+          cost: 0, // Mortality is derecognition, NOT an added expense
+          details: event.details || 'মৃত্যুজনিত ক্ষতি ও অবলোপন সম্পন্ন',
+          synced: false
+        };
+        await safeInsert(db.animalEvents, eventRecord);
+
+        const noteAddition = event.details
+          ? `[DECEASED - ${event.date}: ${event.details}]`
+          : `[DECEASED - ${event.date}]`;
+        const combinedNotes = freshAnimalForEvent.notes ? `${freshAnimalForEvent.notes} | ${noteAddition}` : noteAddition;
+
+        await db.animals.update(freshAnimalForEvent.id, {
+          status: 'DECEASED',
+          notes: combinedNotes,
+          journalEntryId: mortalityJournalId || freshAnimalForEvent.journalEntryId,
+          salePrice: undefined,
+          saleDate: undefined,
+          synced: false
+        });
+
+        await safeInsert(db.auditLogs, {
+          id: generateUniqueId('audit'),
+          timestamp: new Date().toISOString(),
+          userId: currentUserId,
+          role: 'OWNER',
+          action: 'ANIMAL_MORTALITY',
+          module: 'LIVESTOCK',
+          recordId: freshAnimalForEvent.id,
+          status: 'SUCCESS',
+          details: `${freshAnimalForEvent.id} (${freshAnimalForEvent.breed}) মৃত্যুজনিত অবলোপন সম্পন্ন (পুঞ্জীভূত ক্ষতি: ৳${costToDerecognize})`
+        });
+
+        return { event: eventRecord, journalEntryId: mortalityJournalId };
+      }
+
       // Determine inventory item consumption for FEED event with inventory item linked + quantity
       const feedItemId = (event as any).inventoryItemId || event.feedItemId;
       const feedQuantityUsed = (event as any).quantity ?? event.feedQuantityUsed;
@@ -2131,9 +2288,6 @@ export async function executeAnimalEventTransaction(params: {
 
       if (event.eventType === 'WEIGHT' && event.weightKg && event.weightKg > 0) {
         animalUpdates.currentWeightKg = event.weightKg;
-      }
-      if (event.eventType === 'MORTALITY') {
-        animalUpdates.status = 'DECEASED';
       }
 
       await db.animals.update(freshAnimal.id, animalUpdates);
@@ -2520,6 +2674,10 @@ export async function reclassifyLivestockExpenseToBiologicalAsset(
         throw new Error(`গবাদিপশু পাওয়া যায়নি (ID: ${animalId})।`);
       }
 
+      if (['SOLD', 'DECEASED', 'TRANSFERRED', 'STOLEN'].includes(freshAnimal.status)) {
+        throw new Error(`বিক্রিত বা অপসারণকৃত গবাদিপশু (${freshAnimal.id} - ${freshAnimal.status}) এর ব্যয় জৈবিক সম্পদে স্থানান্তর করা যাবে না।`);
+      }
+
       const existingEntries = await dbInstance.journalEntries
         .filter(
           (j: any) =>
@@ -2649,6 +2807,10 @@ export async function integrateLivestockProductionCostAccounting(
       const freshAnimal = await db.animals.get(animalId);
       if (!freshAnimal) {
         throw new Error(`গবাদিপশু পাওয়া যায়নি (ID: ${animalId})।`);
+      }
+
+      if (['SOLD', 'DECEASED', 'TRANSFERRED', 'STOLEN'].includes(freshAnimal.status)) {
+        throw new Error(`বিক্রিত বা অপসারণকৃত গবাদিপশু (${freshAnimal.id} - ${freshAnimal.status}) এর ব্যয় সম্পদে স্থানান্তর বা সমন্বয় করা যাবে না।`);
       }
 
       const recordedCosts = calculateAnimalRecordedCosts(freshAnimal);
@@ -2788,6 +2950,324 @@ export async function integrateLivestockProductionCostAccounting(
   );
 }
 
+export interface AnimalPurchaseParams {
+  animalData: {
+    id?: string;
+    tag?: string;
+    species?: Animal['species'];
+    breed?: string;
+    gender?: Animal['gender'];
+    birthDate?: string;
+    purchaseDate?: string;
+    currentWeightKg?: number;
+    location?: string;
+    photoUrl?: string;
+    notes?: string;
+  };
+  purchaseCost: number;
+  paymentMethod?: 'CASH' | 'BANK' | 'CREDIT';
+  bankAccountId?: string;
+  supplierId?: string;
+  date?: string;
+  currentUserId: string;
+}
+
+/**
+ * Atomic Execution of Animal Purchase Transaction
+ * Creates Animal record and posts accounting transaction:
+ * Dr Livestock & Biological Assets (1580)
+ * Cr Cash (1010) / Bank (1020) / Accounts Payable (2010)
+ * Reconciles strictly with double-entry accounting.
+ */
+export async function executeAnimalPurchaseTransaction(
+  params: AnimalPurchaseParams
+): Promise<{ animal: Animal; journalEntryId?: string; voucherNumber?: string }> {
+  return await db.transaction(
+    'rw',
+    [
+      db.animals,
+      db.journalEntries,
+      db.accounts,
+      db.cashBankAccounts,
+      db.parties,
+      db.auditLogs,
+      db.closedPeriods
+    ],
+    async () => {
+      const {
+        animalData,
+        purchaseCost,
+        paymentMethod = 'CASH',
+        bankAccountId,
+        supplierId,
+        date = new Date().toISOString().split('T')[0],
+        currentUserId
+      } = params;
+
+      const cleanPurchaseCost = Math.max(0, Math.round((purchaseCost || 0) * 100) / 100);
+
+      const closedPeriod = await db.closedPeriods
+        .filter((p) => (p.startDate ? p.startDate <= date : true) && p.endDate >= date)
+        .first();
+      if (closedPeriod) {
+        throw new Error(`হিসাবকাল বন্ধ রয়েছে (${closedPeriod.notes || closedPeriod.endDate})। এই তারিখে নতুন লেনদেন পোস্টিং অনুমোদিত নয়।`);
+      }
+
+      const species = animalData.species || 'CATTLE';
+      const speciesPrefix = species === 'GOAT' ? 'GOT' : species === 'SHEEP' ? 'SHP' : species === 'POULTRY' ? 'PLT' : 'COW';
+      const animalId = animalData.id?.trim() || animalData.tag?.trim() || generateTransactionNumber(speciesPrefix);
+
+      // Check for duplicate animal ID/tag
+      const existing = await db.animals.get(animalId);
+      if (existing) {
+        throw new Error(`এই আইডি বা ট্যাগের পশু ইতিপূর্বে নিবন্ধিত হয়েছে (ID: ${animalId})।`);
+      }
+
+      let journalEntryId: string | undefined;
+      let voucherNumber: string | undefined;
+
+      if (cleanPurchaseCost > 0) {
+        const accounts = await db.accounts.toArray();
+        let livestockAssetAcc = accounts.find((a) => a.code === CANONICAL_ACCOUNTS.LIVESTOCK_ASSETS);
+        if (!livestockAssetAcc) {
+          const newAcc: Account = {
+            id: 'acc_1580',
+            code: CANONICAL_ACCOUNTS.LIVESTOCK_ASSETS,
+            nameBn: 'পশুসম্পদ (Livestock & Biological Assets)',
+            nameEn: 'Livestock & Biological Assets',
+            accountClass: 'ASSET',
+            normalBalance: 'DEBIT',
+            isSystem: true,
+            isActive: true
+          };
+          await safeInsert(db.accounts, newAcc, { idPrefix: 'acc' });
+          accounts.push(newAcc);
+          livestockAssetAcc = newAcc;
+        }
+
+        let paymentCode: string = CANONICAL_ACCOUNTS.CASH;
+        let paymentName = 'নগদ টাকা (Cash on Hand)';
+        if (paymentMethod === 'BANK') {
+          paymentCode = CANONICAL_ACCOUNTS.BANK;
+          paymentName = 'ব্যাংক হিসাব (Bank Accounts)';
+        } else if (paymentMethod === 'CREDIT') {
+          paymentCode = CANONICAL_ACCOUNTS.ACCOUNTS_PAYABLE;
+          paymentName = 'সরবরাহকারীর দেনা (Accounts Payable)';
+        }
+
+        const paymentAcc = accounts.find((a) => a.code === paymentCode) || {
+          id: `acc_${paymentCode}`,
+          code: paymentCode,
+          nameBn: paymentName
+        };
+
+        const journalLines: JournalLine[] = [
+          {
+            accountId: livestockAssetAcc.id,
+            accountCode: CANONICAL_ACCOUNTS.LIVESTOCK_ASSETS,
+            accountName: livestockAssetAcc.nameBn || 'পশুসম্পদ (Livestock & Biological Assets)',
+            debit: cleanPurchaseCost,
+            credit: 0,
+            memo: `পশু ক্রয়: ট্যাগ ${animalId}`
+          },
+          {
+            accountId: paymentAcc.id,
+            accountCode: paymentCode,
+            accountName: paymentAcc.nameBn || paymentName,
+            debit: 0,
+            credit: cleanPurchaseCost,
+            memo: paymentMethod === 'CASH'
+              ? `পশু ক্রয়ে নগদ পরিশোধ: ${animalId}`
+              : paymentMethod === 'BANK'
+              ? `পশু ক্রয়ে ব্যাংক পরিশোধ: ${animalId}`
+              : `পশু ক্রয়ে সরবরাহকারীর নিকট দেনা: ${animalId}`
+          }
+        ];
+
+        const check = validateBalancedLines(journalLines, accounts);
+        if (!check.isBalanced) {
+          throw new Error('পশু ক্রয় জাবেদা ভারসাম্যহীন! ক্রয় সংরক্ষণ বাতিল করা হলো।');
+        }
+
+        voucherNumber = generateTransactionNumber(paymentMethod === 'CREDIT' ? 'JV' : 'PAY');
+        const journalEntry = await postJournalEntry(
+          {
+            id: generateUniqueId('j_anm'),
+            voucherNumber,
+            voucherType: paymentMethod === 'CREDIT' ? 'JOURNAL' : 'PAYMENT',
+            date,
+            narration: `গবাদিপশু ক্রয়: ${species} (ট্যাগ: ${animalId}), ক্রয়মূল্য: ৳${cleanPurchaseCost}`,
+            reference: animalId,
+            lines: journalLines,
+            createdBy: currentUserId,
+            createdAt: new Date().toISOString()
+          },
+          { accounts, skipDbPut: true }
+        );
+        await safeInsert(db.journalEntries, journalEntry, { idPrefix: 'j' });
+        journalEntryId = journalEntry.id;
+
+        // Update operational cash/bank account balance or supplier balance
+        if (paymentMethod === 'CASH') {
+          const cashAcc = await db.cashBankAccounts.where('accountType').equals('CASH').first();
+          if (cashAcc) {
+            await db.cashBankAccounts.update(cashAcc.id, {
+              currentBalance: Math.round((cashAcc.currentBalance - cleanPurchaseCost) * 100) / 100,
+              synced: false
+            });
+          }
+        } else if (paymentMethod === 'BANK') {
+          let bankAcc: CashBankAccount | undefined;
+          if (bankAccountId) bankAcc = await db.cashBankAccounts.get(bankAccountId);
+          if (!bankAcc) bankAcc = await db.cashBankAccounts.where('accountType').equals('BANK').first();
+          if (bankAcc) {
+            await db.cashBankAccounts.update(bankAcc.id, {
+              currentBalance: Math.round((bankAcc.currentBalance - cleanPurchaseCost) * 100) / 100,
+              synced: false
+            });
+          }
+        } else if (paymentMethod === 'CREDIT' && supplierId) {
+          const sParty = await db.parties.get(supplierId);
+          if (sParty) {
+            await db.parties.update(supplierId, {
+              balance: Math.round(((sParty.balance || 0) + cleanPurchaseCost) * 100) / 100,
+              synced: false
+            });
+          }
+        }
+      }
+
+      const animal: Animal = {
+        id: animalId,
+        tag: animalData.tag || animalId,
+        species,
+        breed: animalData.breed?.trim() || '',
+        gender: animalData.gender || 'FEMALE',
+        birthDate: animalData.birthDate || date,
+        purchaseDate: animalData.purchaseDate || date,
+        purchaseCost: cleanPurchaseCost,
+        currentWeightKg: animalData.currentWeightKg || 0,
+        status: 'ACTIVE',
+        location: animalData.location || 'প্রধান শেড',
+        accumulatedFeedCost: 0,
+        accumulatedMedCost: 0,
+        accumulatedLabourCost: 0,
+        otherCosts: 0,
+        totalCost: cleanPurchaseCost,
+        photoUrl: animalData.photoUrl,
+        notes: animalData.notes,
+        journalEntryId,
+        paymentMethod,
+        bankAccountId,
+        supplierId,
+        synced: false
+      };
+
+      await safeInsert(db.animals, animal, { idPrefix: speciesPrefix });
+
+      // Audit Log
+      await safeInsert(db.auditLogs, {
+        id: generateUniqueId('audit'),
+        timestamp: new Date().toISOString(),
+        userId: currentUserId,
+        role: 'OWNER',
+        action: 'ANIMAL_REGISTERED',
+        module: 'LIVESTOCK',
+        recordId: animal.id,
+        status: 'SUCCESS',
+        details: `${animal.id} (${animal.breed}) ক্রয় ও নিবন্ধন সম্পন্ন (ক্রয়মূল্য: ৳${cleanPurchaseCost})`
+      });
+
+      return { animal, journalEntryId, voucherNumber };
+    }
+  );
+}
+
+/**
+ * Retrieves an Animal's accumulated cost and reconciles it against General Ledger transactions.
+ * Returns breakdown, GL debits, COGS already transferred, net remaining cost, and consistency flag.
+ * Ensures that operational cost cannot be claimed without source accounting transactions.
+ */
+export async function getAnimalAccumulatedCost(
+  animalId: string,
+  dbInstance: any = db
+): Promise<{
+  animalId: string;
+  accumulatedCost: number;
+  breakdown: AnimalCostBreakdown;
+  accountingDebits: number;
+  cogsTransferred: number;
+  writeOffTransferred: number;
+  netRemainingCost: number;
+  isConsistent: boolean;
+  unbackedCost: number;
+}> {
+  const animal = await dbInstance.animals.get(animalId);
+  if (!animal) {
+    throw new Error(`পশু খুঁজে পাওয়া যায়নি (ID: ${animalId})।`);
+  }
+
+  const breakdown = calculateAnimalRecordedCosts(animal);
+  const accumulatedCost = breakdown.totalRecordedCost;
+
+  const animalEntries = await dbInstance.journalEntries
+    .filter(
+      (j: any) =>
+        j.reference === animalId ||
+        (j.lines && j.lines.some((l: any) => l.memo && l.memo.includes(animalId)))
+    )
+    .toArray();
+
+  let assetDebits1580 = 0;
+  let expenseDebits = 0;
+  let cogsTransferred = 0;
+  let writeOffTransferred = 0;
+
+  for (const entry of animalEntries) {
+    for (const line of entry.lines || []) {
+      const isForThisAnimal = line.memo ? line.memo.includes(animalId) : entry.reference === animalId;
+      if (!isForThisAnimal) continue;
+
+      if (line.accountCode === CANONICAL_ACCOUNTS.LIVESTOCK_ASSETS) {
+        assetDebits1580 += (line.debit || 0) - (line.credit || 0);
+      } else if (
+        line.accountCode === CANONICAL_ACCOUNTS.FEED_EXPENSE ||
+        line.accountCode === CANONICAL_ACCOUNTS.VET_MEDICINE ||
+        line.accountCode === CANONICAL_ACCOUNTS.VACCINATION ||
+        line.accountCode === CANONICAL_ACCOUNTS.FARM_LABOUR_WAGES ||
+        line.accountCode === CANONICAL_ACCOUNTS.MISCELLANEOUS_EXPENSE
+      ) {
+        expenseDebits += (line.debit || 0) - (line.credit || 0);
+      } else if (line.accountCode === CANONICAL_ACCOUNTS.LIVESTOCK_COGS) {
+        cogsTransferred += (line.debit || 0) - (line.credit || 0);
+      } else if (line.accountCode === CANONICAL_ACCOUNTS.LIVESTOCK_WRITEOFF || line.accountCode === CANONICAL_ACCOUNTS.LIVESTOCK_MORTALITY_LOSS || line.accountCode === '8020') {
+        writeOffTransferred += (line.debit || 0) - (line.credit || 0);
+      }
+    }
+  }
+
+  cogsTransferred = Math.max(0, Math.round(cogsTransferred * 100) / 100);
+  writeOffTransferred = Math.max(0, Math.round(writeOffTransferred * 100) / 100);
+  const totalGlAvailable = Math.max(0, Math.round((assetDebits1580 + expenseDebits) * 100) / 100);
+  const accountingDebits = Math.max(0, Math.round((totalGlAvailable + cogsTransferred + writeOffTransferred) * 100) / 100);
+  const netRemainingCost = totalGlAvailable;
+
+  const unbackedCost = Math.max(0, Math.round((accumulatedCost - accountingDebits) * 100) / 100);
+  const isConsistent = unbackedCost === 0;
+
+  return {
+    animalId,
+    accumulatedCost,
+    breakdown,
+    accountingDebits,
+    cogsTransferred,
+    writeOffTransferred,
+    netRemainingCost,
+    isConsistent,
+    unbackedCost
+  };
+}
+
 export interface LivestockProductionCostParams {
   animalId: string;
   costType: 'FEED' | 'MEDICINE' | 'LABOUR' | 'OTHER';
@@ -2830,6 +3310,7 @@ export async function executeLivestockProductionCostTransaction(
       const {
         animalId,
         costType,
+        eventType,
         amount,
         date = new Date().toISOString().split('T')[0],
         paymentMethod = 'CASH',
@@ -2857,8 +3338,15 @@ export async function executeLivestockProductionCostTransaction(
         throw new Error(`পশু খুঁজে পাওয়া যায়নি (ID: ${animalId})`);
       }
 
-      if (['SOLD', 'DECEASED', 'TRANSFERRED', 'STOLEN'].includes(freshAnimal.status)) {
-        throw new Error(`বিক্রিত বা অপসারণকৃত পশুর (${freshAnimal.status}) উৎপাদন ব্যয় যুক্ত করা যাবে না।`);
+      if ((eventType as any) === 'MORTALITY') {
+        throw new Error('মৃত্যুজনিত ঘটনা উৎপাদন ব্যয় হিসেবে গণ্য করা যাবে না। অনুগ্রহ করে মৃত্যু দাখিলা ব্যবহার করুন।');
+      }
+
+      if (freshAnimal.status === 'DECEASED') {
+        throw new Error(`গবাদিপশু ${freshAnimal.id} ইতিপূর্বে মৃত ঘোষণা করা হয়েছে। মৃত পশুর ক্ষেত্রে উৎপাদন ব্যয় যুক্ত করা নিষিদ্ধ।`);
+      }
+      if (['SOLD', 'TRANSFERRED', 'STOLEN'].includes(freshAnimal.status)) {
+        throw new Error(`বিক্রিত বা অপসারণকৃত পশুর (${freshAnimal.id} - ${freshAnimal.status}) উৎপাদন ব্যয় যুক্ত করা যাবে না।`);
       }
 
       const accounts = await db.accounts.toArray();
@@ -3121,6 +3609,7 @@ export async function executeAnimalSaleOrRemovalTransaction(params: {
     'rw',
     [
       db.animals,
+      db.animalEvents,
       db.sales,
       db.journalEntries,
       db.cashBankAccounts,
@@ -3153,12 +3642,57 @@ export async function executeAnimalSaleOrRemovalTransaction(params: {
       const todayStr = new Date().toISOString().split('T')[0];
 
       if (newStatus === 'SOLD') {
+        if (freshAnimal.status === 'SOLD') {
+          throw new Error(`গবাদিপশু ${freshAnimal.id} ইতিপূর্বে বিক্রয় করা হয়েছে। পুনরায় বিক্রয় বা ডুপ্লিকেট COGS দাখিলা তৈরি করা যাবে না।`);
+        }
+        if (['DECEASED', 'STOLEN', 'TRANSFERRED'].includes(freshAnimal.status)) {
+          throw new Error(`অপসারণকৃত গবাদিপশু (${freshAnimal.id} - ${freshAnimal.status}) পুনরায় বিক্রয় বা COGS নির্ধারণ করা যাবে না।`);
+        }
         if (freshAnimal.purchaseDate && date < freshAnimal.purchaseDate) {
           throw new Error(`পশু বিক্রয়ের তারিখ (${date}) ক্রয় তারিখের (${freshAnimal.purchaseDate}) পূর্ববর্তী হতে পারে না।`);
         }
         if (date > todayStr) {
           throw new Error(`পশু বিক্রয়ের তারিখ ভবিষ্যতের হতে পারে না (${todayStr} বা তার পূর্বের তারিখ নির্বাচন করুন)।`);
         }
+      } else {
+        if (freshAnimal.status === 'DECEASED') {
+          throw new Error(`গবাদিপশু ${freshAnimal.id} ইতিপূর্বে মৃত ঘোষণা করা হয়েছে। পুনরায় মৃত্যু বা অবলোপন দাখিলা নিষিদ্ধ।`);
+        }
+        if (['SOLD', 'STOLEN', 'TRANSFERRED'].includes(freshAnimal.status)) {
+          throw new Error(`ইতিপূর্বে নিষ্পত্তি বা অপসারণকৃত গবাদিপশু (${freshAnimal.id} - ${freshAnimal.status}) পুনরায় অপসারণ বা অবলোপন করা যাবে না।`);
+        }
+        if (newStatus === 'DECEASED' && salePrice && salePrice > 0) {
+          throw new Error(`মৃত পশুর ক্ষেত্রে বিক্রয়মূল্য ধার্য করা যাবে না। মৃত্যুজনিত ঘটনা বিক্রয় হিসেবে গণ্য করা নিষিদ্ধ।`);
+        }
+      }
+
+      // Check if COGS or write-off already exists in GL for this animal to prevent duplicate COGS / derecognition
+      let alreadyRecognizedCogs = 0;
+      let alreadyWrittenOff = 0;
+      try {
+        const pastEntries = await db.journalEntries
+          .filter((j) => j.reference === freshAnimal.id || (Boolean(j.narration) && j.narration.includes(freshAnimal.id)))
+          .toArray();
+        for (const entry of pastEntries) {
+          for (const line of entry.lines || []) {
+            const isForThisAnimal = line.memo ? line.memo.includes(freshAnimal.id) : (entry.reference === freshAnimal.id);
+            if (!isForThisAnimal) continue;
+            if (line.accountCode === CANONICAL_ACCOUNTS.LIVESTOCK_COGS) {
+              alreadyRecognizedCogs += (line.debit || 0) - (line.credit || 0);
+            } else if (line.accountCode === CANONICAL_ACCOUNTS.LIVESTOCK_WRITEOFF || line.accountCode === CANONICAL_ACCOUNTS.LIVESTOCK_MORTALITY_LOSS || line.accountCode === '8020') {
+              alreadyWrittenOff += (line.debit || 0) - (line.credit || 0);
+            }
+          }
+        }
+      } catch {
+        // Fallback
+      }
+
+      if (newStatus === 'SOLD' && alreadyRecognizedCogs > 0) {
+        throw new Error(`গবাদিপশু ${freshAnimal.id} এর জন্য ইতিপূর্বে ৳${alreadyRecognizedCogs} COGS দাখিলা সম্পন্ন হয়েছে। পুনরায় COGS নির্ধারণ বা ডুপ্লিকেট বিক্রয় নিষিদ্ধ।`);
+      }
+      if (alreadyWrittenOff > 0) {
+        throw new Error(`গবাদিপশু ${freshAnimal.id} এর জন্য ইতিপূর্বে ৳${alreadyWrittenOff} অবলোপন বা মৃত্যুজনিত দাখিলা সম্পন্ন হয়েছে। পুনরায় নিষ্পত্তি নিষিদ্ধ।`);
       }
 
       const cleanPrice = Math.round((salePrice || 0) * 100) / 100;
@@ -3297,7 +3831,7 @@ export async function executeAnimalSaleOrRemovalTransaction(params: {
           }
 
           const totalAvailableInGl = Math.max(0, Math.round((glAssetDebit1580 + glExpenseDebit) * 100) / 100);
-          if (totalJournalCount > 0 && costToDerecognize > totalAvailableInGl) {
+          if (costToDerecognize > totalAvailableInGl) {
             const unbackedAmount = Math.round((costToDerecognize - totalAvailableInGl) * 100) / 100;
             throw new Error(
               `গবাদিপশু ${freshAnimal.id} এর উৎপাদন ব্যয়ে অমিল রয়েছে: মোট অপারেশনাল ব্যয় ৳${costToDerecognize}, কিন্তু সংশ্লিষ্ট অনুমোদিত জাবেদা ব্যালেন্স পাওয়া গেছে মাত্র ৳${totalAvailableInGl} (অননুমোদিত বা হিসাবহীন ঘাটতি: ৳${unbackedAmount})। কোনো প্রকৃত হিসাব লেনদেন ছাড়া স্বয়ংক্রিয় ক্রেডিট সৃষ্টি করা নিষিদ্ধ। অনুগ্রহ করে প্রকৃত লেনদেন নথিভুক্ত করুন।`
@@ -3438,20 +3972,23 @@ export async function executeAnimalSaleOrRemovalTransaction(params: {
           }
 
           const totalAvailableInGl = Math.max(0, Math.round((glAssetDebit1580 + glExpenseDebit) * 100) / 100);
-          if (totalJournalCount > 0 && costToDerecognize > totalAvailableInGl) {
+          if (costToDerecognize > totalAvailableInGl) {
             const unbackedAmount = Math.round((costToDerecognize - totalAvailableInGl) * 100) / 100;
             throw new Error(
               `গবাদিপশু ${freshAnimal.id} এর অবলোপন ব্যয়ে অমিল রয়েছে: মোট অপারেশনাল ব্যয় ৳${costToDerecognize}, কিন্তু সংশ্লিষ্ট অনুমোদিত জাবেদা ব্যালেন্স পাওয়া গেছে মাত্র ৳${totalAvailableInGl} (অননুমোদিত বা হিসাবহীন ঘাটতি: ৳${unbackedAmount})। কোনো প্রকৃত হিসাব লেনদেন ছাড়া স্বয়ংক্রিয় ক্রেডিট সৃষ্টি করা নিষিদ্ধ। অনুগ্রহ করে প্রকৃত লেনদেন নথিভুক্ত করুন।`
             );
           }
 
+          const isMortality = newStatus === 'DECEASED';
           const writeOffDebitLine: JournalLine = {
             accountId: writeOffAcc.id,
-            accountCode: CANONICAL_ACCOUNTS.LIVESTOCK_WRITEOFF,
-            accountName: writeOffAcc.nameBn || 'পশুসম্পদ অবলোপন (Livestock Write-off)',
+            accountCode: CANONICAL_ACCOUNTS.LIVESTOCK_MORTALITY_LOSS,
+            accountName: writeOffAcc.nameBn || (isMortality ? 'পশুসম্পদ অবলোপন ও মৃত্যুজনিত ক্ষতি (Livestock Write-off & Mortality Loss)' : 'পশুসম্পদ অবলোপন (Livestock Write-off)'),
             debit: costToDerecognize,
             credit: 0,
-            memo: `পশু অবলোপন (${newStatus}): ${freshAnimal.id} (${freshAnimal.breed}) পুঞ্জীভূত ব্যয়`
+            memo: isMortality
+              ? `পশু মৃত্যুজনিত ক্ষতি (Mortality Loss): ${freshAnimal.id} (${freshAnimal.breed}) পুঞ্জীভূত ব্যয়`
+              : `পশু অবলোপন (${newStatus}): ${freshAnimal.id} (${freshAnimal.breed}) পুঞ্জীভূত ব্যয়`
           };
           const creditLines = await buildLivestockCostCreditLines(freshAnimal, costToDerecognize, accounts);
           const writeOffLines: JournalLine[] = [writeOffDebitLine, ...creditLines];
@@ -3466,13 +4003,17 @@ export async function executeAnimalSaleOrRemovalTransaction(params: {
             ? ` (পুঞ্জীভূত মোট ব্যয়: ৳${costToDerecognize})`
             : '';
 
+          const narration = isMortality
+            ? `গবাদিপশু মৃত্যুজনিত ক্ষতি ও অবলোপন দাখিলা: ${freshAnimal.id} (${freshAnimal.breed}) মৃত্যু বাবদ অবলোপন${costDetailStr}${notes ? ` [${notes}]` : ''}`
+            : `পশুসম্পদ অবলোপন দাখিলা (${newStatus}): ${freshAnimal.id} (${freshAnimal.breed}) খামার থেকে অপসারণ বাবদ অবলোপন${costDetailStr}${notes ? ` [${notes}]` : ''}`;
+
           const writeOffEntry = await postJournalEntry(
             {
               id: generateUniqueId('j_writeoff'),
               voucherNumber,
               voucherType: 'ADJUSTMENT',
               date,
-              narration: `পশুসম্পদ অবলোপন দাখিলা (${newStatus}): ${freshAnimal.id} (${freshAnimal.breed}) খামার থেকে অপসারণ বাবদ অবলোপন${costDetailStr}${notes ? ` [${notes}]` : ''}`,
+              narration,
               reference: freshAnimal.id,
               lines: writeOffLines,
               createdBy: currentUserId,
@@ -3485,6 +4026,24 @@ export async function executeAnimalSaleOrRemovalTransaction(params: {
         }
       }
 
+      // If DECEASED, ensure an AnimalEvent of type MORTALITY exists to keep operational logs in sync
+      if (newStatus === 'DECEASED') {
+        const existingEvent = await db.animalEvents
+          .filter((ev) => ev.animalId === freshAnimal.id && ev.eventType === 'MORTALITY')
+          .first();
+        if (!existingEvent) {
+          await safeInsert(db.animalEvents, {
+            id: generateUniqueId('evt'),
+            animalId: freshAnimal.id,
+            eventType: 'MORTALITY',
+            date,
+            cost: 0,
+            details: notes?.trim() || `পশু ${freshAnimal.id} মৃত্যুজনিত ক্ষতি ও অবলোপন সম্পন্ন`,
+            synced: false
+          });
+        }
+      }
+
       // Update animal status/salePrice/saleDate/notes
       const noteAddition = notes?.trim() ? `[${newStatus} - ${date}: ${notes.trim()}]` : `[${newStatus} - ${date}]`;
       const combinedNotes = freshAnimal.notes ? `${freshAnimal.notes} | ${noteAddition}` : noteAddition;
@@ -3492,8 +4051,8 @@ export async function executeAnimalSaleOrRemovalTransaction(params: {
       const updatedAnimal: Animal = {
         ...freshAnimal,
         status: newStatus,
-        salePrice: newStatus === 'SOLD' ? cleanPrice : freshAnimal.salePrice,
-        saleDate: date,
+        salePrice: newStatus === 'SOLD' ? cleanPrice : undefined,
+        saleDate: newStatus === 'SOLD' ? date : undefined,
         notes: combinedNotes,
         journalEntryId: journalEntryId || freshAnimal.journalEntryId,
         synced: false
@@ -3506,16 +4065,60 @@ export async function executeAnimalSaleOrRemovalTransaction(params: {
         timestamp: new Date().toISOString(),
         userId: currentUserId,
         role: 'OWNER',
-        action: newStatus === 'SOLD' ? 'ANIMAL_SOLD' : 'ANIMAL_REMOVED',
+        action: newStatus === 'SOLD' ? 'ANIMAL_SOLD' : (newStatus === 'DECEASED' ? 'ANIMAL_MORTALITY' : 'ANIMAL_REMOVED'),
         module: 'LIVESTOCK',
         recordId: freshAnimal.id,
         status: 'SUCCESS',
-        details: `${freshAnimal.id} স্ট্যাটাস পরিবর্তন: ${newStatus}${newStatus === 'SOLD' ? ` (বিক্রয়মূল্য: ৳${cleanPrice})` : ''}`
+        details: newStatus === 'DECEASED'
+          ? `${freshAnimal.id} (${freshAnimal.breed}) মৃত্যুজনিত অবলোপন সম্পন্ন (পুঞ্জীভূত ক্ষতি: ৳${costToDerecognize})`
+          : `${freshAnimal.id} স্ট্যাটাস পরিবর্তন: ${newStatus}${newStatus === 'SOLD' ? ` (বিক্রয়মূল্য: ৳${cleanPrice})` : ''}`
       });
 
       return { updatedAnimal, sale: saleRecord, journalEntryId };
     }
   );
+}
+
+/**
+ * TASK 10: Atomic Livestock Mortality Accounting
+ * Derecognizes active biological asset carrying cost and recognizes Livestock Mortality Loss (8020).
+ * Prevents treating mortality as a sale, rejects unbacked/invented losses, and blocks duplicate mortality entries.
+ */
+export async function executeLivestockMortalityTransaction(params: {
+  animal?: Animal;
+  animalId?: string;
+  date?: string;
+  causeOfDeath?: string;
+  notes?: string;
+  currentUserId: string;
+}): Promise<{ updatedAnimal: Animal; journalEntryId?: string; eventId?: string }> {
+  const targetId = params.animal?.id || params.animalId;
+  if (!targetId) {
+    throw new Error('পশুর তথ্য বা আইডি প্রদান করা হয়নি।');
+  }
+  const date = params.date || new Date().toISOString().split('T')[0];
+  const combinedNotes = params.causeOfDeath
+    ? (params.notes ? `${params.causeOfDeath} - ${params.notes}` : params.causeOfDeath)
+    : params.notes;
+
+  const result = await executeAnimalSaleOrRemovalTransaction({
+    animal: params.animal,
+    animalId: targetId,
+    newStatus: 'DECEASED',
+    date,
+    notes: combinedNotes,
+    currentUserId: params.currentUserId
+  });
+
+  const event = await db.animalEvents
+    .filter((ev) => ev.animalId === targetId && ev.eventType === 'MORTALITY')
+    .last();
+
+  return {
+    updatedAnimal: result.updatedAnimal,
+    journalEntryId: result.journalEntryId,
+    eventId: event?.id
+  };
 }
 
 /**

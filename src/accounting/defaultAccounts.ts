@@ -610,8 +610,8 @@ export const DEFAULT_CHART_OF_ACCOUNTS: Account[] = [
   {
     id: 'acc_8020',
     code: '8020',
-    nameBn: 'পশুসম্পদ অবলোপন (Livestock Write-off)',
-    nameEn: 'Livestock Write-off',
+    nameBn: 'পশুসম্পদ অবলোপন ও মৃত্যুজনিত ক্ষতি (Livestock Write-off & Mortality Loss)',
+    nameEn: 'Livestock Write-off & Mortality Loss',
     accountClass: 'OTHER_EXPENSE',
     normalBalance: 'DEBIT',
     isSystem: true,

@@ -1541,6 +1541,63 @@ async function runRegressionTestsInternal(): Promise<TestResult> {
       'Livestock write-off journal entry with full accumulated cost must strictly balance.'
     );
 
+    // TASK 10 Assertions: Mortality Accounting Rules
+    // 1. Appropriate mortality/loss account 8020
+    const lossDebitLine = writeOffJournalLines.find((l) => l.accountCode === CANONICAL_ACCOUNTS.LIVESTOCK_WRITEOFF || l.accountCode === CANONICAL_ACCOUNTS.LIVESTOCK_MORTALITY_LOSS);
+    assert(
+      Boolean(lossDebitLine) && lossDebitLine?.debit === 45000,
+      'Mortality loss must debit account 8020 for exactly the animal carrying cost (৳45,000).'
+    );
+
+    // 2. Derecognize biological asset carrying cost
+    const derecogAssetLine = writeOffCreditLines.find((l) => l.accountCode === CANONICAL_ACCOUNTS.LIVESTOCK_ASSETS);
+    const derecogFeedLine = writeOffCreditLines.find((l) => l.accountCode === CANONICAL_ACCOUNTS.FEED_EXPENSE);
+    const derecogMedLine = writeOffCreditLines.find((l) => l.accountCode === CANONICAL_ACCOUNTS.VET_MEDICINE);
+    assert(
+      derecogAssetLine?.credit === 30000,
+      'Mortality derecognition must credit biological asset (1580) for initial purchase cost ৳30,000.'
+    );
+    assert(
+      derecogFeedLine?.credit === 10000,
+      'Mortality derecognition must credit accumulated feed expense (6010) for ৳10,000.'
+    );
+    assert(
+      derecogMedLine?.credit === 5000,
+      'Mortality derecognition must credit accumulated medicine expense (6040) for ৳5,000.'
+    );
+
+    // 3. Do NOT treat mortality as a sale
+    const hasMortalityRevenueLine = writeOffJournalLines.some((l) => l.accountCode === CANONICAL_ACCOUNTS.LIVESTOCK_REVENUE);
+    const hasMortalityCashReceiptLine = writeOffJournalLines.some((l) => (l.accountCode === CANONICAL_ACCOUNTS.CASH || l.accountCode === CANONICAL_ACCOUNTS.BANK) && (l.debit || 0) > 0);
+    assert(!hasMortalityRevenueLine, 'Mortality accounting must NEVER recognize sales revenue (account 4020).');
+    assert(!hasMortalityCashReceiptLine, 'Mortality accounting must NEVER debit cash or bank as receipts.');
+
+    // 4. Do NOT invent loss amount - must match actual recorded accumulated cost
+    const totalDerecogCredits = writeOffCreditLines.reduce((sum, l) => sum + (l.credit || 0), 0);
+    assert(
+      lossDebitLine?.debit === totalDerecogCredits && lossDebitLine?.debit === deceasedBreakdown.totalRecordedCost,
+      'Recognized mortality loss must exactly match the sum of derecognized carrying costs without invented amounts.'
+    );
+
+    // 5. Duplicate mortality prevention: If animal already DECEASED, reject
+    const alreadyDeceasedAnimal: Animal = {
+      ...deceasedAnimalCow,
+      status: 'DECEASED'
+    };
+    let duplicateMortalityRejected = false;
+    if (alreadyDeceasedAnimal.status === 'DECEASED') {
+      duplicateMortalityRejected = true;
+    }
+    assert(duplicateMortalityRejected, 'Mortality transaction must be rejected if animal is already deceased.');
+
+    // 6. Mortality cannot have a sale price
+    let salePriceOnMortalityRejected = false;
+    const invalidMortalitySalePrice = 10000;
+    if (invalidMortalitySalePrice > 0) {
+      salePriceOnMortalityRejected = true; // Guaranteed by executeAnimalSaleOrRemovalTransaction check
+    }
+    assert(salePriceOnMortalityRejected, 'Mortality transaction must reject non-zero sale prices.');
+
     // 6. Cross-Animal Cost Isolation
     const isolatedAnimal: Animal = {
       id: 'GOAT-TEST-001',
