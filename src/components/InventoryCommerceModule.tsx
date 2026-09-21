@@ -34,7 +34,7 @@ import { HIGH_AMOUNT_CONFIRMATION_THRESHOLD } from '../constants/validation';
 import { notifyUndoableAction } from '../services/undoService';
 import { triggerSuccessAnimation } from './ui/SuccessAnimation';
 import { postJournalEntry, validateBalancedLines } from '../accounting/accountingEngine';
-import { CANONICAL_ACCOUNTS } from '../accounting/accountMapping';
+import { CANONICAL_ACCOUNTS, getInventoryAssetAccount, getInventoryAccountDetails } from '../accounting/accountMapping';
 import { SearchableSelect, SearchableOption } from './ui';
 
 declare module '../types' {
@@ -46,24 +46,13 @@ declare module '../types' {
 }
 
 const getInventoryOpeningAssetAccount = (category?: string): { code: string; name: string } => {
-  switch (category) {
-    case 'FEED':
-    case 'FEED_STOCK':
-      return { code: '1051', name: 'মজুদ খাদ্য (Feed Inventory)' };
-    case 'MEDICINE':
-      return { code: '1052', name: 'মজুদ ওষুধ ও প্রতিষেধক (Medicine Inventory)' };
-    case 'FERTILIZER':
-      return { code: '1053', name: 'মজুদ সার ও পুষ্টি (Fertilizer Inventory)' };
-    case 'SEED':
-      return { code: '1054', name: 'মজুদ বীজ (Seeds Inventory)' };
-    case 'RAW_MATERIAL':
-      return { code: '1055', name: 'মজুদ কৃষি-রাসায়নিক ও কাঁচামাল (Agrochemicals / Raw Materials)' };
-    case 'PACKAGING':
-    case 'FARM_PRODUCT':
-    case 'PROCESSED':
-    default:
-      return { code: '1056', name: 'অন্যান্য মজুদ পণ্য ও প্যাকেজিং (Other Inventory / Packaging)' };
-  }
+  const details = getInventoryAccountDetails(category);
+  return { code: details.code, name: details.nameBn };
+};
+
+const getInventoryCategoryBadge = (category?: string): { code: string; label: string } => {
+  const details = getInventoryAccountDetails(category);
+  return { code: details.code, label: details.categoryLabelBn };
 };
 
 export interface ReceiptData {
@@ -820,7 +809,7 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
       let postedJournalEntryId: string | undefined = undefined;
 
       // When openingStock > 0 and unitCost > 0 (or buyPrice > 0):
-      // - debit the appropriate inventory asset account (1051 FEED, 1052 MEDICINE, 1053 FERTILIZER, 1054 SEEDS, 1055 AGROCHEMICALS, or 1056 OTHER)
+      // - debit the appropriate inventory asset account (1051 FEED, 1052 SEED & FERTILIZER, 1053 RAW MATERIALS, 1054 WIP, 1055 FINISHED GOODS, or 1056 PACKAGING)
       // - credit 3050 (Retained Earnings / মালিকানা স্বত্ব ও প্রারম্ভিক মূলধন) as this is opening stock from prior periods, NOT a cash purchase today
       if (stockNum > 0 && totalOpeningValue > 0) {
         const invAccount = getInventoryOpeningAssetAccount(itemCategory);
@@ -1697,13 +1686,13 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                     onChange={(e) => setItemCategory(e.target.value as any)}
                     className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900"
                   >
-                    <option value="FEED">ফিড স্টক (Feed Stock - 1051)</option>
-                    <option value="MEDICINE">ওষুধ ও স্বাস্থ্য উপকরণ (Medicine - 1052)</option>
-                    <option value="FERTILIZER">সার (Fertilizer - 1053)</option>
-                    <option value="SEED">বীজ (Seed - 1054)</option>
-                    <option value="RAW_MATERIAL">কাঁচামাল ও কৃষি-রাসায়নিক (Agrochemicals / Raw Material - 1055)</option>
-                    <option value="FARM_PRODUCT">খামারের উৎপাদিত পণ্য (Product - 1055)</option>
-                    <option value="PACKAGING">প্যাকেজিং ও অন্যান্য (Packaging / Other - 1056)</option>
+                    <option value="FEED">মজুদ খাদ্য (Feed Stock - 1051)</option>
+                    <option value="SEED">বীজ (Seed - 1052)</option>
+                    <option value="FERTILIZER">সার ও পুষ্টি (Fertilizer - 1052)</option>
+                    <option value="RAW_MATERIAL">কাঁচামাল ও ওষুধ (Raw Materials - 1053)</option>
+                    <option value="WIP">প্রক্রিয়াধীন পণ্য (WIP - 1054)</option>
+                    <option value="FARM_PRODUCT">খামারের উৎপাদিত পণ্য (Finished Goods - 1055)</option>
+                    <option value="PACKAGING">প্যাকেজিং সামগ্রী (Packaging - 1056)</option>
                   </select>
                 </div>
                 <div>
@@ -1830,7 +1819,7 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                         ) : (
                           <div className="w-full h-full flex flex-col items-center justify-center bg-gradient-to-br from-amber-50 to-emerald-50/50 text-slate-500">
                             <Package className="w-10 h-10 text-amber-700/70 mb-1 stroke-[1.5]" />
-                            <span className="text-[11px] font-semibold text-gray-500">{it.category}</span>
+                            <span className="text-[11px] font-semibold text-gray-500">{getInventoryCategoryBadge(it.category).label}</span>
                           </div>
                         )}
                         <div className="absolute top-2.5 right-2.5">
@@ -1852,7 +1841,7 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                           <span className="text-[11px] text-gray-400 font-mono shrink-0">{it.code}</span>
                         </div>
                         <div className="text-[12px] text-gray-500 mt-0.5">
-                          {it.category === 'FEED' ? 'ফিড স্টক' : it.category}
+                          {getInventoryCategoryBadge(it.category).label} ({getInventoryAssetAccount(it.category)})
                         </div>
                       </div>
                     </div>
@@ -1929,13 +1918,9 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                           <div className="text-[11px] text-gray-400 font-mono">{it.code}</div>
                         </td>
                         <td className="p-3 text-gray-600 text-[13px]">
-                          {it.category === 'FEED' ? (
-                            <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold bg-emerald-50 text-emerald-800 border border-emerald-200">
-                              ফিড স্টক
-                            </span>
-                          ) : (
-                            it.category
-                          )}
+                          <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold bg-emerald-50 text-emerald-800 border border-emerald-200">
+                            {getInventoryCategoryBadge(it.category).label} ({getInventoryAssetAccount(it.category)})
+                          </span>
                         </td>
                         <td className="p-3 font-bold text-gray-900">{it.currentStock} {it.unit}</td>
                         <td className="p-3 text-gray-700">{fmt(it.avgCostPrice)}</td>
@@ -2350,7 +2335,7 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                 <ShoppingCart className="w-5 h-5 text-sky-600" />
                 <span>ক্রয় চালান ও সরবরাহকারী খরচ (Purchase Invoices)</span>
               </h3>
-              <p className="text-[13px] text-gray-600 mt-0.5">ফিড ক্রয়: Dr 1051, নগদ: Cr 1010, ব্যাংক: Cr 1030, বাকি: Cr 2010 AP</p>
+              <p className="text-[13px] text-gray-600 mt-0.5">পণ্য ক্রয়: Dr ইনভেন্টরি (1051-1056), নগদ: Cr 1010, ব্যাংক: Cr 1030, বাকি: Cr 2010 AP</p>
             </div>
 
             {role === 'OWNER' && (
@@ -2413,7 +2398,7 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                     <option value="">-- পণ্য নির্বাচন --</option>
                     {items.map((it) => (
                       <option key={it.id} value={it.id}>
-                        {it.nameBn} ({it.category === 'FEED' ? '1051 Feed' : it.category})
+                        {it.nameBn} ({getInventoryAssetAccount(it.category)})
                       </option>
                     ))}
                   </select>

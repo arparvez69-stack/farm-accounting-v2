@@ -104,7 +104,7 @@ export function validateBalancedLines(
 
     // Explicit rejection of invalid account 1050
     if (code === '1050') {
-      throw new Error('REJECTED: Account code 1050 does not exist in Chart of Accounts. Use 1051 (Feed), 1052 (Seed/Fert), 1053 (Raw Material), or 1055 (Finished Goods).');
+      throw new Error('REJECTED: Account code 1050 does not exist in Chart of Accounts. Use 1051 (Feed), 1052 (Seed & Fertilizer), 1053 (Raw Materials), 1054 (WIP), 1055 (Finished Goods), or 1056 (Packaging).');
     }
 
     // Verify against Chart of Accounts if provided
@@ -868,13 +868,19 @@ export async function migrateLegacyAccounts(): Promise<number> {
         migratedCount++;
         const desc = `${entry.narration || ''} ${line.memo || ''} ${line.accountName || ''}`.toLowerCase();
         let targetCode = '1051';
-        let targetName = 'পশুখাদ্য মজুদ (Feed Inventory)';
+        let targetName = 'মজুদ খাদ্য (Feed Inventory)';
         if (desc.includes('সার') || desc.includes('বীজ') || desc.includes('fert') || desc.includes('seed')) {
           targetCode = '1052';
-          targetName = 'সার ও বীজ মজুদ (Fertilizer & Seed Inventory)';
-        } else if (desc.includes('কাঁচামাল') || desc.includes('raw')) {
+          targetName = 'মজুদ বীজ ও সার (Seed & Fertilizer Inventory)';
+        } else if (desc.includes('কাঁচামাল') || desc.includes('raw') || desc.includes('ঔষধ') || desc.includes('medicine')) {
           targetCode = '1053';
-          targetName = 'কাঁচামাল মজুদ (Raw Materials)';
+          targetName = 'মজুদ কাঁচামাল (Raw Materials)';
+        } else if (desc.includes('প্রক্রিয়াধীন') || desc.includes('wip')) {
+          targetCode = '1054';
+          targetName = 'প্রক্রিয়াধীন পণ্য (Work in Progress - WIP)';
+        } else if (desc.includes('প্যাকেজিং') || desc.includes('pack')) {
+          targetCode = '1056';
+          targetName = 'মজুদ প্যাকেজিং সামগ্রী (Packaging Inventory)';
         } else if (
           desc.includes('পণ্য') ||
           desc.includes('দুধ') ||
@@ -884,7 +890,7 @@ export async function migrateLegacyAccounts(): Promise<number> {
           desc.includes('মাংস')
         ) {
           targetCode = '1055';
-          targetName = 'প্রস্তুত পণ্য / সমাপনী মজুদ (Finished Goods)';
+          targetName = 'বিক্রয়যোগ্য উৎপাদিত পণ্য (Finished Farm Products)';
         }
 
         return {

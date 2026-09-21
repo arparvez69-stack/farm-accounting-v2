@@ -211,6 +211,7 @@ export interface FishBatch {
   waterTreatmentCost?: number;
   otherCost?: number;
   otherCosts?: number;
+  totalCost?: number;
   journalEntryId?: string;
   mortalityCount: number;
   currentEstimatedWeightKg: number;
@@ -278,7 +279,7 @@ export interface CropProductionCostParams {
   supplierId?: string;
   inventoryItemId?: string;
   notes?: string;
-  currentUserId: string;
+  currentUserId?: string;
 }
 
 export interface InternalFlow {
@@ -322,8 +323,12 @@ export interface InventoryItem {
     | 'FEED_STOCK'
     | 'SEED'
     | 'FERTILIZER'
+    | 'SEED_FERTILIZER'
     | 'MEDICINE'
     | 'RAW_MATERIAL'
+    | 'RAW_MATERIALS'
+    | 'WIP'
+    | 'FINISHED_GOODS'
     | 'FARM_PRODUCT'
     | 'PROCESSED'
     | 'PACKAGING';

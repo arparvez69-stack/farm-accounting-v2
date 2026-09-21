@@ -57,8 +57,13 @@ import {
   executeFishStockingTransaction,
   executeFishHarvestAndSaleTransaction,
   executeCropHarvestAndSaleTransaction,
+  executeFishProductionCostTransaction,
+  executeCropProductionCostTransaction,
+  executeLivestockProductionCostTransaction,
   calculateFishBatchRecordedCosts,
-  calculateCropCycleRecordedCosts
+  calculateCropCycleRecordedCosts,
+  FishProductionCostParams,
+  CropProductionCostParams
 } from '../services/transactionService';
 import { AnimalDetailView } from './AnimalDetailView';
 import { notifyUndoableAction } from '../services/undoService';
@@ -276,6 +281,33 @@ export const FarmOperationsModule: React.FC<Props> = ({
   const [flowQty, setFlowQty] = useState('500');
   const [flowValue, setFlowValue] = useState('1000');
 
+  // All inventory items state
+  const [allInventoryItems, setAllInventoryItems] = useState<InventoryItem[]>([]);
+
+  // Fish Production Cost Modal state
+  const [fishCostBatch, setFishCostBatch] = useState<FishBatch | null>(null);
+  const [fishCostType, setFishCostType] = useState<FishProductionCostParams['costType']>('FEED');
+  const [fishCostAmount, setFishCostAmount] = useState<string>('');
+  const [fishCostQty, setFishCostQty] = useState<string>('');
+  const [fishCostDate, setFishCostDate] = useState<string>(() => new Date().toISOString().split('T')[0]);
+  const [fishCostPaymentMethod, setFishCostPaymentMethod] = useState<'CASH' | 'BANK' | 'INVENTORY'>('CASH');
+  const [fishCostBankAccountId, setFishCostBankAccountId] = useState<string>('');
+  const [fishCostFeedItemId, setFishCostFeedItemId] = useState<string>('');
+  const [fishCostNotes, setFishCostNotes] = useState<string>('');
+  const [submittingFishCost, setSubmittingFishCost] = useState<boolean>(false);
+
+  // Crop Production Cost Modal state
+  const [cropCostCycle, setCropCostCycle] = useState<CropCycle | null>(null);
+  const [cropCostType, setCropCostType] = useState<CropProductionCostParams['costType']>('FERTILIZER');
+  const [cropCostAmount, setCropCostAmount] = useState<string>('');
+  const [cropCostQty, setCropCostQty] = useState<string>('');
+  const [cropCostDate, setCropCostDate] = useState<string>(() => new Date().toISOString().split('T')[0]);
+  const [cropCostPaymentMethod, setCropCostPaymentMethod] = useState<'CASH' | 'BANK' | 'INVENTORY'>('CASH');
+  const [cropCostBankAccountId, setCropCostBankAccountId] = useState<string>('');
+  const [cropCostInvItemId, setCropCostInvItemId] = useState<string>('');
+  const [cropCostNotes, setCropCostNotes] = useState<string>('');
+  const [submittingCropCost, setSubmittingCropCost] = useState<boolean>(false);
+
   useEffect(() => {
     loadOpsData();
   }, [tab]);
@@ -353,6 +385,7 @@ export const FarmOperationsModule: React.FC<Props> = ({
 
       // Load feed items for feed event logging
       const allInv = await db.inventoryItems.toArray();
+      setAllInventoryItems(allInv);
       const feeds = allInv.filter((i) => i.category === 'FEED' || i.category === 'FEED_STOCK');
       setFeedStockItems(feeds);
       if (feeds.length > 0) {
@@ -912,25 +945,61 @@ export const FarmOperationsModule: React.FC<Props> = ({
               : feedQtyPerAnimal)
           : rawFeedQty;
 
-        const res = await executeAnimalEventTransaction({
-          animal,
-          event: {
+        let resEventId: string;
+        let resJournalEntryId: string | undefined;
+
+        if (animalCost > 0) {
+          let costType: 'FEED' | 'MEDICINE' | 'LABOUR' | 'OTHER' = 'OTHER';
+          if (eventType === 'FEED') costType = 'FEED';
+          else if (eventType === 'VACCINE' || eventType === 'TREATMENT') costType = 'MEDICINE';
+          else if ((eventType as string) === 'LABOUR') costType = 'LABOUR';
+
+          const isInventoryFeed = eventType === 'FEED' && selectedFeedItemId && animalFeedQty && animalFeedQty > 0;
+          const payMethod = isInventoryFeed ? 'INVENTORY' : eventPaymentMethod;
+
+          const costRes = await executeLivestockProductionCostTransaction({
             animalId: animal.id,
+            costType,
             eventType,
-            date: eventDate || new Date().toISOString().split('T')[0],
-            cost: animalCost,
+            amount: animalCost,
+            date: chosenEventDate,
+            paymentMethod: payMethod,
+            bankAccountId: eventPaymentMethod === 'BANK' ? selectedBankAccountId : undefined,
             feedItemId: (eventType === 'FEED' && selectedFeedItemId) ? selectedFeedItemId : undefined,
             feedQuantityUsed: animalFeedQty,
-            feedUnit: (eventType === 'FEED' && selectedFeedItemId) ? (feedStockItems.find(f => f.id === selectedFeedItemId)?.unit) : undefined,
-            milkLiters: milk,
-            weightKg: weight,
             vaccineName: (eventType === 'VACCINE' || eventType === 'TREATMENT') ? eventVaccineName.trim() || undefined : undefined,
             nextDueDate: (eventType === 'VACCINE' || eventType === 'TREATMENT') ? eventNextDueDate || undefined : undefined,
-            details: eventDetails.trim() || `${eventType} কার্যক্রম সম্পন্ন${isBulkMode ? ' (একত্র এন্ট্রি)' : ''}`
-          },
-          paymentMethod: eventPaymentMethod,
-          currentUserId
-        });
+            weightKg: weight,
+            milkLiters: milk,
+            notes: eventDetails.trim() || `${eventType} কার্যক্রম সম্পন্ন${isBulkMode ? ' (একত্র এন্ট্রি)' : ''}`,
+            currentUserId
+          });
+
+          resEventId = costRes.eventId || generateUniqueId('evt');
+          resJournalEntryId = costRes.journalEntryId;
+        } else {
+          const res = await executeAnimalEventTransaction({
+            animal,
+            event: {
+              animalId: animal.id,
+              eventType,
+              date: chosenEventDate,
+              cost: 0,
+              feedItemId: (eventType === 'FEED' && selectedFeedItemId) ? selectedFeedItemId : undefined,
+              feedQuantityUsed: animalFeedQty,
+              feedUnit: (eventType === 'FEED' && selectedFeedItemId) ? (feedStockItems.find(f => f.id === selectedFeedItemId)?.unit) : undefined,
+              milkLiters: milk,
+              weightKg: weight,
+              vaccineName: (eventType === 'VACCINE' || eventType === 'TREATMENT') ? eventVaccineName.trim() || undefined : undefined,
+              nextDueDate: (eventType === 'VACCINE' || eventType === 'TREATMENT') ? eventNextDueDate || undefined : undefined,
+              details: eventDetails.trim() || `${eventType} কার্যক্রম সম্পন্ন${isBulkMode ? ' (একত্র এন্ট্রি)' : ''}`
+            },
+            paymentMethod: eventPaymentMethod,
+            currentUserId
+          });
+          resEventId = res.event.id;
+          resJournalEntryId = res.journalEntryId;
+        }
 
         let autoReminderId: string | undefined;
         // Automatically create matching PENDING Reminder when nextDueDate is set
@@ -955,8 +1024,8 @@ export const FarmOperationsModule: React.FC<Props> = ({
 
         notifyUndoableAction({
           type: 'ANIMAL_EVENT',
-          eventId: res.event.id,
-          journalEntryId: res.journalEntryId,
+          eventId: resEventId,
+          journalEntryId: resJournalEntryId,
           animalId: animal.id,
           cost: animalCost,
           eventType,
@@ -1164,6 +1233,103 @@ export const FarmOperationsModule: React.FC<Props> = ({
       loadOpsData();
     } catch (err: any) {
       setMsg({ type: 'error', text: err.message });
+    }
+  };
+
+  const handleOpenFishCost = (batch: FishBatch) => {
+    setFishCostBatch(batch);
+    setFishCostType('FEED');
+    setFishCostAmount('');
+    setFishCostQty('');
+    setFishCostDate(new Date().toISOString().split('T')[0]);
+    setFishCostPaymentMethod('CASH');
+    setFishCostBankAccountId(bankAccountsList[0]?.id || '');
+    setFishCostFeedItemId(feedStockItems[0]?.id || '');
+    setFishCostNotes('');
+  };
+
+  const handleFishCostSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!fishCostBatch) return;
+    const cleanAmount = parseFloat(fishCostAmount) || 0;
+    if (cleanAmount <= 0) {
+      setMsg({ type: 'error', text: 'উৎপাদন ব্যয়ের পরিমাণ ০ এর বেশি হতে হবে।' });
+      return;
+    }
+    setSubmittingFishCost(true);
+    try {
+      const res = await executeFishProductionCostTransaction({
+        batchId: fishCostBatch.id,
+        costType: fishCostType,
+        amount: cleanAmount,
+        quantity: parseFloat(fishCostQty) || undefined,
+        date: fishCostDate || new Date().toISOString().split('T')[0],
+        paymentMethod: fishCostPaymentMethod,
+        bankAccountId: fishCostPaymentMethod === 'BANK' ? fishCostBankAccountId : undefined,
+        feedItemId: (fishCostPaymentMethod === 'INVENTORY' && fishCostType === 'FEED') ? fishCostFeedItemId : undefined,
+        notes: fishCostNotes.trim() || undefined,
+        currentUserId: currentUserId || 'system-user'
+      });
+      setFishCostBatch(null);
+      setMsg({
+        type: 'success',
+        text: `মাছের ব্যাচ ${fishCostBatch.id} এ উৎপাদন খরচ সফলভাবে যুক্ত হয়েছে! (ভাউচার: ${res.voucherNumber || 'হালনাগাদ'})`
+      });
+      triggerSuccessAnimation('মাছের উৎপাদন খরচ সফলভাবে যুক্ত হয়েছে', `ভাউচার: ${res.voucherNumber || 'হালনাগাদ'}`);
+      loadOpsData();
+    } catch (err: any) {
+      setMsg({ type: 'error', text: err.message || 'উৎপাদন খরচ সংরক্ষণ ব্যর্থ হয়েছে।' });
+    } finally {
+      setSubmittingFishCost(false);
+    }
+  };
+
+  const handleOpenCropCost = (cycle: CropCycle) => {
+    setCropCostCycle(cycle);
+    setCropCostType('FERTILIZER');
+    setCropCostAmount('');
+    setCropCostQty('');
+    setCropCostDate(new Date().toISOString().split('T')[0]);
+    setCropCostPaymentMethod('CASH');
+    setCropCostBankAccountId(bankAccountsList[0]?.id || '');
+    const seedFertilizerItem = allInventoryItems.find(i => i.category === 'SEED_FERTILIZER' || i.category === 'RAW_MATERIALS') || allInventoryItems[0];
+    setCropCostInvItemId(seedFertilizerItem?.id || '');
+    setCropCostNotes('');
+  };
+
+  const handleCropCostSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!cropCostCycle) return;
+    const cleanAmount = parseFloat(cropCostAmount) || 0;
+    if (cleanAmount <= 0) {
+      setMsg({ type: 'error', text: 'উৎপাদন ব্যয়ের পরিমাণ ০ এর বেশি হতে হবে।' });
+      return;
+    }
+    setSubmittingCropCost(true);
+    try {
+      const res = await executeCropProductionCostTransaction({
+        cycleId: cropCostCycle.id,
+        costType: cropCostType,
+        amount: cleanAmount,
+        quantity: parseFloat(cropCostQty) || undefined,
+        date: cropCostDate || new Date().toISOString().split('T')[0],
+        paymentMethod: cropCostPaymentMethod,
+        bankAccountId: cropCostPaymentMethod === 'BANK' ? cropCostBankAccountId : undefined,
+        inventoryItemId: cropCostPaymentMethod === 'INVENTORY' ? cropCostInvItemId : undefined,
+        notes: cropCostNotes.trim() || undefined,
+        currentUserId: currentUserId || 'system-user'
+      });
+      setCropCostCycle(null);
+      setMsg({
+        type: 'success',
+        text: `শস্য চক্র ${cropCostCycle.id} এ উৎপাদন খরচ সফলভাবে যুক্ত হয়েছে! (ভাউচার: ${res.voucherNumber || 'হালনাগাদ'})`
+      });
+      triggerSuccessAnimation('শস্য উৎপাদন খরচ সফলভাবে যুক্ত হয়েছে', `ভাউচার: ${res.voucherNumber || 'হালনাগাদ'}`);
+      loadOpsData();
+    } catch (err: any) {
+      setMsg({ type: 'error', text: err.message || 'উৎপাদন খরচ সংরক্ষণ ব্যর্থ হয়েছে।' });
+    } finally {
+      setSubmittingCropCost(false);
     }
   };
 
@@ -3272,14 +3438,22 @@ export const FarmOperationsModule: React.FC<Props> = ({
                       </div>
 
                       {!isHarvested && (
-                        <div className="pt-2">
+                        <div className="pt-2 flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => handleOpenFishCost(b)}
+                            className="flex-1 py-2 px-3 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-[13px] font-bold shadow-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                          >
+                            <PlusCircle className="w-4 h-4" />
+                            <span>খরচ যোগ (Add Cost)</span>
+                          </button>
                           <button
                             type="button"
                             onClick={() => handleOpenFishHarvest(b)}
-                            className="w-full py-2 px-3 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-[13px] font-bold shadow-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                            className="flex-1 py-2 px-3 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-[13px] font-bold shadow-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer"
                           >
                             <ShoppingCart className="w-4 h-4" />
-                            <span>আহরণ ও বিক্রয় (Harvest & Sell)</span>
+                            <span>আহরণ ও বিক্রয়</span>
                           </button>
                         </div>
                       )}
@@ -3502,14 +3676,22 @@ export const FarmOperationsModule: React.FC<Props> = ({
                       </div>
 
                       {!isHarvested && (
-                        <div className="pt-2">
+                        <div className="pt-2 flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => handleOpenCropCost(c)}
+                            className="flex-1 py-2 px-3 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-[13px] font-bold shadow-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                          >
+                            <PlusCircle className="w-4 h-4" />
+                            <span>খরচ যোগ (Add Cost)</span>
+                          </button>
                           <button
                             type="button"
                             onClick={() => handleOpenCropHarvest(c)}
-                            className="w-full py-2 px-3 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-[13px] font-bold shadow-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                            className="flex-1 py-2 px-3 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-[13px] font-bold shadow-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer"
                           >
                             <ShoppingCart className="w-4 h-4" />
-                            <span>আহরণ ও বিক্রয় (Harvest & Sell)</span>
+                            <span>আহরণ ও বিক্রয়</span>
                           </button>
                         </div>
                       )}
@@ -4376,6 +4558,371 @@ export const FarmOperationsModule: React.FC<Props> = ({
                 >
                   <ShoppingCart className="w-4 h-4" />
                   <span>{isSubmittingCropHarvest ? 'কর্তন প্রক্রিয়াধীন...' : 'কর্তন ও বিক্রয় নিশ্চিত করুন'}</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Fish Production Cost Modal */}
+      {fishCostBatch && (
+        <div id="fish-cost-modal" className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
+          <div className="bg-white dark:bg-slate-900 rounded-2xl max-w-xl w-full p-5 sm:p-6 shadow-2xl border border-gray-200 dark:border-slate-800 space-y-4 my-8">
+            <div className="flex items-start justify-between gap-3 border-b border-gray-100 dark:border-slate-800 pb-3">
+              <div className="flex items-center gap-2.5 text-indigo-700 dark:text-indigo-400">
+                <div className="p-2 rounded-xl bg-indigo-50 dark:bg-indigo-950/40 border border-indigo-200 dark:border-indigo-800">
+                  <PlusCircle className="w-6 h-6 text-indigo-600 dark:text-indigo-400" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold text-gray-900 dark:text-white">মাছের উৎপাদন খরচ সংযোজন (Record Fish Cost)</h3>
+                  <p className="text-xs text-gray-500 dark:text-slate-400">ব্যাচ: {fishCostBatch.id} • {fishCostBatch.pondName} ({fishCostBatch.species})</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => !submittingFishCost && setFishCostBatch(null)}
+                className="text-gray-400 hover:text-gray-600 dark:hover:text-slate-200 p-1 rounded-lg cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Current Batch Cost Summary */}
+            <div className="p-3 bg-indigo-50/70 dark:bg-indigo-950/30 rounded-xl border border-indigo-100 dark:border-indigo-900/50 text-xs space-y-1">
+              <div className="font-semibold text-indigo-900 dark:text-indigo-300">বর্তমান পুঞ্জীভূত খরচ সারসংক্ষেপ:</div>
+              {(() => {
+                const costs = calculateFishBatchRecordedCosts(fishCostBatch);
+                return (
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-gray-700 dark:text-slate-300 pt-1">
+                    <div>পোনা খরচ: <span className="font-bold">{fmt(costs.fingerlingCost)}</span></div>
+                    <div>ফিড খরচ: <span className="font-bold">{fmt(costs.feedCost)}</span> ({fishCostBatch.totalFeedKg || 0} কেজি)</div>
+                    <div>মোট জৈবিক সম্পদ: <span className="font-bold text-indigo-950 dark:text-indigo-200">{fmt(costs.totalRecordedCost)}</span></div>
+                  </div>
+                );
+              })()}
+            </div>
+
+            <form onSubmit={handleFishCostSubmit} className="space-y-3.5 text-xs">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-semibold text-gray-700 dark:text-slate-300 mb-1">খরচের ধরন *</label>
+                  <select
+                    value={fishCostType}
+                    onChange={(e) => setFishCostType(e.target.value as any)}
+                    className="w-full px-3 py-2 rounded-xl border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-900 dark:text-white"
+                  >
+                    <option value="FEED">মাছের খাদ্য (Feed)</option>
+                    <option value="MEDICINE">ওষুধ ও চিকিৎসা (Medicine)</option>
+                    <option value="LABOUR">শ্রমিক ও মজুরি (Labour)</option>
+                    <option value="ELECTRICITY">বিদ্যুৎ ও পাম্পিং (Electricity)</option>
+                    <option value="WATER_TREATMENT">পানি শোধন ও পরিচর্যা (Water Treatment)</option>
+                    <option value="OTHER">অন্যান্য উৎপাদন খরচ (Other)</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block font-semibold text-gray-700 dark:text-slate-300 mb-1">খরচের তারিখ *</label>
+                  <input
+                    type="date"
+                    required
+                    value={fishCostDate}
+                    onChange={(e) => setFishCostDate(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-900 dark:text-white"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-semibold text-gray-700 dark:text-slate-300 mb-1">খরচের পরিমাণ (৳) *</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0.01"
+                    required
+                    placeholder="যেমন: 5000"
+                    value={fishCostAmount}
+                    onChange={(e) => setFishCostAmount(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-900 dark:text-white"
+                  />
+                </div>
+
+                <div>
+                  <label className="block font-semibold text-gray-700 dark:text-slate-300 mb-1">
+                    {fishCostType === 'FEED' ? 'খাদ্যের পরিমাণ (কেজি)' : 'পরিমাণ / কোয়ান্টিটি (ঐচ্ছিক)'}
+                  </label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    placeholder="যেমন: 50"
+                    value={fishCostQty}
+                    onChange={(e) => setFishCostQty(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-900 dark:text-white"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-semibold text-gray-700 dark:text-slate-300 mb-1">পরিশোধের মাধ্যম *</label>
+                  <select
+                    value={fishCostPaymentMethod}
+                    onChange={(e) => setFishCostPaymentMethod(e.target.value as any)}
+                    className="w-full px-3 py-2 rounded-xl border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-900 dark:text-white"
+                  >
+                    <option value="CASH">নগদ (Cash)</option>
+                    <option value="BANK">ব্যাংক হিসাব (Bank)</option>
+                    {fishCostType === 'FEED' && <option value="INVENTORY">খাদ্য মজুদ থেকে (Inventory)</option>}
+                  </select>
+                </div>
+
+                {fishCostPaymentMethod === 'BANK' && (
+                  <div>
+                    <label className="block font-semibold text-gray-700 dark:text-slate-300 mb-1">ব্যাংক হিসাব *</label>
+                    <select
+                      value={fishCostBankAccountId}
+                      onChange={(e) => setFishCostBankAccountId(e.target.value)}
+                      className="w-full px-3 py-2 rounded-xl border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-900 dark:text-white"
+                    >
+                      {bankAccountsList.map((acc) => (
+                        <option key={acc.id} value={acc.id}>
+                          {acc.accountName} ({fmt(acc.currentBalance)})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+
+                {fishCostPaymentMethod === 'INVENTORY' && (
+                  <div>
+                    <label className="block font-semibold text-gray-700 dark:text-slate-300 mb-1">ফিড ইনভেন্টরি আইটেম *</label>
+                    <select
+                      value={fishCostFeedItemId}
+                      onChange={(e) => setFishCostFeedItemId(e.target.value)}
+                      className="w-full px-3 py-2 rounded-xl border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-900 dark:text-white"
+                    >
+                      {feedStockItems.map((item) => (
+                        <option key={item.id} value={item.id}>
+                          {item.nameBn || item.nameEn} (মজুদ: {item.currentStock} {item.unit})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+              </div>
+
+              <div>
+                <label className="block font-semibold text-gray-700 dark:text-slate-300 mb-1">বিবরণ / নোট (ঐচ্ছিক)</label>
+                <input
+                  type="text"
+                  placeholder="যেমন: নিয়মিত ফিডিং ও পানির পরিচর্যা"
+                  value={fishCostNotes}
+                  onChange={(e) => setFishCostNotes(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-900 dark:text-white"
+                />
+              </div>
+
+              <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-gray-100 dark:border-slate-800">
+                <button
+                  type="button"
+                  disabled={submittingFishCost}
+                  onClick={() => setFishCostBatch(null)}
+                  className="px-4 py-2.5 rounded-xl bg-gray-100 dark:bg-slate-800 hover:bg-gray-200 dark:hover:bg-slate-700 text-gray-700 dark:text-slate-300 text-xs font-bold transition-colors cursor-pointer min-h-[40px]"
+                >
+                  বাতিল
+                </button>
+                <button
+                  type="submit"
+                  id="btn-confirm-fish-cost"
+                  disabled={submittingFishCost}
+                  className="px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold transition-all cursor-pointer shadow-xs min-h-[40px] flex items-center gap-1.5 disabled:opacity-50"
+                >
+                  <PlusCircle className="w-4 h-4" />
+                  <span>{submittingFishCost ? 'খরচ প্রক্রিয়াধীন...' : 'খরচ সংরক্ষণ করুন'}</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Crop Production Cost Modal */}
+      {cropCostCycle && (
+        <div id="crop-cost-modal" className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
+          <div className="bg-white dark:bg-slate-900 rounded-2xl max-w-xl w-full p-5 sm:p-6 shadow-2xl border border-gray-200 dark:border-slate-800 space-y-4 my-8">
+            <div className="flex items-start justify-between gap-3 border-b border-gray-100 dark:border-slate-800 pb-3">
+              <div className="flex items-center gap-2.5 text-amber-700 dark:text-amber-400">
+                <div className="p-2 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800">
+                  <PlusCircle className="w-6 h-6 text-amber-600 dark:text-amber-400" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold text-gray-900 dark:text-white">শস্য উৎপাদন খরচ সংযোজন (Record Crop Cost)</h3>
+                  <p className="text-xs text-gray-500 dark:text-slate-400">চক্র: {cropCostCycle.id} • {cropCostCycle.cropName} ({cropCostCycle.plotName})</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => !submittingCropCost && setCropCostCycle(null)}
+                className="text-gray-400 hover:text-gray-600 dark:hover:text-slate-200 p-1 rounded-lg cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Current Crop Cost Summary */}
+            <div className="p-3 bg-amber-50/70 dark:bg-amber-950/30 rounded-xl border border-amber-100 dark:border-amber-900/50 text-xs space-y-1">
+              <div className="font-semibold text-amber-900 dark:text-amber-300">বর্তমান পুঞ্জীভূত খরচ সারসংক্ষেপ:</div>
+              {(() => {
+                const costs = calculateCropCycleRecordedCosts(cropCostCycle);
+                return (
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-gray-700 dark:text-slate-300 pt-1">
+                    <div>বীজ খরচ: <span className="font-bold">{fmt(costs.seedCost)}</span></div>
+                    <div>সার ও কীটনাশক: <span className="font-bold">{fmt(costs.fertilizerCost + costs.protectionCost)}</span></div>
+                    <div>মোট চাষ বিনিয়োগ: <span className="font-bold text-amber-950 dark:text-amber-200">{fmt(costs.totalRecordedCost)}</span></div>
+                  </div>
+                );
+              })()}
+            </div>
+
+            <form onSubmit={handleCropCostSubmit} className="space-y-3.5 text-xs">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-semibold text-gray-700 dark:text-slate-300 mb-1">খরচের ধরন *</label>
+                  <select
+                    value={cropCostType}
+                    onChange={(e) => setCropCostType(e.target.value as any)}
+                    className="w-full px-3 py-2 rounded-xl border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-900 dark:text-white"
+                  >
+                    <option value="SEED">বীজ ও চারা (Seeds)</option>
+                    <option value="FERTILIZER">সার ও মাটির পুষ্টি (Fertilizer)</option>
+                    <option value="IRRIGATION">সেচ ও পানি ব্যবস্থাপনা (Irrigation)</option>
+                    <option value="LABOUR">শ্রমিক ও মজুরি (Labour)</option>
+                    <option value="PROTECTION">বালাইনাশক ও ফসল সুরক্ষা (Crop Protection)</option>
+                    <option value="MACHINERY">ট্রাক্টর ও যন্ত্রপাতি (Machinery)</option>
+                    <option value="OTHER">অন্যান্য চাষ খরচ (Other)</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block font-semibold text-gray-700 dark:text-slate-300 mb-1">খরচের তারিখ *</label>
+                  <input
+                    type="date"
+                    required
+                    value={cropCostDate}
+                    onChange={(e) => setCropCostDate(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-900 dark:text-white"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-semibold text-gray-700 dark:text-slate-300 mb-1">খরচের পরিমাণ (৳) *</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0.01"
+                    required
+                    placeholder="যেমন: 3000"
+                    value={cropCostAmount}
+                    onChange={(e) => setCropCostAmount(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-900 dark:text-white"
+                  />
+                </div>
+
+                <div>
+                  <label className="block font-semibold text-gray-700 dark:text-slate-300 mb-1">পরিমাণ / কেজি / বস্তা (ঐচ্ছিক)</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    placeholder="যেমন: 25"
+                    value={cropCostQty}
+                    onChange={(e) => setCropCostQty(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-900 dark:text-white"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-semibold text-gray-700 dark:text-slate-300 mb-1">পরিশোধের মাধ্যম *</label>
+                  <select
+                    value={cropCostPaymentMethod}
+                    onChange={(e) => setCropCostPaymentMethod(e.target.value as any)}
+                    className="w-full px-3 py-2 rounded-xl border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-900 dark:text-white"
+                  >
+                    <option value="CASH">নগদ (Cash)</option>
+                    <option value="BANK">ব্যাংক হিসাব (Bank)</option>
+                    <option value="INVENTORY">ইনভেন্টরি মজুদ থেকে (Inventory)</option>
+                  </select>
+                </div>
+
+                {cropCostPaymentMethod === 'BANK' && (
+                  <div>
+                    <label className="block font-semibold text-gray-700 dark:text-slate-300 mb-1">ব্যাংক হিসাব *</label>
+                    <select
+                      value={cropCostBankAccountId}
+                      onChange={(e) => setCropCostBankAccountId(e.target.value)}
+                      className="w-full px-3 py-2 rounded-xl border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-900 dark:text-white"
+                    >
+                      {bankAccountsList.map((acc) => (
+                        <option key={acc.id} value={acc.id}>
+                          {acc.accountName} ({fmt(acc.currentBalance)})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+
+                {cropCostPaymentMethod === 'INVENTORY' && (
+                  <div>
+                    <label className="block font-semibold text-gray-700 dark:text-slate-300 mb-1">ইনভেন্টরি আইটেম *</label>
+                    <select
+                      value={cropCostInvItemId}
+                      onChange={(e) => setCropCostInvItemId(e.target.value)}
+                      className="w-full px-3 py-2 rounded-xl border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-900 dark:text-white"
+                    >
+                      {allInventoryItems.map((item) => (
+                        <option key={item.id} value={item.id}>
+                          {item.nameBn || item.nameEn} ({item.category}) - মজুদ: {item.currentStock} {item.unit}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+              </div>
+
+              <div>
+                <label className="block font-semibold text-gray-700 dark:text-slate-300 mb-1">বিবরণ / নোট (ঐচ্ছিক)</label>
+                <input
+                  type="text"
+                  placeholder="যেমন: ইউরিয়া ও টিএসপি সার প্রয়োগ"
+                  value={cropCostNotes}
+                  onChange={(e) => setCropCostNotes(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-900 dark:text-white"
+                />
+              </div>
+
+              <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-gray-100 dark:border-slate-800">
+                <button
+                  type="button"
+                  disabled={submittingCropCost}
+                  onClick={() => setCropCostCycle(null)}
+                  className="px-4 py-2.5 rounded-xl bg-gray-100 dark:bg-slate-800 hover:bg-gray-200 dark:hover:bg-slate-700 text-gray-700 dark:text-slate-300 text-xs font-bold transition-colors cursor-pointer min-h-[40px]"
+                >
+                  বাতিল
+                </button>
+                <button
+                  type="submit"
+                  id="btn-confirm-crop-cost"
+                  disabled={submittingCropCost}
+                  className="px-5 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold transition-all cursor-pointer shadow-xs min-h-[40px] flex items-center gap-1.5 disabled:opacity-50"
+                >
+                  <PlusCircle className="w-4 h-4" />
+                  <span>{submittingCropCost ? 'খরচ প্রক্রিয়াধীন...' : 'খরচ সংরক্ষণ করুন'}</span>
                 </button>
               </div>
             </form>

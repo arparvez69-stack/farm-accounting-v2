@@ -286,16 +286,33 @@ async function runRegressionTestsInternal(): Promise<TestResult> {
     assert(passedBalanced, 'Balanced journal lines (debit == credit) MUST pass validation.');
 
     // ----------------------------------------------------
-    // TEST 4: Feed Category Maps to 1051 (NEVER 1050)
+    // TEST 4: Comprehensive Inventory Category ↔ COA Mapping (Task 1)
     // ----------------------------------------------------
-    const feedAcc = getInventoryAssetAccount('FEED');
-    assert(feedAcc === '1051', 'Feed inventory MUST map strictly to 1051 Feed Inventory.');
+    // Feed → 1051
+    assert(getInventoryAssetAccount('FEED') === '1051', 'Feed inventory MUST map strictly to 1051.');
+    assert(getInventoryAssetAccount('FEED_STOCK') === '1051', 'Feed Stock MUST map strictly to 1051.');
+    // Seed & Fertilizer → 1052
+    assert(getInventoryAssetAccount('SEED') === '1052', 'Seed inventory MUST map strictly to 1052.');
+    assert(getInventoryAssetAccount('FERTILIZER') === '1052', 'Fertilizer inventory MUST map strictly to 1052.');
+    assert(getInventoryAssetAccount('SEED_FERTILIZER') === '1052', 'Seed & Fertilizer MUST map strictly to 1052.');
+    // Raw Materials → 1053
+    assert(getInventoryAssetAccount('RAW_MATERIAL') === '1053', 'Raw Material MUST map strictly to 1053.');
+    assert(getInventoryAssetAccount('RAW_MATERIALS') === '1053', 'Raw Materials MUST map strictly to 1053.');
+    assert(getInventoryAssetAccount('MEDICINE') === '1053', 'Medicine / agrochemicals MUST map strictly to 1053 Raw Materials.');
+    // WIP → 1054
+    assert(getInventoryAssetAccount('WIP') === '1054', 'WIP inventory MUST map strictly to 1054.');
+    assert(getInventoryAssetAccount('WORK_IN_PROGRESS') === '1054', 'Work in Progress MUST map strictly to 1054.');
+    // Finished Goods → 1055
+    assert(getInventoryAssetAccount('FINISHED_GOODS') === '1055', 'Finished Goods MUST map strictly to 1055.');
+    assert(getInventoryAssetAccount('FARM_PRODUCT') === '1055', 'Farm Product MUST map strictly to 1055 Finished Goods.');
+    assert(getInventoryAssetAccount('PROCESSED') === '1055', 'Processed product MUST map strictly to 1055 Finished Goods.');
+    // Packaging → 1056
+    assert(getInventoryAssetAccount('PACKAGING') === '1056', 'Packaging inventory MUST map strictly to 1056.');
+    assert(getInventoryAssetAccount('PACKAGING_INVENTORY') === '1056', 'Packaging Inventory MUST map strictly to 1056.');
 
-    // ----------------------------------------------------
-    // TEST 5: Seed/Fertilizer Maps to 1052
-    // ----------------------------------------------------
-    const seedAcc = getInventoryAssetAccount('SEED');
-    assert(seedAcc === '1052', 'Seed inventory MUST map strictly to 1052.');
+    // Verify canonical accounts in Chart of Accounts have all 6 inventory accounts
+    const invAccounts = accounts.filter(a => ['1051', '1052', '1053', '1054', '1055', '1056'].includes(a.code));
+    assert(invAccounts.length === 6, 'COA must contain all 6 distinct inventory accounts: 1051, 1052, 1053, 1054, 1055, 1056.');
 
     // ----------------------------------------------------
     // TEST 6: Payment Accounts Mapping
@@ -2760,6 +2777,36 @@ async function runRegressionTestsInternal(): Promise<TestResult> {
     };
     await arTestDb.fishBatches.put(fishBatch1);
 
+    // Legitimate source journal entry backing fishBatch1's ৳40,000 production cost specifically referencing its batch ID
+    await arTestDb.journalEntries.put({
+      id: 'j_init_fish_batch1',
+      voucherNumber: 'JV-INIT-01',
+      voucherType: 'PAYMENT',
+      date: '2026-01-15',
+      narration: 'Initial fish batch production costs',
+      reference: fishBatch1.id,
+      lines: [
+        {
+          accountId: CANONICAL_ACCOUNTS.LIVESTOCK_ASSETS,
+          accountCode: CANONICAL_ACCOUNTS.LIVESTOCK_ASSETS,
+          accountName: 'পশুসম্পদ ও জৈবিক সম্পদ (Livestock & Biological Assets)',
+          debit: 40000,
+          credit: 0,
+          memo: `[PRODUCTION] মাছের ব্যাচ ${fishBatch1.id} উৎপাদন ব্যয়`
+        },
+        {
+          accountId: CANONICAL_ACCOUNTS.CASH,
+          accountCode: CANONICAL_ACCOUNTS.CASH,
+          accountName: 'ক্যাশ (Cash)',
+          debit: 0,
+          credit: 40000,
+          memo: `মাছের ব্যাচ ${fishBatch1.id} উৎপাদন ব্যয় পরিশোধ`
+        }
+      ],
+      createdAt: '2026-01-15T00:00:00Z',
+      createdBy: 'usr_owner'
+    });
+
     // Execute Fish Harvest and Credit Sale (Dr AR 1040 -> Cr Revenue 4010)
     const harvestSaleRes = await executeFishHarvestAndSaleTransaction(
       {
@@ -2936,6 +2983,34 @@ async function runRegressionTestsInternal(): Promise<TestResult> {
       synced: false
     };
     await arTestDb.cropCycles.put(testCropCycle);
+
+    await arTestDb.journalEntries.put({
+      id: 'j_seed_crop_ar_01',
+      voucherNumber: 'JV-SEED-AR01',
+      voucherType: 'JOURNAL',
+      date: '2026-03-01',
+      narration: 'Initial Crop WIP for cc_task10_01',
+      reference: testCropCycle.id,
+      lines: [
+        {
+          accountId: CANONICAL_ACCOUNTS.WIP,
+          accountCode: CANONICAL_ACCOUNTS.WIP,
+          accountName: 'Work in Progress',
+          debit: 17000,
+          credit: 0,
+          memo: `[PRODUCTION_COST] [WIP] [${testCropCycle.id}] Seed, fertilizer, labour WIP`
+        },
+        {
+          accountId: CANONICAL_ACCOUNTS.CASH,
+          accountCode: CANONICAL_ACCOUNTS.CASH,
+          accountName: 'Cash',
+          debit: 0,
+          credit: 17000,
+          memo: `[PRODUCTION_COST] [WIP] [${testCropCycle.id}] Paid Cash`
+        }
+      ],
+      createdAt: new Date().toISOString()
+    });
 
     // Execute Crop credit sale: ৳35,000 credit
     const cropSaleRes = await executeCropHarvestAndSaleTransaction(

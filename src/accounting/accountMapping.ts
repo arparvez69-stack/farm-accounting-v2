@@ -85,10 +85,55 @@ export const CANONICAL_ACCOUNTS = {
  */
 export function assertValidInventoryAccount(code: string): string {
   if (code === '1050') {
-    throw new Error('ILLEGAL ACCOUNT POSTING: Account 1050 does not exist. Use 1051 (Feed), 1052 (Seed/Fert), 1053 (Raw Material), or 1055 (Finished Goods).');
+    throw new Error('ILLEGAL ACCOUNT POSTING: Account 1050 does not exist. Use 1051 (Feed), 1052 (Seed & Fertilizer), 1053 (Raw Materials), 1054 (WIP), 1055 (Finished Goods), or 1056 (Packaging).');
   }
   return code;
 }
+
+/**
+ * Canonical Inventory Accounts Detail Map
+ */
+export const INVENTORY_CATEGORY_ACCOUNT_MAP: Record<
+  string,
+  { code: string; nameBn: string; nameEn: string; categoryLabelBn: string }
+> = {
+  '1051': {
+    code: '1051',
+    nameBn: 'মজুদ খাদ্য (Feed Inventory)',
+    nameEn: 'Feed Inventory',
+    categoryLabelBn: 'খাদ্য মজুদ'
+  },
+  '1052': {
+    code: '1052',
+    nameBn: 'মজুদ বীজ ও সার (Seed & Fertilizer Inventory)',
+    nameEn: 'Seed & Fertilizer Inventory',
+    categoryLabelBn: 'বীজ ও সার মজুদ'
+  },
+  '1053': {
+    code: '1053',
+    nameBn: 'মজুদ কাঁচামাল (Raw Materials)',
+    nameEn: 'Raw Materials',
+    categoryLabelBn: 'কাঁচামাল ও ওষুধ মজুদ'
+  },
+  '1054': {
+    code: '1054',
+    nameBn: 'প্রক্রিয়াধীন পণ্য (Work in Progress - WIP)',
+    nameEn: 'Work in Progress',
+    categoryLabelBn: 'প্রক্রিয়াধীন পণ্য (WIP)'
+  },
+  '1055': {
+    code: '1055',
+    nameBn: 'বিক্রয়যোগ্য উৎপাদিত পণ্য (Finished Farm Products)',
+    nameEn: 'Finished Goods Inventory',
+    categoryLabelBn: 'উৎপাদিত পণ্য'
+  },
+  '1056': {
+    code: '1056',
+    nameBn: 'মজুদ প্যাকেজিং সামগ্রী (Packaging Inventory)',
+    nameEn: 'Packaging Inventory',
+    categoryLabelBn: 'প্যাকেজিং সামগ্রী'
+  }
+};
 
 /**
  * Maps payment method to Cash / Bank / Receivable / Payable account
@@ -136,27 +181,104 @@ export function getCashBankAccountGLCode(accountType: 'CASH' | 'BANK' | 'MOBILE_
 }
 
 /**
- * Maps inventory item category to inventory asset account in Chart of Accounts
+ * Maps inventory item category to inventory asset account in Chart of Accounts:
+ * - Feed -> 1051
+ * - Seed & Fertilizer -> 1052
+ * - Raw Materials -> 1053
+ * - WIP -> 1054
+ * - Finished Goods -> 1055
+ * - Packaging -> 1056
  */
 export function getInventoryAssetAccount(category?: string): string {
-  switch (category) {
-    case 'FEED':
-    case 'FEED_STOCK':
-      return CANONICAL_ACCOUNTS.FEED_INVENTORY; // 1051
-    case 'SEED':
-    case 'FERTILIZER':
-      return CANONICAL_ACCOUNTS.SEED_FERT_INVENTORY; // 1052
-    case 'RAW_MATERIAL':
-      return CANONICAL_ACCOUNTS.RAW_MATERIALS; // 1053
-    case 'WIP':
-      return CANONICAL_ACCOUNTS.WIP; // 1054
-    case 'PACKAGING':
-      return CANONICAL_ACCOUNTS.PACKAGING_INVENTORY; // 1056
-    case 'FARM_PRODUCT':
-    case 'PROCESSED':
-    default:
-      return CANONICAL_ACCOUNTS.FINISHED_GOODS; // 1055
+  if (!category) {
+    return CANONICAL_ACCOUNTS.FINISHED_GOODS; // 1055 default
   }
+  const cat = String(category).trim().toUpperCase();
+
+  // Feed -> 1051
+  if (
+    cat === 'FEED' ||
+    cat === 'FEED_STOCK' ||
+    cat === 'FEED_INVENTORY' ||
+    cat === '1051'
+  ) {
+    return CANONICAL_ACCOUNTS.FEED_INVENTORY; // 1051
+  }
+
+  // Seed & Fertilizer -> 1052
+  if (
+    cat === 'SEED' ||
+    cat === 'SEEDS' ||
+    cat === 'FERTILIZER' ||
+    cat === 'FERTILIZERS' ||
+    cat === 'SEED_FERTILIZER' ||
+    cat === 'SEED_AND_FERTILIZER' ||
+    cat === 'SEED_FERT' ||
+    cat === '1052'
+  ) {
+    return CANONICAL_ACCOUNTS.SEED_FERT_INVENTORY; // 1052
+  }
+
+  // Raw Materials -> 1053
+  if (
+    cat === 'RAW_MATERIAL' ||
+    cat === 'RAW_MATERIALS' ||
+    cat === 'RAW' ||
+    cat === 'MEDICINE' ||
+    cat === 'MEDICINES' ||
+    cat === '1053'
+  ) {
+    return CANONICAL_ACCOUNTS.RAW_MATERIALS; // 1053
+  }
+
+  // WIP -> 1054
+  if (
+    cat === 'WIP' ||
+    cat === 'WORK_IN_PROGRESS' ||
+    cat === 'WORK IN PROGRESS' ||
+    cat === '1054'
+  ) {
+    return CANONICAL_ACCOUNTS.WIP; // 1054
+  }
+
+  // Packaging -> 1056
+  if (
+    cat === 'PACKAGING' ||
+    cat === 'PACKAGING_INVENTORY' ||
+    cat === 'PACKAGE' ||
+    cat === 'PACKAGES' ||
+    cat === '1056'
+  ) {
+    return CANONICAL_ACCOUNTS.PACKAGING_INVENTORY; // 1056
+  }
+
+  // Finished Goods -> 1055
+  if (
+    cat === 'FINISHED_GOODS' ||
+    cat === 'FINISHED' ||
+    cat === 'FARM_PRODUCT' ||
+    cat === 'PROCESSED' ||
+    cat === 'PRODUCT' ||
+    cat === 'PRODUCTS' ||
+    cat === '1055'
+  ) {
+    return CANONICAL_ACCOUNTS.FINISHED_GOODS; // 1055
+  }
+
+  return CANONICAL_ACCOUNTS.FINISHED_GOODS; // 1055 fallback
+}
+
+/**
+ * Returns canonical metadata (code, nameBn, nameEn) for any inventory category
+ */
+export function getInventoryAccountDetails(category?: string): {
+  code: string;
+  nameBn: string;
+  nameEn: string;
+  categoryLabelBn: string;
+} {
+  const code = getInventoryAssetAccount(category);
+  return INVENTORY_CATEGORY_ACCOUNT_MAP[code] || INVENTORY_CATEGORY_ACCOUNT_MAP['1055'];
 }
 
 /**
