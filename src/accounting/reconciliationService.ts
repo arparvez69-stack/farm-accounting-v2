@@ -22,6 +22,7 @@ import {
 export interface ReconciliationSubItem {
   id: string;
   name: string;
+  code?: string;
   operationalAmount: number;
   glAmount?: number;
   difference?: number;
@@ -32,8 +33,11 @@ export interface ReconciliationSubItem {
 export interface ReconciliationCheck {
   id: string;
   itemNumber: number;
+  checkNumber?: number;
   moduleBn: string;
+  moduleNameBn?: string;
   moduleEn: string;
+  moduleNameEn?: string;
   accountCode: string;
   accountNameBn: string;
   accountNameEn: string;
@@ -43,14 +47,19 @@ export interface ReconciliationCheck {
   isMatched: boolean;
   status: 'MATCHED' | 'MISMATCH';
   notesBn: string;
+  notes?: string;
   details?: ReconciliationSubItem[];
+  subItems?: ReconciliationSubItem[];
 }
 
 export interface FullReconciliationReport {
   timestamp: string;
+  asOfDate?: string;
   checks: ReconciliationCheck[];
   totalOperational: number;
+  totalOperationalAmount?: number;
   totalGl: number;
+  totalGlAmount?: number;
   totalDifference: number;
   matchedCount: number;
   mismatchCount: number;
@@ -855,11 +864,24 @@ export async function runAccountingReconciliation(
 
   const totalDifference = round2(totalOperational - totalGl);
 
+  const enrichedChecks: ReconciliationCheck[] = checks.map((c) => ({
+    ...c,
+    checkNumber: c.itemNumber,
+    moduleNameBn: c.moduleBn,
+    moduleNameEn: c.moduleEn,
+    notes: c.notesBn,
+    subItems: c.details || []
+  }));
+
+  const now = new Date().toISOString();
   return {
-    timestamp: new Date().toISOString(),
-    checks,
+    timestamp: now,
+    asOfDate: now.split('T')[0],
+    checks: enrichedChecks,
     totalOperational,
+    totalOperationalAmount: totalOperational,
     totalGl,
+    totalGlAmount: totalGl,
     totalDifference,
     matchedCount,
     mismatchCount,

@@ -1,9 +1,5 @@
-import {
-  generateCashFlowStatement,
-  JournalEntry,
-  CashBankAccount,
-  Account
-} from '../accounting/accountingEngine';
+import { generateCashFlowStatement } from '../accounting/accountingEngine';
+import { JournalEntry, CashBankAccount, Account } from '../types';
 
 interface TestResult {
   name: string;

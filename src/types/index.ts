@@ -55,11 +55,14 @@ export interface Account {
   code: string;
   nameBn: string;
   nameEn: string;
-  accountClass: AccountClass;
+  accountClass?: AccountClass;
+  type?: AccountClass | string;
   parentCode?: string;
   normalBalance: NormalBalance;
-  isSystem: boolean;
-  isActive: boolean;
+  isSystem?: boolean;
+  isSystemAccount?: boolean;
+  isActive?: boolean;
+  currentBalance?: number;
   description?: string;
 }
 
@@ -73,10 +76,12 @@ export type VoucherType =
   | 'PURCHASE_RETURN'
   | 'SALES_RETURN'
   | 'ADJUSTMENT'
-  | 'TRANSFER';
+  | 'TRANSFER'
+  | 'EXPENSE';
 
 export interface JournalLine {
-  accountId: string;
+  id?: string;
+  accountId?: string;
   accountCode: string;
   accountName: string;
   debit: number;
@@ -91,11 +96,12 @@ export interface JournalEntry {
   date: string;
   narration: string;
   lines: JournalLine[];
-  totalDebit: number;
-  totalCredit: number;
+  totalDebit?: number;
+  totalCredit?: number;
   reference?: string;
-  createdBy: string;
+  createdBy?: string;
   createdAt: string;
+  status?: 'POSTED' | 'DRAFT' | 'REVERSED' | string;
   synced?: boolean;
   reversedBy?: string;
   reversalOf?: string;
@@ -476,7 +482,9 @@ export interface CashBankAccount {
   accountNumber?: string;
   bankName?: string;
   branch?: string;
-  currentBalance: number;
+  currentBalance?: number;
+  balance?: number;
+  code?: string;
   openingBalance?: number;
   isActive?: boolean;
   synced?: boolean;

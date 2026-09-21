@@ -1079,6 +1079,10 @@ app.get('/api/access-logs', (req, res) => {
   });
 });
 
+app.get('/api/health', (req, res) => {
+  res.json({ status: 'ok' });
+});
+
 // Farm status endpoint
 app.get('/api/farm-info', (req, res) => {
   const setupComplete = isSetupComplete();
