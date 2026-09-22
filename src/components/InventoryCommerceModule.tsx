@@ -27,20 +27,14 @@ import {
 import { jsPDF } from 'jspdf';
 import QRCode from 'qrcode';
 import { db } from '../db/indexedDb';
-import { executePurchaseTransaction, executeSaleTransaction, executePaymentTransaction } from '../services/transactionService';
+import { executePurchaseTransaction, executeSaleTransaction, executePaymentTransaction, executeInventoryItemCreationTransaction } from '../services/transactionService';
 import { generateTransactionNumber, generateUniqueId, safeInsert } from '../utils/idGenerator';
-import { InventoryItem, Party, PaymentRecord, Purchase, Sale, UserRole, StockMovement, JournalLine, CashBankAccount } from '../types';
+import { InventoryItem, Party, PaymentRecord, Purchase, Sale, UserRole, CashBankAccount } from '../types';
 import { HIGH_AMOUNT_CONFIRMATION_THRESHOLD } from '../constants/validation';
 import { notifyUndoableAction } from '../services/undoService';
 import { triggerSuccessAnimation } from './ui/SuccessAnimation';
-import { postJournalEntry, validateBalancedLines } from '../accounting/accountingEngine';
 import { CANONICAL_ACCOUNTS, getInventoryAssetAccount, getInventoryAccountDetails } from '../accounting/accountMapping';
 import { SearchableSelect, SearchableOption } from './ui';
-
-const getInventoryOpeningAssetAccount = (category?: string): { code: string; name: string } => {
-  const details = getInventoryAccountDetails(category);
-  return { code: details.code, name: details.nameBn };
-};
 
 const getInventoryCategoryBadge = (category?: string): { code: string; label: string } => {
   const details = getInventoryAccountDetails(category);
@@ -797,91 +791,21 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
       const customThreshold = itemThreshold.trim() !== '' ? parseFloat(itemThreshold) : undefined;
       const defaultThreshold = Math.round((stockNum > 0 ? stockNum : reorderNum) * 0.20 * 100) / 100;
       const finalThreshold = customThreshold !== undefined && !isNaN(customThreshold) ? customThreshold : defaultThreshold;
-      const todayStr = new Date().toISOString().split('T')[0];
 
-      let postedJournalEntryId: string | undefined = undefined;
-
-      // When openingStock > 0 and unitCost > 0 (or buyPrice > 0):
-      // - debit the appropriate inventory asset account (1051 FEED, 1052 SEED & FERTILIZER, 1053 RAW MATERIALS, 1054 WIP, 1055 FINISHED GOODS, or 1056 PACKAGING)
-      // - credit 3050 (Retained Earnings / মালিকানা স্বত্ব ও প্রারম্ভিক মূলধন) as this is opening stock from prior periods, NOT a cash purchase today
-      if (stockNum > 0 && totalOpeningValue > 0) {
-        const invAccount = getInventoryOpeningAssetAccount(itemCategory);
-        const accounts = await db.accounts.toArray();
-        const existingInvAcc = accounts.find((a) => a.code === invAccount.code);
-        const invAccountName = existingInvAcc ? existingInvAcc.nameBn : invAccount.name;
-
-        const lines: JournalLine[] = [
-          {
-            accountId: invAccount.code,
-            accountCode: invAccount.code,
-            accountName: invAccountName,
-            debit: totalOpeningValue,
-            credit: 0,
-            memo: `প্রারম্ভিক মজুদ: ${itemNameBn.trim()} (${stockNum} ${itemUnit.trim() || 'কেজি'} @ ৳${effectiveUnitCost})`
-          },
-          {
-            accountId: '3050',
-            accountCode: '3050',
-            accountName: 'পুঞ্জীভূত লাভ/মুনাফা (Retained Earnings)',
-            debit: 0,
-            credit: totalOpeningValue,
-            memo: 'প্রারম্ভিক মজুদ সমন্বয় (মালিকানা স্বত্ব / পূর্ববর্তী মেয়াদের উদ্বৃত্ত)'
-          }
-        ];
-
-        const jEntry = await postJournalEntry(
-          {
-            id: generateUniqueId('j_inv_open'),
-            voucherNumber: generateTransactionNumber('JV'),
-            voucherType: 'JOURNAL',
-            date: todayStr,
-            narration: `প্রারম্ভিক মজুদ পণ্য দাখিলা: ${itemNameBn.trim()} (${stockNum} ${itemUnit.trim() || 'কেজি'} @ ৳${effectiveUnitCost})`,
-            reference: 'OPENING_STOCK',
-            lines,
-            createdBy: currentUserId || 'system',
-            createdAt: new Date().toISOString()
-          },
-          { accounts, skipDbPut: true }
-        );
-
-        await safeInsert(db.journalEntries, jEntry, { idPrefix: 'j' });
-        postedJournalEntryId = jEntry.id;
-      }
-
-      const item: InventoryItem = {
-        id: generateUniqueId('it'),
-        code: itemCategory === 'FEED' ? generateTransactionNumber('FED') : generateTransactionNumber('ITM'),
-        nameBn: itemNameBn.trim(),
-        nameEn: itemNameBn.trim(),
-        category: itemCategory,
-        unit: itemUnit.trim() || 'কেজি',
-        currentStock: stockNum,
-        reorderLevel: reorderNum,
-        avgCostPrice: costNum,
-        sellingPrice: priceNum,
-        lastRestockAmount: stockNum,
-        lowStockThreshold: finalThreshold,
-        journalEntryId: postedJournalEntryId,
-        synced: false
-      };
-      await safeInsert(db.inventoryItems, item, { idPrefix: 'it' });
-
-      // Create a StockMovement record of type 'OPENING' so the inventory sub-ledger matches the GL
-      if (stockNum > 0) {
-        const movement: StockMovement = {
-          id: generateUniqueId('sm'),
-          date: todayStr,
-          itemId: item.id,
-          movementType: 'OPENING',
-          quantity: stockNum,
-          unitCost: effectiveUnitCost,
-          totalValue: totalOpeningValue,
-          referenceId: postedJournalEntryId || item.id,
-          notes: `প্রারম্ভিক মজুদ (Opening Stock): ${item.nameBn}`,
-          synced: false
-        };
-        await safeInsert(db.stockMovements, movement, { idPrefix: 'sm' });
-      }
+      const { item, journalEntryId: postedJournalEntryId } = await executeInventoryItemCreationTransaction({
+        itemData: {
+          nameBn: itemNameBn.trim(),
+          nameEn: itemNameBn.trim(),
+          category: itemCategory,
+          unit: itemUnit.trim() || 'কেজি',
+          currentStock: stockNum,
+          reorderLevel: reorderNum,
+          avgCostPrice: effectiveUnitCost,
+          sellingPrice: priceNum,
+          lowStockThreshold: finalThreshold
+        },
+        currentUserId: currentUserId || 'system'
+      });
 
       setShowAddItem(false);
       setItemNameBn('');

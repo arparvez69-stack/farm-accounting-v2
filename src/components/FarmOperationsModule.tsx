@@ -45,13 +45,13 @@ import {
   UserRole,
   InventoryItem,
   Party,
-  CashBankAccount,
-  JournalLine
+  CashBankAccount
 } from '../types';
 import { generateTransactionNumber, generateUniqueId, safeInsert } from '../utils/idGenerator';
-import { postJournalEntry } from '../accounting/accountingEngine';
 import { CANONICAL_ACCOUNTS, getCashBankAccountGLCode } from '../accounting/accountMapping';
 import {
+  executeAnimalPurchaseTransaction,
+  executeAnimalPurchaseCostAdjustmentTransaction,
   executeAnimalEventTransaction,
   executeAnimalSaleOrRemovalTransaction,
   executeFishStockingTransaction,
@@ -430,106 +430,33 @@ export const FarmOperationsModule: React.FC<Props> = ({
   const executeSaveAnimal = async (animalToSave: Animal) => {
     try {
       const pCost = animalToSave.purchaseCost || 0;
-      const finalAnimal: Animal = { ...animalToSave };
+      const todayStr = new Date().toISOString().split('T')[0];
+      const entryDate = animalToSave.purchaseDate && animalToSave.purchaseDate <= todayStr ? animalToSave.purchaseDate : todayStr;
+      const effectiveBankId = paymentMethod === 'BANK' ? (selectedBankAccountId || bankAccountsList[0]?.id) : undefined;
+      const effectiveSupplierId = paymentMethod === 'CREDIT' ? (selectedSupplierId || suppliersList[0]?.id) : undefined;
 
-      if (pCost > 0) {
-        const todayStr = new Date().toISOString().split('T')[0];
-        const entryDate = finalAnimal.purchaseDate && finalAnimal.purchaseDate <= todayStr ? finalAnimal.purchaseDate : todayStr;
-        const method = paymentMethod;
-        let paymentCode: string = CANONICAL_ACCOUNTS.CASH;
-        let paymentAccountName = 'নগদ টাকা (Cash on Hand)';
-        let effectiveBankId: string | undefined = undefined;
-        let effectiveSupplierId: string | undefined = undefined;
+      const { animal } = await executeAnimalPurchaseTransaction({
+        animalData: {
+          id: animalToSave.id,
+          tag: animalToSave.tag,
+          species: animalToSave.species,
+          breed: animalToSave.breed,
+          gender: animalToSave.gender,
+          birthDate: animalToSave.birthDate,
+          purchaseDate: animalToSave.purchaseDate,
+          currentWeightKg: animalToSave.currentWeightKg,
+          location: animalToSave.location,
+          photoUrl: animalToSave.photoUrl,
+          notes: animalToSave.notes
+        },
+        purchaseCost: pCost,
+        paymentMethod,
+        bankAccountId: effectiveBankId,
+        supplierId: effectiveSupplierId,
+        date: entryDate,
+        currentUserId: currentUserId || 'system'
+      });
 
-        if (method === 'BANK') {
-          paymentCode = CANONICAL_ACCOUNTS.BANK;
-          effectiveBankId = selectedBankAccountId || (bankAccountsList[0]?.id);
-          const bAcc = bankAccountsList.find(b => b.id === effectiveBankId);
-          paymentAccountName = bAcc ? `ব্যাংক হিসাব (${bAcc.name})` : 'ব্যাংক হিসাব (Bank Accounts)';
-        } else if (method === 'CREDIT') {
-          paymentCode = CANONICAL_ACCOUNTS.ACCOUNTS_PAYABLE;
-          effectiveSupplierId = selectedSupplierId || (suppliersList[0]?.id);
-          const sParty = suppliersList.find(s => s.id === effectiveSupplierId);
-          paymentAccountName = sParty ? `সরবরাহকারীর দেনা (${sParty.name})` : 'সরবরাহকারীর দেনা (Accounts Payable)';
-        }
-
-        const lines: JournalLine[] = [
-          {
-            accountId: '1580',
-            accountCode: '1580',
-            accountName: 'পশুসম্পদ (Livestock & Biological Assets)',
-            debit: pCost,
-            credit: 0,
-            memo: `পশু ক্রয়: ট্যাগ ${finalAnimal.id}`
-          },
-          {
-            accountId: paymentCode,
-            accountCode: paymentCode,
-            accountName: paymentAccountName,
-            debit: 0,
-            credit: pCost,
-            memo: method === 'CASH'
-              ? 'পশু ক্রয়ে নগদ পরিশোধ'
-              : method === 'BANK'
-              ? `পশু ক্রয়ে ব্যাংক পরিশোধ`
-              : `পশু ক্রয়ে সরবরাহকারীর নিকট দেনা`
-          }
-        ];
-
-        const voucherNumber = generateTransactionNumber(method === 'CREDIT' ? 'JV' : 'PAY');
-        const accounts = await db.accounts.toArray();
-        const jEntry = await postJournalEntry(
-          {
-            id: generateUniqueId('j_anm'),
-            voucherNumber,
-            voucherType: method === 'CREDIT' ? 'JOURNAL' : 'PAYMENT',
-            date: entryDate,
-            narration: `নতুন গবাদিপশু/হাঁস-মুরগি ক্রয়: ${finalAnimal.species === 'CATTLE' ? 'গরু' : finalAnimal.species === 'GOAT' ? 'ছাগল' : finalAnimal.species === 'SHEEP' ? 'ভেড়া' : finalAnimal.species === 'POULTRY' ? 'হাঁস-মুরগি' : 'পশু'} (ট্যাগ: ${finalAnimal.id}), ক্রয়মূল্য: ৳${pCost}`,
-            reference: finalAnimal.id,
-            lines,
-            createdBy: currentUserId,
-            createdAt: new Date().toISOString()
-          },
-          { accounts, skipDbPut: true }
-        );
-
-        await safeInsert(db.journalEntries, jEntry, { idPrefix: 'j' });
-
-        // Update Operational Cash/Bank balance or Supplier AP consistently with GL
-        if (method === 'CASH') {
-          const cashAcc = await db.cashBankAccounts.where('accountType').equals('CASH').first();
-          if (cashAcc) {
-            await db.cashBankAccounts.update(cashAcc.id, {
-              currentBalance: Math.round((cashAcc.currentBalance - pCost) * 100) / 100,
-              synced: false
-            });
-          }
-        } else if (method === 'BANK' && effectiveBankId) {
-          const bAcc = await db.cashBankAccounts.get(effectiveBankId);
-          if (bAcc) {
-            await db.cashBankAccounts.update(effectiveBankId, {
-              currentBalance: Math.round((bAcc.currentBalance - pCost) * 100) / 100,
-              synced: false
-            });
-          }
-        } else if (method === 'CREDIT' && effectiveSupplierId) {
-          const sParty = await db.parties.get(effectiveSupplierId);
-          if (sParty) {
-            await db.parties.update(effectiveSupplierId, {
-              balance: Math.round(((sParty.balance || 0) + pCost) * 100) / 100,
-              synced: false
-            });
-          }
-        }
-
-        finalAnimal.journalEntryId = jEntry.id;
-        finalAnimal.paymentMethod = method;
-        finalAnimal.bankAccountId = effectiveBankId;
-        finalAnimal.supplierId = effectiveSupplierId;
-      }
-
-      const speciesPrefix = finalAnimal.species === 'GOAT' ? 'GOT' : finalAnimal.species === 'SHEEP' ? 'SHP' : finalAnimal.species === 'POULTRY' ? 'PLT' : 'COW';
-      await safeInsert(db.animals, finalAnimal, { idPrefix: speciesPrefix });
       setShowAddAnimal(false);
       setDuplicateTagWarning(null);
       setTagId('');
@@ -537,8 +464,8 @@ export const FarmOperationsModule: React.FC<Props> = ({
       setAnimalBirthDate(new Date().toISOString().split('T')[0]);
       setAnimalPurchaseDate(new Date().toISOString().split('T')[0]);
       setPurchaseCost('0');
-      setMsg({ type: 'success', text: `পশু ট্যাগ ${finalAnimal.id} সফলভাবে যুক্ত হয়েছে${pCost > 0 ? ' এবং জাবেদা ভাউচার দাখিলা সম্পন্ন হয়েছে' : ''}!` });
-      triggerSuccessAnimation('পশু সফলভাবে নিবন্ধিত হয়েছে!', `ট্যাগ: ${finalAnimal.id}`);
+      setMsg({ type: 'success', text: `পশু ট্যাগ ${animal.id} সফলভাবে যুক্ত হয়েছে${pCost > 0 ? ' এবং জাবেদা ভাউচার দাখিলা সম্পন্ন হয়েছে' : ''}!` });
+      triggerSuccessAnimation('পশু সফলভাবে নিবন্ধিত হয়েছে!', `ট্যাগ: ${animal.id}`);
       await loadOpsData();
     } catch (err: any) {
       setMsg({ type: 'error', text: err.message });
@@ -639,179 +566,25 @@ export const FarmOperationsModule: React.FC<Props> = ({
 
     try {
       setSubmittingEdit(true);
-      const oldCost = editingAnimal.purchaseCost || 0;
       const newCost = parseFloat(editPurchaseCost) || 0;
-      const diff = Math.round((newCost - oldCost) * 100) / 100;
-      const todayStr = new Date().toISOString().split('T')[0];
 
-      let newJournalEntryId = editingAnimal.journalEntryId;
+      await executeAnimalPurchaseCostAdjustmentTransaction({
+        animalId: editingAnimal.id,
+        newPurchaseCost: newCost,
+        updatedFields: {
+          tag: editTag.trim() || editingAnimal.id,
+          species: editSpecies as any,
+          breed: editBreed.trim(),
+          gender: editGender,
+          birthDate: editBirthDate,
+          purchaseDate: editPurchaseDate,
+          currentWeightKg: parseFloat(editCurrentWeight) || 0,
+          location: editLocation.trim() || 'প্রধান শেড',
+          photoUrl: editPhotoUrl.trim() ? editPhotoUrl : ''
+        },
+        currentUserId: currentUserId || 'system'
+      });
 
-      if (diff !== 0) {
-        const accounts = await db.accounts.toArray();
-        const method = editingAnimal.paymentMethod || 'CASH';
-        let paymentCode: string = CANONICAL_ACCOUNTS.CASH;
-        let paymentAccountName = 'নগদ টাকা (Cash on Hand)';
-
-        if (method === 'BANK') {
-          paymentCode = CANONICAL_ACCOUNTS.BANK;
-          paymentAccountName = 'ব্যাংক হিসাব (Bank Accounts)';
-        } else if (method === 'CREDIT') {
-          paymentCode = CANONICAL_ACCOUNTS.ACCOUNTS_PAYABLE;
-          paymentAccountName = 'সরবরাহকারীর দেনা (Accounts Payable)';
-        }
-
-        if (editingAnimal.journalEntryId) {
-          // Adjusting entry for the difference
-          const absDiff = Math.abs(diff);
-          const lines: JournalLine[] = diff > 0
-            ? [
-                {
-                  accountId: '1580',
-                  accountCode: '1580',
-                  accountName: 'পশুসম্পদ (Livestock & Biological Assets)',
-                  debit: absDiff,
-                  credit: 0,
-                  memo: `পশু ${editingAnimal.id} ক্রয়মূল্য সমন্বয় বৃদ্ধি`
-                },
-                {
-                  accountId: paymentCode,
-                  accountCode: paymentCode,
-                  accountName: paymentAccountName,
-                  debit: 0,
-                  credit: absDiff,
-                  memo: `পশু ক্রয়মূল্য বৃদ্ধি সমন্বয়`
-                }
-              ]
-            : [
-                {
-                  accountId: paymentCode,
-                  accountCode: paymentCode,
-                  accountName: paymentAccountName,
-                  debit: absDiff,
-                  credit: 0,
-                  memo: `পশু ক্রয়মূল্য হ্রাস সমন্বয়`
-                },
-                {
-                  accountId: '1580',
-                  accountCode: '1580',
-                  accountName: 'পশুসম্পদ (Livestock & Biological Assets)',
-                  debit: 0,
-                  credit: absDiff,
-                  memo: `পশু ${editingAnimal.id} ক্রয়মূল্য সমন্বয় হ্রাস`
-                }
-              ];
-
-          const adjEntry = await postJournalEntry(
-            {
-              id: generateUniqueId('j_anm_adj'),
-              voucherNumber: generateTransactionNumber('JV'),
-              voucherType: 'JOURNAL',
-              date: todayStr,
-              narration: `পশু ${editingAnimal.id}-এর ক্রয়মূল্য সমন্বয় (${diff > 0 ? 'বৃদ্ধি' : 'হ্রাস'}: ৳${absDiff})`,
-              reference: editingAnimal.id,
-              lines,
-              createdBy: currentUserId,
-              createdAt: new Date().toISOString()
-            },
-            { accounts, skipDbPut: true }
-          );
-          await safeInsert(db.journalEntries, adjEntry, { idPrefix: 'j' });
-
-          // Adjust Cash / Bank / Supplier balance
-          if (method === 'CASH') {
-            const cashAcc = await db.cashBankAccounts.where('accountType').equals('CASH').first();
-            if (cashAcc) {
-              await db.cashBankAccounts.update(cashAcc.id, {
-                currentBalance: Math.round((cashAcc.currentBalance - diff) * 100) / 100,
-                synced: false
-              });
-            }
-          } else if (method === 'BANK' && editingAnimal.bankAccountId) {
-            const bAcc = await db.cashBankAccounts.get(editingAnimal.bankAccountId);
-            if (bAcc) {
-              await db.cashBankAccounts.update(editingAnimal.bankAccountId, {
-                currentBalance: Math.round((bAcc.currentBalance - diff) * 100) / 100,
-                synced: false
-              });
-            }
-          } else if (method === 'CREDIT' && editingAnimal.supplierId) {
-            const supp = await db.parties.get(editingAnimal.supplierId);
-            if (supp) {
-              await db.parties.update(editingAnimal.supplierId, {
-                balance: Math.round(((supp.balance || 0) + diff) * 100) / 100,
-                synced: false
-              });
-            }
-          }
-        } else if (newCost > 0) {
-          // Animal had no initial journal entry, post initial one now
-          const lines: JournalLine[] = [
-            {
-              accountId: '1580',
-              accountCode: '1580',
-              accountName: 'পশুসম্পদ (Livestock & Biological Assets)',
-              debit: newCost,
-              credit: 0,
-              memo: `পশু ক্রয়: ট্যাগ ${editingAnimal.id}`
-            },
-            {
-              accountId: paymentCode,
-              accountCode: paymentCode,
-              accountName: paymentAccountName,
-              debit: 0,
-              credit: newCost,
-              memo: `পশু ক্রয়ের জন্য পরিশোধ`
-            }
-          ];
-
-          const jEntry = await postJournalEntry(
-            {
-              id: generateUniqueId('j_anm'),
-              voucherNumber: generateTransactionNumber('PAY'),
-              voucherType: 'PAYMENT',
-              date: todayStr,
-              narration: `গবাদিপশু ক্রয়: (ট্যাগ: ${editingAnimal.id}), ক্রয়মূল্য: ৳${newCost}`,
-              reference: editingAnimal.id,
-              lines,
-              createdBy: currentUserId,
-              createdAt: new Date().toISOString()
-            },
-            { accounts, skipDbPut: true }
-          );
-          await safeInsert(db.journalEntries, jEntry, { idPrefix: 'j' });
-          newJournalEntryId = jEntry.id;
-
-          if (method === 'CASH') {
-            const cashAcc = await db.cashBankAccounts.where('accountType').equals('CASH').first();
-            if (cashAcc) {
-              await db.cashBankAccounts.update(cashAcc.id, {
-                currentBalance: Math.round((cashAcc.currentBalance - newCost) * 100) / 100,
-                synced: false
-              });
-            }
-          }
-        }
-      }
-
-      const newTotalCost = Math.max(0, Math.round(((editingAnimal.totalCost || 0) - oldCost + newCost) * 100) / 100);
-
-      const updatedFields: Partial<Animal> = {
-        tag: editTag.trim() || editingAnimal.id,
-        species: editSpecies as any,
-        breed: editBreed.trim(),
-        gender: editGender,
-        birthDate: editBirthDate,
-        purchaseDate: editPurchaseDate,
-        purchaseCost: newCost,
-        totalCost: newTotalCost,
-        currentWeightKg: parseFloat(editCurrentWeight) || 0,
-        location: editLocation.trim() || 'প্রধান শেড',
-        photoUrl: editPhotoUrl.trim() ? editPhotoUrl : '',
-        journalEntryId: newJournalEntryId,
-        synced: false
-      };
-
-      await db.animals.update(editingAnimal.id, updatedFields);
       setMsg({ type: 'success', text: `পশু ${editingAnimal.id} এর তথ্য ও ক্রয়মূল্য সফলভাবে হালনাগাদ করা হয়েছে!` });
       setEditingAnimal(null);
       await loadOpsData();

@@ -3443,6 +3443,440 @@ export async function executeAnimalPurchaseTransaction(
   );
 }
 
+export interface AnimalPurchaseCostAdjustmentParams {
+  animalId: string;
+  newPurchaseCost: number;
+  updatedFields?: Partial<Animal>;
+  currentUserId: string;
+}
+
+/**
+ * Atomic Execution of Animal Purchase Cost Adjustment
+ * Handles adjusting journal entry (Dr/Cr Livestock & Biological Assets 1580, Cr/Dr Cash/Bank/AP)
+ * and updates operational balances and animal record atomically.
+ */
+export async function executeAnimalPurchaseCostAdjustmentTransaction(
+  params: AnimalPurchaseCostAdjustmentParams
+): Promise<{ animal: Animal; journalEntryId?: string; diff: number }> {
+  return await db.transaction(
+    'rw',
+    [
+      db.animals,
+      db.journalEntries,
+      db.accounts,
+      db.cashBankAccounts,
+      db.parties,
+      db.auditLogs,
+      db.closedPeriods
+    ],
+    async () => {
+      const { animalId, newPurchaseCost, updatedFields = {}, currentUserId } = params;
+      const animal = await db.animals.get(animalId);
+      if (!animal) {
+        throw new Error(`পশু পাওয়া যায়নি (ID: ${animalId})।`);
+      }
+
+      const cleanNewCost = Math.max(0, Math.round((newPurchaseCost || 0) * 100) / 100);
+      const oldCost = animal.purchaseCost || 0;
+      const diff = Math.round((cleanNewCost - oldCost) * 100) / 100;
+      const todayStr = new Date().toISOString().split('T')[0];
+
+      let newJournalEntryId = animal.journalEntryId;
+
+      if (diff !== 0) {
+        const closedPeriod = await db.closedPeriods
+          .filter((p) => (p.startDate ? p.startDate <= todayStr : true) && p.endDate >= todayStr)
+          .first();
+        if (closedPeriod) {
+          throw new Error(`হিসাবকাল বন্ধ রয়েছে (${closedPeriod.notes || closedPeriod.endDate})। বন্ধ সময়কালের তারিখে সমন্বয় অনুমোদিত নয়।`);
+        }
+
+        const accounts = await db.accounts.toArray();
+        let livestockAssetAcc = accounts.find((a) => a.code === CANONICAL_ACCOUNTS.LIVESTOCK_ASSETS);
+        if (!livestockAssetAcc) {
+          const newAcc: Account = {
+            id: 'acc_1580',
+            code: CANONICAL_ACCOUNTS.LIVESTOCK_ASSETS,
+            nameBn: 'পশুসম্পদ (Livestock & Biological Assets)',
+            nameEn: 'Livestock & Biological Assets',
+            accountClass: 'ASSET',
+            normalBalance: 'DEBIT',
+            isSystem: true,
+            isActive: true
+          };
+          await safeInsert(db.accounts, newAcc, { idPrefix: 'acc' });
+          accounts.push(newAcc);
+          livestockAssetAcc = newAcc;
+        }
+
+        const method = animal.paymentMethod || 'CASH';
+        let paymentCode: string = CANONICAL_ACCOUNTS.CASH;
+        let paymentName = 'নগদ টাকা (Cash on Hand)';
+        if (method === 'BANK') {
+          paymentCode = CANONICAL_ACCOUNTS.BANK;
+          paymentName = 'ব্যাংক হিসাব (Bank Accounts)';
+        } else if (method === 'CREDIT') {
+          paymentCode = CANONICAL_ACCOUNTS.ACCOUNTS_PAYABLE;
+          paymentName = 'সরবরাহকারীর দেনা (Accounts Payable)';
+        }
+
+        const paymentAcc = accounts.find((a) => a.code === paymentCode) || {
+          id: `acc_${paymentCode}`,
+          code: paymentCode,
+          nameBn: paymentName
+        };
+
+        if (animal.journalEntryId) {
+          const absDiff = Math.abs(diff);
+          if (diff > 0) {
+            if (method === 'CASH') {
+              const cashAcc = await db.cashBankAccounts.where('accountType').equals('CASH').first();
+              if (cashAcc && Number(cashAcc.currentBalance || 0) < absDiff) {
+                throw new Error(`নগদ তহবিলে পর্যাপ্ত ব্যালেন্স নেই (Available: ৳${cashAcc.currentBalance || 0}, সমন্বয় বৃদ্ধি: ৳${absDiff})।`);
+              }
+            } else if (method === 'BANK') {
+              let bankAcc: CashBankAccount | undefined;
+              if (animal.bankAccountId) bankAcc = await db.cashBankAccounts.get(animal.bankAccountId);
+              if (!bankAcc) bankAcc = await db.cashBankAccounts.where('accountType').equals('BANK').first();
+              if (bankAcc && Number(bankAcc.currentBalance || 0) < absDiff) {
+                throw new Error(`ব্যাংক হিসাবে পর্যাপ্ত ব্যালেন্স নেই (Available: ৳${bankAcc.currentBalance || 0}, সমন্বয় বৃদ্ধি: ৳${absDiff})।`);
+              }
+            }
+          }
+
+          const lines: JournalLine[] = diff > 0
+            ? [
+                {
+                  accountId: livestockAssetAcc.id,
+                  accountCode: CANONICAL_ACCOUNTS.LIVESTOCK_ASSETS,
+                  accountName: livestockAssetAcc.nameBn || 'পশুসম্পদ (Livestock & Biological Assets)',
+                  debit: absDiff,
+                  credit: 0,
+                  memo: `পশু ${animal.id} ক্রয়মূল্য সমন্বয় বৃদ্ধি`
+                },
+                {
+                  accountId: paymentAcc.id,
+                  accountCode: paymentCode,
+                  accountName: paymentAcc.nameBn || paymentName,
+                  debit: 0,
+                  credit: absDiff,
+                  memo: `পশু ক্রয়মূল্য বৃদ্ধি সমন্বয়`
+                }
+              ]
+            : [
+                {
+                  accountId: paymentAcc.id,
+                  accountCode: paymentCode,
+                  accountName: paymentAcc.nameBn || paymentName,
+                  debit: absDiff,
+                  credit: 0,
+                  memo: `পশু ক্রয়মূল্য হ্রাস সমন্বয়`
+                },
+                {
+                  accountId: livestockAssetAcc.id,
+                  accountCode: CANONICAL_ACCOUNTS.LIVESTOCK_ASSETS,
+                  accountName: livestockAssetAcc.nameBn || 'পশুসম্পদ (Livestock & Biological Assets)',
+                  debit: 0,
+                  credit: absDiff,
+                  memo: `পশু ${animal.id} ক্রয়মূল্য সমন্বয় হ্রাস`
+                }
+              ];
+
+          const check = validateBalancedLines(lines, accounts);
+          if (!check.isBalanced) {
+            throw new Error('পশু ক্রয় সমন্বয় জাবেদা ভারসাম্যহীন!');
+          }
+
+          const adjEntry = await postJournalEntry(
+            {
+              id: generateUniqueId('j_anm_adj'),
+              voucherNumber: generateTransactionNumber('JV'),
+              voucherType: 'JOURNAL',
+              date: todayStr,
+              narration: `পশু ${animal.id}-এর ক্রয়মূল্য সমন্বয় (${diff > 0 ? 'বৃদ্ধি' : 'হ্রাস'}: ৳${absDiff})`,
+              reference: animal.id,
+              lines,
+              createdBy: currentUserId,
+              createdAt: new Date().toISOString()
+            },
+            { accounts, skipDbPut: true }
+          );
+          await safeInsert(db.journalEntries, adjEntry, { idPrefix: 'j' });
+
+          if (method === 'CASH') {
+            const cashAcc = await db.cashBankAccounts.where('accountType').equals('CASH').first();
+            if (cashAcc) {
+              await db.cashBankAccounts.update(cashAcc.id, {
+                currentBalance: Math.round((cashAcc.currentBalance - diff) * 100) / 100,
+                synced: false
+              });
+            }
+          } else if (method === 'BANK' && animal.bankAccountId) {
+            const bAcc = await db.cashBankAccounts.get(animal.bankAccountId);
+            if (bAcc) {
+              await db.cashBankAccounts.update(animal.bankAccountId, {
+                currentBalance: Math.round((bAcc.currentBalance - diff) * 100) / 100,
+                synced: false
+              });
+            }
+          } else if (method === 'CREDIT' && animal.supplierId) {
+            const supp = await db.parties.get(animal.supplierId);
+            if (supp) {
+              await db.parties.update(animal.supplierId, {
+                balance: Math.round(((supp.balance || 0) + diff) * 100) / 100,
+                synced: false
+              });
+            }
+          }
+        } else if (cleanNewCost > 0) {
+          if (method === 'CASH') {
+            const cashAcc = await db.cashBankAccounts.where('accountType').equals('CASH').first();
+            if (cashAcc && Number(cashAcc.currentBalance || 0) < cleanNewCost) {
+              throw new Error(`নগদ তহবিলে পর্যাপ্ত ব্যালেন্স নেই (Available: ৳${cashAcc.currentBalance || 0}, নতুন ক্রয়মূল্য: ৳${cleanNewCost})।`);
+            }
+          }
+
+          const lines: JournalLine[] = [
+            {
+              accountId: livestockAssetAcc.id,
+              accountCode: CANONICAL_ACCOUNTS.LIVESTOCK_ASSETS,
+              accountName: livestockAssetAcc.nameBn || 'পশুসম্পদ (Livestock & Biological Assets)',
+              debit: cleanNewCost,
+              credit: 0,
+              memo: `পশু ক্রয়: ট্যাগ ${animal.id}`
+            },
+            {
+              accountId: paymentAcc.id,
+              accountCode: paymentCode,
+              accountName: paymentAcc.nameBn || paymentName,
+              debit: 0,
+              credit: cleanNewCost,
+              memo: `পশু ক্রয়ের জন্য পরিশোধ`
+            }
+          ];
+
+          const check = validateBalancedLines(lines, accounts);
+          if (!check.isBalanced) {
+            throw new Error('পশু ক্রয় জাবেদা ভারসাম্যহীন!');
+          }
+
+          const jEntry = await postJournalEntry(
+            {
+              id: generateUniqueId('j_anm'),
+              voucherNumber: generateTransactionNumber('PAY'),
+              voucherType: 'PAYMENT',
+              date: todayStr,
+              narration: `গবাদিপশু ক্রয়: (ট্যাগ: ${animal.id}), ক্রয়মূল্য: ৳${cleanNewCost}`,
+              reference: animal.id,
+              lines,
+              createdBy: currentUserId,
+              createdAt: new Date().toISOString()
+            },
+            { accounts, skipDbPut: true }
+          );
+          await safeInsert(db.journalEntries, jEntry, { idPrefix: 'j' });
+          newJournalEntryId = jEntry.id;
+
+          if (method === 'CASH') {
+            const cashAcc = await db.cashBankAccounts.where('accountType').equals('CASH').first();
+            if (cashAcc) {
+              await db.cashBankAccounts.update(cashAcc.id, {
+                currentBalance: Math.round((cashAcc.currentBalance - cleanNewCost) * 100) / 100,
+                synced: false
+              });
+            }
+          }
+        }
+      }
+
+      const newTotalCost = Math.max(0, Math.round(((animal.totalCost || 0) - oldCost + cleanNewCost) * 100) / 100);
+
+      const mergedFields: Partial<Animal> = {
+        ...updatedFields,
+        purchaseCost: cleanNewCost,
+        totalCost: newTotalCost,
+        journalEntryId: newJournalEntryId,
+        synced: false
+      };
+
+      await db.animals.update(animal.id, mergedFields);
+      const updatedAnimal = (await db.animals.get(animal.id))!;
+
+      await safeInsert(db.auditLogs, {
+        id: generateUniqueId('audit'),
+        timestamp: new Date().toISOString(),
+        userId: currentUserId,
+        role: 'OWNER',
+        action: 'ANIMAL_UPDATED',
+        module: 'LIVESTOCK',
+        recordId: animal.id,
+        status: 'SUCCESS',
+        details: `পশু ${animal.id} আপডেট সম্পন্ন (ক্রয়মূল্য পরিবর্তন: ৳${oldCost} -> ৳${cleanNewCost})`
+      });
+
+      return { animal: updatedAnimal, journalEntryId: newJournalEntryId, diff };
+    }
+  );
+}
+
+export interface InventoryItemCreationParams {
+  itemData: {
+    id?: string;
+    code?: string;
+    nameBn: string;
+    nameEn?: string;
+    category?: InventoryItem['category'];
+    unit?: string;
+    currentStock: number;
+    reorderLevel?: number;
+    avgCostPrice?: number;
+    sellingPrice?: number;
+    lowStockThreshold?: number;
+  };
+  currentUserId: string;
+}
+
+/**
+ * Atomic Execution of Inventory Item Registration with Opening Stock
+ * Handles opening stock valuation, journal entry (Dr Inventory 105x, Cr Retained Earnings 3050),
+ * stock movement creation, and item registration inside an atomic Dexie transaction.
+ */
+export async function executeInventoryItemCreationTransaction(
+  params: InventoryItemCreationParams
+): Promise<{ item: InventoryItem; journalEntryId?: string; stockMovementId?: string }> {
+  return await db.transaction(
+    'rw',
+    [
+      db.inventoryItems,
+      db.journalEntries,
+      db.stockMovements,
+      db.accounts,
+      db.closedPeriods,
+      db.auditLogs
+    ],
+    async () => {
+      const { itemData, currentUserId } = params;
+      const todayStr = new Date().toISOString().split('T')[0];
+      const stockNum = Math.max(0, itemData.currentStock || 0);
+      const costNum = Math.max(0, itemData.avgCostPrice || 0);
+      const totalOpeningValue = Math.round(stockNum * costNum * 100) / 100;
+      const category: InventoryItem['category'] = itemData.category || 'FEED';
+
+      let postedJournalEntryId: string | undefined = undefined;
+      let stockMovementId: string | undefined = undefined;
+
+      if (stockNum > 0 && totalOpeningValue > 0) {
+        const closedPeriod = await db.closedPeriods
+          .filter((p) => (p.startDate ? p.startDate <= todayStr : true) && p.endDate >= todayStr)
+          .first();
+        if (closedPeriod) {
+          throw new Error(`হিসাবকাল বন্ধ রয়েছে (${closedPeriod.notes || closedPeriod.endDate})। এই তারিখে প্রারম্ভিক মজুদ দাখিলা অনুমোদিত নয়।`);
+        }
+
+        const invDetails = getInventoryAccountDetails(category);
+        const accounts = await db.accounts.toArray();
+        const existingInvAcc = accounts.find((a) => a.code === invDetails.code);
+        const invAccountName = existingInvAcc ? existingInvAcc.nameBn : invDetails.nameBn;
+
+        const lines: JournalLine[] = [
+          {
+            accountId: invDetails.code,
+            accountCode: invDetails.code,
+            accountName: invAccountName,
+            debit: totalOpeningValue,
+            credit: 0,
+            memo: `প্রারম্ভিক মজুদ: ${itemData.nameBn.trim()} (${stockNum} ${itemData.unit?.trim() || 'কেজি'} @ ৳${costNum})`
+          },
+          {
+            accountId: CANONICAL_ACCOUNTS.RETAINED_EARNINGS,
+            accountCode: CANONICAL_ACCOUNTS.RETAINED_EARNINGS,
+            accountName: 'পুঞ্জীভূত লাভ/মুনাফা (Retained Earnings)',
+            debit: 0,
+            credit: totalOpeningValue,
+            memo: 'প্রারম্ভিক মজুদ সমন্বয় (মালিকানা স্বত্ব / পূর্ববর্তী মেয়াদের উদ্বৃত্ত)'
+          }
+        ];
+
+        const check = validateBalancedLines(lines, accounts);
+        if (!check.isBalanced) {
+          throw new Error('প্রারম্ভিক মজুদ পণ্য জাবেদা দাখিলা ভারসাম্যহীন!');
+        }
+
+        const jEntry = await postJournalEntry(
+          {
+            id: generateUniqueId('j_inv_open'),
+            voucherNumber: generateTransactionNumber('JV'),
+            voucherType: 'JOURNAL',
+            date: todayStr,
+            narration: `প্রারম্ভিক মজুদ পণ্য দাখিলা: ${itemData.nameBn.trim()} (${stockNum} ${itemData.unit?.trim() || 'কেজি'} @ ৳${costNum})`,
+            reference: 'OPENING_STOCK',
+            lines,
+            createdBy: currentUserId || 'system',
+            createdAt: new Date().toISOString()
+          },
+          { accounts, skipDbPut: true }
+        );
+
+        await safeInsert(db.journalEntries, jEntry, { idPrefix: 'j' });
+        postedJournalEntryId = jEntry.id;
+      }
+
+      const itemId = itemData.id?.trim() || generateUniqueId('it');
+      const itemCode = itemData.code?.trim() || (category === 'FEED' ? generateTransactionNumber('FED') : generateTransactionNumber('ITM'));
+
+      const item: InventoryItem = {
+        id: itemId,
+        code: itemCode,
+        nameBn: itemData.nameBn.trim(),
+        nameEn: itemData.nameEn?.trim() || itemData.nameBn.trim(),
+        category,
+        unit: itemData.unit?.trim() || 'কেজি',
+        currentStock: stockNum,
+        reorderLevel: itemData.reorderLevel || 10,
+        avgCostPrice: costNum,
+        sellingPrice: itemData.sellingPrice || 0,
+        lastRestockAmount: stockNum,
+        lowStockThreshold: itemData.lowStockThreshold ?? itemData.reorderLevel ?? 10,
+        journalEntryId: postedJournalEntryId,
+        synced: false
+      };
+
+      await safeInsert(db.inventoryItems, item, { idPrefix: 'it' });
+
+      if (stockNum > 0) {
+        const movement: StockMovement = {
+          id: generateUniqueId('sm'),
+          date: todayStr,
+          itemId: item.id,
+          movementType: 'OPENING',
+          quantity: stockNum,
+          unitCost: costNum,
+          totalValue: totalOpeningValue,
+          referenceId: postedJournalEntryId || item.id,
+          notes: `প্রারম্ভিক মজুদ (Opening Stock): ${item.nameBn}`,
+          synced: false
+        };
+        await safeInsert(db.stockMovements, movement, { idPrefix: 'sm' });
+        stockMovementId = movement.id;
+      }
+
+      await safeInsert(db.auditLogs, {
+        id: generateUniqueId('audit'),
+        timestamp: new Date().toISOString(),
+        userId: currentUserId,
+        role: 'OWNER',
+        action: 'INVENTORY_ITEM_CREATED',
+        module: 'INVENTORY',
+        recordId: item.id,
+        status: 'SUCCESS',
+        details: `নতুন পণ্য ${item.nameBn} নিবন্ধিত (প্রারম্ভিক স্টক: ${stockNum} ${item.unit}, মান: ৳${totalOpeningValue})`
+      });
+
+      return { item, journalEntryId: postedJournalEntryId, stockMovementId };
+    }
+  );
+}
+
 /**
  * Retrieves an Animal's accumulated cost and reconciles it against General Ledger transactions.
  * Returns breakdown, GL debits, COGS already transferred, net remaining cost, and consistency flag.
