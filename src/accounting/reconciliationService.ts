@@ -16,7 +16,11 @@ import {
   InventoryItem,
   Investor,
   JournalEntry,
-  Party
+  Party,
+  PaymentRecord,
+  Purchase,
+  Sale,
+  StockMovement
 } from '../types';
 
 export interface ReconciliationSubItem {
@@ -68,6 +72,7 @@ export interface FullReconciliationReport {
 
 /**
  * Calculates net balance for one or more account codes from journal entries.
+ * When asOfDate is provided, strictly filters entries on or before asOfDate.
  * normalBalance:
  * - 'DEBIT': debit - credit
  * - 'CREDIT': credit - debit
@@ -75,12 +80,21 @@ export interface FullReconciliationReport {
 export function calculateGlBalanceForAccounts(
   journalEntries: JournalEntry[],
   accountCodes: string[],
-  normalBalance: 'DEBIT' | 'CREDIT'
+  normalBalance: 'DEBIT' | 'CREDIT',
+  asOfDate?: string
 ): number {
   let net = 0;
   const targetCodes = new Set(accountCodes);
+  const cleanAsOf = asOfDate ? asOfDate.slice(0, 10) : undefined;
 
   for (const entry of journalEntries) {
+    if (cleanAsOf && entry.date) {
+      const entryDate = String(entry.date).slice(0, 10);
+      if (entryDate > cleanAsOf) {
+        continue;
+      }
+    }
+
     for (const line of entry.lines || []) {
       if (targetCodes.has(line.accountCode)) {
         const debit = Number(line.debit) || 0;
@@ -106,15 +120,19 @@ function round2(val: number): number {
 
 /**
  * Check 1: Inventory subledger ↔ inventory GL
- * - Operational: Sum of (currentStock * avgCostPrice) across all inventory items
- * - GL: Net debit balance of inventory asset accounts (1051, 1052, 1053, 1055, 1056, and 1050 if legacy)
+ * - Operational: Sum of (stock * avgCostPrice) as of asOfDate
+ * - GL: Net debit balance of inventory asset accounts as of asOfDate (1051, 1052, 1053, 1055, 1056, and 1050 if legacy)
  */
 export async function reconcileInventorySubledger(
   dbInstance: any = db,
-  journalEntries?: JournalEntry[]
+  journalEntries?: JournalEntry[],
+  asOfDate?: string
 ): Promise<ReconciliationCheck> {
   const items: InventoryItem[] = await dbInstance.inventoryItems.toArray();
   const entries: JournalEntry[] = journalEntries || (await dbInstance.journalEntries.toArray());
+  const movements: StockMovement[] = dbInstance.stockMovements ? await dbInstance.stockMovements.toArray() : [];
+
+  const cleanAsOf = asOfDate ? asOfDate.slice(0, 10) : undefined;
 
   let totalOperational = 0;
   const categoryBreakdown: Record<string, { name: string; opVal: number; glCode: string }> = {
@@ -126,8 +144,37 @@ export async function reconcileInventorySubledger(
   };
 
   for (const item of items) {
-    const qty = Math.max(0, Number(item.currentStock) || 0);
+    const currentStock = Math.max(0, Number(item.currentStock) || 0);
     const unitCost = Number(item.avgCostPrice) || Number((item as any).costPrice) || 0;
+    let qty = currentStock;
+
+    if (cleanAsOf && movements.length > 0) {
+      const postMovements = movements.filter(
+        (m) => m.itemId === item.id && m.date && String(m.date).slice(0, 10) > cleanAsOf
+      );
+      if (postMovements.length > 0) {
+        let postInflows = 0;
+        let postOutflows = 0;
+        for (const m of postMovements) {
+          const type = String(m.movementType || '').toUpperCase();
+          const mQty = Math.abs(Number(m.quantity) || 0);
+          if (
+            type === 'PURCHASE' ||
+            type === 'PRODUCTION' ||
+            type === 'OPENING' ||
+            (type === 'ADJUSTMENT' && m.quantity > 0 && !(m.notes || '').includes('হ্রাস'))
+          ) {
+            postInflows += mQty;
+          } else {
+            postOutflows += mQty;
+          }
+        }
+        qty = Math.max(0, currentStock - postInflows + postOutflows);
+      } else if ((item as any).createdAt && String((item as any).createdAt).slice(0, 10) > cleanAsOf && movements.some((m) => m.itemId === item.id)) {
+        qty = 0;
+      }
+    }
+
     const itemVal = round2(qty * unitCost);
     totalOperational = round2(totalOperational + itemVal);
 
@@ -154,12 +201,12 @@ export async function reconcileInventorySubledger(
     '1050' // Legacy account check
   ];
 
-  const glAmount = calculateGlBalanceForAccounts(entries, inventoryCodes, 'DEBIT');
+  const glAmount = calculateGlBalanceForAccounts(entries, inventoryCodes, 'DEBIT', asOfDate);
   const difference = round2(totalOperational - glAmount);
   const isMatched = Math.abs(difference) < 0.01;
 
   const details: ReconciliationSubItem[] = Object.entries(categoryBreakdown).map(([code, cat]) => {
-    const catGl = calculateGlBalanceForAccounts(entries, [cat.glCode], 'DEBIT');
+    const catGl = calculateGlBalanceForAccounts(entries, [cat.glCode], 'DEBIT', asOfDate);
     const diff = round2(cat.opVal - catGl);
     return {
       id: `inv_cat_${code}`,
@@ -194,22 +241,51 @@ export async function reconcileInventorySubledger(
 
 /**
  * Check 2: Customer balances ↔ AR GL
- * - Operational: Sum of balance of customers (parties with type 'CUSTOMER' or 'BOTH')
- * - GL: Net debit balance of Accounts Receivable (1040)
+ * - Operational: Sum of balance of customers as of asOfDate
+ * - GL: Net debit balance of Accounts Receivable (1040) as of asOfDate
  */
 export async function reconcileCustomerBalances(
   dbInstance: any = db,
-  journalEntries?: JournalEntry[]
+  journalEntries?: JournalEntry[],
+  asOfDate?: string
 ): Promise<ReconciliationCheck> {
   const parties: Party[] = await dbInstance.parties.toArray();
   const entries: JournalEntry[] = journalEntries || (await dbInstance.journalEntries.toArray());
+  const sales: Sale[] = dbInstance.sales ? await dbInstance.sales.toArray() : [];
+  const payments: PaymentRecord[] = dbInstance.payments ? await dbInstance.payments.toArray() : [];
 
+  const cleanAsOf = asOfDate ? asOfDate.slice(0, 10) : undefined;
   const customers = parties.filter((p) => p.type === 'CUSTOMER' || p.type === 'BOTH');
   let totalOperational = 0;
   const customerDetails: ReconciliationSubItem[] = [];
 
   for (const c of customers) {
-    const bal = round2(Number(c.balance) || 0);
+    let bal = round2(Number(c.balance) || 0);
+
+    if (cleanAsOf) {
+      // 1. Credit sales after cleanAsOf (increased customer balance after asOfDate)
+      const postSales = sales.filter(
+        (s) => s.customerId === c.id && s.date && String(s.date).slice(0, 10) > cleanAsOf
+      );
+      let postCreditSales = 0;
+      for (const s of postSales) {
+        if (s.paymentMethod === 'CREDIT' || (s.dueAmount && s.dueAmount > 0)) {
+          postCreditSales += Number(s.dueAmount ?? s.totalAmount) || 0;
+        }
+      }
+
+      // 2. Payments after cleanAsOf (reduced customer balance after asOfDate)
+      const postPayments = payments.filter((pmt) => {
+        if (pmt.parentType !== 'SALE' || !pmt.date || String(pmt.date).slice(0, 10) <= cleanAsOf) return false;
+        const s = sales.find((sale) => sale.id === pmt.parentId);
+        return s && s.customerId === c.id;
+      });
+      const postPaymentsTotal = postPayments.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+
+      // Unwind to as-of date
+      bal = round2(bal - postCreditSales + postPaymentsTotal);
+    }
+
     totalOperational = round2(totalOperational + bal);
     if (bal !== 0) {
       customerDetails.push({
@@ -217,12 +293,12 @@ export async function reconcileCustomerBalances(
         name: `${c.name} (${c.phone || 'ফোন নেই'})`,
         operationalAmount: bal,
         status: 'MATCHED',
-        notes: `গ্রাহকের বর্তমান বাকি পাওনা: ৳${bal}`
+        notes: `গ্রাহকের বকেয়া পাওনা: ৳${bal}`
       });
     }
   }
 
-  const glAmount = calculateGlBalanceForAccounts(entries, [CANONICAL_ACCOUNTS.ACCOUNTS_RECEIVABLE], 'DEBIT');
+  const glAmount = calculateGlBalanceForAccounts(entries, [CANONICAL_ACCOUNTS.ACCOUNTS_RECEIVABLE], 'DEBIT', asOfDate);
   const difference = round2(totalOperational - glAmount);
   const isMatched = Math.abs(difference) < 0.01;
 
@@ -248,22 +324,51 @@ export async function reconcileCustomerBalances(
 
 /**
  * Check 3: Supplier balances ↔ AP GL
- * - Operational: Sum of balance of suppliers (parties with type 'SUPPLIER' or 'BOTH')
- * - GL: Net credit balance of Accounts Payable (2010)
+ * - Operational: Sum of balance of suppliers as of asOfDate
+ * - GL: Net credit balance of Accounts Payable (2010) as of asOfDate
  */
 export async function reconcileSupplierBalances(
   dbInstance: any = db,
-  journalEntries?: JournalEntry[]
+  journalEntries?: JournalEntry[],
+  asOfDate?: string
 ): Promise<ReconciliationCheck> {
   const parties: Party[] = await dbInstance.parties.toArray();
   const entries: JournalEntry[] = journalEntries || (await dbInstance.journalEntries.toArray());
+  const purchases: Purchase[] = dbInstance.purchases ? await dbInstance.purchases.toArray() : [];
+  const payments: PaymentRecord[] = dbInstance.payments ? await dbInstance.payments.toArray() : [];
 
+  const cleanAsOf = asOfDate ? asOfDate.slice(0, 10) : undefined;
   const suppliers = parties.filter((p) => p.type === 'SUPPLIER' || p.type === 'BOTH');
   let totalOperational = 0;
   const supplierDetails: ReconciliationSubItem[] = [];
 
   for (const s of suppliers) {
-    const bal = round2(Number(s.balance) || 0);
+    let bal = round2(Number(s.balance) || 0);
+
+    if (cleanAsOf) {
+      // 1. Credit purchases after cleanAsOf (increased supplier balance after asOfDate)
+      const postPurchases = purchases.filter(
+        (p) => p.supplierId === s.id && p.date && String(p.date).slice(0, 10) > cleanAsOf
+      );
+      let postCreditPurchases = 0;
+      for (const p of postPurchases) {
+        if (p.paymentMethod === 'CREDIT' || (p.dueAmount && p.dueAmount > 0)) {
+          postCreditPurchases += Number(p.dueAmount ?? p.totalAmount) || 0;
+        }
+      }
+
+      // 2. Payments to supplier after cleanAsOf (reduced supplier balance after asOfDate)
+      const postPayments = payments.filter((pmt) => {
+        if (pmt.parentType !== 'PURCHASE' || !pmt.date || String(pmt.date).slice(0, 10) <= cleanAsOf) return false;
+        const pur = purchases.find((p) => p.id === pmt.parentId);
+        return pur && pur.supplierId === s.id;
+      });
+      const postPaymentsTotal = postPayments.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+
+      // Unwind to as-of date
+      bal = round2(bal - postCreditPurchases + postPaymentsTotal);
+    }
+
     totalOperational = round2(totalOperational + bal);
     if (bal !== 0) {
       supplierDetails.push({
@@ -271,12 +376,12 @@ export async function reconcileSupplierBalances(
         name: `${s.name} (${s.phone || 'ফোন নেই'})`,
         operationalAmount: bal,
         status: 'MATCHED',
-        notes: `সরবরাহকারীর বর্তমান প্রদেয় দেনা: ৳${bal}`
+        notes: `সরবরাহকারীর প্রদেয় দেনা: ৳${bal}`
       });
     }
   }
 
-  const glAmount = calculateGlBalanceForAccounts(entries, [CANONICAL_ACCOUNTS.ACCOUNTS_PAYABLE], 'CREDIT');
+  const glAmount = calculateGlBalanceForAccounts(entries, [CANONICAL_ACCOUNTS.ACCOUNTS_PAYABLE], 'CREDIT', asOfDate);
   const difference = round2(totalOperational - glAmount);
   const isMatched = Math.abs(difference) < 0.01;
 
@@ -302,33 +407,45 @@ export async function reconcileSupplierBalances(
 
 /**
  * Check 4: Fish batch accumulated cost ↔ Fish production accounting
- * - Operational: Sum of accumulated recorded costs for active fish batches
- * - GL/Accounting: Sum of batch-linked accounting debits/net remaining costs across active batches
+ * - Operational: Sum of accumulated recorded costs for active fish batches as of asOfDate
+ * - GL/Accounting: Sum of batch-linked accounting debits across active batches as of asOfDate
  */
 export async function reconcileFishBatchProduction(
   dbInstance: any = db,
-  journalEntries?: JournalEntry[]
+  journalEntries?: JournalEntry[],
+  asOfDate?: string
 ): Promise<ReconciliationCheck> {
   const batches: FishBatch[] = await dbInstance.fishBatches.toArray();
-  const activeBatches = batches.filter((b) => b.status === 'ACTIVE');
+  const cleanAsOf = asOfDate ? asOfDate.slice(0, 10) : undefined;
+
+  const activeBatches = batches.filter((b) => {
+    if (cleanAsOf) {
+      const stocked = !b.stockingDate || String(b.stockingDate).slice(0, 10) <= cleanAsOf;
+      const notHarvestedYet = !b.harvestDate || String(b.harvestDate).slice(0, 10) > cleanAsOf;
+      return stocked && notHarvestedYet && (b.status === 'ACTIVE' || (b.harvestDate && String(b.harvestDate).slice(0, 10) > cleanAsOf));
+    }
+    return b.status === 'ACTIVE';
+  });
 
   let totalOperational = 0;
   let totalAccounting = 0;
   const batchDetails: ReconciliationSubItem[] = [];
 
   for (const batch of activeBatches) {
-    const opBreakdown = calculateFishBatchRecordedCosts(batch);
-    const opCost = opBreakdown.totalRecordedCost;
-    totalOperational = round2(totalOperational + opCost);
-
+    let opCost = 0;
     let accountingCost = 0;
+
     try {
-      const status = await getFishBatchAccumulatedCost(batch.id, dbInstance);
+      const status = await getFishBatchAccumulatedCost(batch.id, dbInstance, asOfDate);
+      opCost = status.accumulatedCost;
       accountingCost = status.accountingDebits;
     } catch {
+      const opBreakdown = calculateFishBatchRecordedCosts(batch);
+      opCost = opBreakdown.totalRecordedCost;
       accountingCost = 0;
     }
 
+    totalOperational = round2(totalOperational + opCost);
     totalAccounting = round2(totalAccounting + accountingCost);
     const diff = round2(opCost - accountingCost);
 
@@ -368,33 +485,49 @@ export async function reconcileFishBatchProduction(
 
 /**
  * Check 5: Crop cycle accumulated cost ↔ Crop WIP accounting
- * - Operational: Sum of accumulated recorded costs for active/unharvested crop cycles
- * - GL/Accounting: Sum of cycle-linked accounting WIP debits / net remaining costs across active cycles
+ * - Operational: Sum of accumulated recorded costs for active/unharvested crop cycles as of asOfDate
+ * - GL/Accounting: Sum of cycle-linked accounting WIP debits across active cycles as of asOfDate
  */
 export async function reconcileCropCycleWip(
   dbInstance: any = db,
-  journalEntries?: JournalEntry[]
+  journalEntries?: JournalEntry[],
+  asOfDate?: string
 ): Promise<ReconciliationCheck> {
   const cycles: CropCycle[] = await dbInstance.cropCycles.toArray();
-  const activeCycles = cycles.filter((c) => c.status !== 'HARVESTED' && c.status !== 'CLOSED');
+  const cleanAsOf = asOfDate ? asOfDate.slice(0, 10) : undefined;
+
+  const activeCycles = cycles.filter((c) => {
+    if (cleanAsOf) {
+      const planted = !c.plantingDate || String(c.plantingDate).slice(0, 10) <= cleanAsOf;
+      const notHarvestedYet = !c.actualHarvestDate || String(c.actualHarvestDate).slice(0, 10) > cleanAsOf;
+      return (
+        planted &&
+        notHarvestedYet &&
+        (c.status !== 'CLOSED' && (c.status !== 'HARVESTED' || (c.actualHarvestDate && String(c.actualHarvestDate).slice(0, 10) > cleanAsOf)))
+      );
+    }
+    return c.status !== 'HARVESTED' && c.status !== 'CLOSED';
+  });
 
   let totalOperational = 0;
   let totalAccounting = 0;
   const cycleDetails: ReconciliationSubItem[] = [];
 
   for (const cycle of activeCycles) {
-    const opBreakdown = calculateCropCycleRecordedCosts(cycle);
-    const opCost = opBreakdown.totalRecordedCost;
-    totalOperational = round2(totalOperational + opCost);
-
+    let opCost = 0;
     let accountingCost = 0;
+
     try {
-      const status = await getCropCycleAccumulatedCost(cycle.id, dbInstance);
+      const status = await getCropCycleAccumulatedCost(cycle.id, dbInstance, asOfDate);
+      opCost = status.accumulatedCost;
       accountingCost = status.accountingDebits;
     } catch {
+      const opBreakdown = calculateCropCycleRecordedCosts(cycle);
+      opCost = opBreakdown.totalRecordedCost;
       accountingCost = 0;
     }
 
+    totalOperational = round2(totalOperational + opCost);
     totalAccounting = round2(totalAccounting + accountingCost);
     const diff = round2(opCost - accountingCost);
 
@@ -434,25 +567,63 @@ export async function reconcileCropCycleWip(
 
 /**
  * Check 6: Livestock accumulated cost ↔ biological asset GL
- * - Operational: Sum of accumulated costs of all active animals
- * - GL: Net debit balance of GL account 1580 (Livestock Assets)
+ * - Operational: Sum of accumulated costs of all active animals as of asOfDate
+ * - GL: Net debit balance of GL account 1580 (Livestock Assets) as of asOfDate
  */
 export async function reconcileLivestockBiologicalAssets(
   dbInstance: any = db,
-  journalEntries?: JournalEntry[]
+  journalEntries?: JournalEntry[],
+  asOfDate?: string
 ): Promise<ReconciliationCheck> {
   const animals: Animal[] = await dbInstance.animals.toArray();
   const entries: JournalEntry[] = journalEntries || (await dbInstance.journalEntries.toArray());
+  const cleanAsOf = asOfDate ? asOfDate.slice(0, 10) : undefined;
 
-  const activeAnimals = animals.filter((a) => a.status === 'ACTIVE');
+  const activeAnimals = animals.filter((a) => {
+    if (cleanAsOf) {
+      const purchased = !a.purchaseDate || String(a.purchaseDate).slice(0, 10) <= cleanAsOf;
+      const notSold = !a.saleDate || String(a.saleDate).slice(0, 10) > cleanAsOf;
+      return purchased && notSold && (a.status === 'ACTIVE' || (a.saleDate && String(a.saleDate).slice(0, 10) > cleanAsOf));
+    }
+    return a.status === 'ACTIVE';
+  });
+
   let totalOperational = 0;
   const animalDetails: ReconciliationSubItem[] = [];
 
   for (const animal of activeAnimals) {
     const costBreakdown = calculateAnimalRecordedCosts(animal);
-    const opCost = costBreakdown.totalRecordedCost;
-    totalOperational = round2(totalOperational + opCost);
+    let opCost = costBreakdown.totalRecordedCost;
 
+    if (cleanAsOf) {
+      // Unwind journal entry debits to livestock assets for this animal posted after cleanAsOf
+      const postAnimalEntries = entries.filter((e) => {
+        if (!e.date || String(e.date).slice(0, 10) <= cleanAsOf) return false;
+        return (
+          e.reference === animal.id ||
+          e.reference === animal.tag ||
+          (e.lines &&
+            e.lines.some(
+              (l: any) =>
+                l.memo && (l.memo.includes(animal.id) || (animal.tag && l.memo.includes(animal.tag)))
+            ))
+        );
+      });
+
+      let postDebits = 0;
+      for (const pe of postAnimalEntries) {
+        for (const l of pe.lines || []) {
+          const matches =
+            l.memo ? l.memo.includes(animal.id) || (animal.tag && l.memo.includes(animal.tag)) : pe.reference === animal.id;
+          if (matches && l.accountCode === CANONICAL_ACCOUNTS.LIVESTOCK_ASSETS) {
+            postDebits += Number(l.debit) || 0;
+          }
+        }
+      }
+      opCost = Math.max(0, round2(opCost - postDebits));
+    }
+
+    totalOperational = round2(totalOperational + opCost);
     if (opCost > 0) {
       animalDetails.push({
         id: animal.id,
@@ -464,7 +635,7 @@ export async function reconcileLivestockBiologicalAssets(
     }
   }
 
-  const glAmount = calculateGlBalanceForAccounts(entries, [CANONICAL_ACCOUNTS.LIVESTOCK_ASSETS], 'DEBIT');
+  const glAmount = calculateGlBalanceForAccounts(entries, [CANONICAL_ACCOUNTS.LIVESTOCK_ASSETS], 'DEBIT', asOfDate);
   const difference = round2(totalOperational - glAmount);
   const isMatched = Math.abs(difference) < 0.01;
 
@@ -490,17 +661,27 @@ export async function reconcileLivestockBiologicalAssets(
 
 /**
  * Check 7: Fixed Asset register ↔ fixed asset GL
- * - Operational: Sum of originalCost across active fixed assets
- * - GL: Net debit balance of Fixed Asset GL accounts (1510, 1520, 1530, 1550)
+ * - Operational: Sum of originalCost across active fixed assets as of asOfDate
+ * - GL: Net debit balance of Fixed Asset GL accounts (1510, 1520, 1530, 1550) as of asOfDate
  */
 export async function reconcileFixedAssetRegister(
   dbInstance: any = db,
-  journalEntries?: JournalEntry[]
+  journalEntries?: JournalEntry[],
+  asOfDate?: string
 ): Promise<ReconciliationCheck> {
   const assets: FixedAsset[] = await dbInstance.fixedAssets.toArray();
   const entries: JournalEntry[] = journalEntries || (await dbInstance.journalEntries.toArray());
+  const cleanAsOf = asOfDate ? asOfDate.slice(0, 10) : undefined;
 
-  const activeAssets = assets.filter((a) => a.status === 'ACTIVE' || (a.status as any) !== 'DISPOSED');
+  const activeAssets = assets.filter((a) => {
+    if (cleanAsOf) {
+      const purchased = !a.purchaseDate || String(a.purchaseDate).slice(0, 10) <= cleanAsOf;
+      const notDisposed = !a.disposalDate || String(a.disposalDate).slice(0, 10) > cleanAsOf;
+      return purchased && notDisposed && (a.status === 'ACTIVE' || (a.disposalDate && String(a.disposalDate).slice(0, 10) > cleanAsOf));
+    }
+    return a.status === 'ACTIVE' || (a.status as any) !== 'DISPOSED';
+  });
+
   let totalOperational = 0;
   const assetDetails: ReconciliationSubItem[] = [];
 
@@ -523,7 +704,7 @@ export async function reconcileFixedAssetRegister(
     CANONICAL_ACCOUNTS.MACHINERY // 1550
   ];
 
-  const glAmount = calculateGlBalanceForAccounts(entries, fixedAssetCodes, 'DEBIT');
+  const glAmount = calculateGlBalanceForAccounts(entries, fixedAssetCodes, 'DEBIT', asOfDate);
   const difference = round2(totalOperational - glAmount);
   const isMatched = Math.abs(difference) < 0.01;
 
@@ -549,22 +730,61 @@ export async function reconcileFixedAssetRegister(
 
 /**
  * Check 8: Accumulated depreciation ↔ depreciation GL
- * - Operational: Sum of accumulatedDepreciation across active fixed assets
- * - GL: Net credit balance of GL account 1590 (Accumulated Depreciation)
+ * - Operational: Sum of accumulatedDepreciation across active fixed assets as of asOfDate
+ * - GL: Net credit balance of GL account 1590 (Accumulated Depreciation) as of asOfDate
  */
 export async function reconcileAccumulatedDepreciation(
   dbInstance: any = db,
-  journalEntries?: JournalEntry[]
+  journalEntries?: JournalEntry[],
+  asOfDate?: string
 ): Promise<ReconciliationCheck> {
   const assets: FixedAsset[] = await dbInstance.fixedAssets.toArray();
   const entries: JournalEntry[] = journalEntries || (await dbInstance.journalEntries.toArray());
+  const cleanAsOf = asOfDate ? asOfDate.slice(0, 10) : undefined;
 
-  const activeAssets = assets.filter((a) => a.status === 'ACTIVE' || (a.status as any) !== 'DISPOSED');
+  const activeAssets = assets.filter((a) => {
+    if (cleanAsOf) {
+      const purchased = !a.purchaseDate || String(a.purchaseDate).slice(0, 10) <= cleanAsOf;
+      const notDisposed = !a.disposalDate || String(a.disposalDate).slice(0, 10) > cleanAsOf;
+      return purchased && notDisposed && (a.status === 'ACTIVE' || (a.disposalDate && String(a.disposalDate).slice(0, 10) > cleanAsOf));
+    }
+    return a.status === 'ACTIVE' || (a.status as any) !== 'DISPOSED';
+  });
+
   let totalOperational = 0;
   const depDetails: ReconciliationSubItem[] = [];
 
   for (const asset of activeAssets) {
-    const dep = round2(Number(asset.accumulatedDepreciation) || 0);
+    let dep = round2(Number(asset.accumulatedDepreciation) || 0);
+
+    if (cleanAsOf) {
+      // Unwind depreciation entries posted after cleanAsOf
+      const postDepEntries = entries.filter((e) => {
+        if (!e.date || String(e.date).slice(0, 10) <= cleanAsOf) return false;
+        return (
+          e.reference === asset.id ||
+          (e.narration && e.narration.includes(asset.id)) ||
+          (e.lines &&
+            e.lines.some(
+              (l: any) =>
+                l.accountCode === CANONICAL_ACCOUNTS.ACCUMULATED_DEPRECIATION &&
+                l.memo &&
+                l.memo.includes(asset.id)
+            ))
+        );
+      });
+
+      let postDepCredits = 0;
+      for (const pe of postDepEntries) {
+        for (const l of pe.lines || []) {
+          if (l.accountCode === CANONICAL_ACCOUNTS.ACCUMULATED_DEPRECIATION) {
+            postDepCredits += (Number(l.credit) || 0) - (Number(l.debit) || 0);
+          }
+        }
+      }
+      dep = Math.max(0, round2(dep - postDepCredits));
+    }
+
     totalOperational = round2(totalOperational + dep);
     if (dep > 0) {
       depDetails.push({
@@ -577,7 +797,7 @@ export async function reconcileAccumulatedDepreciation(
     }
   }
 
-  const glAmount = calculateGlBalanceForAccounts(entries, [CANONICAL_ACCOUNTS.ACCUMULATED_DEPRECIATION], 'CREDIT');
+  const glAmount = calculateGlBalanceForAccounts(entries, [CANONICAL_ACCOUNTS.ACCUMULATED_DEPRECIATION], 'CREDIT', asOfDate);
   const difference = round2(totalOperational - glAmount);
   const isMatched = Math.abs(difference) < 0.01;
 
@@ -603,23 +823,56 @@ export async function reconcileAccumulatedDepreciation(
 
 /**
  * Check 9: Investor capital records ↔ Investor Capital GL
- * - Operational: Sum of currentCapitalBalance (fallback to capitalAmount/capitalContributed) for all investors
- * - GL: Net credit balance of GL account 3020 (Investor Capital)
+ * - Operational: Sum of currentCapitalBalance for all investors as of asOfDate
+ * - GL: Net credit balance of GL account 3020 (Investor Capital) as of asOfDate
  */
 export async function reconcileInvestorCapital(
   dbInstance: any = db,
-  journalEntries?: JournalEntry[]
+  journalEntries?: JournalEntry[],
+  asOfDate?: string
 ): Promise<ReconciliationCheck> {
   const investors: Investor[] = await dbInstance.investors.toArray();
   const entries: JournalEntry[] = journalEntries || (await dbInstance.journalEntries.toArray());
+  const cleanAsOf = asOfDate ? asOfDate.slice(0, 10) : undefined;
 
   let totalOperational = 0;
   const investorDetails: ReconciliationSubItem[] = [];
 
   for (const inv of investors) {
-    const cap = round2(
+    let cap = round2(
       Number(inv.currentCapitalBalance ?? inv.capitalAmount ?? inv.capitalContributed ?? (inv as any).totalContribution ?? 0)
     );
+
+    if (cleanAsOf) {
+      if (inv.entryDate && String(inv.entryDate).slice(0, 10) > cleanAsOf) {
+        cap = 0;
+      } else {
+        // Unwind capital contributions and returns posted after cleanAsOf
+        const postCapEntries = entries.filter((e) => {
+          if (!e.date || String(e.date).slice(0, 10) <= cleanAsOf) return false;
+          return (
+            e.reference === inv.id ||
+            (e.narration && e.narration.includes(inv.name)) ||
+            (e.lines &&
+              e.lines.some(
+                (l: any) =>
+                  l.memo && (l.memo.includes(inv.id) || l.memo.includes(inv.name))
+              ))
+          );
+        });
+
+        let postNetContribution = 0;
+        for (const pe of postCapEntries) {
+          for (const l of pe.lines || []) {
+            if (l.accountCode === CANONICAL_ACCOUNTS.INVESTOR_CAPITAL) {
+              postNetContribution += (Number(l.credit) || 0) - (Number(l.debit) || 0);
+            }
+          }
+        }
+        cap = Math.max(0, round2(cap - postNetContribution));
+      }
+    }
+
     totalOperational = round2(totalOperational + cap);
     investorDetails.push({
       id: inv.id,
@@ -630,7 +883,7 @@ export async function reconcileInvestorCapital(
     });
   }
 
-  const glAmount = calculateGlBalanceForAccounts(entries, [CANONICAL_ACCOUNTS.INVESTOR_CAPITAL], 'CREDIT');
+  const glAmount = calculateGlBalanceForAccounts(entries, [CANONICAL_ACCOUNTS.INVESTOR_CAPITAL], 'CREDIT', asOfDate);
   const difference = round2(totalOperational - glAmount);
   const isMatched = Math.abs(difference) < 0.01;
 
@@ -656,21 +909,50 @@ export async function reconcileInvestorCapital(
 
 /**
  * Check 10: Investor profit payable ↔ Investor Profit Payable GL
- * - Operational: Sum of profitPayable across all investors
- * - GL: Net credit balance of GL account 2050 (Investor Profit Payable)
+ * - Operational: Sum of profitPayable across all investors as of asOfDate
+ * - GL: Net credit balance of GL account 2050 (Investor Profit Payable) as of asOfDate
  */
 export async function reconcileInvestorProfitPayable(
   dbInstance: any = db,
-  journalEntries?: JournalEntry[]
+  journalEntries?: JournalEntry[],
+  asOfDate?: string
 ): Promise<ReconciliationCheck> {
   const investors: Investor[] = await dbInstance.investors.toArray();
   const entries: JournalEntry[] = journalEntries || (await dbInstance.journalEntries.toArray());
+  const cleanAsOf = asOfDate ? asOfDate.slice(0, 10) : undefined;
 
   let totalOperational = 0;
   const payableDetails: ReconciliationSubItem[] = [];
 
   for (const inv of investors) {
-    const payable = round2(Number(inv.profitPayable) || 0);
+    let payable = round2(Number(inv.profitPayable) || 0);
+
+    if (cleanAsOf) {
+      // Unwind profit allocations and payouts after cleanAsOf
+      const postPayableEntries = entries.filter((e) => {
+        if (!e.date || String(e.date).slice(0, 10) <= cleanAsOf) return false;
+        return (
+          e.reference === inv.id ||
+          (e.narration && e.narration.includes(inv.name)) ||
+          (e.lines &&
+            e.lines.some(
+              (l: any) =>
+                l.memo && (l.memo.includes(inv.id) || l.memo.includes(inv.name))
+            ))
+        );
+      });
+
+      let postNetAllocated = 0;
+      for (const pe of postPayableEntries) {
+        for (const l of pe.lines || []) {
+          if (l.accountCode === CANONICAL_ACCOUNTS.INVESTOR_PROFIT_PAYABLE) {
+            postNetAllocated += (Number(l.credit) || 0) - (Number(l.debit) || 0);
+          }
+        }
+      }
+      payable = Math.max(0, round2(payable - postNetAllocated));
+    }
+
     totalOperational = round2(totalOperational + payable);
     if (payable > 0) {
       payableDetails.push({
@@ -683,7 +965,7 @@ export async function reconcileInvestorProfitPayable(
     }
   }
 
-  const glAmount = calculateGlBalanceForAccounts(entries, [CANONICAL_ACCOUNTS.INVESTOR_PROFIT_PAYABLE], 'CREDIT');
+  const glAmount = calculateGlBalanceForAccounts(entries, [CANONICAL_ACCOUNTS.INVESTOR_PROFIT_PAYABLE], 'CREDIT', asOfDate);
   const difference = round2(totalOperational - glAmount);
   const isMatched = Math.abs(difference) < 0.01;
 
@@ -709,15 +991,17 @@ export async function reconcileInvestorProfitPayable(
 
 /**
  * Check 11: Cash/bank operational balances ↔ GL
- * - Operational: Sum of currentBalance across all accounts in db.cashBankAccounts
- * - GL: Net debit balance of GL Cash and Bank accounts (1010, 1020, 1030)
+ * - Operational: Sum of currentBalance across all accounts as of asOfDate
+ * - GL: Net debit balance of GL Cash and Bank accounts (1010, 1020, 1030) as of asOfDate
  */
 export async function reconcileCashBankBalances(
   dbInstance: any = db,
-  journalEntries?: JournalEntry[]
+  journalEntries?: JournalEntry[],
+  asOfDate?: string
 ): Promise<ReconciliationCheck> {
   const accounts: CashBankAccount[] = await dbInstance.cashBankAccounts.toArray();
   const entries: JournalEntry[] = journalEntries || (await dbInstance.journalEntries.toArray());
+  const cleanAsOf = asOfDate ? asOfDate.slice(0, 10) : undefined;
 
   let totalOperational = 0;
   let cashOperational = 0;
@@ -725,10 +1009,42 @@ export async function reconcileCashBankBalances(
   const cbDetails: ReconciliationSubItem[] = [];
 
   for (const acc of accounts) {
-    const bal = round2(Number(acc.currentBalance ?? (acc as any).balance ?? 0));
+    let bal = round2(Number(acc.currentBalance ?? (acc as any).balance ?? 0));
+
+    if (cleanAsOf) {
+      const isCash = (acc.accountType as string) === 'CASH' || (acc.accountType as string) === 'PETTY_CASH';
+      const targetCodes: string[] = isCash
+        ? [CANONICAL_ACCOUNTS.CASH, CANONICAL_ACCOUNTS.PETTY_CASH]
+        : [CANONICAL_ACCOUNTS.BANK];
+
+      const postEntries = entries.filter(
+        (e) => e.date && String(e.date).slice(0, 10) > cleanAsOf
+      );
+
+      let postNetInflow = 0;
+      for (const pe of postEntries) {
+        for (const l of pe.lines || []) {
+          const matchAccount =
+            l.accountId === acc.id ||
+            (l.memo && l.memo.includes(acc.id)) ||
+            (isCash && targetCodes.includes(l.accountCode)) ||
+            (!isCash &&
+              targetCodes.includes(l.accountCode) &&
+              (accounts.filter((a) => (a.accountType as string) !== 'CASH' && (a.accountType as string) !== 'PETTY_CASH').length <= 1 ||
+                l.accountId === acc.id ||
+                (l.memo && l.memo.includes(acc.id))));
+
+          if (matchAccount && targetCodes.includes(l.accountCode)) {
+            postNetInflow += (Number(l.debit) || 0) - (Number(l.credit) || 0);
+          }
+        }
+      }
+      bal = round2(bal - postNetInflow);
+    }
+
     totalOperational = round2(totalOperational + bal);
 
-    if (acc.accountType === 'CASH') {
+    if ((acc.accountType as string) === 'CASH' || (acc.accountType as string) === 'PETTY_CASH') {
       cashOperational = round2(cashOperational + bal);
     } else {
       bankOperational = round2(bankOperational + bal);
@@ -749,13 +1065,13 @@ export async function reconcileCashBankBalances(
     CANONICAL_ACCOUNTS.BANK // 1030
   ];
 
-  const glAmount = calculateGlBalanceForAccounts(entries, cashBankCodes, 'DEBIT');
+  const glAmount = calculateGlBalanceForAccounts(entries, cashBankCodes, 'DEBIT', asOfDate);
   const difference = round2(totalOperational - glAmount);
   const isMatched = Math.abs(difference) < 0.01;
 
   // Breakdown detail comparing Cash vs Bank GL
-  const cashGl = calculateGlBalanceForAccounts(entries, [CANONICAL_ACCOUNTS.CASH, CANONICAL_ACCOUNTS.PETTY_CASH], 'DEBIT');
-  const bankGl = calculateGlBalanceForAccounts(entries, [CANONICAL_ACCOUNTS.BANK], 'DEBIT');
+  const cashGl = calculateGlBalanceForAccounts(entries, [CANONICAL_ACCOUNTS.CASH, CANONICAL_ACCOUNTS.PETTY_CASH], 'DEBIT', asOfDate);
+  const bankGl = calculateGlBalanceForAccounts(entries, [CANONICAL_ACCOUNTS.BANK], 'DEBIT', asOfDate);
 
   cbDetails.unshift(
     {
@@ -799,11 +1115,13 @@ export async function reconcileCashBankBalances(
 }
 
 /**
- * Runs all 11 internal accounting reconciliation checks.
- * Completely non-destructive: does not create journals, does not modify historical data.
+ * Runs all 11 internal accounting reconciliation checks as of the specified asOfDate.
+ * Both operational subledgers and GL balances are calculated as of the exact SAME date.
+ * Completely non-destructive: does not create correcting journals, only reports differences.
  */
 export async function runAccountingReconciliation(
-  dbInstance: any = db
+  dbInstance: any = db,
+  asOfDate?: string
 ): Promise<FullReconciliationReport> {
   const journalEntries: JournalEntry[] = await dbInstance.journalEntries.toArray();
 
@@ -820,17 +1138,17 @@ export async function runAccountingReconciliation(
     check10,
     check11
   ] = await Promise.all([
-    reconcileInventorySubledger(dbInstance, journalEntries),
-    reconcileCustomerBalances(dbInstance, journalEntries),
-    reconcileSupplierBalances(dbInstance, journalEntries),
-    reconcileFishBatchProduction(dbInstance, journalEntries),
-    reconcileCropCycleWip(dbInstance, journalEntries),
-    reconcileLivestockBiologicalAssets(dbInstance, journalEntries),
-    reconcileFixedAssetRegister(dbInstance, journalEntries),
-    reconcileAccumulatedDepreciation(dbInstance, journalEntries),
-    reconcileInvestorCapital(dbInstance, journalEntries),
-    reconcileInvestorProfitPayable(dbInstance, journalEntries),
-    reconcileCashBankBalances(dbInstance, journalEntries)
+    reconcileInventorySubledger(dbInstance, journalEntries, asOfDate),
+    reconcileCustomerBalances(dbInstance, journalEntries, asOfDate),
+    reconcileSupplierBalances(dbInstance, journalEntries, asOfDate),
+    reconcileFishBatchProduction(dbInstance, journalEntries, asOfDate),
+    reconcileCropCycleWip(dbInstance, journalEntries, asOfDate),
+    reconcileLivestockBiologicalAssets(dbInstance, journalEntries, asOfDate),
+    reconcileFixedAssetRegister(dbInstance, journalEntries, asOfDate),
+    reconcileAccumulatedDepreciation(dbInstance, journalEntries, asOfDate),
+    reconcileInvestorCapital(dbInstance, journalEntries, asOfDate),
+    reconcileInvestorProfitPayable(dbInstance, journalEntries, asOfDate),
+    reconcileCashBankBalances(dbInstance, journalEntries, asOfDate)
   ]);
 
   const checks: ReconciliationCheck[] = [
@@ -876,7 +1194,7 @@ export async function runAccountingReconciliation(
   const now = new Date().toISOString();
   return {
     timestamp: now,
-    asOfDate: now.split('T')[0],
+    asOfDate: asOfDate || now.split('T')[0],
     checks: enrichedChecks,
     totalOperational,
     totalOperationalAmount: totalOperational,

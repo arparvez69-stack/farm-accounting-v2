@@ -284,6 +284,7 @@ export interface CropCostBreakdown {
 export interface CropProductionCostParams {
   cycleId: string;
   costType: 'SEED' | 'FERTILIZER' | 'IRRIGATION' | 'LABOUR' | 'PROTECTION' | 'MACHINERY' | 'OTHER';
+  category?: 'SEED' | 'FERTILIZER' | 'IRRIGATION' | 'LABOUR' | 'PROTECTION' | 'MACHINERY' | 'OTHER';
   amount: number;
   quantity?: number;
   date?: string;

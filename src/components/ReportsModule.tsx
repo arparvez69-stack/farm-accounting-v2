@@ -1169,7 +1169,7 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
       } else if (activeReport === 'herdSummary') {
         await loadHerdSummaryReport();
       } else if (activeReport === 'reconciliation') {
-        await loadReconciliationReport();
+        await loadReconciliationReport(endDate);
       }
     } catch (e) {
       console.error(e);
@@ -1178,10 +1178,11 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
     }
   };
 
-  const loadReconciliationReport = async () => {
+  const loadReconciliationReport = async (overrideDate?: string) => {
     setIsReconciling(true);
     try {
-      const report = await runAccountingReconciliation(db);
+      const targetDate = overrideDate || endDate || new Date().toISOString().split('T')[0];
+      const report = await runAccountingReconciliation(db, targetDate);
       setReconciliationReport(report);
     } catch (e) {
       console.error('Failed to run accounting reconciliation:', e);
@@ -1987,7 +1988,7 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
           id="tab-reconciliation-report"
           onClick={() => {
             setActiveReport('reconciliation');
-            loadReconciliationReport();
+            loadReconciliationReport(endDate);
           }}
           className={`flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg transition-all cursor-pointer min-h-[42px] text-center text-xs sm:text-[13px] font-bold ${
             activeReport === 'reconciliation'
@@ -2158,8 +2159,8 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
         </button>
       </div>
 
-      {/* Date Range Control (Visible for Financial Reports: pl, balanceSheet, trialBalance, animalProfitability, vatSummary) */}
-      {activeReport !== 'backup' && activeReport !== 'aging' && activeReport !== 'yoyComparison' && activeReport !== 'reconciliation' && (
+      {/* Date Range Control (Visible for Financial Reports: pl, balanceSheet, trialBalance, animalProfitability, vatSummary, reconciliation) */}
+      {activeReport !== 'backup' && activeReport !== 'aging' && activeReport !== 'yoyComparison' && (
         <div className="p-4 rounded-2xl bg-white border border-gray-200 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-3">
           <div className="flex items-center gap-2.5">
             <div className="w-9 h-9 rounded-xl bg-teal-50 text-teal-700 border border-teal-100 flex items-center justify-center shrink-0">
@@ -6462,7 +6463,7 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
               <button
                 type="button"
                 id="btn-refresh-reconciliation"
-                onClick={loadReconciliationReport}
+                onClick={() => loadReconciliationReport(endDate)}
                 disabled={isReconciling}
                 className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-700 transition-colors disabled:opacity-50"
               >

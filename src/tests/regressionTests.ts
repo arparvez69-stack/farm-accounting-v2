@@ -5115,6 +5115,1023 @@ async function runRegressionTestsInternal(): Promise<TestResult> {
       'Task 14 Rollback: No audit log entry may be retained on failed transaction.'
     );
 
+    // =========================================================================
+    // TASK 4: MULTIPLE INVESTOR PROFIT SHARING VERIFICATION
+    // Rules:
+    // 1. Total active investor profit-sharing ratios + working partner ratio = 100%.
+    // 2. Working partner ratio = 100% - total active investor ratios.
+    // 3. Do NOT calculate working partner share separately as 60% for A and 70% for B.
+    // 4. Total active investor ratios cannot exceed 100%.
+    // 5. Each investor allocation cannot exceed that investor's agreed ratio of finalized distributable profit.
+    // 6. Total investor allocations cannot exceed the finalized distributable profit.
+    // 7. Do not change capital accounting.
+    // 8. Do not treat profit share as operating expense.
+    // 9. No interest.
+    // Tests:
+    // - 1 investor scenario
+    // - 2 investors scenario
+    // - 3 investors scenario
+    // =========================================================================
+
+    // -------------------------------------------------------------------------
+    // SCENARIO 1: 1 INVESTOR
+    // Investor A: 40% agreed ratio
+    // Working partner ratio: 100% - 40% = 60%
+    // -------------------------------------------------------------------------
+    const t4Db1 = createMockAgroDatabase();
+    for (const acc of DEFAULT_CHART_OF_ACCOUNTS) {
+      await t4Db1.accounts.put(acc);
+    }
+    await t4Db1.cashBankAccounts.put({
+      id: 'cb_bank_t4_1',
+      accountType: 'BANK',
+      name: 'প্রধান ব্যাংক হিসাব',
+      currentBalance: 500000,
+      synced: false
+    });
+
+    const invA_1 = await executeInvestorTransaction(
+      {
+        investorName: 'বিনিয়োগকারী ক (Investor A)',
+        phone: '01711000001',
+        contribution: 100000,
+        profitShare: 40,
+        profitSharingRatio: 40,
+        targetAccountId: 'cb_bank_t4_1',
+        date: '2026-01-10',
+        currentUserId: 'usr_owner'
+      },
+      t4Db1
+    );
+
+    // Verify 1 investor working partner ratio = 60%
+    assert(invA_1.investor.profitSharingRatio === 40, 'T4 Scenario 1: Investor A ratio must be 40%.');
+    assert(invA_1.investor.workingPartnerShareRatio === 60, 'T4 Scenario 1: Working partner ratio must be 60% (100% - 40%).');
+
+    // Allocate profit with finalized profit = ৳100,000
+    const t4Alloc1 = await executeInvestorProfitAllocationTransaction(
+      {
+        investorId: invA_1.investor.id,
+        finalizedDistributableProfit: 100000,
+        allocationDate: '2026-06-30',
+        allocationReference: 'T4-ALLOC-1-INV',
+        currentUserId: 'usr_owner'
+      },
+      t4Db1
+    );
+
+    assert(t4Alloc1.allocatedProfit === 40000, 'T4 Scenario 1: Investor A allocated profit must be ৳40,000 (40% of ৳100,000).');
+    assert(t4Alloc1.workingPartnerShare === 60000, 'T4 Scenario 1: Working partner share must be ৳60,000 (60% of ৳100,000).');
+    assert(t4Alloc1.workingPartnerRatio === 60, 'T4 Scenario 1: Working partner ratio must be 60%.');
+    assert(t4Alloc1.allocatedProfit + t4Alloc1.workingPartnerShare === 100000, 'T4 Scenario 1: Investor allocation + working partner share must equal finalized profit (৳100,000).');
+
+    // Verify capital is unchanged
+    const invA_1_after = await t4Db1.investors.get(invA_1.investor.id);
+    assert(invA_1_after?.currentCapitalBalance === 100000, 'T4 Scenario 1: Capital accounting remains unchanged at ৳100,000.');
+    assert(invA_1_after?.profitPayable === 40000, 'T4 Scenario 1: Profit payable is ৳40,000.');
+
+    // -------------------------------------------------------------------------
+    // SCENARIO 2: 2 INVESTORS (Example from specification)
+    // Investor A = 40%
+    // Investor B = 30%
+    // Working partner = 30% (100% - 70% = 30%)
+    // Do NOT calculate working partner share separately as 60% for A and 70% for B!
+    // -------------------------------------------------------------------------
+    const t4Db2 = createMockAgroDatabase();
+    for (const acc of DEFAULT_CHART_OF_ACCOUNTS) {
+      await t4Db2.accounts.put(acc);
+    }
+    await t4Db2.cashBankAccounts.put({
+      id: 'cb_bank_t4_2',
+      accountType: 'BANK',
+      name: 'প্রধান ব্যাংক হিসাব',
+      currentBalance: 500000,
+      synced: false
+    });
+
+    const invA_2 = await executeInvestorTransaction(
+      {
+        investorName: 'Investor A',
+        phone: '01711000002',
+        contribution: 100000,
+        profitShare: 40,
+        profitSharingRatio: 40,
+        targetAccountId: 'cb_bank_t4_2',
+        date: '2026-01-10',
+        currentUserId: 'usr_owner'
+      },
+      t4Db2
+    );
+
+    const invB_2 = await executeInvestorTransaction(
+      {
+        investorName: 'Investor B',
+        phone: '01711000003',
+        contribution: 80000,
+        profitShare: 30,
+        profitSharingRatio: 30,
+        targetAccountId: 'cb_bank_t4_2',
+        date: '2026-01-15',
+        currentUserId: 'usr_owner'
+      },
+      t4Db2
+    );
+
+    // Verify aggregate active ratios and working partner ratio
+    const invA_2_record = await t4Db2.investors.get(invA_2.investor.id);
+    const invB_2_record = await t4Db2.investors.get(invB_2.investor.id);
+    assert(invA_2_record?.profitSharingRatio === 40, 'T4 Scenario 2: Investor A ratio = 40%.');
+    assert(invB_2_record?.profitSharingRatio === 30, 'T4 Scenario 2: Investor B ratio = 30%.');
+    assert(invA_2_record?.workingPartnerShareRatio === 30, 'T4 Scenario 2: Investor A record updated to farm working partner ratio = 30%.');
+    assert(invB_2_record?.workingPartnerShareRatio === 30, 'T4 Scenario 2: Investor B record reflects farm working partner ratio = 30%.');
+
+    // Distributable Profit: ৳200,000
+    // Allocate for Investor A (40% of 200,000 = ৳80,000)
+    const t4Alloc2_A = await executeInvestorProfitAllocationTransaction(
+      {
+        investorId: invA_2.investor.id,
+        finalizedDistributableProfit: 200000,
+        allocationDate: '2026-06-30',
+        allocationReference: 'T4-ALLOC-2-INV',
+        currentUserId: 'usr_owner'
+      },
+      t4Db2
+    );
+
+    assert(t4Alloc2_A.allocatedProfit === 80000, 'T4 Scenario 2: Investor A allocated profit must be ৳80,000 (40% of ৳200,000).');
+    assert(t4Alloc2_A.workingPartnerRatio === 30, 'T4 Scenario 2: Working partner ratio for Investor A allocation must be 30% (NOT 60%).');
+    assert(t4Alloc2_A.workingPartnerShare === 60000, 'T4 Scenario 2: Working partner share must be ৳60,000 (30% of ৳200,000, NOT ৳120,000).');
+
+    // Allocate for Investor B (30% of 200,000 = ৳60,000)
+    const t4Alloc2_B = await executeInvestorProfitAllocationTransaction(
+      {
+        investorId: invB_2.investor.id,
+        finalizedDistributableProfit: 200000,
+        allocationDate: '2026-06-30',
+        allocationReference: 'T4-ALLOC-2-INV',
+        currentUserId: 'usr_owner'
+      },
+      t4Db2
+    );
+
+    assert(t4Alloc2_B.allocatedProfit === 60000, 'T4 Scenario 2: Investor B allocated profit must be ৳60,000 (30% of ৳200,000).');
+    assert(t4Alloc2_B.workingPartnerRatio === 30, 'T4 Scenario 2: Working partner ratio for Investor B allocation must be 30% (NOT 70%).');
+    assert(t4Alloc2_B.workingPartnerShare === 60000, 'T4 Scenario 2: Working partner share must be ৳60,000 (30% of ৳200,000, NOT ৳140,000).');
+
+    // Total active investor profit-sharing ratios + working partner ratio = 100%
+    const totalActiveRatio2 = (invA_2_record?.profitSharingRatio || 0) + (invB_2_record?.profitSharingRatio || 0);
+    assert(totalActiveRatio2 + t4Alloc2_A.workingPartnerRatio === 100, 'T4 Scenario 2: 40% + 30% + 30% = 100%.');
+
+    // Total investor allocations + working partner share = finalized distributable profit
+    const totalAllocations2 = t4Alloc2_A.allocatedProfit + t4Alloc2_B.allocatedProfit;
+    assert(totalAllocations2 === 140000, 'T4 Scenario 2: Total investor allocations = ৳80,000 + ৳60,000 = ৳140,000.');
+    assert(totalAllocations2 + t4Alloc2_A.workingPartnerShare === 200000, 'T4 Scenario 2: Total allocations (৳140,000) + working partner share (৳60,000) = ৳200,000.');
+    assert(totalAllocations2 <= 200000, 'T4 Scenario 2: Total investor allocations cannot exceed finalized distributable profit.');
+
+    // Capital accounting untouched
+    const invA_2_after = await t4Db2.investors.get(invA_2.investor.id);
+    const invB_2_after = await t4Db2.investors.get(invB_2.investor.id);
+    assert(invA_2_after?.currentCapitalBalance === 100000, 'T4 Scenario 2: Investor A capital untouched at ৳100,000.');
+    assert(invB_2_after?.currentCapitalBalance === 80000, 'T4 Scenario 2: Investor B capital untouched at ৳80,000.');
+    assert(invA_2_after?.profitPayable === 80000, 'T4 Scenario 2: Investor A profit payable is ৳80,000.');
+    assert(invB_2_after?.profitPayable === 60000, 'T4 Scenario 2: Investor B profit payable is ৳60,000.');
+
+    // Constraint Rule: Each investor allocation cannot exceed that investor's agreed ratio
+    let t4ExceedAgreedRatioCaught = false;
+    try {
+      await executeInvestorProfitAllocationTransaction(
+        {
+          investorId: invB_2.investor.id,
+          finalizedDistributableProfit: 200000,
+          allocatedProfit: 70000, // 30% of 200,000 is 60,000; 70,000 exceeds 30%
+          allocationDate: '2026-07-01',
+          allocationReference: 'T4-EXCEED-AGREED-TEST',
+          currentUserId: 'usr_owner'
+        },
+        t4Db2
+      );
+    } catch (err: any) {
+      t4ExceedAgreedRatioCaught = true;
+      assert(err.message.includes('চুক্তিভিত্তিক লভ্যাংশ অনুপাতের'), 'Allocation exceeding agreed ratio must be rejected.');
+    }
+    assert(t4ExceedAgreedRatioCaught, 'T4 Scenario 2: Allocation exceeding agreed ratio was caught.');
+
+    // Constraint Rule: Total investor allocations cannot exceed finalized profit
+    let t4ExceedDistributableCaught = false;
+    try {
+      await executeInvestorProfitAllocationTransaction(
+        {
+          investorId: invA_2.investor.id,
+          finalizedDistributableProfit: 200000,
+          allocatedProfit: 70000, // Prior is 140,000. 140,000 + 70,000 = 210,000 > 200,000
+          allocationDate: '2026-06-30',
+          allocationReference: 'T4-ALLOC-2-INV',
+          currentUserId: 'usr_owner'
+        },
+        t4Db2
+      );
+    } catch (err: any) {
+      t4ExceedDistributableCaught = true;
+    }
+    assert(t4ExceedDistributableCaught, 'T4 Scenario 2: Total allocations exceeding finalized profit must be rejected.');
+
+    // -------------------------------------------------------------------------
+    // SCENARIO 3: 3 INVESTORS
+    // Investor A = 40%
+    // Investor B = 30%
+    // Investor C = 10%
+    // Working partner = 20% (100% - 80% = 20%)
+    // -------------------------------------------------------------------------
+    const t4Db3 = createMockAgroDatabase();
+    for (const acc of DEFAULT_CHART_OF_ACCOUNTS) {
+      await t4Db3.accounts.put(acc);
+    }
+    await t4Db3.cashBankAccounts.put({
+      id: 'cb_bank_t4_3',
+      accountType: 'BANK',
+      name: 'প্রধান ব্যাংক হিসাব',
+      currentBalance: 500000,
+      synced: false
+    });
+
+    const invA_3 = await executeInvestorTransaction(
+      {
+        investorName: 'Investor A',
+        phone: '01711000004',
+        contribution: 150000,
+        profitShare: 40,
+        profitSharingRatio: 40,
+        targetAccountId: 'cb_bank_t4_3',
+        date: '2026-01-05',
+        currentUserId: 'usr_owner'
+      },
+      t4Db3
+    );
+
+    const invB_3 = await executeInvestorTransaction(
+      {
+        investorName: 'Investor B',
+        phone: '01711000005',
+        contribution: 100000,
+        profitShare: 30,
+        profitSharingRatio: 30,
+        targetAccountId: 'cb_bank_t4_3',
+        date: '2026-01-10',
+        currentUserId: 'usr_owner'
+      },
+      t4Db3
+    );
+
+    const invC_3 = await executeInvestorTransaction(
+      {
+        investorName: 'Investor C',
+        phone: '01711000006',
+        contribution: 50000,
+        profitShare: 10,
+        profitSharingRatio: 10,
+        targetAccountId: 'cb_bank_t4_3',
+        date: '2026-01-15',
+        currentUserId: 'usr_owner'
+      },
+      t4Db3
+    );
+
+    // Verify 3 investors ratio sum = 80%, working partner = 20%
+    const invA_3_rec = await t4Db3.investors.get(invA_3.investor.id);
+    const invB_3_rec = await t4Db3.investors.get(invB_3.investor.id);
+    const invC_3_rec = await t4Db3.investors.get(invC_3.investor.id);
+    const totalActiveRatio3 = (invA_3_rec?.profitSharingRatio || 0) + (invB_3_rec?.profitSharingRatio || 0) + (invC_3_rec?.profitSharingRatio || 0);
+    assert(totalActiveRatio3 === 80, 'T4 Scenario 3: Total active investor ratio = 40% + 30% + 10% = 80%.');
+    assert(invC_3_rec?.workingPartnerShareRatio === 20, 'T4 Scenario 3: Working partner ratio = 100% - 80% = 20%.');
+    assert(totalActiveRatio3 + (invC_3_rec?.workingPartnerShareRatio || 0) === 100, 'T4 Scenario 3: 80% + 20% = 100%.');
+
+    // Finalized Distributable Profit: ৳300,000
+    // Allocate for Investor A (40% = ৳120,000)
+    const t4Alloc3_A = await executeInvestorProfitAllocationTransaction(
+      {
+        investorId: invA_3.investor.id,
+        finalizedDistributableProfit: 300000,
+        allocationDate: '2026-06-30',
+        allocationReference: 'T4-ALLOC-3-INV',
+        currentUserId: 'usr_owner'
+      },
+      t4Db3
+    );
+
+    // Allocate for Investor B (30% = ৳90,000)
+    const t4Alloc3_B = await executeInvestorProfitAllocationTransaction(
+      {
+        investorId: invB_3.investor.id,
+        finalizedDistributableProfit: 300000,
+        allocationDate: '2026-06-30',
+        allocationReference: 'T4-ALLOC-3-INV',
+        currentUserId: 'usr_owner'
+      },
+      t4Db3
+    );
+
+    // Allocate for Investor C (10% = ৳30,000)
+    const t4Alloc3_C = await executeInvestorProfitAllocationTransaction(
+      {
+        investorId: invC_3.investor.id,
+        finalizedDistributableProfit: 300000,
+        allocationDate: '2026-06-30',
+        allocationReference: 'T4-ALLOC-3-INV',
+        currentUserId: 'usr_owner'
+      },
+      t4Db3
+    );
+
+    // Assertions for 3 investors allocations
+    assert(t4Alloc3_A.allocatedProfit === 120000, 'T4 Scenario 3: Investor A allocated ৳120,000 (40% of ৳300,000).');
+    assert(t4Alloc3_B.allocatedProfit === 90000, 'T4 Scenario 3: Investor B allocated ৳90,000 (30% of ৳300,000).');
+    assert(t4Alloc3_C.allocatedProfit === 30000, 'T4 Scenario 3: Investor C allocated ৳30,000 (10% of ৳300,000).');
+
+    // Assert working partner share is strictly 20% across all 3 allocations
+    assert(t4Alloc3_A.workingPartnerRatio === 20, 'T4 Scenario 3: Working partner ratio is 20% on A allocation.');
+    assert(t4Alloc3_B.workingPartnerRatio === 20, 'T4 Scenario 3: Working partner ratio is 20% on B allocation.');
+    assert(t4Alloc3_C.workingPartnerRatio === 20, 'T4 Scenario 3: Working partner ratio is 20% on C allocation.');
+    assert(t4Alloc3_A.workingPartnerShare === 60000, 'T4 Scenario 3: Working partner share is ৳60,000 (20% of ৳300,000).');
+    assert(t4Alloc3_B.workingPartnerShare === 60000, 'T4 Scenario 3: Working partner share is ৳60,000 (20% of ৳300,000).');
+    assert(t4Alloc3_C.workingPartnerShare === 60000, 'T4 Scenario 3: Working partner share is ৳60,000 (20% of ৳300,000).');
+
+    // Total investor allocations
+    const totalAllocations3 = t4Alloc3_A.allocatedProfit + t4Alloc3_B.allocatedProfit + t4Alloc3_C.allocatedProfit;
+    assert(totalAllocations3 === 240000, 'T4 Scenario 3: Total investor allocations = ৳120,000 + ৳90,000 + ৳30,000 = ৳240,000.');
+    assert(totalAllocations3 + t4Alloc3_A.workingPartnerShare === 300000, 'T4 Scenario 3: Total allocations (৳240,000) + working partner share (৳60,000) = ৳300,000.');
+    assert(totalAllocations3 <= 300000, 'T4 Scenario 3: Total investor allocations cannot exceed finalized distributable profit.');
+
+    // Capital accounting strictly preserved
+    const invA_3_after = await t4Db3.investors.get(invA_3.investor.id);
+    const invB_3_after = await t4Db3.investors.get(invB_3.investor.id);
+    const invC_3_after = await t4Db3.investors.get(invC_3.investor.id);
+    assert(invA_3_after?.currentCapitalBalance === 150000, 'T4 Scenario 3: Investor A capital untouched at ৳150,000.');
+    assert(invB_3_after?.currentCapitalBalance === 100000, 'T4 Scenario 3: Investor B capital untouched at ৳100,000.');
+    assert(invC_3_after?.currentCapitalBalance === 50000, 'T4 Scenario 3: Investor C capital untouched at ৳50,000.');
+
+    // Journal Entry verification: Dr 3070/3050, Cr 2050 (No operating expense, no interest)
+    const journalC = await t4Db3.journalEntries.get(t4Alloc3_C.journalEntryId);
+    assert(journalC !== undefined, 'T4 Scenario 3: Journal entry for C allocation must exist.');
+    const hasOpExpenseC = journalC.lines.some((l: any) => l.accountCode.startsWith('5') || l.accountCode.startsWith('6'));
+    const hasInterestC = journalC.lines.some((l: any) => l.accountCode === '8010' || l.accountCode === '7010');
+    assert(!hasOpExpenseC, 'T4 Scenario 3: Profit share must not be treated as operating expense.');
+    assert(!hasInterestC, 'T4 Scenario 3: No interest accounts allowed in profit share.');
+
+    // Constraint Rule: Total active investor ratios cannot exceed 100%
+    let t4Exceed100RatioCaught = false;
+    try {
+      await executeInvestorTransaction(
+        {
+          investorName: 'Investor D (Exceeding 100%)',
+          phone: '01711000007',
+          contribution: 50000,
+          profitShare: 25, // 80% + 25% = 105% > 100%
+          profitSharingRatio: 25,
+          targetAccountId: 'cb_bank_t4_3',
+          date: '2026-02-01',
+          currentUserId: 'usr_owner'
+        },
+        t4Db3
+      );
+    } catch (err: any) {
+      t4Exceed100RatioCaught = true;
+      assert(err.message.includes('১০০% অতিক্রম করতে পারে না'), 'Total investor ratios > 100% must be rejected.');
+    }
+    assert(t4Exceed100RatioCaught, 'T4 Scenario 3: Ratio sum exceeding 100% was caught.');
+
+    // =========================================================================
+    // TASK 5: INVESTOR CAPITAL RETURN ACCOUNTING REGRESSION SUITE
+    // =========================================================================
+    // Create dedicated mock DB for Task 5
+    const t5Db = createMockAgroDatabase();
+    for (const acc of DEFAULT_CHART_OF_ACCOUNTS) {
+      await t5Db.accounts.put(acc);
+    }
+
+    // Setup initial accounts: Bank (1030) with ৳50,000, Cash (1010) with ৳20,000
+    await t5Db.cashBankAccounts.put({
+      id: 'cb_bank_t5',
+      name: 'City Bank Ltd',
+      accountName: 'City Bank Ltd',
+      accountType: 'BANK',
+      accountNumber: 'CB-T5-001',
+      currentBalance: 50000,
+      currency: 'BDT',
+      isActive: true,
+      synced: false
+    });
+    await t5Db.cashBankAccounts.put({
+      id: 'cb_cash_t5',
+      name: 'Main Cash',
+      accountName: 'Main Cash',
+      accountType: 'CASH',
+      accountNumber: 'CASH-T5-001',
+      currentBalance: 20000,
+      currency: 'BDT',
+      isActive: true,
+      synced: false
+    });
+
+    // Investor contributes ৳100,000 into Bank (bringing Bank balance to ৳150,000)
+    const t5InvContrib = await executeInvestorTransaction(
+      {
+        investorName: 'Investor T5 Test',
+        phone: '01711999999',
+        contribution: 100000,
+        profitShare: 30,
+        profitSharingRatio: 30,
+        targetAccountId: 'cb_bank_t5',
+        date: '2026-03-01',
+        currentUserId: 'usr_owner'
+      },
+      t5Db
+    );
+
+    const initialInv = await t5Db.investors.get(t5InvContrib.investor.id);
+    assert(initialInv !== undefined, 'T5: Investor record must exist.');
+    assert(initialInv?.capitalContributed === 100000, 'T5: capitalContributed must be 100,000.');
+    assert(initialInv?.currentCapitalBalance === 100000, 'T5: currentCapitalBalance must be 100,000.');
+    assert((initialInv?.drawings || 0) === 0, 'T5: Initial drawings must be 0.');
+    assert((initialInv?.totalWithdrawals || 0) === 0, 'T5: Initial totalWithdrawals must be 0.');
+
+    // 1. REJECT RETURN IF: amount <= 0
+    let t5ZeroReturnCaught = false;
+    try {
+      await executeInvestorCapitalReturnTransaction(
+        {
+          investorId: initialInv.id,
+          amount: 0,
+          sourceAccountId: 'cb_bank_t5',
+          returnDate: '2026-03-05',
+          currentUserId: 'usr_owner'
+        },
+        t5Db
+      );
+    } catch (err: any) {
+      t5ZeroReturnCaught = true;
+      assert(err.message.includes('০ এর বেশি হতে হবে'), 'T5: amount <= 0 must be rejected.');
+    }
+    assert(t5ZeroReturnCaught, 'T5: Return with amount <= 0 was rejected.');
+
+    let t5NegReturnCaught = false;
+    try {
+      await executeInvestorCapitalReturnTransaction(
+        {
+          investorId: initialInv.id,
+          amount: -5000,
+          sourceAccountId: 'cb_bank_t5',
+          returnDate: '2026-03-05',
+          currentUserId: 'usr_owner'
+        },
+        t5Db
+      );
+    } catch (err: any) {
+      t5NegReturnCaught = true;
+      assert(err.message.includes('০ এর বেশি হতে হবে'), 'T5: Negative return amount must be rejected.');
+    }
+    assert(t5NegReturnCaught, 'T5: Return with negative amount was rejected.');
+
+    // 2. REJECT RETURN IF: amount > investor current capital
+    let t5OverCapitalCaught = false;
+    try {
+      await executeInvestorCapitalReturnTransaction(
+        {
+          investorId: initialInv.id,
+          amount: 150000, // Capital is 100,000
+          sourceAccountId: 'cb_bank_t5',
+          returnDate: '2026-03-05',
+          currentUserId: 'usr_owner'
+        },
+        t5Db
+      );
+    } catch (err: any) {
+      t5OverCapitalCaught = true;
+      assert(err.message.includes('বিদ্যমান মূলধনের চেয়ে বেশি হতে পারে না'), 'T5: amount > current capital must be rejected.');
+    }
+    assert(t5OverCapitalCaught, 'T5: Return exceeding current capital was rejected.');
+
+    // 3. REJECT RETURN IF: source Cash/Bank balance is insufficient
+    // Cash account only has ৳20,000. Trying to return ৳40,000 from cash must fail (cannot make cash negative).
+    let t5InsufficientCashCaught = false;
+    try {
+      await executeInvestorCapitalReturnTransaction(
+        {
+          investorId: initialInv.id,
+          amount: 40000,
+          sourceAccountId: 'cb_cash_t5',
+          returnDate: '2026-03-05',
+          currentUserId: 'usr_owner'
+        },
+        t5Db
+      );
+    } catch (err: any) {
+      t5InsufficientCashCaught = true;
+      assert(err.message.includes('পর্যাপ্ত ব্যালেন্স নেই'), 'T5: Insufficient cash balance must be rejected.');
+    }
+    assert(t5InsufficientCashCaught, 'T5: Return with insufficient cash balance was rejected.');
+
+    // 4. VALID CAPITAL RETURN: Return ৳30,000 from Bank (Bank balance is 150,000)
+    const t5ReturnRes = await executeInvestorCapitalReturnTransaction(
+      {
+        investorId: initialInv.id,
+        amount: 30000,
+        sourceAccountId: 'cb_bank_t5',
+        returnDate: '2026-03-10',
+        returnReference: 'RET-REF-001',
+        notes: 'আংশিক মূলধন ফেরত',
+        currentUserId: 'usr_owner'
+      },
+      t5Db
+    );
+
+    assert(t5ReturnRes.returnedAmount === 30000, 'T5: returnedAmount must be 30,000.');
+    const invAfterT5Return = await t5Db.investors.get(initialInv.id);
+
+    // Track separately:
+    // * capital contributed
+    // * capital returned
+    // * current capital balance
+    assert(invAfterT5Return?.capitalContributed === 100000, 'T5: capitalContributed must remain 100,000.');
+    assert(invAfterT5Return?.totalCapitalReturned === 30000, 'T5: totalCapitalReturned must be 30,000.');
+    assert(invAfterT5Return?.currentCapitalBalance === 70000, 'T5: currentCapitalBalance must be 70,000 (100k - 30k).');
+
+    // DO NOT increase investor `drawings` or owner-style `withdrawals` for a capital return
+    assert((invAfterT5Return?.drawings || 0) === 0, 'T5: Investor drawings must NOT increase for capital return.');
+    assert((invAfterT5Return?.totalWithdrawals || 0) === 0, 'T5: Investor totalWithdrawals must NOT increase for capital return.');
+    assert((invAfterT5Return?.withdrawals || 0) === 0, 'T5: Investor withdrawals must NOT increase for capital return.');
+
+    // Correct Accounting Check on Journal Entry:
+    // Dr Investor Capital (3020)
+    // Cr Cash/Bank (1030)
+    const returnJournal = await t5Db.journalEntries.get(t5ReturnRes.journalEntryId);
+    assert(returnJournal !== undefined, 'T5: Capital return journal entry must exist.');
+    const drCapLine = returnJournal.lines.find((l: any) => l.accountCode === '3020');
+    const crBankLine = returnJournal.lines.find((l: any) => l.accountCode === '1030');
+    assert(drCapLine?.debit === 30000, 'T5: Must Dr 3020 Investor Capital with ৳30,000.');
+    assert(crBankLine?.credit === 30000, 'T5: Must Cr 1030 Bank Account with ৳30,000.');
+
+    // Capital return is NOT operating expense, owner drawing, investor profit, or interest
+    const t5HasOpExpense = returnJournal.lines.some((l: any) => l.accountCode.startsWith('5') || l.accountCode.startsWith('6'));
+    const t5HasOwnerDrawings = returnJournal.lines.some((l: any) => l.accountCode === '3040' || l.accountCode === '3030');
+    const t5HasInvestorProfit = returnJournal.lines.some((l: any) => l.accountCode === '2050' || l.accountCode === '3070');
+    const t5HasInterest = returnJournal.lines.some((l: any) => l.accountCode === '8010' || l.accountCode === '7010');
+    assert(!t5HasOpExpense, 'T5: Capital return must NOT be an operating expense.');
+    assert(!t5HasOwnerDrawings, 'T5: Capital return must NOT be an owner drawing.');
+    assert(!t5HasInvestorProfit, 'T5: Capital return must NOT be investor profit.');
+    assert(!t5HasInterest, 'T5: Capital return must NOT be interest.');
+
+    // Bank balance should be 150,000 - 30,000 = 120,000
+    const bankAfterT5Return = await t5Db.cashBankAccounts.get('cb_bank_t5');
+    assert(bankAfterT5Return?.currentBalance === 120000, 'T5: Bank operational balance must be 120,000.');
+
+    // 5. PREVENT DUPLICATE CAPITAL RETURN:
+    // Submitting with the same reference 'RET-REF-001' must be rejected
+    let t5DuplicateCaught = false;
+    try {
+      await executeInvestorCapitalReturnTransaction(
+        {
+          investorId: initialInv.id,
+          amount: 30000,
+          sourceAccountId: 'cb_bank_t5',
+          returnDate: '2026-03-10',
+          returnReference: 'RET-REF-001',
+          currentUserId: 'usr_owner'
+        },
+        t5Db
+      );
+    } catch (err: any) {
+      t5DuplicateCaught = true;
+      assert(err.message.includes('ডুপ্লিকেট') || err.message.includes('Duplicate'), 'T5: Duplicate capital return must be prevented.');
+    }
+    assert(t5DuplicateCaught, 'T5: Duplicate capital return was prevented.');
+
+    // 6. Return remainder of capital to test EXITED status and zero capital state
+    // Remaining capital is ৳70,000
+    const t5FullReturnRes = await executeInvestorCapitalReturnTransaction(
+      {
+        investorId: initialInv.id,
+        amount: 70000,
+        sourceAccountId: 'cb_bank_t5',
+        returnDate: '2026-03-15',
+        notes: 'চূড়ান্ত মূলধন ফেরত ও অব্যাহতি',
+        currentUserId: 'usr_owner'
+      },
+      t5Db
+    );
+    assert(t5FullReturnRes.returnedAmount === 70000, 'T5: Final returned amount must be 70,000.');
+    const invAfterFullReturn = await t5Db.investors.get(initialInv.id);
+    assert(invAfterFullReturn?.capitalContributed === 100000, 'T5: Contributed capital remains 100,000.');
+    assert(invAfterFullReturn?.totalCapitalReturned === 100000, 'T5: totalCapitalReturned reached 100,000.');
+    assert(invAfterFullReturn?.currentCapitalBalance === 0, 'T5: currentCapitalBalance reached 0.');
+    assert(invAfterFullReturn?.status === 'EXITED', 'T5: Status becomes EXITED when capital balance is 0 and no profit payable.');
+    assert((invAfterFullReturn?.drawings || 0) === 0, 'T5: Drawings remain 0 even after full capital return.');
+    assert((invAfterFullReturn?.totalWithdrawals || 0) === 0, 'T5: totalWithdrawals remain 0 even after full capital return.');
+
+    // =========================================================================
+    // TASK 6: PROTECT INVESTOR PAYMENTS (SUFFICIENT & INSUFFICIENT FUNDS)
+    // =========================================================================
+    const t6Db = createMockAgroDatabase();
+    for (const acc of DEFAULT_CHART_OF_ACCOUNTS) {
+      await t6Db.accounts.put(acc);
+    }
+
+    // Cash: ৳10,000, Bank: ৳50,000
+    await t6Db.cashBankAccounts.put({
+      id: 'cb_cash_t6',
+      name: 'Cash Register T6',
+      accountName: 'Cash Register T6',
+      accountType: 'CASH',
+      accountNumber: 'CASH-T6',
+      currentBalance: 10000,
+      currency: 'BDT',
+      isActive: true,
+      synced: false
+    });
+    await t6Db.cashBankAccounts.put({
+      id: 'cb_bank_t6',
+      name: 'Prime Bank T6',
+      accountName: 'Prime Bank T6',
+      accountType: 'BANK',
+      accountNumber: 'BANK-T6',
+      currentBalance: 50000,
+      currency: 'BDT',
+      isActive: true,
+      synced: false
+    });
+
+    // Create Investor record with capital ৳40,000 and profit payable ৳25,000
+    const t6InvestorId = 'inv_t6_protection';
+    await t6Db.investors.put({
+      id: t6InvestorId,
+      name: 'Protective Investor T6',
+      phone: '01800000000',
+      capitalAmount: 40000,
+      capitalContributed: 40000,
+      currentCapitalBalance: 40000,
+      currentBalance: 40000,
+      profitShare: 20,
+      profitSharingRatio: 20,
+      profitPayable: 25000,
+      totalProfitPaid: 0,
+      totalCapitalReturned: 0,
+      drawings: 0,
+      withdrawals: 0,
+      totalWithdrawals: 0,
+      status: 'ACTIVE',
+      joinDate: '2026-01-01',
+      synced: false
+    });
+
+    const initialJournalCount = (await t6Db.journalEntries.toArray()).length;
+
+    // --- TEST 1: PROFIT PAYMENT WITH INSUFFICIENT FUNDS ---
+    // Try paying ৳15,000 from Cash (which only has ৳10,000). Must be REJECTED!
+    let t6ProfitInsufficientCaught = false;
+    try {
+      await executeInvestorProfitPaymentTransaction(
+        {
+          investorId: t6InvestorId,
+          amount: 15000,
+          sourceAccountId: 'cb_cash_t6',
+          paymentDate: '2026-03-20',
+          currentUserId: 'usr_owner'
+        },
+        t6Db
+      );
+    } catch (err: any) {
+      t6ProfitInsufficientCaught = true;
+      assert(
+        err.message.includes('পর্যাপ্ত ব্যালেন্স নেই') || err.message.includes('Insufficient'),
+        'T6: Profit payment error message must indicate insufficient cash/bank balance.'
+      );
+    }
+    assert(t6ProfitInsufficientCaught, 'T6: Profit payment with insufficient cash balance was rejected.');
+
+    // Verify nothing was changed in DB:
+    const journalsAfterFailedPay = await t6Db.journalEntries.toArray();
+    assert(journalsAfterFailedPay.length === initialJournalCount, 'T6: No journal entry created on rejected profit payment.');
+
+    const invAfterFailedPay = await t6Db.investors.get(t6InvestorId);
+    assert(invAfterFailedPay?.profitPayable === 25000, 'T6: Investor profitPayable must remain 25,000 on rejection.');
+    assert((invAfterFailedPay?.totalProfitPaid || 0) === 0, 'T6: Investor totalProfitPaid must remain 0 on rejection.');
+
+    const cashAfterFailedPay = await t6Db.cashBankAccounts.get('cb_cash_t6');
+    assert(cashAfterFailedPay?.currentBalance === 10000, 'T6: Cash balance must remain 10,000 without becoming negative.');
+
+    // --- TEST 2: PROFIT PAYMENT WITH SUFFICIENT FUNDS ---
+    // Pay ৳15,000 from Bank (which has ৳50,000). Must SUCCEED!
+    const t6ProfitSufficientRes = await executeInvestorProfitPaymentTransaction(
+      {
+        investorId: t6InvestorId,
+        amount: 15000,
+        sourceAccountId: 'cb_bank_t6',
+        paymentDate: '2026-03-20',
+        paymentReference: 'T6-PAY-REF-001',
+        currentUserId: 'usr_owner'
+      },
+      t6Db
+    );
+
+    assert(t6ProfitSufficientRes.paidAmount === 15000, 'T6: Paid amount must be 15,000.');
+    assert(t6ProfitSufficientRes.remainingPayable === 10000, 'T6: Remaining payable must be 10,000.');
+
+    const invAfterGoodPay = await t6Db.investors.get(t6InvestorId);
+    assert(invAfterGoodPay?.profitPayable === 10000, 'T6: Investor profitPayable updated to 10,000.');
+    assert(invAfterGoodPay?.totalProfitPaid === 15000, 'T6: Investor totalProfitPaid updated to 15,000.');
+
+    const bankAfterGoodPay = await t6Db.cashBankAccounts.get('cb_bank_t6');
+    assert(bankAfterGoodPay?.currentBalance === 35000, 'T6: Bank balance reduced to 35,000 (50k - 15k).');
+
+    // Accounting check: Dr 2050 Profit Payable, Cr 1030 Bank
+    const goodPayJournal = await t6Db.journalEntries.get(t6ProfitSufficientRes.journalEntryId);
+    assert(goodPayJournal !== undefined, 'T6: Profit payment journal entry must exist.');
+    const t6DrPayable = goodPayJournal.lines.find((l: any) => l.accountCode === '2050' && l.debit === 15000);
+    const t6CrBank = goodPayJournal.lines.find((l: any) => l.accountCode === '1030' && l.credit === 15000);
+    assert(!!t6DrPayable && !!t6CrBank, 'T6: Must Dr 2050 Investor Profit Payable and Cr 1030 Bank.');
+
+    // --- TEST 3: CAPITAL RETURN WITH INSUFFICIENT FUNDS ---
+    // Try returning ৳20,000 from Cash (which only has ৳10,000). Must be REJECTED!
+    const journalCountBeforeCapRet = (await t6Db.journalEntries.toArray()).length;
+    let t6CapitalInsufficientCaught = false;
+    try {
+      await executeInvestorCapitalReturnTransaction(
+        {
+          investorId: t6InvestorId,
+          amount: 20000,
+          sourceAccountId: 'cb_cash_t6',
+          returnDate: '2026-03-21',
+          currentUserId: 'usr_owner'
+        },
+        t6Db
+      );
+    } catch (err: any) {
+      t6CapitalInsufficientCaught = true;
+      assert(
+        err.message.includes('পর্যাপ্ত ব্যালেন্স নেই') || err.message.includes('Insufficient'),
+        'T6: Capital return error message must indicate insufficient cash/bank balance.'
+      );
+    }
+    assert(t6CapitalInsufficientCaught, 'T6: Capital return with insufficient cash balance was rejected.');
+
+    // Verify nothing changed on rejection:
+    const journalsAfterFailedRet = await t6Db.journalEntries.toArray();
+    assert(journalsAfterFailedRet.length === journalCountBeforeCapRet, 'T6: No journal entry created on rejected capital return.');
+
+    const invAfterFailedRet = await t6Db.investors.get(t6InvestorId);
+    assert(invAfterFailedRet?.currentCapitalBalance === 40000, 'T6: Current capital balance remains 40,000 on rejection.');
+    assert((invAfterFailedRet?.totalCapitalReturned || 0) === 0, 'T6: totalCapitalReturned remains 0 on rejection.');
+
+    const cashAfterFailedRet = await t6Db.cashBankAccounts.get('cb_cash_t6');
+    assert(cashAfterFailedRet?.currentBalance === 10000, 'T6: Cash balance remains 10,000 without negative balance.');
+
+    // --- TEST 4: CAPITAL RETURN WITH SUFFICIENT FUNDS ---
+    // Return ৳20,000 from Bank (which currently has ৳35,000). Must SUCCEED!
+    const t6CapitalSufficientRes = await executeInvestorCapitalReturnTransaction(
+      {
+        investorId: t6InvestorId,
+        amount: 20000,
+        sourceAccountId: 'cb_bank_t6',
+        returnDate: '2026-03-22',
+        returnReference: 'T6-RET-REF-001',
+        currentUserId: 'usr_owner'
+      },
+      t6Db
+    );
+
+    assert(t6CapitalSufficientRes.returnedAmount === 20000, 'T6: Returned capital amount must be 20,000.');
+
+    const invAfterGoodRet = await t6Db.investors.get(t6InvestorId);
+    assert(invAfterGoodRet?.currentCapitalBalance === 20000, 'T6: Current capital balance reduced to 20,000 (40k - 20k).');
+    assert(invAfterGoodRet?.totalCapitalReturned === 20000, 'T6: totalCapitalReturned updated to 20,000.');
+    assert((invAfterGoodRet?.drawings || 0) === 0, 'T6: Drawings must remain 0.');
+    assert((invAfterGoodRet?.totalWithdrawals || 0) === 0, 'T6: Withdrawals must remain 0.');
+
+    const bankAfterGoodRet = await t6Db.cashBankAccounts.get('cb_bank_t6');
+    assert(bankAfterGoodRet?.currentBalance === 15000, 'T6: Bank balance reduced to 15,000 (35k - 20k).');
+
+    // Accounting check: Dr 3020 Investor Capital, Cr 1030 Bank
+    const goodRetJournal = await t6Db.journalEntries.get(t6CapitalSufficientRes.journalEntryId);
+    assert(goodRetJournal !== undefined, 'T6: Capital return journal entry must exist.');
+    const t6DrCap = goodRetJournal.lines.find((l: any) => l.accountCode === '3020' && l.debit === 20000);
+    const t6CrBankRet = goodRetJournal.lines.find((l: any) => l.accountCode === '1030' && l.credit === 20000);
+    assert(!!t6DrCap && !!t6CrBankRet, 'T6: Must Dr 3020 Investor Capital and Cr 1030 Bank.');
+
+    // =========================================================================
+    // TASK 7: PURCHASE INVENTORY STOCKMOVEMENT COST CONSISTENCY
+    // =========================================================================
+    const t7Db = createMockAgroDatabase();
+    for (const acc of DEFAULT_CHART_OF_ACCOUNTS) {
+      await t7Db.accounts.put(acc);
+    }
+
+    await t7Db.cashBankAccounts.put({
+      id: 'cb_cash_t7',
+      name: 'Main Cash T7',
+      accountName: 'Main Cash T7',
+      accountType: 'CASH',
+      accountNumber: 'CASH-T7',
+      currentBalance: 500000,
+      currency: 'BDT',
+      isActive: true,
+      synced: false
+    });
+
+    const t7Supplier: Party = {
+      id: 'sup_t7_feed',
+      type: 'SUPPLIER',
+      name: 'Mega Feed Mills Ltd',
+      phone: '01700000007',
+      balance: 0,
+      isActive: true,
+      synced: false
+    };
+    await t7Db.parties.put(t7Supplier);
+
+    // 1. Normal Purchase (No transport, No discount)
+    const t7ItemNormal: InventoryItem = {
+      id: 'item_t7_normal',
+      code: 'FEED-T7-01',
+      nameBn: 'স্টার্টার ফিড',
+      nameEn: 'Starter Feed',
+      category: 'FEED',
+      unit: 'কেজি',
+      currentStock: 0,
+      avgCostPrice: 0,
+      sellingPrice: 70,
+      reorderLevel: 20,
+      synced: false
+    };
+    await t7Db.inventoryItems.put(t7ItemNormal);
+
+    const normalPurRes = await executePurchaseTransaction(
+      {
+        supplier: t7Supplier,
+        item: t7ItemNormal,
+        quantity: 100,
+        unitPrice: 50,
+        transportCost: 0,
+        discount: 0,
+        paymentMethod: 'CASH',
+        date: '2026-03-25',
+        currentUserId: 'usr_owner'
+      },
+      t7Db
+    );
+
+    const normalMovements = await t7Db.stockMovements.where('itemId').equals(t7ItemNormal.id).toArray();
+    assert(normalMovements.length === 1, 'T7: Exactly 1 stock movement for normal purchase.');
+    const normalSm = normalMovements[0];
+    assert(normalSm.movementType === 'PURCHASE', 'T7 Normal: movementType must be PURCHASE.');
+    assert(normalSm.quantity === 100, 'T7 Normal: quantity must be 100.');
+    assert(normalSm.totalValue === 5000, 'T7 Normal: totalValue must equal actual inventory cost added (5000).');
+    assert(normalSm.unitCost === 50, 'T7 Normal: unitCost must be totalValue / quantity (50).');
+    assert(
+      Math.abs(normalSm.unitCost * normalSm.quantity - normalSm.totalValue) < 0.001,
+      'T7 Normal: unitCost * quantity must equal totalValue.'
+    );
+
+    // 2. Purchase with Transport Cost (transportCost = 500, discount = 0)
+    // Items total = 50 * 80 = 4000. Grand total = 4000 + 500 = 4500.
+    const t7ItemTransport: InventoryItem = {
+      id: 'item_t7_transport',
+      code: 'FEED-T7-02',
+      nameBn: 'গ্রোয়ার ফিড স্পেশাল',
+      nameEn: 'Grower Feed Special',
+      category: 'FEED',
+      unit: 'কেজি',
+      currentStock: 0,
+      avgCostPrice: 0,
+      sellingPrice: 110,
+      reorderLevel: 20,
+      synced: false
+    };
+    await t7Db.inventoryItems.put(t7ItemTransport);
+
+    const transportPurRes = await executePurchaseTransaction(
+      {
+        supplier: t7Supplier,
+        item: t7ItemTransport,
+        quantity: 50,
+        unitPrice: 80,
+        transportCost: 500,
+        discount: 0,
+        paymentMethod: 'CASH',
+        date: '2026-03-26',
+        currentUserId: 'usr_owner'
+      },
+      t7Db
+    );
+
+    const transportMovements = await t7Db.stockMovements.where('itemId').equals(t7ItemTransport.id).toArray();
+    assert(transportMovements.length === 1, 'T7: Exactly 1 stock movement for purchase with transport.');
+    const transportSm = transportMovements[0];
+    assert(transportSm.movementType === 'PURCHASE', 'T7 Transport: movementType must be PURCHASE.');
+    assert(transportSm.quantity === 50, 'T7 Transport: quantity must be 50.');
+    // Actual inventory cost added is 4000 + 500 = 4500
+    assert(transportSm.totalValue === 4500, 'T7 Transport: totalValue must equal actual inventory cost added (4500).');
+    // Unit cost must be totalValue / quantity = 4500 / 50 = 90 (NOT the sticker unitPrice 80!)
+    assert(transportSm.unitCost === 90, 'T7 Transport: unitCost must be totalValue / quantity = 90.');
+    assert(
+      Math.abs(transportSm.unitCost * transportSm.quantity - transportSm.totalValue) < 0.001,
+      'T7 Transport: unitCost * quantity must equal totalValue.'
+    );
+
+    // Verify inventory item avgCostPrice also updated to 90
+    const invItemAfterTransport = await t7Db.inventoryItems.get(t7ItemTransport.id);
+    assert(invItemAfterTransport?.avgCostPrice === 90, 'T7 Transport: avgCostPrice must be 90.');
+
+    // 3. Purchase with Discount (transportCost = 0, discount = 400)
+    // Items total = 40 * 100 = 4000. Grand total = 4000 - 400 = 3600.
+    const t7ItemDiscount: InventoryItem = {
+      id: 'item_t7_discount',
+      code: 'FEED-T7-03',
+      nameBn: 'ফিনিশার ফিড প্রিমিয়াম',
+      nameEn: 'Finisher Feed Premium',
+      category: 'FEED',
+      unit: 'কেজি',
+      currentStock: 0,
+      avgCostPrice: 0,
+      sellingPrice: 130,
+      reorderLevel: 20,
+      synced: false
+    };
+    await t7Db.inventoryItems.put(t7ItemDiscount);
+
+    const discountPurRes = await executePurchaseTransaction(
+      {
+        supplier: t7Supplier,
+        item: t7ItemDiscount,
+        quantity: 40,
+        unitPrice: 100,
+        transportCost: 0,
+        discount: 400,
+        paymentMethod: 'CASH',
+        date: '2026-03-27',
+        currentUserId: 'usr_owner'
+      },
+      t7Db
+    );
+
+    const discountMovements = await t7Db.stockMovements.where('itemId').equals(t7ItemDiscount.id).toArray();
+    assert(discountMovements.length === 1, 'T7: Exactly 1 stock movement for purchase with discount.');
+    const discountSm = discountMovements[0];
+    assert(discountSm.movementType === 'PURCHASE', 'T7 Discount: movementType must be PURCHASE.');
+    assert(discountSm.quantity === 40, 'T7 Discount: quantity must be 40.');
+    // Actual inventory cost added is 4000 - 400 = 3600
+    assert(discountSm.totalValue === 3600, 'T7 Discount: totalValue must equal actual inventory cost added (3600).');
+    // Unit cost must be totalValue / quantity = 3600 / 40 = 90 (NOT 100!)
+    assert(discountSm.unitCost === 90, 'T7 Discount: unitCost must be totalValue / quantity = 90.');
+    assert(
+      Math.abs(discountSm.unitCost * discountSm.quantity - discountSm.totalValue) < 0.001,
+      'T7 Discount: unitCost * quantity must equal totalValue.'
+    );
+
+    const invItemAfterDiscount = await t7Db.inventoryItems.get(t7ItemDiscount.id);
+    assert(invItemAfterDiscount?.avgCostPrice === 90, 'T7 Discount: avgCostPrice must be 90.');
+
+    // 4. Purchase with both Transport and Discount (transportCost = 1000, discount = 200)
+    // Items total = 100 * 60 = 6000. Grand total = 6000 + 1000 - 200 = 6800.
+    const t7ItemCombined: InventoryItem = {
+      id: 'item_t7_combined',
+      code: 'FEED-T7-04',
+      nameBn: 'লেয়ার ফিড কম্বো',
+      nameEn: 'Layer Feed Combo',
+      category: 'FEED',
+      unit: 'কেজি',
+      currentStock: 0,
+      avgCostPrice: 0,
+      sellingPrice: 90,
+      reorderLevel: 20,
+      synced: false
+    };
+    await t7Db.inventoryItems.put(t7ItemCombined);
+
+    const combinedPurRes = await executePurchaseTransaction(
+      {
+        supplier: t7Supplier,
+        item: t7ItemCombined,
+        quantity: 100,
+        unitPrice: 60,
+        transportCost: 1000,
+        discount: 200,
+        paymentMethod: 'CASH',
+        date: '2026-03-28',
+        currentUserId: 'usr_owner'
+      },
+      t7Db
+    );
+
+    const combinedMovements = await t7Db.stockMovements.where('itemId').equals(t7ItemCombined.id).toArray();
+    assert(combinedMovements.length === 1, 'T7: Exactly 1 stock movement for combined purchase.');
+    const combinedSm = combinedMovements[0];
+    assert(combinedSm.totalValue === 6800, 'T7 Combined: totalValue must equal 6800.');
+    assert(combinedSm.unitCost === 68, 'T7 Combined: unitCost must be 6800 / 100 = 68.');
+    assert(
+      Math.abs(combinedSm.unitCost * combinedSm.quantity - combinedSm.totalValue) < 0.001,
+      'T7 Combined: unitCost * quantity must equal totalValue.'
+    );
+
+
 
   } catch (error: any) {
     failures.push(`CRITICAL RUNTIME ERROR: ${error.message}`);

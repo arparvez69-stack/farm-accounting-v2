@@ -299,7 +299,7 @@ export async function executePurchaseTransaction(
     date?: string;
   },
   dbInstance: any = db
-): Promise<{ purchase: Purchase; journalEntryId: string }> {
+): Promise<{ purchase: Purchase; journalEntryId: string; stockMovement: StockMovement }> {
   return await dbInstance.transaction(
     'rw',
     [
@@ -436,14 +436,20 @@ export async function executePurchaseTransaction(
       });
 
       // 4. Record StockMovement for PURCHASE
+      // Consistency: totalValue = actual inventory cost added (grandTotal).
+      // unitCost = totalValue / quantity. Therefore: unitCost × quantity = totalValue.
+      const actualInventoryCostAdded = grandTotal;
+      const movementTotalValue = actualInventoryCostAdded;
+      const movementUnitCost = quantity > 0 ? (movementTotalValue / quantity) : 0;
+
       const stockMovement: StockMovement = {
         id: generateUniqueId('sm_pur'),
         date: dateStr,
         itemId: freshItem.id,
         movementType: 'PURCHASE',
         quantity,
-        unitCost: unitPrice,
-        totalValue: grandTotal,
+        unitCost: movementUnitCost,
+        totalValue: movementTotalValue,
         referenceId: invoiceNumber,
         notes: `ক্রয় চালান ${invoiceNumber}: ${supplier.name} থেকে ${quantity} ${freshItem.unit} ${freshItem.nameBn} ক্রয়`,
         synced: false
@@ -496,7 +502,7 @@ export async function executePurchaseTransaction(
         details: `ক্রয় চালান ${invoiceNumber} সম্পন্ন (৳${grandTotal})`
       });
 
-      return { purchase: purchaseRecord, journalEntryId: journalEntry.id };
+      return { purchase: purchaseRecord, journalEntryId: journalEntry.id, stockMovement };
     }
   );
 }
@@ -849,7 +855,8 @@ export async function executeInvestorTransaction(
 
       // 2. Fetch or initialize investor record
       const existingInvestor = investorId ? await dbInstance.investors.get(investorId) : undefined;
-      const workingRatio = Math.max(0, 100 - agreedRatio);
+      const totalActiveRatio = Math.round((otherActiveRatios + agreedRatio) * 100) / 100;
+      const farmWorkingPartnerRatio = Math.max(0, Math.round((100 - totalActiveRatio) * 100) / 100);
 
       const totalContributed = Math.round(((existingInvestor?.capitalContributed || existingInvestor?.capitalAmount || 0) + contribution) * 100) / 100;
       const existingReturned = existingInvestor?.totalCapitalReturned || 0;
@@ -872,7 +879,7 @@ export async function executeInvestorTransaction(
         profitSharingRatio: agreedRatio,
         profitSharePercentage: agreedRatio,
         sharePercentage: agreedRatio,
-        workingPartnerShareRatio: workingRatio,
+        workingPartnerShareRatio: farmWorkingPartnerRatio,
         totalProfitAllocated: existingInvestor?.totalProfitAllocated || 0,
         profitPayable: existingInvestor?.profitPayable || 0,
         totalProfitPaid: existingInvestor?.totalProfitPaid || 0,
@@ -887,6 +894,13 @@ export async function executeInvestorTransaction(
         await dbInstance.investors.put(investorRecord);
       } else {
         await safeInsert(dbInstance.investors, investorRecord, { idPrefix: 'inv' });
+      }
+
+      // Update all other active investors to reflect the unified farm working partner ratio
+      for (const otherInv of allInvestors.filter((inv: any) => inv.id !== invId && inv.status !== 'EXITED')) {
+        await dbInstance.investors.update(otherInv.id, {
+          workingPartnerShareRatio: farmWorkingPartnerRatio
+        });
       }
 
       // 3. Update target account operational balance
@@ -987,7 +1001,7 @@ export async function executeInvestorProfitAllocationTransaction(
       const allEntries = await dbInstance.journalEntries.toArray();
       const isDuplicate = allEntries.some((j: any) => {
         if (idempotencyKey && (j.reference === idempotencyKey || j.idempotencyKey === idempotencyKey)) return true;
-        if (allocationReference && j.reference === allocationReference) return true;
+        if (allocationReference && j.reference === allocationReference && (j.relatedInvestorId === investorId || !j.relatedInvestorId)) return true;
         if (closedPeriodId && j.relatedClosedPeriodId === closedPeriodId && j.relatedInvestorId === investorId) return true;
         return false;
       });
@@ -1007,7 +1021,27 @@ export async function executeInvestorProfitAllocationTransaction(
           `বিনিয়োগকারী ${investor.name} এর লভ্যাংশ বণ্টন অনুপাত অবৈধ। অনুপাত অবশ্যই ০ এর বেশি এবং সর্বোচ্চ ১০০% হতে হবে (Profit sharing ratio must be > 0 and <= 100: ${ratio}%)।`
         );
       }
-      const workingRatio = investor.workingPartnerShareRatio ?? Math.max(0, 100 - ratio);
+
+      // Aggregate Active Investor Ratios & Working Partner Ratio:
+      // Correct model: Total active investor profit-sharing ratios + working partner ratio = 100%
+      const allInvestors = await dbInstance.investors.toArray();
+      const activeInvestors = allInvestors.filter((inv: any) => inv.status !== 'EXITED');
+      const totalActiveInvestorRatios = Math.round(
+        activeInvestors.reduce((sum: number, inv: any) => {
+          const r = inv.profitSharingRatio ?? inv.profitSharePercentage ?? inv.sharePercentage ?? 0;
+          return sum + r;
+        }, 0) * 100
+      ) / 100;
+
+      // Rule: Total active investor ratios cannot exceed 100%
+      if (totalActiveInvestorRatios > 100) {
+        throw new Error(
+          `মোট সক্রিয় বিনিয়োগকারীদের লভ্যাংশ বণ্টন অনুপাত ১০০% অতিক্রম করতে পারে না (Total active investor ratios cannot exceed 100%: ${totalActiveInvestorRatios}%)।`
+        );
+      }
+
+      // Rule: Working partner ratio = 100% - total active investor ratios
+      const workingPartnerRatio = Math.max(0, Math.round((100 - totalActiveInvestorRatios) * 100) / 100);
 
       // 4. Determine finalized actual distributable profit
       let effectiveFinalizedProfit = 0;
@@ -1029,7 +1063,12 @@ export async function executeInvestorProfitAllocationTransaction(
         );
       }
 
+      // GL Account Codes for Profit Distribution and Investor Profit Payable
+      const distGlCode = getProfitDistributionAccount(); // '3070'
+      const payableGlCode = getInvestorProfitPayableAccount(); // '2050'
+
       // Maximum permitted profit share for this investor according to their ratio
+      // Rule: Each investor allocation cannot exceed that investor's agreed ratio of finalized distributable profit
       const permittedShare = Math.round(effectiveFinalizedProfit * (ratio / 100) * 100) / 100;
 
       // 5. Calculate profit amount (Never calculate from capital, never guarantee profit)
@@ -1039,14 +1078,10 @@ export async function executeInvestorProfitAllocationTransaction(
         if (profitAmount <= 0) {
           throw new Error('বণ্টনযোগ্য লভ্যাংশের পরিমাণ অবশ্যই ০ এর বেশি হতে হবে (Allocated profit must be strictly > 0)।');
         }
-        if (profitAmount > effectiveFinalizedProfit) {
-          throw new Error(
-            `বণ্টনকৃত মুনাফা প্রকৃত বণ্টনযোগ্য মুনাফার চেয়ে বেশি হতে পারে না (Allocated profit ৳${profitAmount} cannot exceed actual distributable profit ৳${effectiveFinalizedProfit})।`
-          );
-        }
+        // Rule: Each investor allocation cannot exceed that investor's agreed ratio of finalized distributable profit
         if (profitAmount > permittedShare) {
           throw new Error(
-            `বণ্টনকৃত মুনাফা অনুমোদিত চুক্তিভিত্তিক লভ্যাংশ কাঠামোর চেয়ে বেশি হতে পারে না (Allocated profit ৳${profitAmount} cannot exceed permitted profit-sharing structure ৳${permittedShare} based on ${ratio}% ratio)।`
+            `বণ্টনকৃত মুনাফা বিনিয়োগকারীর অনুমোদিত চুক্তিভিত্তিক লভ্যাংশ অনুপাতের (${ratio}%) চেয়ে বেশি হতে পারে না (Allocated profit ৳${profitAmount} cannot exceed agreed ratio limit ৳${permittedShare} based on ${ratio}% ratio)।`
           );
         }
       } else {
@@ -1054,21 +1089,42 @@ export async function executeInvestorProfitAllocationTransaction(
         profitAmount = permittedShare;
       }
 
-      if (profitAmount <= 0) {
-        throw new Error('বণ্টনযোগ্য লভ্যাংশের পরিমাণ অবশ্যই ০ এর বেশি হতে হবে (Allocated profit must be strictly > 0)।');
+      // Rule: Total investor allocations cannot exceed the finalized distributable profit
+      if (profitAmount > effectiveFinalizedProfit) {
+        throw new Error(
+          `বণ্টনকৃত মুনাফা প্রকৃত বণ্টনযোগ্য মুনাফার চেয়ে বেশি হতে পারে না (Allocated profit ৳${profitAmount} cannot exceed actual distributable profit ৳${effectiveFinalizedProfit})।`
+        );
       }
 
+      // Check sum of all investor allocations for this same closed period or allocation reference
+      let priorAllocationsTotal = 0;
+      for (const entry of allEntries) {
+        const isSamePeriod = closedPeriodId && (entry as any).relatedClosedPeriodId === closedPeriodId;
+        const isSameRef = allocationReference && entry.reference === allocationReference;
+        if (isSamePeriod || isSameRef) {
+          const payableLine = entry.lines?.find((l: any) => l.accountCode === payableGlCode);
+          if (payableLine) {
+            priorAllocationsTotal += (payableLine.credit || 0);
+          }
+        }
+      }
+
+      if (Math.round((priorAllocationsTotal + profitAmount) * 100) / 100 > effectiveFinalizedProfit) {
+        throw new Error(
+          `মোট বিনিয়োগকারীদের লভ্যাংশ বণ্টন চূড়ান্ত বণ্টনযোগ্য প্রকৃত মুনাফাকে অতিক্রম করতে পারে না (Total investor allocations cannot exceed finalized distributable profit)। ইতিমধ্যে বণ্টনকৃত: ৳${priorAllocationsTotal}, বর্তমান বরাদ্দ: ৳${profitAmount} (সর্বমোট: ৳${priorAllocationsTotal + profitAmount}, চূড়ান্ত মুনাফা: ৳${effectiveFinalizedProfit})।`
+        );
+      }
+
+      // Rule: Do NOT calculate working partner share separately as 60% for A and 70% for B.
+      // Working partner share is calculated using the farm-wide working partner ratio (100% - total active investor ratios).
       const workingPartnerProfit = effectiveFinalizedProfit > 0
-        ? Math.round((effectiveFinalizedProfit - profitAmount) * 100) / 100
+        ? Math.round(effectiveFinalizedProfit * (workingPartnerRatio / 100) * 100) / 100
         : 0;
 
       // 6. Canonical GL Mapping:
       // Profit distribution is NOT an operating expense!
       // Dr 3070 Profit Distribution (or 3050 Retained Earnings)
       // Cr 2050 Investor Profit Payable
-      const distGlCode = getProfitDistributionAccount(); // '3070'
-      const payableGlCode = getInvestorProfitPayableAccount(); // '2050'
-
       const accounts = await dbInstance.accounts.toArray();
       const distAcc = accounts.find((a: any) => a.code === distGlCode) || {
         id: `acc_${distGlCode}`,
@@ -1146,6 +1202,7 @@ export async function executeInvestorProfitAllocationTransaction(
       // 7. Update investor state
       const updatedInvestor: Investor = {
         ...investor,
+        workingPartnerShareRatio: workingPartnerRatio,
         totalProfitAllocated: Math.round(((investor.totalProfitAllocated || 0) + profitAmount) * 100) / 100,
         profitPayable: Math.round(((investor.profitPayable || 0) + profitAmount) * 100) / 100,
         lastProfitAllocationDate: dateStr,
@@ -1174,7 +1231,7 @@ export async function executeInvestorProfitAllocationTransaction(
         finalizedProfit: effectiveFinalizedProfit,
         workingPartnerShare: workingPartnerProfit,
         profitSharingRatio: ratio,
-        workingPartnerRatio: workingRatio
+        workingPartnerRatio: workingPartnerRatio
       };
     }
   );
@@ -1269,7 +1326,30 @@ export async function executeInvestorProfitPaymentTransaction(
         throw new Error(`Source cash/bank account ${sourceAccountId} not found.`);
       }
 
-      // 5. Canonical GL accounts
+      // 5. Source Cash/Bank Balance validation - verify source Cash/Bank current balance >= payment amount
+      const currentSourceBalance = Number(sourceAcc.currentBalance || 0);
+      const allowOverdraft = Boolean(
+        (sourceAcc as any).allowOverdraft ||
+          (typeof (sourceAcc as any).overdraftLimit === 'number' && (sourceAcc as any).overdraftLimit > 0)
+      );
+      const overdraftLimit = Number((sourceAcc as any).overdraftLimit || 0);
+
+      // Do not allow operational cash/bank balance to become negative unless explicit overdraft support exists
+      if (!allowOverdraft) {
+        if (currentSourceBalance < amount) {
+          throw new Error(
+            `উৎস নগদ বা ব্যাংক হিসাবে পর্যাপ্ত ব্যালেন্স নেই (Insufficient cash/bank balance)। বর্তমান ব্যালেন্স: ৳${currentSourceBalance}, পরিশোধের আবেদন: ৳${amount}। ক্যাশ/ব্যাংক ব্যালেন্স নেগেটিভ হওয়া অনুমোদিত নয়।`
+          );
+        }
+      } else {
+        if (currentSourceBalance - amount < -overdraftLimit) {
+          throw new Error(
+            `ওভারড্রাফট সীমা অতিক্রম করেছে (Overdraft limit exceeded)। বর্তমান ব্যালেন্স: ৳${currentSourceBalance}, অনুমোদিত ওভারড্রাফট সীমা: ৳${overdraftLimit}।`
+          );
+        }
+      }
+
+      // 6. Canonical GL accounts
       // Payment is NOT an operating expense!
       // Dr 2050 Investor Profit Payable (Liability reduction)
       // Cr 1010 Cash or 1030 Bank (Asset reduction)
@@ -1388,10 +1468,21 @@ export async function executeInvestorProfitPaymentTransaction(
 
 /**
  * Atomic Execution of Investor Capital Return (Reduction / Exit)
- * - Capital return is NOT operating expense:
- * - Debits 3020 Investor Capital (Equity reduction)
- * - Credits 1010 Cash or 1030 Bank (Asset reduction)
- * - Reduces investor.currentCapitalBalance and tracks totalCapitalReturned
+ * - Correct accounting:
+ *   Dr Investor Capital (3020)
+ *   Cr Cash/Bank (1010/1030)
+ * - Capital return is NOT operating expense, owner drawing, investor profit, or interest.
+ * - Do NOT increase investor drawings or owner-style withdrawals for a capital return.
+ * - Track separately:
+ *   * capital contributed
+ *   * capital returned
+ *   * current capital balance
+ * - Reject return if:
+ *   * amount <= 0
+ *   * amount > investor current capital
+ *   * source Cash/Bank balance is insufficient (no negative balance unless explicit overdraft support exists).
+ * - Prevent duplicate capital return.
+ * - Does NOT modify investor profit allocation/payment.
  */
 export async function executeInvestorCapitalReturnTransaction(
   params: {
@@ -1399,11 +1490,14 @@ export async function executeInvestorCapitalReturnTransaction(
     amount: number;
     sourceAccountId: string;
     returnDate?: string;
+    returnReference?: string;
+    reference?: string;
+    idempotencyKey?: string;
     notes?: string;
     currentUserId: string;
   },
   dbInstance: any = db
-): Promise<{ investor: Investor; journalEntryId: string; returnedAmount: number }> {
+): Promise<{ investor: Investor; journalEntryId: string; returnedAmount: number; voucherNumber: string }> {
   return await dbInstance.transaction(
     'rw',
     [
@@ -1415,14 +1509,25 @@ export async function executeInvestorCapitalReturnTransaction(
       dbInstance.closedPeriods
     ],
     async () => {
-      const { investorId, amount, sourceAccountId, returnDate, notes, currentUserId } = params;
+      const {
+        investorId,
+        amount,
+        sourceAccountId,
+        returnDate,
+        returnReference,
+        reference,
+        idempotencyKey,
+        notes,
+        currentUserId
+      } = params;
       const dateStr = returnDate || new Date().toISOString().split('T')[0];
 
+      // 1. Amount validation (amount must be strictly > 0)
       if (amount <= 0) {
         throw new Error('মূলধন ফেরতের পরিমাণ অবশ্যই ০ এর বেশি হতে হবে (Return amount must be > 0).');
       }
 
-      // Closed period validation
+      // 2. Closed period validation
       if (dbInstance.closedPeriods) {
         const closedPeriods = await dbInstance.closedPeriods.toArray();
         const isClosed = closedPeriods.some((cp: any) => cp.endDate >= dateStr);
@@ -1431,18 +1536,36 @@ export async function executeInvestorCapitalReturnTransaction(
         }
       }
 
+      // 3. Prevent duplicate capital return
+      const refToCheck = returnReference || reference || idempotencyKey;
+      if (refToCheck) {
+        const allEntries = await dbInstance.journalEntries.toArray();
+        const isDuplicate = allEntries.some((j: any) => {
+          if (idempotencyKey && (j.reference === idempotencyKey || (j as any).idempotencyKey === idempotencyKey)) return true;
+          if (returnReference && (j.reference === returnReference || (j as any).returnReference === returnReference)) return true;
+          if (reference && (j.reference === reference || (j as any).reference === reference)) return true;
+          return false;
+        });
+        if (isDuplicate) {
+          throw new Error('এই ভাউচার বা রেফারেন্সের জন্য মূলধন ফেরত ইতোমধ্যে সম্পন্ন হয়েছে (Duplicate capital return prevented)।');
+        }
+      }
+
+      // 4. Investor validation
       const investor = await dbInstance.investors.get(investorId);
       if (!investor) {
         throw new Error(`বিনিয়োগকারী পাওয়া যায়নি (Investor not found: ${investorId})।`);
       }
 
-      const currentCapital = investor.currentCapitalBalance ?? investor.capitalAmount ?? 0;
+      // 5. Current capital balance validation (amount cannot exceed current capital)
+      const currentCapital = investor.currentCapitalBalance ?? investor.capitalAmount ?? investor.capitalContributed ?? 0;
       if (amount > currentCapital) {
         throw new Error(
           `মূলধন ফেরতের পরিমাণ বিদ্যমান মূলধনের চেয়ে বেশি হতে পারে না। বর্তমান মূলধন স্থিতি: ৳${currentCapital}, ফেরত আবেদন: ৳${amount}।`
         );
       }
 
+      // 6. Source Cash/Bank Account validation & Insufficient Balance / Overdraft check
       let sourceAcc = await dbInstance.cashBankAccounts.get(sourceAccountId);
       if (!sourceAcc) {
         sourceAcc = await dbInstance.cashBankAccounts.where('accountType').equals(sourceAccountId).first();
@@ -1454,6 +1577,33 @@ export async function executeInvestorCapitalReturnTransaction(
         throw new Error(`Source cash/bank account ${sourceAccountId} not found.`);
       }
 
+      const currentSourceBalance = Number(sourceAcc.currentBalance || 0);
+      const allowOverdraft = Boolean(
+        (sourceAcc as any).allowOverdraft ||
+          (typeof (sourceAcc as any).overdraftLimit === 'number' && (sourceAcc as any).overdraftLimit > 0)
+      );
+      const overdraftLimit = Number((sourceAcc as any).overdraftLimit || 0);
+
+      // Do not allow the operational cash/bank balance to become negative unless explicit overdraft support already exists
+      if (!allowOverdraft) {
+        if (currentSourceBalance < amount) {
+          throw new Error(
+            `উৎস নগদ বা ব্যাংক হিসাবে পর্যাপ্ত ব্যালেন্স নেই (Insufficient cash/bank balance)। বর্তমান ব্যালেন্স: ৳${currentSourceBalance}, ফেরত দাবি: ৳${amount}। ক্যাশ/ব্যাংক ব্যালেন্স নেগেটিভ হওয়া অনুমোদিত নয়।`
+          );
+        }
+      } else {
+        if (currentSourceBalance - amount < -overdraftLimit) {
+          throw new Error(
+            `ওভারড্রাফট সীমা অতিক্রম করেছে (Overdraft limit exceeded)। বর্তমান ব্যালেন্স: ৳${currentSourceBalance}, অনুমোদিত ওভারড্রাফট সীমা: ৳${overdraftLimit}।`
+          );
+        }
+      }
+
+      // 7. Canonical GL Accounts
+      // Correct accounting:
+      // Dr Investor Capital (3020 - Equity reduction)
+      // Cr Cash/Bank (1010/1030 - Asset reduction)
+      // NOT operating expense (no 5xxx/6xxx), NOT owner drawing (no 3040), NOT investor profit (no 2050/3070), NOT interest (no 8010/7010).
       const assetGlCode = getCashBankAccountGLCode(sourceAcc.accountType);
       const equityGlCode = getInvestorCapitalAccount(); // '3020'
 
@@ -1503,6 +1653,7 @@ export async function executeInvestorCapitalReturnTransaction(
         }
       ];
 
+      const refNumber = refToCheck || generateTransactionNumber('INV-RET');
       const voucherNumber = generateTransactionNumber('INV-RET-V');
       const journalEntry = await postJournalEntry(
         {
@@ -1511,7 +1662,7 @@ export async function executeInvestorCapitalReturnTransaction(
           voucherType: 'PAYMENT',
           date: dateStr,
           narration: `বিনিয়োগকারীর মূলধন ফেরত: ${investor.name} কে ফেরত ৳${amount}`,
-          reference: generateTransactionNumber('INV-RET'),
+          reference: refNumber,
           lines: journalLines,
           createdBy: currentUserId,
           createdAt: new Date().toISOString()
@@ -1519,25 +1670,45 @@ export async function executeInvestorCapitalReturnTransaction(
         { accounts, skipDbPut: true }
       );
 
+      (journalEntry as any).relatedInvestorId = investorId;
+      (journalEntry as any).isCapitalReturn = true;
+      if (idempotencyKey) {
+        (journalEntry as any).idempotencyKey = idempotencyKey;
+      }
+      if (refToCheck) {
+        (journalEntry as any).returnReference = refToCheck;
+      }
+
       await safeInsert(dbInstance.journalEntries, journalEntry, { idPrefix: 'j' });
 
-      // Update source cash/bank operational balance
+      // 8. Update source cash/bank operational balance
       await dbInstance.cashBankAccounts.update(sourceAcc.id, {
         currentBalance: Math.round(((sourceAcc.currentBalance || 0) - amount) * 100) / 100
       });
 
+      // 9. Update investor state:
+      // Track separately:
+      // * capital contributed
+      // * capital returned
+      // * current capital balance
+      // Capital return is NOT owner drawings or withdrawals:
+      // Do NOT increase investor drawings or owner-style withdrawals!
+      const initialCapitalContributed = investor.capitalContributed ?? investor.capitalAmount ?? 0;
       const newCapBalance = Math.round(Math.max(0, currentCapital - amount) * 100) / 100;
       const totalReturned = Math.round(((investor.totalCapitalReturned || 0) + amount) * 100) / 100;
 
-      // Update investor state
       const updatedInvestor: Investor = {
         ...investor,
+        capitalContributed: initialCapitalContributed,
         totalCapitalReturned: totalReturned,
         currentCapitalBalance: newCapBalance,
         currentBalance: newCapBalance,
         currentEquityBalance: newCapBalance,
-        drawings: Math.round(((investor.drawings || 0) + amount) * 100) / 100,
-        totalWithdrawals: Math.round(((investor.totalWithdrawals || 0) + amount) * 100) / 100,
+        netCapital: newCapBalance,
+        // Preserve drawings and withdrawals without increasing them
+        drawings: investor.drawings ?? 0,
+        withdrawals: investor.withdrawals ?? 0,
+        totalWithdrawals: investor.totalWithdrawals ?? 0,
         lastCapitalReturnDate: dateStr,
         status: newCapBalance === 0 && (investor.profitPayable || 0) === 0 ? 'EXITED' : investor.status,
         notes: notes ? (investor.notes ? `${investor.notes}\n${notes}` : notes) : investor.notes,
@@ -1545,7 +1716,22 @@ export async function executeInvestorCapitalReturnTransaction(
       };
       await dbInstance.investors.put(updatedInvestor);
 
-      // Audit Log
+      // 10. If investor exited, recalculate unified working partner ratio for remaining active investors
+      if (updatedInvestor.status === 'EXITED') {
+        const remainingActive = (await dbInstance.investors.toArray())
+          .filter((inv: any) => inv.id !== investor.id && inv.status !== 'EXITED');
+        const newTotalActiveRatio = Math.round(
+          remainingActive.reduce((sum: number, inv: any) => {
+            return sum + (inv.profitSharingRatio ?? inv.profitSharePercentage ?? inv.sharePercentage ?? 0);
+          }, 0) * 100
+        ) / 100;
+        const newWorkingRatio = Math.max(0, Math.round((100 - newTotalActiveRatio) * 100) / 100);
+        for (const remInv of remainingActive) {
+          await dbInstance.investors.update(remInv.id, { workingPartnerShareRatio: newWorkingRatio });
+        }
+      }
+
+      // 11. Audit Log
       await safeInsert(dbInstance.auditLogs, {
         id: generateUniqueId('audit'),
         timestamp: new Date().toISOString(),
@@ -1558,7 +1744,12 @@ export async function executeInvestorCapitalReturnTransaction(
         details: `বিনিয়োগকারী ${investor.name} কে মূলধন ফেরত ৳${amount} (অবশিষ্ট মূলধন: ৳${newCapBalance})`
       });
 
-      return { investor: updatedInvestor, journalEntryId: journalEntry.id, returnedAmount: amount };
+      return {
+        investor: updatedInvestor,
+        journalEntryId: journalEntry.id,
+        returnedAmount: amount,
+        voucherNumber
+      };
     }
   );
 }
@@ -4533,7 +4724,8 @@ export function calculateFishBatchRecordedCosts(batch: FishBatch): FishCostBreak
  */
 export async function getFishBatchAccumulatedCost(
   batchId: string,
-  dbInstance: any = db
+  dbInstance: any = db,
+  asOfDate?: string
 ): Promise<{
   batchId: string;
   accumulatedCost: number;
@@ -4551,7 +4743,8 @@ export async function getFishBatchAccumulatedCost(
   }
 
   const breakdown = calculateFishBatchRecordedCosts(batch);
-  const accumulatedCost = breakdown.totalRecordedCost;
+  let accumulatedCost = breakdown.totalRecordedCost;
+  const cleanAsOf = asOfDate ? asOfDate.slice(0, 10) : undefined;
 
   // Query ONLY journal entries specifically linked to THIS batch ID
   const batchEntries = await dbInstance.journalEntries
@@ -4562,11 +4755,30 @@ export async function getFishBatchAccumulatedCost(
     )
     .toArray();
 
+  if (cleanAsOf) {
+    let postDebits = 0;
+    for (const entry of batchEntries) {
+      if (entry.date && String(entry.date).slice(0, 10) > cleanAsOf) {
+        for (const line of entry.lines || []) {
+          const isForThisBatch = line.memo ? line.memo.includes(batchId) : entry.reference === batchId;
+          if (isForThisBatch && (line.accountCode === CANONICAL_ACCOUNTS.LIVESTOCK_ASSETS || line.accountCode === CANONICAL_ACCOUNTS.WIP)) {
+            postDebits += line.debit || 0;
+          }
+        }
+      }
+    }
+    accumulatedCost = Math.max(0, Math.round((accumulatedCost - postDebits) * 100) / 100);
+  }
+
   let accountingDebits = 0;
   let cogsTransferred = 0;
   let mortalityTransferred = 0;
 
   for (const entry of batchEntries) {
+    if (cleanAsOf && entry.date && String(entry.date).slice(0, 10) > cleanAsOf) {
+      continue;
+    }
+
     for (const line of entry.lines || []) {
       const isForThisBatch = line.memo ? line.memo.includes(batchId) : entry.reference === batchId;
       if (!isForThisBatch) continue;
@@ -4617,6 +4829,7 @@ export interface FishStockingParams {
   bankAccountId?: string;
   supplierId?: string;
   stockingDate?: string;
+  date?: string;
   notes?: string;
   currentUserId: string;
 }
@@ -4644,12 +4857,13 @@ export async function executeFishStockingTransaction(
         bankAccountId,
         supplierId,
         stockingDate,
+        date,
         notes,
         currentUserId
       } = params;
 
       const todayStr = new Date().toISOString().split('T')[0];
-      const dateStr = stockingDate || todayStr;
+      const dateStr = stockingDate || date || todayStr;
       if (dateStr > todayStr) {
         throw new Error(`মজুদের তারিখ ভবিষ্যতের হতে পারে না (${todayStr} বা তার পূর্বের তারিখ নির্বাচন করুন)।`);
       }
@@ -6098,7 +6312,8 @@ export async function executeCropProductionCostTransaction(
     async () => {
       const {
         cycleId,
-        costType,
+        costType: rawCostType,
+        category,
         amount,
         quantity,
         date,
@@ -6109,6 +6324,7 @@ export async function executeCropProductionCostTransaction(
         notes,
         currentUserId
       } = params;
+      const costType = rawCostType || category || 'OTHER';
 
       const todayStr = new Date().toISOString().split('T')[0];
       const dateStr = date || todayStr;
@@ -6402,7 +6618,8 @@ export interface CropCycleCostStatus {
  */
 export async function getCropCycleAccumulatedCost(
   cycleId: string,
-  dbInstance: any = db
+  dbInstance: any = db,
+  asOfDate?: string
 ): Promise<CropCycleCostStatus> {
   const freshCycle = await dbInstance.cropCycles.get(cycleId);
   const recordedBreakdown = freshCycle
@@ -6418,6 +6635,7 @@ export async function getCropCycleAccumulatedCost(
         totalRecordedCost: 0
       };
 
+  const cleanAsOf = asOfDate ? asOfDate.slice(0, 10) : undefined;
   const existingEntries = await dbInstance.journalEntries
     .filter(
       (j: any) =>
@@ -6426,12 +6644,32 @@ export async function getCropCycleAccumulatedCost(
     )
     .toArray();
 
+  let totalRecordedCost = recordedBreakdown.totalRecordedCost;
+  if (cleanAsOf) {
+    let postDebits = 0;
+    for (const entry of existingEntries) {
+      if (entry.date && String(entry.date).slice(0, 10) > cleanAsOf) {
+        for (const line of entry.lines || []) {
+          const isLineForThisCycle = line.memo ? line.memo.includes(cycleId) : (entry.reference === cycleId);
+          if (isLineForThisCycle && (line.accountCode === CANONICAL_ACCOUNTS.WIP || line.accountCode === CANONICAL_ACCOUNTS.LIVESTOCK_ASSETS)) {
+            postDebits += line.debit || 0;
+          }
+        }
+      }
+    }
+    totalRecordedCost = Math.max(0, Math.round((totalRecordedCost - postDebits) * 100) / 100);
+  }
+
   let assetDebits1054 = 0;
   let assetCredits1054 = 0;
   let alreadyTransferredCogs = 0;
   let expensedDebits = 0;
 
   for (const entry of existingEntries) {
+    if (cleanAsOf && entry.date && String(entry.date).slice(0, 10) > cleanAsOf) {
+      continue;
+    }
+
     for (const line of entry.lines || []) {
       const isLineForThisCycle = line.memo ? line.memo.includes(cycleId) : (entry.reference === cycleId);
       if (!isLineForThisCycle) continue;
@@ -6463,7 +6701,6 @@ export async function getCropCycleAccumulatedCost(
   const accountingDebits = Math.round(assetDebits1054 * 100) / 100;
   const cogsTransferred = Math.max(0, Math.round(alreadyTransferredCogs * 100) / 100);
   const netRemainingCost = Math.max(0, Math.round((assetDebits1054 - assetCredits1054) * 100) / 100);
-  const totalRecordedCost = recordedBreakdown.totalRecordedCost;
 
   const totalBackedCost = Math.round((accountingDebits + expensedDebits) * 100) / 100;
   const unbackedCost = Math.max(0, Math.round((totalRecordedCost - totalBackedCost) * 100) / 100);

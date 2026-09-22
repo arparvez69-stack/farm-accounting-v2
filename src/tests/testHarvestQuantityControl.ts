@@ -55,6 +55,7 @@ export async function runHarvestQuantityControlTest() {
     fingerlingQty: 1000,
     fingerlingCost: 50000,
     paymentMethod: 'CASH',
+    stockingDate: '2026-03-01',
     date: '2026-03-01',
     currentUserId: 'usr-tester',
     notes: 'Initial stocking of 1000 fingerlings'
@@ -236,6 +237,7 @@ export async function runHarvestQuantityControlTest() {
   // Capitalize production costs so accounting balance matches
   await executeCropProductionCostTransaction({
     cycleId,
+    costType: 'SEED',
     category: 'SEED',
     amount: 20000,
     paymentMethod: 'CASH',
