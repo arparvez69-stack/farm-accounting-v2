@@ -183,7 +183,12 @@ export async function executeFixedAssetAcquisitionTransaction(
     let bAcc: any = null;
     let sParty: any = null;
 
-    if (method === 'BANK') {
+    if (method === 'CASH') {
+      const cashAcc = await dbInstance.cashBankAccounts.where('accountType').equals('CASH').first();
+      if (cashAcc && Number(cashAcc.currentBalance || 0) < cost) {
+        throw new Error(`নগদ তহবিলে পর্যাপ্ত ব্যালেন্স নেই (Insufficient cash balance: ৳${cashAcc.currentBalance || 0}, ক্রয়মূল্য: ৳${cost})। স্থায়ী সম্পদ ক্রয়ে ক্যাশ ব্যালেন্স নেগেটিভ হওয়া নিষিদ্ধ।`);
+      }
+    } else if (method === 'BANK') {
       paymentCode = CANONICAL_ACCOUNTS.BANK || '1030';
       effectiveBankId = params.bankAccountId;
       if (!effectiveBankId) {
@@ -192,6 +197,9 @@ export async function executeFixedAssetAcquisitionTransaction(
       bAcc = await dbInstance.cashBankAccounts.get(effectiveBankId);
       if (!bAcc) {
         throw new Error(`নির্বাচিত ব্যাংক হিসাব (ID: ${effectiveBankId}) খুঁজে পাওয়া যায়নি।`);
+      }
+      if (Number(bAcc.currentBalance || 0) < cost) {
+        throw new Error(`ব্যাংক হিসাবে পর্যাপ্ত ব্যালেন্স নেই (Insufficient bank balance: ৳${bAcc.currentBalance || 0}, ক্রয়মূল্য: ৳${cost})। স্থায়ী সম্পদ ক্রয়ে ব্যাংক ব্যালেন্স নেগেটিভ হওয়া নিষিদ্ধ।`);
       }
       paymentAccountName = `ব্যাংক হিসাব (${bAcc.name || 'Bank Accounts'})`;
     } else if (method === 'CREDIT') {

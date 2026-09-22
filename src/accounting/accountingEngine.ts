@@ -217,8 +217,9 @@ export async function getClosedPeriods(): Promise<ClosedPeriod[]> {
  */
 export async function postJournalEntry(
   entry: Omit<JournalEntry, 'totalDebit' | 'totalCredit'>,
-  options?: { skipDbPut?: boolean; accounts?: Account[]; isClosingEntry?: boolean }
+  options?: { skipDbPut?: boolean; accounts?: Account[]; isClosingEntry?: boolean; dbInstance?: any }
 ): Promise<JournalEntry> {
+  const targetDb = options?.dbInstance || db;
   const todayStr = new Date().toISOString().split('T')[0];
   if (entry.date > todayStr) {
     throw new Error(
@@ -227,14 +228,26 @@ export async function postJournalEntry(
   }
 
   // Prevent posting new journal entries on or before the latest closed period's endDate
-  const latestClosed = await getLatestClosedPeriod();
+  let latestClosed: ClosedPeriod | null = null;
+  if (options?.dbInstance?.closedPeriods) {
+    try {
+      const closedPeriods = await options.dbInstance.closedPeriods.toArray();
+      const sorted = closedPeriods.sort((a: any, b: any) => (b.endDate || '').localeCompare(a.endDate || ''));
+      latestClosed = sorted[0] || null;
+    } catch {}
+  } else {
+    latestClosed = await getLatestClosedPeriod();
+  }
+
   if (options?.isClosingEntry) {
     if (latestClosed && entry.date <= latestClosed.endDate) {
       throw new Error(
         `হিসাবকাল সমাপ্তি ত্রুটি: এই অর্থবছর বা তারিখ (${entry.date}) ইতোমধ্যে বন্ধ সময়কালের (${latestClosed.endDate}) অন্তর্ভুক্ত। বন্ধ সময়কালে পুনরায় সমাপনী দাখিলা পোস্ট করা যাবে না (Fiscal year/date already closed).`
       );
     }
-    const existingExact = await db.closedPeriods.where('endDate').equals(entry.date).first();
+    const existingExact = targetDb.closedPeriods?.where
+      ? await targetDb.closedPeriods.where('endDate').equals(entry.date).first()
+      : null;
     if (existingExact) {
       throw new Error(
         `হিসাবকাল সমাপ্তি ত্রুটি: এই অর্থবছর সমাপ্তির তারিখ (${entry.date}) ইতোমধ্যে বন্ধ (Closed) করা হয়েছে। একই তারিখে পুনরায় বছর সমাপ্তি করা যাবে না (Fiscal year-end date already closed).`
@@ -248,7 +261,7 @@ export async function postJournalEntry(
     }
   }
 
-  const accounts = options?.accounts ?? (await db.accounts.toArray());
+  const accounts = options?.accounts ?? (await targetDb.accounts.toArray());
   const check = validateBalancedLines(entry.lines, accounts);
 
   if (!check.isBalanced) {
@@ -269,7 +282,7 @@ export async function postJournalEntry(
   };
 
   if (!options?.skipDbPut) {
-    await safeInsert(db.journalEntries, fullEntry, { idPrefix: 'j' });
+    await safeInsert(targetDb.journalEntries, fullEntry, { idPrefix: 'j' });
   }
 
   return fullEntry;
@@ -587,10 +600,11 @@ export async function generateTrialBalance(dateRange?: DateRangeFilter): Promise
  */
 export async function generateProfitLoss(
   dateRange?: DateRangeFilter,
-  options?: { includeClosingEntries?: boolean }
+  options?: { includeClosingEntries?: boolean },
+  dbInstance: any = db
 ): Promise<ProfitLossReport> {
-  const rawAccounts = await db.accounts.toArray();
-  let entries = await db.journalEntries.toArray();
+  const rawAccounts = await dbInstance.accounts.toArray();
+  let entries = await dbInstance.journalEntries.toArray();
 
   // Exclude Year-End Closing entries unless explicitly requested so that P&L reports reflect actual period operations
   if (!options?.includeClosingEntries) {
@@ -697,9 +711,12 @@ export async function generateProfitLoss(
  * Correctly handles Contra accounts (e.g. 1590 Accumulated Depreciation reduces Assets,
  * and 3040 Owner Drawings reduces Equity).
  */
-export async function generateBalanceSheet(dateRange?: DateRangeFilter): Promise<BalanceSheetReport> {
-  const rawAccounts = await db.accounts.toArray();
-  let entries = await db.journalEntries.toArray();
+export async function generateBalanceSheet(
+  dateRange?: DateRangeFilter,
+  dbInstance: any = db
+): Promise<BalanceSheetReport> {
+  const rawAccounts = await dbInstance.accounts.toArray();
+  let entries = await dbInstance.journalEntries.toArray();
 
   // Balance Sheet is cumulative as of the selected end date (date <= endDate) without any startDate filtering
   if (dateRange?.endDate) {
@@ -711,8 +728,8 @@ export async function generateBalanceSheet(dateRange?: DateRangeFilter): Promise
   }
 
   // Find the latest closed period on or before the balance sheet as-of date (if any)
-  const allClosed = await getClosedPeriods();
-  const relevantClosed = allClosed.filter((cp) => cp.endDate && (!dateRange?.endDate || cp.endDate <= dateRange.endDate));
+  const allClosed = dbInstance.closedPeriods?.toArray ? await dbInstance.closedPeriods.toArray() : await getClosedPeriods();
+  const relevantClosed = allClosed.filter((cp: any) => cp.endDate && (!dateRange?.endDate || cp.endDate <= dateRange.endDate));
   const latestRelevantClosed = relevantClosed.length > 0 ? relevantClosed[0] : null;
 
   let unclosedStartDate: string | undefined = undefined;
@@ -727,7 +744,7 @@ export async function generateBalanceSheet(dateRange?: DateRangeFilter): Promise
   const pl = await generateProfitLoss({
     startDate: unclosedStartDate,
     endDate: dateRange?.endDate
-  });
+  }, undefined, dbInstance);
 
   // Deduplicate accounts by code
   const accountsByCode = new Map<string, Account>();

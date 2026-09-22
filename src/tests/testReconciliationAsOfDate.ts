@@ -27,23 +27,29 @@ async function testAsOfDateReconciliation() {
   const testGlEntries: JournalEntry[] = [
     {
       id: 'je-1',
+      voucherNumber: 'JV-1',
+      voucherType: 'RECEIPT',
       date: beforeDate,
       reference: 'REF-1',
       narration: 'Before as of date',
       lines: [
-        { accountCode: CANONICAL_ACCOUNTS.CASH, debit: 5000, credit: 0 },
-        { accountCode: CANONICAL_ACCOUNTS.CAPITAL, debit: 0, credit: 5000 }
-      ]
+        { accountCode: CANONICAL_ACCOUNTS.CASH, accountName: 'Cash', debit: 5000, credit: 0 },
+        { accountCode: CANONICAL_ACCOUNTS.OWNER_CAPITAL, accountName: 'Owner Capital', debit: 0, credit: 5000 }
+      ],
+      createdAt: new Date().toISOString()
     },
     {
       id: 'je-2',
+      voucherNumber: 'JV-2',
+      voucherType: 'SALES',
       date: afterDate,
       reference: 'REF-2',
       narration: 'After as of date',
       lines: [
-        { accountCode: CANONICAL_ACCOUNTS.CASH, debit: 3000, credit: 0 },
-        { accountCode: CANONICAL_ACCOUNTS.SALES_REVENUE, debit: 0, credit: 3000 }
-      ]
+        { accountCode: CANONICAL_ACCOUNTS.CASH, accountName: 'Cash', debit: 3000, credit: 0 },
+        { accountCode: CANONICAL_ACCOUNTS.FISH_REVENUE, accountName: 'Fish Revenue', debit: 0, credit: 3000 }
+      ],
+      createdAt: new Date().toISOString()
     }
   ];
 

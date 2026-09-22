@@ -335,6 +335,21 @@ export async function executePurchaseTransaction(
         throw new Error('Purchase total amount must be strictly greater than 0.');
       }
 
+      // Validate cash/bank balance to prevent silent negative balances
+      if (paymentMethod === 'CASH') {
+        const cashAcc = await dbInstance.cashBankAccounts.where('accountType').equals('CASH').first();
+        if (cashAcc && Number(cashAcc.currentBalance || 0) < grandTotal) {
+          throw new Error(`নগদ তহবিলে পর্যাপ্ত ব্যালেন্স নেই (Insufficient cash balance: ৳${cashAcc.currentBalance || 0}, ক্রয়ের পরিমাণ: ৳${grandTotal})। ক্যাশ ব্যালেন্স নেগেটিভ হওয়া অনুমোদিত নয়।`);
+        }
+      } else if (paymentMethod === 'BANK') {
+        let bankAcc: CashBankAccount | undefined;
+        if (bankAccountId) bankAcc = await dbInstance.cashBankAccounts.get(bankAccountId);
+        if (!bankAcc) bankAcc = await dbInstance.cashBankAccounts.where('accountType').equals('BANK').first();
+        if (bankAcc && Number(bankAcc.currentBalance || 0) < grandTotal) {
+          throw new Error(`ব্যাংক হিসাবে পর্যাপ্ত ব্যালেন্স নেই (Insufficient bank balance: ৳${bankAcc.currentBalance || 0}, ক্রয়ের পরিমাণ: ৳${grandTotal})। ব্যাংক ব্যালেন্স নেগেটিভ হওয়া অনুমোদিত নয়।`);
+        }
+      }
+
       const purchaseId = generateUniqueId('pur');
       const invoiceNumber = generateTransactionNumber('PUR');
       const displayNumber = await generateDisplayNumber('PUR', dateStr);
@@ -3257,6 +3272,21 @@ export async function executeAnimalPurchaseTransaction(
       let voucherNumber: string | undefined;
 
       if (cleanPurchaseCost > 0) {
+        // Validate cash/bank balance to prevent silent negative balances
+        if (paymentMethod === 'CASH') {
+          const cashAcc = await db.cashBankAccounts.where('accountType').equals('CASH').first();
+          if (cashAcc && Number(cashAcc.currentBalance || 0) < cleanPurchaseCost) {
+            throw new Error(`নগদ তহবিলে পর্যাপ্ত ব্যালেন্স নেই (Insufficient cash balance: ৳${cashAcc.currentBalance || 0}, পশু ক্রয়ের পরিমাণ: ৳${cleanPurchaseCost})। ক্যাশ ব্যালেন্স নেগেটিভ হওয়া অনুমোদিত নয়।`);
+          }
+        } else if (paymentMethod === 'BANK') {
+          let bankAcc: CashBankAccount | undefined;
+          if (bankAccountId) bankAcc = await db.cashBankAccounts.get(bankAccountId);
+          if (!bankAcc) bankAcc = await db.cashBankAccounts.where('accountType').equals('BANK').first();
+          if (bankAcc && Number(bankAcc.currentBalance || 0) < cleanPurchaseCost) {
+            throw new Error(`ব্যাংক হিসাবে পর্যাপ্ত ব্যালেন্স নেই (Insufficient bank balance: ৳${bankAcc.currentBalance || 0}, পশু ক্রয়ের পরিমাণ: ৳${cleanPurchaseCost})। ব্যাংক ব্যালেন্স নেগেটিভ হওয়া অনুমোদিত নয়।`);
+          }
+        }
+
         const accounts = await db.accounts.toArray();
         let livestockAssetAcc = accounts.find((a) => a.code === CANONICAL_ACCOUNTS.LIVESTOCK_ASSETS);
         if (!livestockAssetAcc) {
@@ -8332,6 +8362,20 @@ export async function executePaymentTransaction(
           .first();
         if (closedPeriod) {
           throw new Error(`হিসাবকাল বন্ধ রয়েছে (${closedPeriod.notes || closedPeriod.endDate})। এই তারিখে নতুন লেনদেন পোস্টিং অনুমোদিত নয়।`);
+        }
+
+        // Validate source cash/bank balance when paying supplier
+        if (!isSale) {
+          let sourceAcc: CashBankAccount | undefined;
+          if (paymentMethod === 'CASH') {
+            sourceAcc = await dbInstance.cashBankAccounts.where('accountType').equals('CASH').first();
+          } else if (paymentMethod === 'BANK') {
+            if (bankAccountId) sourceAcc = await dbInstance.cashBankAccounts.get(bankAccountId);
+            if (!sourceAcc) sourceAcc = await dbInstance.cashBankAccounts.where('accountType').equals('BANK').first();
+          }
+          if (sourceAcc && Number(sourceAcc.currentBalance || 0) < amt) {
+            throw new Error(`উৎস ${sourceAcc.name || (paymentMethod === 'BANK' ? 'ব্যাংক' : 'নগদ')} হিসাবে পর্যাপ্ত ব্যালেন্স নেই (বর্তমান স্থিতি: ৳${sourceAcc.currentBalance || 0}, পরিশোধের পরিমাণ: ৳${amt})। ক্যাশ/ব্যাংক ব্যালেন্স নেগেটিভ হওয়া অনুমোদিত নয়।`);
+          }
         }
 
         const accounts: Account[] = await dbInstance.accounts.toArray();
