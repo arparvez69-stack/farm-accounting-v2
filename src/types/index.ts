@@ -224,6 +224,10 @@ export interface FishBatch {
   harvestWeightKg?: number;
   harvestRevenue?: number;
   harvestDate?: string;
+  originalStockedQty?: number;
+  initialStockedQty?: number;
+  harvestQuantity?: number;
+  totalHarvestedQty?: number;
   status: 'ACTIVE' | 'HARVESTED' | 'CLOSED';
   notes?: string;
   synced?: boolean;
@@ -259,6 +263,9 @@ export interface CropCycle {
   harvestYieldKg: number;
   harvestRevenue: number;
   internalConsumptionKg: number;
+  expectedYieldKg?: number;
+  totalAvailableYieldKg?: number;
+  availableProductionKg?: number;
   status: 'PLANTED' | 'GROWING' | 'HARVESTED' | 'CLOSED';
   synced?: boolean;
 }

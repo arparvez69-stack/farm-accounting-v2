@@ -259,7 +259,7 @@ export const FarmOperationsModule: React.FC<Props> = ({
   const [statusDate, setStatusDate] = useState<string>(new Date().toISOString().split('T')[0]);
   const [salePrice, setSalePrice] = useState<string>('');
   const [customerName, setCustomerName] = useState<string>('');
-  const [statusPaymentMethod, setStatusPaymentMethod] = useState<'CASH' | 'BANK'>('CASH');
+  const [statusPaymentMethod, setStatusPaymentMethod] = useState<'CASH' | 'BANK' | 'CREDIT'>('CASH');
   const [statusNotes, setStatusNotes] = useState<string>('');
   const [submittingStatus, setSubmittingStatus] = useState(false);
 
@@ -1135,6 +1135,9 @@ export const FarmOperationsModule: React.FC<Props> = ({
       if (newStatus === 'SOLD' && (!price || price <= 0)) {
         throw new Error('পশু বিক্রয়ের ক্ষেত্রে বিক্রয়মূল্য আবশ্যক!');
       }
+      if (newStatus === 'SOLD' && statusPaymentMethod === 'CREDIT' && !customerName.trim()) {
+        throw new Error('বাকিতে পশু বিক্রয়ের ক্ষেত্রে ক্রেতার নাম আবশ্যক!');
+      }
 
       await executeAnimalSaleOrRemovalTransaction({
         animal: statusModalAnimal,
@@ -1150,7 +1153,7 @@ export const FarmOperationsModule: React.FC<Props> = ({
       setMsg({
         type: 'success',
         text: newStatus === 'SOLD'
-          ? `পশু ${statusModalAnimal.id} সফলভাবে বিক্রয় ও রাজস্ব জাবেদায় পোস্ট করা হয়েছে! (বিক্রয়মূল্য: ৳${price})`
+          ? `পশু ${statusModalAnimal.id} সফলভাবে বিক্রয় ও রাজস্ব জাবেদায় পোস্ট করা হয়েছে! (পদ্ধতি: ${statusPaymentMethod === 'CREDIT' ? 'বাকি/দেনাদার' : statusPaymentMethod === 'BANK' ? 'ব্যাংক' : 'নগদ'}, বিক্রয়মূল্য: ৳${price})`
           : `পশু ${statusModalAnimal.id} এর স্ট্যাটাস '${newStatus}' এ সফলভাবে হালনাগাদ করা হয়েছে!`
       });
       setStatusModalAnimal(null);
@@ -3041,11 +3044,12 @@ export const FarmOperationsModule: React.FC<Props> = ({
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                         <div>
                           <label className="block text-[13px] font-medium text-gray-700 mb-1">
-                            ক্রেতার নাম (Customer Name)
+                            ক্রেতার নাম (Customer Name) {statusPaymentMethod === 'CREDIT' ? '*' : ''}
                           </label>
                           <input
                             type="text"
-                            placeholder="সাধারণ ক্রেতা"
+                            required={statusPaymentMethod === 'CREDIT'}
+                            placeholder={statusPaymentMethod === 'CREDIT' ? 'ক্রেতার নাম লিখুন' : 'সাধারণ ক্রেতা'}
                             value={customerName}
                             onChange={(e) => setCustomerName(e.target.value)}
                             className="w-full bg-white border border-gray-300 rounded-lg p-2 text-[13px] text-gray-900"
@@ -3054,22 +3058,29 @@ export const FarmOperationsModule: React.FC<Props> = ({
 
                         <div>
                           <label className="block text-[13px] font-medium text-gray-700 mb-1">
-                            টাকা জমার হিসাব (Deposit To)
+                            পরিশোধের মাধ্যম (Payment Method) *
                           </label>
                           <select
                             value={statusPaymentMethod}
                             onChange={(e) => setStatusPaymentMethod(e.target.value as any)}
-                            className="w-full bg-white border border-gray-300 rounded-lg p-2 text-[13px] text-gray-900"
+                            className="w-full bg-white border border-gray-300 rounded-lg p-2 text-[13px] text-gray-900 font-medium"
                           >
                             <option value="CASH">নগদ ক্যাশ (1010)</option>
                             <option value="BANK">ব্যাংক হিসাব (1030)</option>
+                            <option value="CREDIT">বাকিতে / দেনাদার (1040)</option>
                           </select>
                         </div>
                       </div>
 
-                      <p className="text-[12px] text-amber-800 leading-relaxed">
-                        বিক্রয় সংরক্ষিত হলে স্বয়ংক্রিয়ভাবে পশু বিক্রয় আয় (৪০২০) ক্রেডিট এবং ক্যাশ/ব্যাংক ডেবিট করে জাবেদা ভাউচার ও বিক্রয় চালান তৈরি হবে।
-                      </p>
+                      {statusPaymentMethod === 'CREDIT' ? (
+                        <p className="text-[12px] text-amber-800 leading-relaxed font-medium">
+                          বাকিতে বিক্রয়ের ফলে প্রাপ্য হিসাব (১০৪০) ডেবিট এবং পশু বিক্রয় আয় (৪০২০) ক্রেডিট হবে। ক্যাশ/ব্যাংক বৃদ্ধি পাবে না এবং ক্রেতার নামে বকেয়া দাখিলা সংরক্ষিত হবে।
+                        </p>
+                      ) : (
+                        <p className="text-[12px] text-amber-800 leading-relaxed">
+                          বিক্রয় সংরক্ষিত হলে স্বয়ংক্রিয়ভাবে পশু বিক্রয় আয় (৪০২০) ক্রেডিট এবং {statusPaymentMethod === 'BANK' ? 'ব্যাংক হিসাব (১০৩০)' : 'নগদ ক্যাশ (১০১০)'} ডেবিট করে জাবেদা ভাউচার ও বিক্রয় চালান তৈরি হবে।
+                        </p>
+                      )}
                     </div>
                   )}
 

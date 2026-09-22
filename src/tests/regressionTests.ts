@@ -3423,6 +3423,35 @@ async function runRegressionTestsInternal(): Promise<TestResult> {
     };
     await invTestDb.cropCycles.put(cropCycleProd);
 
+    // Legitimate Crop WIP for cycle_paddy_2026: ৳2,800
+    await invTestDb.journalEntries.put({
+      id: 'j_paddy_wip_prod',
+      voucherNumber: 'JV-PDY-PROD',
+      voucherType: 'JOURNAL',
+      date: '2026-07-01',
+      narration: 'Paddy production cost (WIP)',
+      reference: cropCycleProd.id,
+      lines: [
+        {
+          accountId: CANONICAL_ACCOUNTS.WIP,
+          accountCode: CANONICAL_ACCOUNTS.WIP,
+          accountName: 'Work in Progress',
+          debit: 2800,
+          credit: 0,
+          memo: `[PRODUCTION_COST] [WIP] [${cropCycleProd.id}] Paddy production cost`
+        },
+        {
+          accountId: CANONICAL_ACCOUNTS.CASH,
+          accountCode: CANONICAL_ACCOUNTS.CASH,
+          accountName: 'Cash',
+          debit: 0,
+          credit: 2800,
+          memo: `[PRODUCTION_COST] [WIP] [${cropCycleProd.id}] Cash payment`
+        }
+      ],
+      createdAt: new Date().toISOString()
+    });
+
     const paddyReceiptRes = await executeProductionReceiptTransaction(
       {
         itemId: paddyItem.id,
