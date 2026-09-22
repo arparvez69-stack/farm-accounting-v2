@@ -1820,6 +1820,76 @@ export async function executeLoanRepaymentTransaction(params: {
         throw new Error(`ঋণ চুক্তি ${loanId} পাওয়া যায়নি।`);
       }
 
+      // Calculate remaining principal
+      const remainingPrincipal = Math.max(
+        0,
+        loan.status === 'PAID_OFF'
+          ? 0
+          : Math.round(
+              Number(
+                loan.remainingPrincipal ??
+                  loan.remainingBalance ??
+                  loan.outstandingPrincipal ??
+                  loan.principalAmount ??
+                  0
+              ) * 100
+            ) / 100
+      );
+
+      // Calculate remaining interest
+      let remainingInterest = 0;
+      if (loan.status !== 'PAID_OFF' && remainingPrincipal > 0) {
+        if (loan.schedule && loan.schedule.length > 0) {
+          const unpaidItems = loan.schedule.filter((s) => !s.isPaid);
+          remainingInterest = Math.round(
+            unpaidItems.reduce((sum, s) => sum + Number(s.interestPortion || 0), 0) * 100
+          ) / 100;
+        } else {
+          const rate = Number(loan.annualInterestRatePercent ?? loan.interestRateAnnual ?? loan.interestRate ?? 0);
+          const months = Number(loan.termMonths ?? loan.tenureMonths ?? 12);
+          if (rate > 0) {
+            const sched = generateAmortizationSchedule(
+              loan.principalAmount,
+              rate,
+              months,
+              loan.disbursedDate || loan.startDate
+            );
+            const totalSchedInterest = sched.reduce((sum, s) => sum + Number(s.interestPortion || 0), 0);
+            remainingInterest = Math.max(
+              0,
+              Math.round((totalSchedInterest - Number(loan.totalPaidInterest || 0)) * 100) / 100
+            );
+          }
+        }
+      }
+
+      // Calculate remaining liability
+      const remainingLiability = (loan as any).remainingLiability !== undefined
+        ? Math.max(0, Math.round(Number((loan as any).remainingLiability) * 100) / 100)
+        : Math.max(0, Math.round((remainingPrincipal + remainingInterest) * 100) / 100);
+
+      // Validate against overpayment BEFORE journal/cash/loan changes
+      const isRepaymentExceeded = totalRepayment > remainingLiability + 0.0001;
+      const isPrincipalExceeded = pAmt > remainingPrincipal + 0.0001;
+
+      if (isRepaymentExceeded && isPrincipalExceeded) {
+        throw new Error(
+          `পরিশোধের পরিমাণ অবশিষ্ট দায় ও আসলের চেয়ে বেশি (repayment exceeds remaining liability: ৳${totalRepayment} > ৳${remainingLiability}; principal repayment exceeds remaining principal: ৳${pAmt} > ৳${remainingPrincipal})। অতিরিক্ত ঋণ পরিশোধ গ্রহণযোগ্য নয়।`
+        );
+      }
+
+      if (isRepaymentExceeded) {
+        throw new Error(
+          `পরিশোধের মোট পরিমাণ অবশিষ্ট ঋণ দায়ের চেয়ে বেশি (repayment exceeds remaining liability: ৳${totalRepayment} > ৳${remainingLiability})। অতিরিক্ত ঋণ পরিশোধ গ্রহণযোগ্য নয়।`
+        );
+      }
+
+      if (isPrincipalExceeded) {
+        throw new Error(
+          `আসল পরিশোধের পরিমাণ অবশিষ্ট আসলের চেয়ে বেশি (principal repayment exceeds remaining principal: ৳${pAmt} > ৳${remainingPrincipal})। অতিরিক্ত ঋণ পরিশোধ গ্রহণযোগ্য নয়।`
+        );
+      }
+
       const sourceAcc = await db.cashBankAccounts.get(sourceAccountId);
       if (!sourceAcc) {
         throw new Error(`উৎস পরিশোধ হিসাব ${sourceAccountId} পাওয়া যায়নি।`);
@@ -2328,9 +2398,17 @@ export async function executeAnimalEventTransaction(params: {
 
       if (isInventoryFeed) {
         feedItem = await db.inventoryItems.get(feedItemId);
-        if (feedItem) {
-          effectiveCost = Math.round(feedQuantityUsed * (feedItem.avgCostPrice || 0) * 100) / 100;
+        if (!feedItem) {
+          throw new Error('নির্বাচিত খাদ্য আইটেমটি ইনভেন্টরিতে পাওয়া যায়নি।');
         }
+        const availableQty = Number(feedItem.currentStock || 0);
+        const requestedQty = Number(feedQuantityUsed || 0);
+        if (requestedQty > availableQty) {
+          throw new Error(
+            `ইনভেন্টরিতে পর্যাপ্ত খাদ্য মজুদ নেই (মজুদ: ${availableQty} ${feedItem.unit || ''}, অনুরোধকৃত: ${requestedQty} ${feedItem.unit || ''})।`
+          );
+        }
+        effectiveCost = Math.round(requestedQty * (feedItem.avgCostPrice || 0) * 100) / 100;
       }
 
       const cost = effectiveCost;
@@ -2420,6 +2498,38 @@ export async function executeAnimalEventTransaction(params: {
             expenseName = 'খামার শ্রমিক মজুরি (Farm Labour Wages)';
           }
 
+          // Verify sufficient cash/bank balance before posting
+          let cashAcc: CashBankAccount | undefined;
+          let bankAcc: CashBankAccount | undefined;
+
+          if (paymentMethod === 'CASH') {
+            const targetAccId = (params as any).cashBankAccountId || bankAccountId;
+            if (targetAccId) cashAcc = await db.cashBankAccounts.get(targetAccId);
+            if (!cashAcc) cashAcc = await db.cashBankAccounts.where('accountType').equals('CASH').first();
+            if (!cashAcc) {
+              throw new Error('নগদ হিসাব (Cash Account) পাওয়া যায়নি।');
+            }
+            const availableBal = Number(cashAcc.currentBalance || 0);
+            if (availableBal < cost) {
+              throw new Error(
+                `উৎস নগদ হিসাবে (${cashAcc.accountName || cashAcc.name || 'ক্যাশ'}) পর্যাপ্ত ব্যালেন্স নেই (বর্তমান স্থিতি: ৳${availableBal}, প্রয়োজনীয় খরচ: ৳${cost})। ক্যাশ ব্যালেন্স নেগেটিভ হওয়া অনুমোদিত নয়।`
+              );
+            }
+          } else if (paymentMethod === 'BANK') {
+            const targetBankId = bankAccountId || (params as any).cashBankAccountId;
+            if (targetBankId) bankAcc = await db.cashBankAccounts.get(targetBankId);
+            if (!bankAcc) bankAcc = await db.cashBankAccounts.where('accountType').equals('BANK').first();
+            if (!bankAcc) {
+              throw new Error('ব্যাংক হিসাব (Bank Account) পাওয়া যায়নি।');
+            }
+            const availableBal = Number(bankAcc.currentBalance || 0);
+            if (availableBal < cost) {
+              throw new Error(
+                `উৎস ব্যাংক হিসাবে (${bankAcc.accountName || bankAcc.name || 'ব্যাংক'}) পর্যাপ্ত ব্যালেন্স নেই (বর্তমান স্থিতি: ৳${availableBal}, প্রয়োজনীয় খরচ: ৳${cost})। ব্যাংক ব্যালেন্স নেগেটিভ হওয়া অনুমোদিত নয়।`
+              );
+            }
+          }
+
           const paymentCode = paymentMethod === 'BANK' ? CANONICAL_ACCOUNTS.BANK : CANONICAL_ACCOUNTS.CASH;
           const paymentName = paymentMethod === 'BANK' ? 'ব্যাংক হিসাব (Bank Accounts)' : 'নগদ টাকা (Cash on Hand)';
 
@@ -2479,22 +2589,22 @@ export async function executeAnimalEventTransaction(params: {
           journalEntryId = journalEntry.id;
 
           // Update operational Cash / Bank balance consistently with GL
-          if (paymentMethod === 'CASH') {
-            const cashAcc = await db.cashBankAccounts.where('accountType').equals('CASH').first();
-            if (cashAcc) {
-              await db.cashBankAccounts.update(cashAcc.id, {
-                currentBalance: Math.round((cashAcc.currentBalance - cost) * 100) / 100
-              });
+          if (paymentMethod === 'CASH' && cashAcc) {
+            const newBal = Math.round((cashAcc.currentBalance - cost) * 100) / 100;
+            if (newBal < 0) {
+              throw new Error('ক্যাশ ব্যালেন্স নেগেটিভ হওয়া অনুমোদিত নয়।');
             }
-          } else if (paymentMethod === 'BANK') {
-            let bankAcc: CashBankAccount | undefined;
-            if (bankAccountId) bankAcc = await db.cashBankAccounts.get(bankAccountId);
-            if (!bankAcc) bankAcc = await db.cashBankAccounts.where('accountType').equals('BANK').first();
-            if (bankAcc) {
-              await db.cashBankAccounts.update(bankAcc.id, {
-                currentBalance: Math.round((bankAcc.currentBalance - cost) * 100) / 100
-              });
+            await db.cashBankAccounts.update(cashAcc.id, {
+              currentBalance: newBal
+            });
+          } else if (paymentMethod === 'BANK' && bankAcc) {
+            const newBal = Math.round((bankAcc.currentBalance - cost) * 100) / 100;
+            if (newBal < 0) {
+              throw new Error('ব্যাংক ব্যালেন্স নেগেটিভ হওয়া অনুমোদিত নয়।');
             }
+            await db.cashBankAccounts.update(bankAcc.id, {
+              currentBalance: newBal
+            });
           }
         }
       }
@@ -2541,7 +2651,7 @@ export async function executeAnimalEventTransaction(params: {
       if (isInventoryFeed) {
         const itemToDeduct = feedItem || (feedItemId ? await db.inventoryItems.get(feedItemId) : undefined);
         if (itemToDeduct && feedQuantityUsed && feedQuantityUsed > 0) {
-          const newStock = Math.max(0, Math.round((itemToDeduct.currentStock - feedQuantityUsed) * 100) / 100);
+          const newStock = Math.round((itemToDeduct.currentStock - feedQuantityUsed) * 100) / 100;
           await db.inventoryItems.update(itemToDeduct.id, {
             currentStock: newStock,
             synced: false
@@ -4047,15 +4157,20 @@ export async function executeLivestockProductionCostTransaction(
       let journalEntryId: string | undefined;
       let voucherNumber: string | undefined;
 
-      if (paymentMethod === 'INVENTORY' && feedItemId) {
+      if (paymentMethod === 'INVENTORY') {
+        if (!feedItemId) {
+          throw new Error('ইনভেন্টরি থেকে খাদ্য ব্যবহারের জন্য খাদ্য আইটেম নির্বাচন আবশ্যক।');
+        }
         const freshItem = await db.inventoryItems.get(feedItemId);
         if (!freshItem) {
           throw new Error('নির্বাচিত খাদ্য আইটেম খুঁজে পাওয়া যায়নি!');
         }
-        const qtyUsed = Math.max(0, feedQuantityUsed || 0);
-        if (qtyUsed > 0 && freshItem.currentStock < qtyUsed) {
-          throw new Error(`পর্যাপ্ত খাদ্য মজুদ নেই! বর্তমান মজুদ: ${freshItem.currentStock} ${freshItem.unit}`);
+        const availableQty = Number(freshItem.currentStock || 0);
+        const requestedQty = Number(feedQuantityUsed || 0);
+        if (requestedQty > availableQty) {
+          throw new Error(`পর্যাপ্ত খাদ্য মজুদ নেই! বর্তমান মজুদ: ${availableQty} ${freshItem.unit || ''}, অনুরোধকৃত: ${requestedQty} ${freshItem.unit || ''}`);
         }
+        const qtyUsed = requestedQty;
 
         const feedExpAcc = accounts.find((a) => a.code === CANONICAL_ACCOUNTS.FEED_EXPENSE) || {
           id: `acc_${CANONICAL_ACCOUNTS.FEED_EXPENSE}`,
@@ -4106,7 +4221,7 @@ export async function executeLivestockProductionCostTransaction(
         journalEntryId = journalEntry.id;
 
         if (qtyUsed > 0) {
-          const newStock = Math.max(0, Math.round((freshItem.currentStock - qtyUsed) * 100) / 100);
+          const newStock = Math.round((freshItem.currentStock - qtyUsed) * 100) / 100;
           await db.inventoryItems.update(freshItem.id, {
             currentStock: newStock,
             synced: false
@@ -4127,6 +4242,37 @@ export async function executeLivestockProductionCostTransaction(
         }
       } else {
         // Cash or Bank Payment
+        let cashAcc: CashBankAccount | undefined;
+        let bankAcc: CashBankAccount | undefined;
+
+        if (paymentMethod === 'CASH') {
+          const targetAccId = (params as any).cashBankAccountId || bankAccountId;
+          if (targetAccId) cashAcc = await db.cashBankAccounts.get(targetAccId);
+          if (!cashAcc) cashAcc = await db.cashBankAccounts.where('accountType').equals('CASH').first();
+          if (!cashAcc) {
+            throw new Error('নগদ হিসাব (Cash Account) পাওয়া যায়নি।');
+          }
+          const availableBal = Number(cashAcc.currentBalance || 0);
+          if (availableBal < cleanAmount) {
+            throw new Error(
+              `উৎস নগদ হিসাবে (${cashAcc.accountName || cashAcc.name || 'ক্যাশ'}) পর্যাপ্ত ব্যালেন্স নেই (বর্তমান স্থিতি: ৳${availableBal}, প্রয়োজনীয় উৎপাদন খরচ: ৳${cleanAmount})। ক্যাশ ব্যালেন্স নেগেটিভ হওয়া অনুমোদিত নয়।`
+            );
+          }
+        } else if (paymentMethod === 'BANK') {
+          const targetBankId = bankAccountId || (params as any).cashBankAccountId;
+          if (targetBankId) bankAcc = await db.cashBankAccounts.get(targetBankId);
+          if (!bankAcc) bankAcc = await db.cashBankAccounts.where('accountType').equals('BANK').first();
+          if (!bankAcc) {
+            throw new Error('ব্যাংক হিসাব (Bank Account) পাওয়া যায়নি।');
+          }
+          const availableBal = Number(bankAcc.currentBalance || 0);
+          if (availableBal < cleanAmount) {
+            throw new Error(
+              `উৎস ব্যাংক হিসাবে (${bankAcc.accountName || bankAcc.name || 'ব্যাংক'}) পর্যাপ্ত ব্যালেন্স নেই (বর্তমান স্থিতি: ৳${availableBal}, প্রয়োজনীয় উৎপাদন খরচ: ৳${cleanAmount})। ব্যাংক ব্যালেন্স নেগেটিভ হওয়া অনুমোদিত নয়।`
+            );
+          }
+        }
+
         let expenseCode: string = CANONICAL_ACCOUNTS.MISCELLANEOUS_EXPENSE;
         let expenseName = 'বিবিধ পরিচালন ব্যয় (Miscellaneous Expense)';
 
@@ -4198,22 +4344,22 @@ export async function executeLivestockProductionCostTransaction(
         journalEntryId = journalEntry.id;
 
         // Update operational cash/bank account balance
-        if (paymentMethod === 'CASH') {
-          const cashAcc = await db.cashBankAccounts.where('accountType').equals('CASH').first();
-          if (cashAcc) {
-            await db.cashBankAccounts.update(cashAcc.id, {
-              currentBalance: Math.round((cashAcc.currentBalance - cleanAmount) * 100) / 100
-            });
+        if (paymentMethod === 'CASH' && cashAcc) {
+          const newBal = Math.round((cashAcc.currentBalance - cleanAmount) * 100) / 100;
+          if (newBal < 0) {
+            throw new Error('ক্যাশ ব্যালেন্স নেগেটিভ হওয়া অনুমোদিত নয়।');
           }
-        } else if (paymentMethod === 'BANK') {
-          let bankAcc: CashBankAccount | undefined;
-          if (bankAccountId) bankAcc = await db.cashBankAccounts.get(bankAccountId);
-          if (!bankAcc) bankAcc = await db.cashBankAccounts.where('accountType').equals('BANK').first();
-          if (bankAcc) {
-            await db.cashBankAccounts.update(bankAcc.id, {
-              currentBalance: Math.round((bankAcc.currentBalance - cleanAmount) * 100) / 100
-            });
+          await db.cashBankAccounts.update(cashAcc.id, {
+            currentBalance: newBal
+          });
+        } else if (paymentMethod === 'BANK' && bankAcc) {
+          const newBal = Math.round((bankAcc.currentBalance - cleanAmount) * 100) / 100;
+          if (newBal < 0) {
+            throw new Error('ব্যাংক ব্যালেন্স নেগেটিভ হওয়া অনুমোদিত নয়।');
           }
+          await db.cashBankAccounts.update(bankAcc.id, {
+            currentBalance: newBal
+          });
         }
       }
 
@@ -5617,71 +5763,67 @@ export async function executeFishProductionCostTransaction(
       let creditAccCode: string = CANONICAL_ACCOUNTS.CASH;
       let creditAccName = 'নগদ টাকা (Cash on Hand)';
 
+      let invItem: InventoryItem | undefined;
+      let bankAcc: CashBankAccount | undefined;
+      let cashAcc: CashBankAccount | undefined;
+      let availableQty = 0;
+      let requestedQty = 0;
+
       if (paymentMethod === 'INVENTORY') {
         if (!feedItemId) {
           throw new Error('ইনভেন্টরি থেকে খাদ্য ব্যবহারের জন্য খাদ্য আইটেম নির্বাচন আবশ্যক।');
         }
-        const invItem = await db.inventoryItems.get(feedItemId);
-        if (!invItem) {
+        const fetchedItem = await db.inventoryItems.get(feedItemId);
+        if (!fetchedItem) {
           throw new Error('নির্বাচিত খাদ্য আইটেমটি ইনভেন্টরিতে পাওয়া যায়নি।');
         }
-        if (cleanQty > 0 && invItem.currentStock < cleanQty) {
-          throw new Error(`ইনভেন্টরিতে পর্যাপ্ত খাদ্য মজুদ নেই (মজুদ: ${invItem.currentStock} ${invItem.unit}, প্রয়োজন: ${cleanQty} ${invItem.unit})।`);
+        invItem = fetchedItem;
+        availableQty = Number(invItem.currentStock || 0);
+        requestedQty = cleanQty;
+        if (requestedQty > availableQty) {
+          throw new Error(`ইনভেন্টরিতে পর্যাপ্ত খাদ্য মজুদ নেই (মজুদ: ${availableQty} ${invItem.unit || ''}, প্রয়োজন: ${requestedQty} ${invItem.unit || ''})।`);
         }
 
         creditAccCode = CANONICAL_ACCOUNTS.FEED_INVENTORY;
         creditAccName = 'খাদ্য মজুদ (Feed Inventory)';
-
-        if (cleanQty > 0) {
-          await db.inventoryItems.update(invItem.id, {
-            currentStock: Math.max(0, invItem.currentStock - cleanQty),
-            synced: false
-          });
-
-          await safeInsert(
-            db.stockMovements,
-            {
-              id: generateUniqueId('stk'),
-              itemId: invItem.id,
-              date: dateStr,
-              movementType: 'CONSUMPTION',
-              quantity: cleanQty,
-              unitCost: invItem.avgCostPrice || 0,
-              totalValue: cleanAmount,
-              referenceType: 'PRODUCTION',
-              referenceId: freshBatch.id,
-              notes: `মাছের ব্যাচ ${freshBatch.id}: খাদ্য প্রয়োগ (${cleanQty} ${invItem.unit})`,
-              synced: false
-            } as StockMovement,
-            { idPrefix: 'stk' }
-          );
-        }
       } else if (paymentMethod === 'BANK') {
-        if (!bankAccountId) {
+        const targetBankId = bankAccountId || (params as any).cashBankAccountId;
+        if (targetBankId) {
+          bankAcc = await db.cashBankAccounts.get(targetBankId);
+        }
+        if (!bankAcc) {
+          bankAcc = await db.cashBankAccounts.where('accountType').equals('BANK').first();
+        }
+        if (!bankAcc) {
           throw new Error('ব্যাংক মাধ্যমে পরিশোধের জন্য ব্যাংক হিসাব নির্বাচন করা আবশ্যক।');
         }
-        const bankAcc = await db.cashBankAccounts.get(bankAccountId);
-        if (!bankAcc) {
-          throw new Error('নির্বাচিত ব্যাংক হিসাবটি ডাটাবেজে পাওয়া যায়নি।');
+        const availableBalance = Number(bankAcc.currentBalance || 0);
+        if (availableBalance < cleanAmount) {
+          throw new Error(
+            `উৎস ব্যাংক হিসাবে (${bankAcc.accountName || bankAcc.name || 'ব্যাংক'}) পর্যাপ্ত ব্যালেন্স নেই (বর্তমান স্থিতি: ৳${availableBalance}, প্রয়োজনীয় উৎপাদন খরচ: ৳${cleanAmount})। ব্যাংক ব্যালেন্স নেগেটিভ হওয়া অনুমোদিত নয়।`
+          );
         }
         creditAccCode = CANONICAL_ACCOUNTS.BANK;
         creditAccName = 'ব্যাংক হিসাব (Bank Accounts)';
-        await db.cashBankAccounts.update(bankAcc.id, {
-          currentBalance: Math.round((bankAcc.currentBalance - cleanAmount) * 100) / 100,
-          synced: false
-        });
       } else if (paymentMethod === 'CREDIT') {
         creditAccCode = CANONICAL_ACCOUNTS.ACCOUNTS_PAYABLE;
         creditAccName = 'সরবরাহকারীর নিকট দেনা (Accounts Payable)';
       } else {
         // CASH
-        const cashAcc = await db.cashBankAccounts.where('accountType').equals('CASH').first();
-        if (cashAcc) {
-          await db.cashBankAccounts.update(cashAcc.id, {
-            currentBalance: Math.round((cashAcc.currentBalance - cleanAmount) * 100) / 100,
-            synced: false
-          });
+        const targetAccId = (params as any).cashBankAccountId || bankAccountId;
+        if (targetAccId) cashAcc = await db.cashBankAccounts.get(targetAccId);
+        if (!cashAcc) cashAcc = await db.cashBankAccounts.where('accountType').equals('CASH').first();
+        if (!cashAcc) {
+          throw new Error('নগদ হিসাব (Cash Account) পাওয়া যায়নি।');
         }
+        const availableBalance = Number(cashAcc.currentBalance || 0);
+        if (availableBalance < cleanAmount) {
+          throw new Error(
+            `উৎস নগদ হিসাবে (${cashAcc.accountName || cashAcc.name || 'ক্যাশ'}) পর্যাপ্ত ব্যালেন্স নেই (বর্তমান স্থিতি: ৳${availableBalance}, প্রয়োজনীয় উৎপাদন খরচ: ৳${cleanAmount})। ক্যাশ ব্যালেন্স নেগেটিভ হওয়া অনুমোদিত নয়।`
+          );
+        }
+        creditAccCode = CANONICAL_ACCOUNTS.CASH;
+        creditAccName = 'নগদ টাকা (Cash on Hand)';
       }
 
       const journalLines: JournalLine[] = [
@@ -5724,6 +5866,50 @@ export async function executeFishProductionCostTransaction(
         { accounts, skipDbPut: true }
       );
       await safeInsert(db.journalEntries, jEntry, { idPrefix: 'j' });
+
+      // After accounting validation and journal entry succeed, update inventory or cash/bank
+      if (paymentMethod === 'INVENTORY' && invItem && cleanQty > 0) {
+        await db.inventoryItems.update(invItem.id, {
+          currentStock: Math.round((availableQty - requestedQty) * 100) / 100,
+          synced: false
+        });
+
+        await safeInsert(
+          db.stockMovements,
+          {
+            id: generateUniqueId('stk'),
+            itemId: invItem.id,
+            date: dateStr,
+            movementType: 'CONSUMPTION',
+            quantity: cleanQty,
+            unitCost: invItem.avgCostPrice || 0,
+            totalValue: cleanAmount,
+            referenceType: 'PRODUCTION',
+            referenceId: freshBatch.id,
+            notes: `মাছের ব্যাচ ${freshBatch.id}: খাদ্য প্রয়োগ (${cleanQty} ${invItem.unit})`,
+            synced: false
+          } as StockMovement,
+          { idPrefix: 'stk' }
+        );
+      } else if (paymentMethod === 'BANK' && bankAcc) {
+        const newBal = Math.round((bankAcc.currentBalance - cleanAmount) * 100) / 100;
+        if (newBal < 0) {
+          throw new Error('ব্যাংক ব্যালেন্স নেগেটিভ হওয়া অনুমোদিত নয়।');
+        }
+        await db.cashBankAccounts.update(bankAcc.id, {
+          currentBalance: newBal,
+          synced: false
+        });
+      } else if (paymentMethod === 'CASH' && cashAcc) {
+        const newBal = Math.round((cashAcc.currentBalance - cleanAmount) * 100) / 100;
+        if (newBal < 0) {
+          throw new Error('ক্যাশ ব্যালেন্স নেগেটিভ হওয়া অনুমোদিত নয়।');
+        }
+        await db.cashBankAccounts.update(cashAcc.id, {
+          currentBalance: newBal,
+          synced: false
+        });
+      }
 
       // Update operational cost tracking on FishBatch
       if (costType === 'FINGERLING') {
@@ -5963,6 +6149,15 @@ export interface FishHarvestSaleParams {
   harvestQuantity?: number;
   harvestQty?: number;
   harvestCount?: number;
+  quantity?: number;
+  harvest?: number;
+  harvestAmount?: number;
+  harvestedQty?: number;
+  harvestedQuantity?: number;
+  stockedQuantity?: number;
+  stockedQty?: number;
+  mortality?: number;
+  previousHarvest?: number;
   mortalityCount?: number;
   salePrice: number;
   paymentMethod: 'CASH' | 'BANK' | 'CREDIT';
@@ -6045,7 +6240,25 @@ export async function executeFishHarvestAndSaleTransaction(
       if (params.mortalityCount !== undefined && Number(params.mortalityCount) < 0) {
         throw new Error('মৃত মাছের সংখ্যা ঋণাত্মক হতে পারে না।');
       }
+      if ((params as any).mortality !== undefined && Number((params as any).mortality) < 0) {
+        throw new Error('মৃত মাছের সংখ্যা ঋণাত্মক হতে পারে না।');
+      }
       if (params.harvestQuantity !== undefined && Number(params.harvestQuantity) < 0) {
+        throw new Error('আহরণের সংখ্যা ঋণাত্মক হতে পারে না।');
+      }
+      if (params.harvestQty !== undefined && Number(params.harvestQty) < 0) {
+        throw new Error('আহরণের সংখ্যা ঋণাত্মক হতে পারে না।');
+      }
+      if (params.harvestCount !== undefined && Number(params.harvestCount) < 0) {
+        throw new Error('আহরণের সংখ্যা ঋণাত্মক হতে পারে না।');
+      }
+      if ((params as any).quantity !== undefined && Number((params as any).quantity) < 0) {
+        throw new Error('আহরণের সংখ্যা ঋণাত্মক হতে পারে না।');
+      }
+      if ((params as any).harvest !== undefined && Number((params as any).harvest) < 0) {
+        throw new Error('আহরণের সংখ্যা ঋণাত্মক হতে পারে না।');
+      }
+      if ((params as any).harvestAmount !== undefined && Number((params as any).harvestAmount) < 0) {
         throw new Error('আহরণের সংখ্যা ঋণাত্মক হতে পারে না।');
       }
       if (params.salePrice !== undefined && Number(params.salePrice) < 0) {
@@ -6053,22 +6266,41 @@ export async function executeFishHarvestAndSaleTransaction(
       }
 
       // Fish physical quantity validation:
-      // Original stocked quantity - previous mortality - previous harvested quantity = available quantity.
-      const originalStockedQty = Number(
+      // Available fish = stocked quantity − mortality − previous harvest.
+      const stockedQuantity = Number(
+        (params as any).stockedQuantity ??
+        (params as any).stockedQty ??
+        (freshBatch as any).stockedQuantity ??
+        (freshBatch as any).stockedQty ??
         freshBatch.originalStockedQty ??
         freshBatch.initialStockedQty ??
-        ((freshBatch.fingerlingQty || 0) + (freshBatch.mortalityCount || 0) + (freshBatch.harvestQuantity || freshBatch.totalHarvestedQty || 0))
+        freshBatch.fingerlingQty ??
+        0
       );
+      const originalStockedQty = stockedQuantity;
 
-      const previousMortality = Math.max(0, Number(freshBatch.mortalityCount) || 0);
-      const previousHarvestedQty = Math.max(0, Number(freshBatch.harvestQuantity ?? freshBatch.totalHarvestedQty) || 0);
-      const availableQuantity = Math.max(0, originalStockedQty - previousMortality - previousHarvestedQty);
+      const previousMortality = Math.max(0, Number((freshBatch as any).mortality ?? freshBatch.mortalityCount) || 0);
+      const cleanMortality = params.mortalityCount !== undefined
+        ? Number(params.mortalityCount)
+        : ((params as any).mortality !== undefined ? Number((params as any).mortality) : 0);
+      const totalMortality = previousMortality + cleanMortality;
 
-      if (availableQuantity <= 0) {
+      const previousHarvestedQty = Math.max(0, Number(
+        (freshBatch as any).previousHarvest ??
+        (freshBatch as any).previousHarvestQuantity ??
+        (freshBatch as any).previous_harvest ??
+        (freshBatch as any).harvestedQty ??
+        (freshBatch as any).harvestedQuantity ??
+        freshBatch.harvestQuantity ??
+        freshBatch.totalHarvestedQty
+      ) || 0);
+
+      const availableFish = Math.max(0, stockedQuantity - previousMortality - previousHarvestedQty);
+      const availableQuantity = availableFish;
+
+      if (availableFish <= 0) {
         throw new Error(`মাছের ব্যাচ ${freshBatch.id} এ কোনো অবশিষ্ট মাছ নেই (উপলব্ধ পরিমাণ: ০ টি)। নতুন আহরণ বা মৃত্যু নথিভুক্ত করা সম্ভব নয়।`);
       }
-
-      const cleanMortality = params.mortalityCount !== undefined ? Number(params.mortalityCount) : 0;
 
       // Determine requested harvest quantity
       let requestedHarvestQty: number | undefined = undefined;
@@ -6078,47 +6310,67 @@ export async function executeFishHarvestAndSaleTransaction(
         requestedHarvestQty = Number(params.harvestQty);
       } else if (params.harvestCount !== undefined) {
         requestedHarvestQty = Number(params.harvestCount);
+      } else if ((params as any).quantity !== undefined) {
+        requestedHarvestQty = Number((params as any).quantity);
+      } else if ((params as any).harvest !== undefined) {
+        requestedHarvestQty = Number((params as any).harvest);
+      } else if ((params as any).harvestAmount !== undefined) {
+        requestedHarvestQty = Number((params as any).harvestAmount);
+      } else if ((params as any).harvestedQty !== undefined) {
+        requestedHarvestQty = Number((params as any).harvestedQty);
+      } else if ((params as any).harvestedQuantity !== undefined) {
+        requestedHarvestQty = Number((params as any).harvestedQuantity);
       } else if (params.remainingFingerlingQty !== undefined) {
         if (params.remainingFingerlingQty < 0) {
           throw new Error('অবশিষ্ট মাছের সংখ্যা ঋণাত্মক হতে পারে না।');
         }
-        if (params.remainingFingerlingQty > (availableQuantity - cleanMortality)) {
+        if (params.remainingFingerlingQty > (availableFish - cleanMortality)) {
           throw new Error(
-            `অবশিষ্ট মাছের সংখ্যা (${params.remainingFingerlingQty} টি) বিদ্যমান অবশিষ্ট মাছের পরিমাণ (${availableQuantity - cleanMortality} টি) অপেক্ষা বেশি হতে পারে না।`
+            `অবশিষ্ট মাছের সংখ্যা (${params.remainingFingerlingQty} টি) বিদ্যমান অবশিষ্ট মাছের পরিমাণ (${availableFish - cleanMortality} টি) অপেক্ষা বেশি হতে পারে না।`
           );
         }
-        requestedHarvestQty = availableQuantity - cleanMortality - params.remainingFingerlingQty;
+        requestedHarvestQty = availableFish - cleanMortality - params.remainingFingerlingQty;
       } else if (!params.isPartialHarvest) {
-        requestedHarvestQty = Math.max(0, availableQuantity - cleanMortality);
+        requestedHarvestQty = Math.max(0, availableFish - cleanMortality);
       } else if (params.isPartialHarvest && params.harvestPortionRatio !== undefined && params.harvestPortionRatio > 0) {
-        const ratio = Math.min(1, Math.max(0.0001, params.harvestPortionRatio));
-        requestedHarvestQty = Math.round((availableQuantity - cleanMortality) * ratio);
+        if (params.harvestPortionRatio > 1) {
+          throw new Error('আংশিক আহরণের অনুপাত ১০০% বা ১.০ অপেক্ষা বেশি হতে পারে না।');
+        }
+        const ratio = Math.max(0.0001, params.harvestPortionRatio);
+        requestedHarvestQty = Math.round((availableFish - cleanMortality) * ratio);
       }
 
-      // Reject any harvest/mortality that exceeds the remaining physical quantity
-      if (cleanMortality > availableQuantity) {
+      // Reject any harvest/mortality that exceeds available fish
+      if (cleanMortality > availableFish) {
         throw new Error(
-          `মৃত মাছের সংখ্যা (${cleanMortality} টি) বিদ্যমান অবশিষ্ট মাছের পরিমাণ (${availableQuantity} টি) অপেক্ষা বেশি হতে পারে না (মূল স্টক: ${originalStockedQty}, পূর্ববর্তী মৃত্যু: ${previousMortality}, পূর্ববর্তী আহরণ: ${previousHarvestedQty})।`
+          `মৃত মাছের সংখ্যা (${cleanMortality} টি) বিদ্যমান অবশিষ্ট মাছের পরিমাণ (${availableFish} টি) অপেক্ষা বেশি হতে পারে না (মূল স্টক: ${stockedQuantity}, পূর্ববর্তী মৃত্যু: ${previousMortality}, পূর্ববর্তী আহরণ: ${previousHarvestedQty})।`
         );
       }
 
+      const availableForHarvest = availableFish - cleanMortality;
+
       if (requestedHarvestQty !== undefined) {
-        if (requestedHarvestQty > availableQuantity) {
+        if (requestedHarvestQty > availableFish) {
           throw new Error(
-            `আহরণের সংখ্যা (${requestedHarvestQty} টি) বিদ্যমান অবশিষ্ট মাছের পরিমাণ (${availableQuantity} টি) অপেক্ষা বেশি হতে পারে না (মূল স্টক: ${originalStockedQty}, পূর্ববর্তী মৃত্যু: ${previousMortality}, পূর্ববর্তী আহরণ: ${previousHarvestedQty})।`
+            `আহরণের সংখ্যা (${requestedHarvestQty} টি) বিদ্যমান অবশিষ্ট মাছের পরিমাণ (${availableFish} টি) অপেক্ষা বেশি হতে পারে না (মূল স্টক: ${stockedQuantity}, পূর্ববর্তী মৃত্যু: ${previousMortality}, পূর্ববর্তী আহরণ: ${previousHarvestedQty})।`
           );
         }
-        if ((requestedHarvestQty + cleanMortality) > availableQuantity) {
+        if (requestedHarvestQty > availableForHarvest) {
           throw new Error(
-            `আহরণ (${requestedHarvestQty} টি) এবং মৃত্যুজনিত সংখ্যা (${cleanMortality} টি) এর যোগফল মোট অবশিষ্ট মাছের পরিমাণ (${availableQuantity} টি) অপেক্ষা বেশি হতে পারে না (ঘাটতি: ${(requestedHarvestQty + cleanMortality) - availableQuantity} টি)।`
+            `আহরণের সংখ্যা (${requestedHarvestQty} টি) বিদ্যমান অবশিষ্ট মাছের পরিমাণ (${availableForHarvest} টি) অপেক্ষা বেশি হতে পারে না (মূল স্টক: ${stockedQuantity}, মৃত্যু: ${totalMortality}, পূর্ববর্তী আহরণ: ${previousHarvestedQty})।`
+          );
+        }
+        if ((requestedHarvestQty + cleanMortality) > availableFish) {
+          throw new Error(
+            `আহরণ (${requestedHarvestQty} টি) এবং মৃত্যুজনিত সংখ্যা (${cleanMortality} টি) এর যোগফল মোট অবশিষ্ট মাছের পরিমাণ (${availableFish} টি) অপেক্ষা বেশি হতে পারে না (ঘাটতি: ${(requestedHarvestQty + cleanMortality) - availableFish} টি)।`
           );
         }
       }
 
       const finalHarvestQty = requestedHarvestQty !== undefined
         ? requestedHarvestQty
-        : (params.isPartialHarvest ? 0 : Math.max(0, availableQuantity - cleanMortality));
-      const remainingFishCount = Math.max(0, availableQuantity - finalHarvestQty - cleanMortality);
+        : (params.isPartialHarvest ? 0 : Math.max(0, availableForHarvest));
+      const remainingFishCount = Math.max(0, availableFish - finalHarvestQty - cleanMortality);
 
       const cleanWeight = Math.max(0, Number(harvestWeightKg) || 0);
       const cleanPrice = Math.max(0, Math.round((Number(salePrice) || 0) * 100) / 100);
@@ -6662,7 +6914,7 @@ export async function executeFishHarvestAndSaleTransaction(
       freshBatch.originalStockedQty = originalStockedQty;
       freshBatch.harvestQuantity = previousHarvestedQty + finalHarvestQty;
       freshBatch.totalHarvestedQty = freshBatch.harvestQuantity;
-      freshBatch.mortalityCount = previousMortality + cleanMortality;
+      freshBatch.mortalityCount = totalMortality;
       freshBatch.fingerlingQty = remainingFishCount;
       freshBatch.harvestWeightKg = Math.round(((freshBatch.harvestWeightKg || 0) + cleanWeight) * 100) / 100;
       freshBatch.harvestRevenue = Math.round(((freshBatch.harvestRevenue || 0) + cleanPrice) * 100) / 100;
@@ -6852,16 +7104,26 @@ export async function executeCropProductionCostTransaction(
       let creditAccCode: string = CANONICAL_ACCOUNTS.CASH;
       let creditAccName = 'নগদ টাকা (Cash on Hand)';
 
+      let invItem: InventoryItem | undefined;
+      let bankAcc: CashBankAccount | undefined;
+      let cashAcc: CashBankAccount | undefined;
+      let supplier: Party | undefined;
+      let availableQty = 0;
+      let requestedQty = 0;
+
       if (paymentMethod === 'INVENTORY') {
         if (!inventoryItemId) {
           throw new Error('ইনভেন্টরি থেকে ব্যবহারের জন্য আইটেম নির্বাচন আবশ্যক।');
         }
-        const invItem = await db.inventoryItems.get(inventoryItemId);
-        if (!invItem) {
+        const fetchedItem = await db.inventoryItems.get(inventoryItemId);
+        if (!fetchedItem) {
           throw new Error('নির্বাচিত আইটেমটি ইনভেন্টরিতে পাওয়া যায়নি।');
         }
-        if (cleanQty > 0 && invItem.currentStock < cleanQty) {
-          throw new Error(`ইনভেন্টরিতে পর্যাপ্ত মজুদ নেই (মজুদ: ${invItem.currentStock} ${invItem.unit}, প্রয়োজন: ${cleanQty} ${invItem.unit})।`);
+        invItem = fetchedItem;
+        availableQty = Number(invItem.currentStock || 0);
+        requestedQty = cleanQty;
+        if (requestedQty > availableQty) {
+          throw new Error(`ইনভেন্টরিতে পর্যাপ্ত মজুদ নেই (মজুদ: ${availableQty} ${invItem.unit || ''}, প্রয়োজন: ${requestedQty} ${invItem.unit || ''})।`);
         }
 
         // Determine inventory asset account: 1051 Feed, 1052 Seed & Fertilizer, 1053 Raw Materials, etc.
@@ -6884,71 +7146,48 @@ export async function executeCropProductionCostTransaction(
           await safeInsert(db.accounts, newAcc, { idPrefix: 'acc' });
           accounts.push(newAcc);
         }
-
-        // Decrement inventory stock
-        if (cleanQty > 0) {
-          await db.inventoryItems.update(invItem.id, {
-            currentStock: Math.max(0, Math.round((invItem.currentStock - cleanQty) * 1000) / 1000),
-            synced: false
-          });
-
-          await safeInsert(
-            db.stockMovements,
-            {
-              id: generateUniqueId('stk'),
-              itemId: invItem.id,
-              date: dateStr,
-              movementType: 'CONSUMPTION',
-              referenceId: freshCycle.id,
-              quantity: cleanQty,
-              unitCost: invItem.avgCostPrice || (cleanQty > 0 ? cleanAmount / cleanQty : 0),
-              totalValue: cleanAmount,
-              notes: notes || `শস্য চক্র ${freshCycle.id} (${freshCycle.cropName} - ${freshCycle.plotName}) উৎপাদন খরচ বাবদ ব্যবহার`
-            },
-            { idPrefix: 'stk' }
-          );
-        }
       } else if (paymentMethod === 'BANK') {
         const targetBankId = bankAccountId || (params as any).cashBankAccountId;
-        if (!targetBankId) {
+        if (targetBankId) {
+          bankAcc = await db.cashBankAccounts.get(targetBankId);
+        }
+        if (!bankAcc) {
+          bankAcc = await db.cashBankAccounts.where('accountType').equals('BANK').first();
+        }
+        if (!bankAcc) {
           throw new Error('ব্যাংক পরিশোধের জন্য ব্যাংক হিসাব নির্বাচন আবশ্যক।');
         }
-        const bankAcc = await db.cashBankAccounts.get(targetBankId);
-        if (!bankAcc) {
-          throw new Error('নির্বাচিত ব্যাংক হিসাবটি পাওয়া যায়নি।');
+        const availableBalance = Number(bankAcc.currentBalance || 0);
+        if (availableBalance < cleanAmount) {
+          throw new Error(
+            `উৎস ব্যাংক হিসাবে (${bankAcc.accountName || bankAcc.name || 'ব্যাংক'}) পর্যাপ্ত ব্যালেন্স নেই (বর্তমান স্থিতি: ৳${availableBalance}, প্রয়োজনীয় উৎপাদন খরচ: ৳${cleanAmount})। ব্যাংক ব্যালেন্স নেগেটিভ হওয়া অনুমোদিত নয়।`
+          );
         }
         creditAccCode = CANONICAL_ACCOUNTS.BANK;
         creditAccName = 'ব্যাংক হিসাব (Bank Accounts)';
-
-        await db.cashBankAccounts.update(bankAcc.id, {
-          currentBalance: Math.round((bankAcc.currentBalance - cleanAmount) * 100) / 100,
-          synced: false
-        });
       } else if (paymentMethod === 'CREDIT') {
         creditAccCode = CANONICAL_ACCOUNTS.ACCOUNTS_PAYABLE;
         creditAccName = 'সরবরাহকারীর নিকট দেনা (Accounts Payable)';
 
         if (supplierId) {
-          const supplier = await db.parties.get(supplierId);
-          if (supplier) {
-            await db.parties.update(supplier.id, {
-              balance: Math.round(((supplier.balance || 0) + cleanAmount) * 100) / 100,
-              synced: false
-            });
-          }
+          supplier = await db.parties.get(supplierId);
         }
       } else {
         // CASH
+        const targetAccId = (params as any).cashBankAccountId || bankAccountId;
+        if (targetAccId) cashAcc = await db.cashBankAccounts.get(targetAccId);
+        if (!cashAcc) cashAcc = await db.cashBankAccounts.where('accountType').equals('CASH').first();
+        if (!cashAcc) {
+          throw new Error('নগদ হিসাব (Cash Account) পাওয়া যায়নি।');
+        }
+        const availableBalance = Number(cashAcc.currentBalance || 0);
+        if (availableBalance < cleanAmount) {
+          throw new Error(
+            `উৎস নগদ হিসাবে (${cashAcc.accountName || cashAcc.name || 'ক্যাশ'}) পর্যাপ্ত ব্যালেন্স নেই (বর্তমান স্থিতি: ৳${availableBalance}, প্রয়োজনীয় উৎপাদন খরচ: ৳${cleanAmount})। ক্যাশ ব্যালেন্স নেগেটিভ হওয়া অনুমোদিত নয়।`
+          );
+        }
         creditAccCode = CANONICAL_ACCOUNTS.CASH;
         creditAccName = 'নগদ টাকা (Cash on Hand)';
-
-        const cashAcc = await db.cashBankAccounts.where('accountType').equals('CASH').first();
-        if (cashAcc) {
-          await db.cashBankAccounts.update(cashAcc.id, {
-            currentBalance: Math.round((cashAcc.currentBalance - cleanAmount) * 100) / 100,
-            synced: false
-          });
-        }
       }
 
       // Duplicate prevention: verify identical cost entry for this cycle hasn't already been posted
@@ -7015,6 +7254,53 @@ export async function executeCropProductionCostTransaction(
         { accounts, skipDbPut: true }
       );
       await safeInsert(db.journalEntries, journalEntry, { idPrefix: 'j' });
+
+      // After accounting validation and journal entry succeed, update inventory or payment accounts
+      if (paymentMethod === 'INVENTORY' && invItem && cleanQty > 0) {
+        await db.inventoryItems.update(invItem.id, {
+          currentStock: Math.round((availableQty - requestedQty) * 1000) / 1000,
+          synced: false
+        });
+
+        await safeInsert(
+          db.stockMovements,
+          {
+            id: generateUniqueId('stk'),
+            itemId: invItem.id,
+            date: dateStr,
+            movementType: 'CONSUMPTION',
+            referenceId: freshCycle.id,
+            quantity: cleanQty,
+            unitCost: invItem.avgCostPrice || (cleanQty > 0 ? cleanAmount / cleanQty : 0),
+            totalValue: cleanAmount,
+            notes: notes || `শস্য চক্র ${freshCycle.id} (${freshCycle.cropName} - ${freshCycle.plotName}) উৎপাদন খরচ বাবদ ব্যবহার`
+          },
+          { idPrefix: 'stk' }
+        );
+      } else if (paymentMethod === 'BANK' && bankAcc) {
+        const newBal = Math.round((bankAcc.currentBalance - cleanAmount) * 100) / 100;
+        if (newBal < 0) {
+          throw new Error('ব্যাংক ব্যালেন্স নেগেটিভ হওয়া অনুমোদিত নয়।');
+        }
+        await db.cashBankAccounts.update(bankAcc.id, {
+          currentBalance: newBal,
+          synced: false
+        });
+      } else if (paymentMethod === 'CREDIT' && supplier) {
+        await db.parties.update(supplier.id, {
+          balance: Math.round(((supplier.balance || 0) + cleanAmount) * 100) / 100,
+          synced: false
+        });
+      } else if (paymentMethod === 'CASH' && cashAcc) {
+        const newBal = Math.round((cashAcc.currentBalance - cleanAmount) * 100) / 100;
+        if (newBal < 0) {
+          throw new Error('ক্যাশ ব্যালেন্স নেগেটিভ হওয়া অনুমোদিত নয়।');
+        }
+        await db.cashBankAccounts.update(cashAcc.id, {
+          currentBalance: newBal,
+          synced: false
+        });
+      }
 
       // Update CropCycle cost fields
       if (costType === 'SEED') {
@@ -7994,7 +8280,20 @@ export async function reclassifyFishExpenseToBiologicalAsset(
  */
 export interface CropHarvestSaleParams {
   cycleId: string;
-  harvestYieldKg: number;
+  harvestYieldKg?: number;
+  harvestQuantity?: number;
+  harvestQty?: number;
+  harvestCount?: number;
+  quantity?: number;
+  harvest?: number;
+  harvestAmount?: number;
+  yieldKg?: number;
+  producedQuantity?: number;
+  producedQty?: number;
+  productionQuantity?: number;
+  yieldQuantity?: number;
+  totalYieldKg?: number;
+  previousHarvest?: number;
   salePrice: number;
   paymentMethod: 'CASH' | 'BANK' | 'CREDIT';
   bankAccountId?: string;
@@ -8070,7 +8369,67 @@ export async function executeCropHarvestAndSaleTransaction(
         throw new Error(`এই শস্য চক্রটি (${freshCycle.id}) ইতিমধ্যে কর্তন ও বিক্রয় সম্পন্ন হয়েছে।`);
       }
 
+      // Crop available production validation:
+      // Available crop = produced/yield quantity − previous harvest.
+      const producedYieldQuantity = Number(
+        (params as any).producedQuantity ??
+        (params as any).producedQty ??
+        (params as any).productionQuantity ??
+        (params as any).yieldQuantity ??
+        (params as any).yieldKg ??
+        params.availableProductionKg ??
+        params.expectedYieldKg ??
+        params.totalAvailableYieldKg ??
+        params.availableProduction ??
+        (params as any).totalYieldKg ??
+        (freshCycle as any).producedQuantity ??
+        (freshCycle as any).producedQty ??
+        (freshCycle as any).productionQuantity ??
+        (freshCycle as any).totalYieldKg ??
+        (freshCycle as any).yieldQuantity ??
+        (freshCycle as any).yieldKg ??
+        (freshCycle as any).actualYieldKg ??
+        freshCycle.expectedYieldKg ??
+        freshCycle.totalAvailableYieldKg ??
+        freshCycle.availableProductionKg ??
+        0
+      );
+      const availableProduction = producedYieldQuantity;
+
+      const previouslyHarvested = Math.max(0, Number(
+        (params as any).previousHarvest ??
+        (params as any).previousHarvestYieldKg ??
+        (freshCycle as any).previousHarvest ??
+        (freshCycle as any).previousHarvestYieldKg ??
+        (freshCycle as any).totalHarvestedKg ??
+        (freshCycle as any).totalHarvestYieldKg ??
+        (freshCycle as any).harvestedQuantity ??
+        (freshCycle as any).harvestedYieldKg ??
+        freshCycle.harvestYieldKg
+      ) || 0);
+
+      // Determine requested harvest quantity
+      let requestedHarvestQty: number | undefined = undefined;
+      if (params.harvestYieldKg !== undefined) {
+        requestedHarvestQty = Number(params.harvestYieldKg);
+      } else if ((params as any).harvestQuantity !== undefined) {
+        requestedHarvestQty = Number((params as any).harvestQuantity);
+      } else if ((params as any).harvestQty !== undefined) {
+        requestedHarvestQty = Number((params as any).harvestQty);
+      } else if ((params as any).quantity !== undefined) {
+        requestedHarvestQty = Number((params as any).quantity);
+      } else if ((params as any).harvest !== undefined) {
+        requestedHarvestQty = Number((params as any).harvest);
+      } else if ((params as any).yieldKg !== undefined) {
+        requestedHarvestQty = Number((params as any).yieldKg);
+      } else if ((params as any).harvestAmount !== undefined) {
+        requestedHarvestQty = Number((params as any).harvestAmount);
+      }
+
       // Non-negative input validation (do not silently reduce/clamp user input)
+      if (requestedHarvestQty !== undefined && requestedHarvestQty < 0) {
+        throw new Error('শস্য কর্তনের পরিমাণ ঋণাত্মক হতে পারে না।');
+      }
       if (params.harvestYieldKg !== undefined && Number(params.harvestYieldKg) < 0) {
         throw new Error('শস্য কর্তনের ফলন ঋণাত্মক হতে পারে না।');
       }
@@ -8078,39 +8437,29 @@ export async function executeCropHarvestAndSaleTransaction(
         throw new Error('বিক্রয়মূল্য ঋণাত্মক হতে পারে না।');
       }
 
-      // Crop available production validation:
-      // Available production/yield - previously harvested quantity = remaining production.
-      const availableProduction = Number(
-        params.availableProductionKg ??
-        params.expectedYieldKg ??
-        params.totalAvailableYieldKg ??
-        params.availableProduction ??
-        freshCycle.expectedYieldKg ??
-        freshCycle.totalAvailableYieldKg ??
-        freshCycle.availableProductionKg ??
-        0
-      );
-
-      const previouslyHarvested = Math.max(0, Number(freshCycle.harvestYieldKg) || 0);
-
-      const cleanYield = Math.max(0, Number(harvestYieldKg) || 0);
-      const cleanPrice = Math.max(0, Math.round((Number(salePrice) || 0) * 100) / 100);
+      // Available crop = produced/yield quantity − previous harvest
+      const availableCrop = availableProduction > 0
+        ? Math.max(0, Math.round((availableProduction - previouslyHarvested) * 100) / 100)
+        : undefined;
 
       if (availableProduction > 0) {
-        const remainingProduction = Math.max(0, Math.round((availableProduction - previouslyHarvested) * 100) / 100);
-
-        if (remainingProduction <= 0) {
+        if (availableCrop !== undefined && availableCrop <= 0) {
           throw new Error(
             `শস্য চক্র ${freshCycle.id} এর সম্পূর্ণ ফলন (${availableProduction} কেজি) ইতিপূর্বে কর্তন সম্পন্ন হয়েছে। অবশিষ্ট উৎপাদন ০ কেজি। নতুন কর্তন অনুমোদিত নয়।`
           );
         }
 
-        if (cleanYield > remainingProduction) {
+        if (requestedHarvestQty !== undefined && availableCrop !== undefined && requestedHarvestQty > availableCrop) {
           throw new Error(
-            `শস্য চক্র ${freshCycle.id} এর কর্তনের পরিমাণ অনুমোদিত অবশিষ্ট ফলন অতিক্রম করেছে: মোট উৎপাদন/ফলন ${availableProduction} কেজি, ইতিপূর্বে কর্তনকৃত ${previouslyHarvested} কেজি, অবশিষ্ট উৎপাদন মাত্র ${remainingProduction} কেজি। কিন্তু কর্তন চাওয়া হয়েছে ${cleanYield} কেজি (অতিরিক্ত: ${Math.round((cleanYield - remainingProduction) * 100) / 100} কেজি)। ব্যবহারকারীর ইনপুট সংক্ষেপ না করে লেনদেন বাতিল করা হলো।`
+            `শস্য চক্র ${freshCycle.id} এর কর্তনের পরিমাণ অনুমোদিত অবশিষ্ট ফলন অতিক্রম করেছে: মোট উৎপাদন/ফলন ${availableProduction} কেজি, ইতিপূর্বে কর্তনকৃত ${previouslyHarvested} কেজি, অবশিষ্ট উৎপাদন মাত্র ${availableCrop} কেজি। কিন্তু কর্তন চাওয়া হয়েছে ${requestedHarvestQty} কেজি (অতিরিক্ত: ${Math.round((requestedHarvestQty - availableCrop) * 100) / 100} কেজি)। ব্যবহারকারীর ইনপুট সংক্ষেপ না করে লেনদেন বাতিল করা হলো।`
           );
         }
       }
+
+      const cleanYield = requestedHarvestQty !== undefined
+        ? requestedHarvestQty
+        : (params.isPartialHarvest ? 0 : (availableCrop !== undefined ? availableCrop : Math.max(0, Number(harvestYieldKg) || 0)));
+      const cleanPrice = Math.max(0, Math.round((Number(salePrice) || 0) * 100) / 100);
 
       if (cleanYield <= 0 && cleanPrice <= 0) {
         throw new Error('কর্তনের ফলন অথবা বিক্রয়মূল্য অবশ্যই শূন্যের বেশি হতে হবে।');
