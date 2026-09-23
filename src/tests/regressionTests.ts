@@ -6256,6 +6256,236 @@ async function runRegressionTestsInternal(): Promise<TestResult> {
     assert(finalStock === 100, 'Successful reversal: Stock restored to 100.');
     assert(finalSale?.status === 'CANCELLED', 'Successful reversal: Sale marked CANCELLED.');
 
+    // =========================================================================
+    // TASK A2: STRICT CASH/BANK ACCOUNT HANDLING
+    // If the selected cash/bank account does not exist:
+    // - reject the transaction
+    // - do not post the journal
+    // - do not change operational balance
+    // - do NOT fall back to another account
+    // =========================================================================
+    const a2Db = createMockAgroDatabase();
+    for (const acc of DEFAULT_CHART_OF_ACCOUNTS) {
+      await a2Db.accounts.put(acc);
+    }
+    await a2Db.cashBankAccounts.put({
+      id: 'cb_cash_real',
+      accountName: 'Real Cash Account',
+      accountType: 'CASH',
+      currentBalance: 50000,
+      synced: false
+    });
+    await a2Db.cashBankAccounts.put({
+      id: 'cb_bank_real',
+      accountName: 'Real Bank Account',
+      accountType: 'BANK',
+      currentBalance: 75000,
+      synced: false
+    });
+
+    const a2Customer: Party = {
+      id: 'cust_a2_1',
+      name: 'A2 Customer',
+      type: 'CUSTOMER',
+      phone: '01700000000',
+      balance: 0,
+      synced: false
+    };
+    await a2Db.parties.put(a2Customer);
+
+    const a2Item: InventoryItem = {
+      id: 'item_a2_1',
+      code: 'ITEM-A2-1',
+      nameBn: 'A2 Test Item',
+      nameEn: 'A2 Test Item',
+      category: 'FEED',
+      unit: 'কেজি',
+      currentStock: 50,
+      avgCostPrice: 100,
+      sellingPrice: 150,
+      reorderLevel: 5,
+      synced: false
+    };
+    await a2Db.inventoryItems.put(a2Item);
+
+    // 1. executeSaleTransaction with non-existent bank account ID
+    let a2SaleFailed = false;
+    try {
+      await executeSaleTransaction(
+        {
+          customer: a2Customer,
+          item: a2Item,
+          quantity: 10,
+          unitPrice: 150,
+          paymentMethod: 'BANK',
+          bankAccountId: 'non_existent_bank_acc',
+          date: '2026-04-12',
+          currentUserId: 'test_user'
+        },
+        a2Db
+      );
+    } catch {
+      a2SaleFailed = true;
+    }
+    assert(a2SaleFailed, 'Task A2: executeSaleTransaction must reject non-existent bank account without fallback.');
+    let a2Journals = await a2Db.journalEntries.toArray();
+    assert(a2Journals.length === 0, 'Task A2: No journal posted for failed sale.');
+    let a2Bank = (await a2Db.cashBankAccounts.get('cb_bank_real'))!.currentBalance;
+    let a2Cash = (await a2Db.cashBankAccounts.get('cb_cash_real'))!.currentBalance;
+    assert(a2Bank === 75000 && a2Cash === 50000, 'Task A2: Operational cash/bank balances remain unchanged on failed sale.');
+
+    // 2. executePaymentTransaction with non-existent bank account ID
+    let a2PaymentFailed = false;
+    try {
+      await executePaymentTransaction(
+        {
+          parentType: 'PURCHASE',
+          parentId: 'pur_dummy_1',
+          paymentMethod: 'BANK',
+          bankAccountId: 'non_existent_bank_acc',
+          amount: 5000,
+          date: '2026-04-12',
+          currentUserId: 'test_user'
+        },
+        a2Db
+      );
+    } catch {
+      a2PaymentFailed = true;
+    }
+    assert(a2PaymentFailed, 'Task A2: executePaymentTransaction must reject non-existent bank account without fallback.');
+    a2Journals = await a2Db.journalEntries.toArray();
+    assert(a2Journals.length === 0, 'Task A2: No journal posted for failed payment.');
+    a2Bank = (await a2Db.cashBankAccounts.get('cb_bank_real'))!.currentBalance;
+    assert(a2Bank === 75000, 'Task A2: Bank balance remains unchanged on failed payment.');
+
+    // 3. executeFishHarvestAndSaleTransaction with non-existent bank account ID
+    const a2FishBatch: FishBatch = {
+      id: 'batch_a2_1',
+      pondId: 'pond_1',
+      pondName: 'Pond A2',
+      species: 'Tilapia',
+      fingerlingQty: 1000,
+      fingerlingCost: 2000,
+      totalFeedKg: 50,
+      totalFeedCost: 3000,
+      mortalityCount: 0,
+      currentEstimatedWeightKg: 500,
+      stockingDate: '2026-01-01',
+      status: 'ACTIVE',
+      totalCost: 10000,
+      synced: false
+    };
+    await a2Db.fishBatches.put(a2FishBatch);
+
+    let a2FishHarvestFailed = false;
+    try {
+      await executeFishHarvestAndSaleTransaction(
+        {
+          batchId: 'batch_a2_1',
+          harvestWeightKg: 500,
+          salePrice: 50000,
+          paymentMethod: 'BANK',
+          bankAccountId: 'non_existent_bank_acc',
+          currentUserId: 'test_user',
+          date: '2026-04-12'
+        },
+        a2Db
+      );
+    } catch {
+      a2FishHarvestFailed = true;
+    }
+    assert(a2FishHarvestFailed, 'Task A2: executeFishHarvestAndSaleTransaction must reject non-existent bank account without fallback.');
+    a2Journals = await a2Db.journalEntries.toArray();
+    assert(a2Journals.length === 0, 'Task A2: No journal posted for failed fish harvest sale.');
+    a2Bank = (await a2Db.cashBankAccounts.get('cb_bank_real'))!.currentBalance;
+    assert(a2Bank === 75000, 'Task A2: Bank balance remains unchanged on failed fish harvest sale.');
+
+    // 4. executeFixedAssetAcquisitionTransaction with non-existent bank account ID
+    let a2FaAcqFailed = false;
+    try {
+      await executeFixedAssetAcquisitionTransaction(
+        {
+          name: 'A2 Tractor',
+          category: 'MACHINERY',
+          originalCost: 20000,
+          paymentMethod: 'BANK',
+          bankAccountId: 'non_existent_bank_acc',
+          purchaseDate: '2026-04-12',
+          salvageValue: 2000,
+          usefulLifeYears: 5,
+          currentUserId: 'test_user'
+        },
+        a2Db
+      );
+    } catch {
+      a2FaAcqFailed = true;
+    }
+    assert(a2FaAcqFailed, 'Task A2: executeFixedAssetAcquisitionTransaction must reject non-existent bank account without fallback.');
+    a2Journals = await a2Db.journalEntries.toArray();
+    assert(a2Journals.length === 0, 'Task A2: No journal posted for failed asset acquisition.');
+    a2Bank = (await a2Db.cashBankAccounts.get('cb_bank_real'))!.currentBalance;
+    assert(a2Bank === 75000, 'Task A2: Bank balance remains unchanged on failed asset acquisition.');
+
+    // 5. executeFixedAssetDisposalTransaction with non-existent bank account ID
+    const a2Asset: FixedAsset = {
+      id: 'fa_a2_1',
+      name: 'A2 Old Pump',
+      category: 'EQUIPMENT',
+      originalCost: 10000,
+      accumulatedDepreciation: 5000,
+      currentBookValue: 5000,
+      salvageValue: 1000,
+      usefulLifeYears: 5,
+      depreciationRatePercent: 20,
+      purchaseDate: '2025-01-01',
+      status: 'ACTIVE',
+      synced: false
+    };
+    await a2Db.fixedAssets.put(a2Asset);
+
+    let a2FaDispFailed = false;
+    try {
+      await executeFixedAssetDisposalTransaction(
+        {
+          assetId: 'fa_a2_1',
+          disposalDate: '2026-04-12',
+          disposalProceeds: 6000,
+          paymentMethod: 'BANK',
+          bankAccountId: 'non_existent_bank_acc'
+        },
+        a2Db
+      );
+    } catch {
+      a2FaDispFailed = true;
+    }
+    assert(a2FaDispFailed, 'Task A2: executeFixedAssetDisposalTransaction must reject non-existent bank account without fallback.');
+    a2Journals = await a2Db.journalEntries.toArray();
+    assert(a2Journals.length === 0, 'Task A2: No journal posted for failed asset disposal.');
+    a2Bank = (await a2Db.cashBankAccounts.get('cb_bank_real'))!.currentBalance;
+    assert(a2Bank === 75000, 'Task A2: Bank balance remains unchanged on failed asset disposal.');
+
+    // 6. executeFixedAssetDisposalTransaction with non-existent cash account ID
+    let a2FaDispCashFailed = false;
+    try {
+      await executeFixedAssetDisposalTransaction(
+        {
+          assetId: 'fa_a2_1',
+          disposalDate: '2026-04-12',
+          disposalProceeds: 6000,
+          paymentMethod: 'CASH',
+          bankAccountId: 'non_existent_cash_acc'
+        },
+        a2Db
+      );
+    } catch {
+      a2FaDispCashFailed = true;
+    }
+    assert(a2FaDispCashFailed, 'Task A2: executeFixedAssetDisposalTransaction must reject non-existent cash account without fallback.');
+    a2Journals = await a2Db.journalEntries.toArray();
+    assert(a2Journals.length === 0, 'Task A2: No journal posted for failed asset cash disposal.');
+    a2Cash = (await a2Db.cashBankAccounts.get('cb_cash_real'))!.currentBalance;
+    assert(a2Cash === 50000, 'Task A2: Cash balance remains unchanged on failed asset cash disposal.');
+
 
 
 

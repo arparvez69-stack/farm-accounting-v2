@@ -182,15 +182,27 @@ export async function executeFixedAssetAcquisitionTransaction(
     let effectiveSupplierId: string | undefined = undefined;
     let bAcc: any = null;
     let sParty: any = null;
+    let cashAcc: any = null;
 
     if (method === 'CASH') {
-      const cashAcc = await dbInstance.cashBankAccounts.where('accountType').equals('CASH').first();
-      if (cashAcc && Number(cashAcc.currentBalance || 0) < cost) {
+      const targetAccId = (params as any).cashBankAccountId || (params as any).bankAccountId;
+      if (targetAccId) {
+        cashAcc = await dbInstance.cashBankAccounts.get(targetAccId);
+        if (!cashAcc) {
+          throw new Error(`নির্বাচিত নগদ হিসাব (${targetAccId}) পাওয়া যায়নি।`);
+        }
+      } else {
+        cashAcc = await dbInstance.cashBankAccounts.where('accountType').equals('CASH').first();
+        if (!cashAcc) {
+          throw new Error('নগদ হিসাব (Cash Account) পাওয়া যায়নি।');
+        }
+      }
+      if (Number(cashAcc.currentBalance || 0) < cost) {
         throw new Error(`নগদ তহবিলে পর্যাপ্ত ব্যালেন্স নেই (Insufficient cash balance: ৳${cashAcc.currentBalance || 0}, ক্রয়মূল্য: ৳${cost})। স্থায়ী সম্পদ ক্রয়ে ক্যাশ ব্যালেন্স নেগেটিভ হওয়া নিষিদ্ধ।`);
       }
     } else if (method === 'BANK') {
       paymentCode = CANONICAL_ACCOUNTS.BANK || '1030';
-      effectiveBankId = params.bankAccountId;
+      effectiveBankId = params.bankAccountId || (params as any).cashBankAccountId;
       if (!effectiveBankId) {
         throw new Error('ব্যাংক পরিশোধের ক্ষেত্রে ব্যাংক হিসাব নির্বাচন করা বাধ্যতামূলক (Bank account is required).');
       }
@@ -265,14 +277,11 @@ export async function executeFixedAssetAcquisitionTransaction(
     await safeInsert(dbInstance.journalEntries, journalEntry, { idPrefix: 'j' });
 
     // 3. Operational Cash/Bank or Supplier AP Subledger update
-    if (method === 'CASH') {
-      const cashAcc = await dbInstance.cashBankAccounts.where('accountType').equals('CASH').first();
-      if (cashAcc) {
-        await dbInstance.cashBankAccounts.update(cashAcc.id, {
-          currentBalance: Math.round((cashAcc.currentBalance - cost) * 100) / 100,
-          synced: false
-        });
-      }
+    if (method === 'CASH' && cashAcc) {
+      await dbInstance.cashBankAccounts.update(cashAcc.id, {
+        currentBalance: Math.round((cashAcc.currentBalance - cost) * 100) / 100,
+        synced: false
+      });
     } else if (method === 'BANK' && effectiveBankId) {
       await dbInstance.cashBankAccounts.update(effectiveBankId, {
         currentBalance: Math.round((bAcc.currentBalance - cost) * 100) / 100,
@@ -956,7 +965,7 @@ export async function executeFixedAssetDisposalTransaction(
     const cost = Number(freshAsset.originalCost || (freshAsset as any).disposedOriginalCost || 0);
     const accum = Number(freshAsset.accumulatedDepreciation || (freshAsset as any).disposedAccumulatedDepreciation || 0);
     const carryingValue = Math.round(Math.max(0, cost - accum) * 100) / 100;
-    const proceeds = Math.max(0, Number(params.disposalProceeds || 0));
+    const proceeds = Math.max(0, Number(params.disposalProceeds ?? (params as any).proceeds ?? 0));
     const gainLoss = Math.round((proceeds - carryingValue) * 100) / 100;
 
     // 5. Ensure Chart of Accounts has 7020 Gain/Loss on Asset Disposal
@@ -992,50 +1001,43 @@ export async function executeFixedAssetDisposalTransaction(
 
     if (proceeds > 0) {
       if (paymentMethod === 'BANK') {
-        if (!params.bankAccountId) {
+        const targetBankId = params.bankAccountId || (params as any).cashBankAccountId;
+        if (!targetBankId) {
           throw new Error('ব্যাংক হিসাব নির্বাচন করুন (Bank account is required for bank payment).');
         }
-        const bAcc = await dbInstance.cashBankAccounts.get(params.bankAccountId);
+        const bAcc = await dbInstance.cashBankAccounts.get(targetBankId);
         if (!bAcc) {
-          throw new Error(`Bank account with ID "${params.bankAccountId}" not found.`);
+          throw new Error(`Bank account with ID "${targetBankId}" not found.`);
         }
         paymentCode = CANONICAL_ACCOUNTS.BANK;
         paymentAccName = bAcc.name || 'ব্যাংক হিসাব (Bank Accounts)';
-        receivingBankId = params.bankAccountId;
+        receivingBankId = targetBankId;
       } else {
         paymentCode = CANONICAL_ACCOUNTS.CASH;
+        const targetAccId = (params as any).cashBankAccountId || params.bankAccountId;
         let cashAcc: any = undefined;
-        if (dbInstance.cashBankAccounts.where) {
-          try {
-            cashAcc = await dbInstance.cashBankAccounts.where('accountType').equals('CASH').first();
-          } catch {
-            // fallback to toArray
+        if (targetAccId) {
+          cashAcc = await dbInstance.cashBankAccounts.get(targetAccId);
+          if (!cashAcc) {
+            throw new Error(`নির্বাচিত নগদ হিসাব (${targetAccId}) পাওয়া যায়নি।`);
+          }
+        } else {
+          if (dbInstance.cashBankAccounts.where) {
+            try {
+              cashAcc = await dbInstance.cashBankAccounts.where('accountType').equals('CASH').first();
+            } catch {
+              // fallback to toArray
+            }
+          }
+          if (!cashAcc) {
+            const allCB = await dbInstance.cashBankAccounts.toArray();
+            cashAcc = allCB.find((cb: any) => cb.accountType === 'CASH');
+          }
+          if (!cashAcc) {
+            throw new Error('নগদ হিসাব (Cash Account) পাওয়া যায়নি।');
           }
         }
-        if (!cashAcc) {
-          const allCB = await dbInstance.cashBankAccounts.toArray();
-          cashAcc = allCB.find((cb: any) =>
-            cb.accountType === 'CASH' ||
-            cb.code === '1010' ||
-            cb.name?.toLowerCase().includes('cash') ||
-            cb.name?.includes('নগদ')
-          ) || allCB[0];
-        }
-        if (!cashAcc && proceeds > 0) {
-          cashAcc = {
-            id: 'cb_cash_default',
-            accountName: 'নগদ টাকা (Cash on Hand)',
-            name: 'নগদ টাকা (Cash on Hand)',
-            accountType: 'CASH',
-            accountNumber: '1010',
-            currentBalance: 0,
-            synced: false
-          };
-          await safeInsert(dbInstance.cashBankAccounts, cashAcc, { idPrefix: 'cb' });
-        }
-        if (cashAcc) {
-          receivingBankId = cashAcc.id;
-        }
+        receivingBankId = cashAcc.id;
       }
     }
 
