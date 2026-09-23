@@ -109,6 +109,7 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
   const [repaymentSourceAccId, setRepaymentSourceAccId] = useState('');
   const [repaymentDate, setRepaymentDate] = useState(new Date().toISOString().split('T')[0]);
   const [repaymentNote, setRepaymentNote] = useState('');
+  const [submittingRepayment, setSubmittingRepayment] = useState(false);
 
   // New Investor Modal
   const [showNewInvestor, setShowNewInvestor] = useState(false);
@@ -298,7 +299,7 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
   // EXECUTE LOAN REPAYMENT
   const handleExecuteRepayment = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!repaymentLoan) return;
+    if (!repaymentLoan || submittingRepayment) return;
 
     const pAmt = parseFloat(repaymentPrincipal) || 0;
     const iAmt = parseFloat(repaymentInterest) || 0;
@@ -313,6 +314,7 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
       return;
     }
 
+    setSubmittingRepayment(true);
     try {
       const res = await executeLoanRepaymentTransaction({
         loanId: repaymentLoan.id,
@@ -334,6 +336,8 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
       loadFinanceData();
     } catch (err: any) {
       setMsg({ type: 'error', text: err.message || 'ঋণ পরিশোধ প্রক্রিয়া ব্যর্থ হয়েছে।' });
+    } finally {
+      setSubmittingRepayment(false);
     }
   };
 
@@ -2751,9 +2755,14 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
               </button>
               <button
                 type="submit"
-                className="px-4 py-2 rounded-lg bg-[#1E5128] hover:bg-[#173F1F] text-white text-xs font-bold cursor-pointer shadow-xs"
+                disabled={submittingRepayment}
+                className={`px-4 py-2 rounded-lg text-white text-xs font-bold shadow-xs ${
+                  submittingRepayment
+                    ? 'bg-gray-400 cursor-not-allowed'
+                    : 'bg-[#1E5128] hover:bg-[#173F1F] cursor-pointer'
+                }`}
               >
-                পরিশোধ নিশ্চিত করুন
+                {submittingRepayment ? 'পরিশোধ হচ্ছে...' : 'পরিশোধ নিশ্চিত করুন'}
               </button>
             </div>
           </form>

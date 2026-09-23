@@ -35,7 +35,8 @@ import {
   CropCostBreakdown,
   CropProductionCostParams,
   StockMovement,
-  PaymentRecord
+  PaymentRecord,
+  AmortizationScheduleItem
 } from '../types';
 import { generateAmortizationSchedule } from '../accounting/amortizationService';
 
@@ -1775,296 +1776,418 @@ export async function executeInvestorCapitalReturnTransaction(
  * Credits Cash (1010) or Bank (1030).
  * Updates Loan schedule and remaining balance.
  */
-export async function executeLoanRepaymentTransaction(params: {
-  loanId: string;
-  sourceAccountId: string; // Cash or Bank account ID
-  principalAmount: number;
-  interestAmount: number;
-  installmentNumber?: number;
-  repaymentDate?: string;
-  note?: string;
-  currentUserId: string;
-}): Promise<{ journalEntryId: string; updatedLoan: Loan }> {
-  return await db.transaction(
-    'rw',
-    [
-      db.journalEntries,
-      db.loans,
-      db.cashBankAccounts,
-      db.accounts,
-      db.auditLogs,
-      db.closedPeriods
-    ],
-    async () => {
-      const {
-        loanId,
-        sourceAccountId,
-        principalAmount,
-        interestAmount,
-        installmentNumber,
-        repaymentDate,
-        note,
-        currentUserId
-      } = params;
+/**
+ * In-memory concurrency locks to prevent concurrent duplicate loan repayment execution
+ */
+const activeLoanRepaymentLocks = new Set<string>();
 
-      const pAmt = Math.max(0, Number(principalAmount) || 0);
-      const iAmt = Math.max(0, Number(interestAmount) || 0);
-      const totalRepayment = Math.round((pAmt + iAmt) * 100) / 100;
+export async function executeLoanRepaymentTransaction(
+  params: {
+    loanId: string;
+    sourceAccountId: string; // Cash or Bank account ID
+    principalAmount: number;
+    interestAmount: number;
+    installmentNumber?: number;
+    repaymentDate?: string;
+    note?: string;
+    currentUserId: string;
+    idempotencyKey?: string;
+  },
+  dbInstance: any = db
+): Promise<{ journalEntryId: string; updatedLoan: Loan }> {
+  const { loanId, installmentNumber, idempotencyKey, principalAmount, interestAmount, sourceAccountId } = params;
+  const lockKey = installmentNumber !== undefined && installmentNumber !== null && Number(installmentNumber) > 0
+    ? `${loanId}_inst_${installmentNumber}`
+    : (idempotencyKey ? `${loanId}_key_${idempotencyKey}` : `${loanId}_repay_${principalAmount}_${interestAmount}_${sourceAccountId}`);
 
-      if (totalRepayment <= 0) {
-        throw new Error('পরিশোধের পরিমাণ (আসল বা সুদ) ০ থেকে বেশি হতে হবে।');
-      }
+  if (activeLoanRepaymentLocks.has(lockKey)) {
+    throw new Error('এই ঋণের একটি পরিশোধ কার্যক্রম বর্তমানে প্রক্রিয়াধীন রয়েছে। ডুপ্লিকেট পোস্টিং প্রতিরোধ করা হয়েছে।');
+  }
+  activeLoanRepaymentLocks.add(lockKey);
 
-      const loan = await db.loans.get(loanId);
-      if (!loan) {
-        throw new Error(`ঋণ চুক্তি ${loanId} পাওয়া যায়নি।`);
-      }
+  try {
+    return await dbInstance.transaction(
+      'rw',
+      [
+        dbInstance.journalEntries,
+        dbInstance.loans,
+        dbInstance.cashBankAccounts,
+        dbInstance.accounts,
+        dbInstance.auditLogs,
+        ...(dbInstance.closedPeriods ? [dbInstance.closedPeriods] : [])
+      ],
+      async () => {
+        const {
+          loanId,
+          sourceAccountId,
+          principalAmount,
+          interestAmount,
+          installmentNumber,
+          repaymentDate,
+          note,
+          currentUserId,
+          idempotencyKey
+        } = params;
 
-      // Calculate remaining principal
-      const remainingPrincipal = Math.max(
-        0,
-        loan.status === 'PAID_OFF'
-          ? 0
-          : Math.round(
-              Number(
-                loan.remainingPrincipal ??
-                  loan.remainingBalance ??
-                  loan.outstandingPrincipal ??
-                  loan.principalAmount ??
-                  0
-              ) * 100
-            ) / 100
-      );
+        const pAmt = Math.max(0, Number(principalAmount) || 0);
+        const iAmt = Math.max(0, Number(interestAmount) || 0);
+        const totalRepayment = Math.round((pAmt + iAmt) * 100) / 100;
 
-      // Calculate remaining interest
-      let remainingInterest = 0;
-      if (loan.status !== 'PAID_OFF' && remainingPrincipal > 0) {
-        if (loan.schedule && loan.schedule.length > 0) {
-          const unpaidItems = loan.schedule.filter((s) => !s.isPaid);
-          remainingInterest = Math.round(
-            unpaidItems.reduce((sum, s) => sum + Number(s.interestPortion || 0), 0) * 100
-          ) / 100;
-        } else {
-          const rate = Number(loan.annualInterestRatePercent ?? loan.interestRateAnnual ?? loan.interestRate ?? 0);
-          const months = Number(loan.termMonths ?? loan.tenureMonths ?? 12);
-          if (rate > 0) {
-            const sched = generateAmortizationSchedule(
-              loan.principalAmount,
-              rate,
-              months,
-              loan.disbursedDate || loan.startDate
+        if (totalRepayment <= 0) {
+          throw new Error('পরিশোধের পরিমাণ (আসল বা সুদ) ০ থেকে বেশি হতে হবে।');
+        }
+
+        const loan = await dbInstance.loans.get(loanId);
+        if (!loan) {
+          throw new Error(`ঋণ চুক্তি ${loanId} পাওয়া যায়নি।`);
+        }
+
+        // 1. Prevent duplicate posting via idempotency key
+        if (idempotencyKey) {
+          const hasKeyInLoan = (loan as any).processedIdempotencyKeys?.includes(idempotencyKey);
+          let hasKeyInJournals = false;
+          if (dbInstance.journalEntries) {
+            const entry = await dbInstance.journalEntries
+              .filter((j: any) => (j as any).idempotencyKey === idempotencyKey || j.reference === idempotencyKey)
+              .first();
+            if (entry) hasKeyInJournals = true;
+          }
+          if (hasKeyInLoan || hasKeyInJournals) {
+            throw new Error('এই কিস্তি পরিশোধটি ইতিমধ্যে সম্পন্ন হয়েছে (ডুপ্লিকেট পেমেন্ট প্রতিরোধ)।');
+          }
+        }
+
+        // 2. Prevent duplicate installment payment
+        let currentSchedule: AmortizationScheduleItem[] =
+          loan.schedule && loan.schedule.length > 0
+            ? [...loan.schedule]
+            : generateAmortizationSchedule(
+                loan.principalAmount,
+                loan.annualInterestRatePercent ?? loan.interestRateAnnual ?? loan.interestRate ?? 0,
+                loan.termMonths ?? loan.tenureMonths ?? 12,
+                loan.disbursedDate || loan.startDate
+              );
+
+        if (installmentNumber !== undefined && installmentNumber !== null && Number(installmentNumber) > 0) {
+          const instNum = Number(installmentNumber);
+          const existingInst = currentSchedule.find((s: any) => s.installmentNumber === instNum);
+          if (existingInst && (existingInst.isPaid || existingInst.repaymentJournalId)) {
+            throw new Error(
+              `কিস্তি #${instNum} ইতিমধ্যে পরিশোধ করা হয়েছে (ডুপ্লিকেট কিস্তি পরিশোধ প্রতিরোধ)।`
             );
-            const totalSchedInterest = sched.reduce((sum, s) => sum + Number(s.interestPortion || 0), 0);
-            remainingInterest = Math.max(
-              0,
-              Math.round((totalSchedInterest - Number(loan.totalPaidInterest || 0)) * 100) / 100
+          }
+
+          // Also check journal entries if this installment was already posted
+          if (dbInstance.journalEntries) {
+            const duplicateEntry = await dbInstance.journalEntries
+              .filter((j: any) => {
+                const isLoanEntry = (j as any).loanId === loan.id ||
+                  (j.reference && (j.reference === loan.id || j.reference === loan.loanNumber)) ||
+                  (j.narration && j.narration.includes(loan.lenderName));
+                if (!isLoanEntry) return false;
+                return (j as any).installmentNumber === instNum || (j.narration && j.narration.includes(`[কিস্তি #${instNum}]`));
+              })
+              .first();
+
+            if (duplicateEntry) {
+              throw new Error(
+                `কিস্তি #${instNum} এর পরিশোধ দাখিলা ইতিমধ্যে সংরক্ষিত হয়েছে (ভাউচার: ${duplicateEntry.voucherNumber || duplicateEntry.id})। ডুপ্লিকেট কিস্তি পরিশোধ প্রতিরোধ করা হয়েছে।`
+              );
+            }
+          }
+        } else if (currentSchedule.length > 0) {
+          const firstUnpaidIdx = currentSchedule.findIndex((s: any) => !s.isPaid);
+          if (firstUnpaidIdx === -1) {
+            throw new Error('এই ঋণের সকল কিস্তি ইতিমধ্যে পরিশোধ সম্পন্ন হয়েছে। ডুপ্লিকেট পরিশোধ প্রতিরোধ করা হলো।');
+          }
+        }
+
+        const dateStr = repaymentDate || new Date().toISOString().split('T')[0];
+
+        // 3. Prevent duplicate identical repayment with same note on same date
+        if (dbInstance.journalEntries && note && note.trim() !== '') {
+          const duplicateByNote = await dbInstance.journalEntries
+            .filter((j: any) => {
+              if (j.date !== dateStr) return false;
+              const isLoanEntry = (j as any).loanId === loan.id ||
+                (j.reference && (j.reference === loan.id || j.reference === loan.loanNumber)) ||
+                (j.narration && j.narration.includes(loan.lenderName));
+              if (!isLoanEntry) return false;
+              return j.narration && j.narration.includes(note.trim());
+            })
+            .first();
+          if (duplicateByNote) {
+            throw new Error(
+              `একই রেফারেন্স/নোট সহ ঋণ পরিশোধ দাখিলা ইতিপূর্বে সংরক্ষিত হয়েছে (ভাউচার: ${duplicateByNote.voucherNumber || duplicateByNote.id})। ডুপ্লিকেট এন্ট্রি প্রতিরোধ করা হয়েছে।`
             );
           }
         }
-      }
 
-      // Calculate remaining liability
-      const remainingLiability = (loan as any).remainingLiability !== undefined
-        ? Math.max(0, Math.round(Number((loan as any).remainingLiability) * 100) / 100)
-        : Math.max(0, Math.round((remainingPrincipal + remainingInterest) * 100) / 100);
-
-      // Validate against overpayment BEFORE journal/cash/loan changes
-      const isRepaymentExceeded = totalRepayment > remainingLiability + 0.0001;
-      const isPrincipalExceeded = pAmt > remainingPrincipal + 0.0001;
-
-      if (isRepaymentExceeded && isPrincipalExceeded) {
-        throw new Error(
-          `পরিশোধের পরিমাণ অবশিষ্ট দায় ও আসলের চেয়ে বেশি (repayment exceeds remaining liability: ৳${totalRepayment} > ৳${remainingLiability}; principal repayment exceeds remaining principal: ৳${pAmt} > ৳${remainingPrincipal})। অতিরিক্ত ঋণ পরিশোধ গ্রহণযোগ্য নয়।`
+        // Calculate remaining principal
+        const remainingPrincipal = Math.max(
+          0,
+          loan.status === 'PAID_OFF'
+            ? 0
+            : Math.round(
+                Number(
+                  loan.remainingPrincipal ??
+                    loan.remainingBalance ??
+                    loan.outstandingPrincipal ??
+                    loan.principalAmount ??
+                    0
+                ) * 100
+              ) / 100
         );
-      }
 
-      if (isRepaymentExceeded) {
-        throw new Error(
-          `পরিশোধের মোট পরিমাণ অবশিষ্ট ঋণ দায়ের চেয়ে বেশি (repayment exceeds remaining liability: ৳${totalRepayment} > ৳${remainingLiability})। অতিরিক্ত ঋণ পরিশোধ গ্রহণযোগ্য নয়।`
-        );
-      }
-
-      if (isPrincipalExceeded) {
-        throw new Error(
-          `আসল পরিশোধের পরিমাণ অবশিষ্ট আসলের চেয়ে বেশি (principal repayment exceeds remaining principal: ৳${pAmt} > ৳${remainingPrincipal})। অতিরিক্ত ঋণ পরিশোধ গ্রহণযোগ্য নয়।`
-        );
-      }
-
-      const sourceAcc = await db.cashBankAccounts.get(sourceAccountId);
-      if (!sourceAcc) {
-        throw new Error(`উৎস পরিশোধ হিসাব ${sourceAccountId} পাওয়া যায়নি।`);
-      }
-
-      if (sourceAcc.currentBalance < totalRepayment) {
-        throw new Error(
-          `পর্যাপ্ত ব্যালেন্স নেই! ${sourceAcc.name} এ বর্তমান স্থিতি: ৳${sourceAcc.currentBalance}`
-        );
-      }
-
-      const dateStr = repaymentDate || new Date().toISOString().split('T')[0];
-      const voucherNumber = generateTransactionNumber('PAY-LN');
-      const repRef = generateTransactionNumber('REP');
-
-      // Asset GL Code for cash/bank account
-      const assetGlCode = getCashBankAccountGLCode(sourceAcc.accountType);
-      // Liability GL Code (2110 or 2120)
-      const liabilityGlCode = getLoanLiabilityAccount(loan.termMonths || loan.tenureMonths || 12);
-      // Interest Expense Code (8010 Loan Interest Expense)
-      const interestExpenseCode = '8010';
-
-      const accounts = await db.accounts.toArray();
-      const liabilityAcc = accounts.find((a) => a.code === liabilityGlCode) || {
-        id: `acc_${liabilityGlCode}`,
-        code: liabilityGlCode,
-        nameBn:
-          liabilityGlCode === '2110'
-            ? 'স্বল্পমেয়াদী ঋণ (Short-Term Loans)'
-            : 'দীর্ঘমেয়াদী ঋণ (Long-Term Loans)'
-      };
-      const interestAcc = accounts.find((a) => a.code === interestExpenseCode) || {
-        id: `acc_${interestExpenseCode}`,
-        code: interestExpenseCode,
-        nameBn: 'ঋণের সুদ খরচ (Loan Interest Expense)'
-      };
-      const assetAcc = accounts.find((a) => a.code === assetGlCode) || {
-        id: `acc_${assetGlCode}`,
-        code: assetGlCode,
-        nameBn: sourceAcc.accountName || sourceAcc.name || 'ব্যাংক/নগদ তহবিল'
-      };
-
-      const journalLines: JournalLine[] = [];
-
-      // 1. Debit Principal to Liability (2110 / 2120)
-      if (pAmt > 0) {
-        journalLines.push({
-          accountId: liabilityAcc.id,
-          accountCode: liabilityGlCode,
-          accountName: liabilityAcc.nameBn,
-          debit: pAmt,
-          credit: 0,
-          memo: `ঋণ কিস্তি আসল পরিশোধ: ${loan.lenderName}`
-        });
-      }
-
-      // 2. Debit Interest to Interest Expense (8010)
-      if (iAmt > 0) {
-        journalLines.push({
-          accountId: interestAcc.id,
-          accountCode: interestExpenseCode,
-          accountName: interestAcc.nameBn,
-          debit: iAmt,
-          credit: 0,
-          memo: `ঋণ কিস্তি সুদ পরিশোধ: ${loan.lenderName}`
-        });
-      }
-
-      // 3. Credit Source Account (1010 Cash or 1030 Bank)
-      journalLines.push({
-        accountId: assetAcc.id,
-        accountCode: assetGlCode,
-        accountName: sourceAcc.accountName || sourceAcc.name || assetAcc.nameBn,
-        debit: 0,
-        credit: totalRepayment,
-        memo: `ঋণ পরিশোধ: ${loan.lenderName} (${voucherNumber})`
-      });
-
-      const journalEntry = await postJournalEntry(
-        {
-          id: generateUniqueId('j_rep'),
-          voucherNumber,
-          voucherType: 'PAYMENT',
-          date: dateStr,
-          narration: `ঋণ পরিশোধ: ${loan.lenderName} (আসল: ৳${pAmt}, সুদ: ৳${iAmt})${note ? ` - ${note}` : ''}`,
-          reference: repRef,
-          lines: journalLines,
-          createdBy: currentUserId,
-          createdAt: new Date().toISOString()
-        },
-        { accounts, skipDbPut: true }
-      );
-
-      await safeInsert(db.journalEntries, journalEntry, { idPrefix: 'j' });
-
-      // Update source bank/cash balance
-      await db.cashBankAccounts.update(sourceAcc.id, {
-        currentBalance: Math.round((sourceAcc.currentBalance - totalRepayment) * 100) / 100
-      });
-
-      // Update Loan record, schedule & balances
-      const currentRemaining = Math.max(0, (loan.remainingPrincipal ?? loan.remainingBalance ?? loan.principalAmount) - pAmt);
-      const newTotalPaidP = (loan.totalPaidPrincipal || 0) + pAmt;
-      const newTotalPaidI = (loan.totalPaidInterest || 0) + iAmt;
-
-      let updatedSchedule =
-        loan.schedule && loan.schedule.length > 0
-          ? [...loan.schedule]
-          : generateAmortizationSchedule(
-              loan.principalAmount,
-              loan.annualInterestRatePercent ?? loan.interestRate ?? 0,
-              loan.termMonths ?? loan.tenureMonths ?? 12,
-              loan.disbursedDate || loan.startDate
-            );
-
-      if (updatedSchedule.length > 0) {
-        if (installmentNumber && installmentNumber > 0) {
-          // Specific installment matched
-          const idx = updatedSchedule.findIndex((s) => s.installmentNumber === installmentNumber);
-          if (idx !== -1) {
-            updatedSchedule[idx] = {
-              ...updatedSchedule[idx],
-              isPaid: true,
-              paidDate: dateStr,
-              repaymentJournalId: journalEntry.id
-            };
-          }
-        } else {
-          // Mark the first unpaid installment as paid
-          const firstUnpaidIdx = updatedSchedule.findIndex((s) => !s.isPaid);
-          if (firstUnpaidIdx !== -1) {
-            updatedSchedule[firstUnpaidIdx] = {
-              ...updatedSchedule[firstUnpaidIdx],
-              isPaid: true,
-              paidDate: dateStr,
-              repaymentJournalId: journalEntry.id
-            };
+        // Calculate remaining interest
+        let remainingInterest = 0;
+        if (loan.status !== 'PAID_OFF' && remainingPrincipal > 0) {
+          if (currentSchedule.length > 0) {
+            const unpaidItems = currentSchedule.filter((s: any) => !s.isPaid);
+            remainingInterest = Math.round(
+              unpaidItems.reduce((sum: number, s: any) => sum + Number(s.interestPortion || 0), 0) * 100
+            ) / 100;
+          } else {
+            const rate = Number(loan.annualInterestRatePercent ?? loan.interestRateAnnual ?? loan.interestRate ?? 0);
+            const months = Number(loan.termMonths ?? loan.tenureMonths ?? 12);
+            if (rate > 0) {
+              const sched = generateAmortizationSchedule(
+                loan.principalAmount,
+                rate,
+                months,
+                loan.disbursedDate || loan.startDate
+              );
+              const totalSchedInterest = sched.reduce((sum, s) => sum + Number(s.interestPortion || 0), 0);
+              remainingInterest = Math.max(
+                0,
+                Math.round((totalSchedInterest - Number(loan.totalPaidInterest || 0)) * 100) / 100
+              );
+            }
           }
         }
+
+        // Calculate remaining liability
+        const remainingLiability = (loan as any).remainingLiability !== undefined
+          ? Math.max(0, Math.round(Number((loan as any).remainingLiability) * 100) / 100)
+          : Math.max(0, Math.round((remainingPrincipal + remainingInterest) * 100) / 100);
+
+        // Validate against overpayment BEFORE journal/cash/loan changes
+        const isRepaymentExceeded = totalRepayment > remainingLiability + 0.0001;
+        const isPrincipalExceeded = pAmt > remainingPrincipal + 0.0001;
+
+        if (isRepaymentExceeded && isPrincipalExceeded) {
+          throw new Error(
+            `পরিশোধের পরিমাণ অবশিষ্ট দায় ও আসলের চেয়ে বেশি (repayment exceeds remaining liability: ৳${totalRepayment} > ৳${remainingLiability}; principal repayment exceeds remaining principal: ৳${pAmt} > ৳${remainingPrincipal})। অতিরিক্ত ঋণ পরিশোধ গ্রহণযোগ্য নয়।`
+          );
+        }
+
+        if (isRepaymentExceeded) {
+          throw new Error(
+            `পরিশোধের মোট পরিমাণ অবশিষ্ট ঋণ দায়ের চেয়ে বেশি (repayment exceeds remaining liability: ৳${totalRepayment} > ৳${remainingLiability})। অতিরিক্ত ঋণ পরিশোধ গ্রহণযোগ্য নয়।`
+          );
+        }
+
+        if (isPrincipalExceeded) {
+          throw new Error(
+            `আসল পরিশোধের পরিমাণ অবশিষ্ট আসলের চেয়ে বেশি (principal repayment exceeds remaining principal: ৳${pAmt} > ৳${remainingPrincipal})। অতিরিক্ত ঋণ পরিশোধ গ্রহণযোগ্য নয়।`
+          );
+        }
+
+        const sourceAcc = await dbInstance.cashBankAccounts.get(sourceAccountId);
+        if (!sourceAcc) {
+          throw new Error(`উৎস পরিশোধ হিসাব ${sourceAccountId} পাওয়া যায়নি।`);
+        }
+
+        if (sourceAcc.currentBalance < totalRepayment) {
+          throw new Error(
+            `পর্যাপ্ত ব্যালেন্স নেই! ${sourceAcc.name} এ বর্তমান স্থিতি: ৳${sourceAcc.currentBalance}`
+          );
+        }
+
+        const voucherNumber = generateTransactionNumber('PAY-LN');
+        const repRef = generateTransactionNumber('REP');
+
+        // Asset GL Code for cash/bank account
+        const assetGlCode = getCashBankAccountGLCode(sourceAcc.accountType);
+        // Liability GL Code (2110 or 2120)
+        const liabilityGlCode = getLoanLiabilityAccount(loan.termMonths || loan.tenureMonths || 12);
+        // Interest Expense Code (8010 Loan Interest Expense)
+        const interestExpenseCode = '8010';
+
+        const accounts = await dbInstance.accounts.toArray();
+        const liabilityAcc = accounts.find((a: any) => a.code === liabilityGlCode) || {
+          id: `acc_${liabilityGlCode}`,
+          code: liabilityGlCode,
+          nameBn:
+            liabilityGlCode === '2110'
+              ? 'স্বল্পমেয়াদী ঋণ (Short-Term Loans)'
+              : 'দীর্ঘমেয়াদী ঋণ (Long-Term Loans)'
+        };
+        const interestAcc = accounts.find((a: any) => a.code === interestExpenseCode) || {
+          id: `acc_${interestExpenseCode}`,
+          code: interestExpenseCode,
+          nameBn: 'ঋণের সুদ খরচ (Loan Interest Expense)'
+        };
+        const assetAcc = accounts.find((a: any) => a.code === assetGlCode) || {
+          id: `acc_${assetGlCode}`,
+          code: assetGlCode,
+          nameBn: sourceAcc.accountName || sourceAcc.name || 'ব্যাংক/নগদ তহবিল'
+        };
+
+        const journalLines: JournalLine[] = [];
+
+        // 1. Debit Principal to Liability (2110 / 2120)
+        if (pAmt > 0) {
+          journalLines.push({
+            accountId: liabilityAcc.id,
+            accountCode: liabilityGlCode,
+            accountName: liabilityAcc.nameBn,
+            debit: pAmt,
+            credit: 0,
+            memo: `ঋণ কিস্তি আসল পরিশোধ: ${loan.lenderName}`
+          });
+        }
+
+        // 2. Debit Interest to Interest Expense (8010)
+        if (iAmt > 0) {
+          journalLines.push({
+            accountId: interestAcc.id,
+            accountCode: interestExpenseCode,
+            accountName: interestAcc.nameBn,
+            debit: iAmt,
+            credit: 0,
+            memo: `ঋণ কিস্তি সুদ পরিশোধ: ${loan.lenderName}`
+          });
+        }
+
+        // 3. Credit Source Account (1010 Cash or 1030 Bank)
+        journalLines.push({
+          accountId: assetAcc.id,
+          accountCode: assetGlCode,
+          accountName: sourceAcc.accountName || sourceAcc.name || assetAcc.nameBn,
+          debit: 0,
+          credit: totalRepayment,
+          memo: `ঋণ পরিশোধ: ${loan.lenderName} (${voucherNumber})`
+        });
+
+        let paidInstallmentNum = installmentNumber && Number(installmentNumber) > 0 ? Number(installmentNumber) : undefined;
+        let updatedSchedule = [...currentSchedule];
+
+        if (updatedSchedule.length > 0) {
+          if (installmentNumber && Number(installmentNumber) > 0) {
+            const idx = updatedSchedule.findIndex((s: any) => s.installmentNumber === Number(installmentNumber));
+            if (idx !== -1) {
+              paidInstallmentNum = updatedSchedule[idx].installmentNumber;
+            }
+          } else {
+            const firstUnpaidIdx = updatedSchedule.findIndex((s: any) => !s.isPaid);
+            if (firstUnpaidIdx !== -1) {
+              paidInstallmentNum = updatedSchedule[firstUnpaidIdx].installmentNumber;
+            }
+          }
+        }
+
+        const journalEntry = await postJournalEntry(
+          {
+            id: generateUniqueId('j_rep'),
+            voucherNumber,
+            voucherType: 'PAYMENT',
+            date: dateStr,
+            narration: `ঋণ পরিশোধ: ${loan.lenderName} (আসল: ৳${pAmt}, সুদ: ৳${iAmt})${paidInstallmentNum ? ` [কিস্তি #${paidInstallmentNum}]` : ''}${note ? ` - ${note}` : ''}`,
+            reference: repRef,
+            lines: journalLines,
+            createdBy: currentUserId,
+            createdAt: new Date().toISOString()
+          },
+          { accounts, skipDbPut: true }
+        );
+
+        (journalEntry as any).loanId = loan.id;
+        (journalEntry as any).installmentNumber = paidInstallmentNum;
+        if (idempotencyKey) {
+          (journalEntry as any).idempotencyKey = idempotencyKey;
+        }
+
+        await safeInsert(dbInstance.journalEntries, journalEntry, { idPrefix: 'j' });
+
+        // Update source bank/cash balance
+        await dbInstance.cashBankAccounts.update(sourceAcc.id, {
+          currentBalance: Math.round((sourceAcc.currentBalance - totalRepayment) * 100) / 100
+        });
+
+        // Update Loan record, schedule & balances
+        const currentRemaining = Math.max(0, (loan.remainingPrincipal ?? loan.remainingBalance ?? loan.principalAmount) - pAmt);
+        const newTotalPaidP = (loan.totalPaidPrincipal || 0) + pAmt;
+        const newTotalPaidI = (loan.totalPaidInterest || 0) + iAmt;
+
+        if (updatedSchedule.length > 0) {
+          if (installmentNumber && Number(installmentNumber) > 0) {
+            const idx = updatedSchedule.findIndex((s: any) => s.installmentNumber === Number(installmentNumber));
+            if (idx !== -1) {
+              updatedSchedule[idx] = {
+                ...updatedSchedule[idx],
+                isPaid: true,
+                paidDate: dateStr,
+                repaymentJournalId: journalEntry.id
+              };
+            }
+          } else {
+            const firstUnpaidIdx = updatedSchedule.findIndex((s: any) => !s.isPaid);
+            if (firstUnpaidIdx !== -1) {
+              updatedSchedule[firstUnpaidIdx] = {
+                ...updatedSchedule[firstUnpaidIdx],
+                isPaid: true,
+                paidDate: dateStr,
+                repaymentJournalId: journalEntry.id
+              };
+            }
+          }
+        }
+
+        const allPaid = updatedSchedule.length > 0
+          ? updatedSchedule.every((s: any) => s.isPaid)
+          : currentRemaining <= 0;
+
+        const newStatus = allPaid || currentRemaining <= 0 ? 'PAID_OFF' : 'ACTIVE';
+
+        const updatedLoan: Loan = {
+          ...loan,
+          remainingPrincipal: currentRemaining,
+          remainingBalance: currentRemaining,
+          totalPaidPrincipal: newTotalPaidP,
+          totalPaidInterest: newTotalPaidI,
+          schedule: updatedSchedule,
+          status: newStatus
+        };
+
+        if (idempotencyKey) {
+          (updatedLoan as any).processedIdempotencyKeys = [
+            ...((loan as any).processedIdempotencyKeys || []),
+            idempotencyKey
+          ];
+        }
+
+        await dbInstance.loans.put(updatedLoan);
+
+        // Audit Log
+        await safeInsert(dbInstance.auditLogs, {
+          id: generateUniqueId('audit'),
+          timestamp: new Date().toISOString(),
+          userId: currentUserId,
+          role: 'OWNER',
+          action: 'LOAN_REPAYMENT',
+          module: 'FINANCE',
+          recordId: repRef,
+          status: 'SUCCESS',
+          details: `ঋণ ${loan.loanNumber || loan.id} পরিশোধ ৳${totalRepayment} (আসল: ৳${pAmt}, সুদ: ৳${iAmt})${paidInstallmentNum ? ` [কিস্তি #${paidInstallmentNum}]` : ''}`
+        });
+
+        return { journalEntryId: journalEntry.id, updatedLoan };
       }
-
-      const allPaid = updatedSchedule.length > 0
-        ? updatedSchedule.every((s) => s.isPaid)
-        : currentRemaining <= 0;
-
-      const newStatus = allPaid || currentRemaining <= 0 ? 'PAID_OFF' : 'ACTIVE';
-
-      const updatedLoan: Loan = {
-        ...loan,
-        remainingPrincipal: currentRemaining,
-        remainingBalance: currentRemaining,
-        totalPaidPrincipal: newTotalPaidP,
-        totalPaidInterest: newTotalPaidI,
-        schedule: updatedSchedule,
-        status: newStatus
-      };
-
-      await db.loans.put(updatedLoan);
-
-      // Audit Log
-      await safeInsert(db.auditLogs, {
-        id: generateUniqueId('audit'),
-        timestamp: new Date().toISOString(),
-        userId: currentUserId,
-        role: 'OWNER',
-        action: 'LOAN_REPAYMENT',
-        module: 'FINANCE',
-        recordId: repRef,
-        status: 'SUCCESS',
-        details: `ঋণ ${loan.loanNumber || loan.id} পরিশোধ ৳${totalRepayment} (আসল: ৳${pAmt}, সুদ: ৳${iAmt})`
-      });
-
-      return { journalEntryId: journalEntry.id, updatedLoan };
-    }
-  );
+    );
+  } finally {
+    activeLoanRepaymentLocks.delete(lockKey);
+  }
 }
 
 /**
