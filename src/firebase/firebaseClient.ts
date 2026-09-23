@@ -450,6 +450,30 @@ export async function synchronizePendingData(): Promise<{ syncedCount: number; e
         errors.push(`Fixed Asset ${asset.id}: ${err.message}`);
       }
     }
+
+    // 15. Sync Parties (Customers & Suppliers)
+    const pendingParties = await db.parties.filter((party) => !party.synced).toArray();
+    for (const party of pendingParties) {
+      try {
+        await syncRecordToServer('parties', party);
+        await db.parties.update(party.id, { synced: true });
+        count++;
+      } catch (err: any) {
+        errors.push(`Party ${party.id}: ${err.message}`);
+      }
+    }
+
+    // 16. Sync Closed Periods
+    const pendingClosedPeriods = await db.closedPeriods.filter((period) => !period.synced).toArray();
+    for (const period of pendingClosedPeriods) {
+      try {
+        await syncRecordToServer('closedPeriods', period);
+        await db.closedPeriods.update(period.id, { synced: true });
+        count++;
+      } catch (err: any) {
+        errors.push(`Closed Period ${period.id}: ${err.message}`);
+      }
+    }
   } catch (globalErr: any) {
     errors.push(`Sync failed: ${globalErr.message}`);
   }
@@ -511,7 +535,9 @@ export function listenToOnlineSync(
       const pLoans = await db.loans.filter((l) => !l.synced).count();
       const pInvestors = await db.investors.filter((i) => !i.synced).count();
       const pAssets = await db.fixedAssets.filter((fa) => !fa.synced).count();
-      const total = pAnimals + pFish + pCrops + pJournals + pPurchases + pSales + pPayments + pInventory + pStock + pAccounts + pLoans + pInvestors + pAssets;
+      const pParties = await db.parties.filter((p) => !p.synced).count();
+      const pClosedPeriods = await db.closedPeriods.filter((cp) => !cp.synced).count();
+      const total = pAnimals + pFish + pCrops + pJournals + pPurchases + pSales + pPayments + pInventory + pStock + pAccounts + pLoans + pInvestors + pAssets + pParties + pClosedPeriods;
       onPendingChange(total);
       if (!navigator.onLine) {
         onStateChange('OFFLINE');
@@ -727,6 +753,10 @@ export async function restoreRemoteDataIfLocalEmpty(userEmail?: string): Promise
             await db.stockMovements.bulkPut(c.stockMovements.map((item: any) => ({ ...item, synced: true })));
             restoredCount += c.stockMovements.length;
           }
+          if (Array.isArray(c.closedPeriods) && c.closedPeriods.length > 0) {
+            await db.closedPeriods.bulkPut(c.closedPeriods.map((item: any) => ({ ...item, synced: true })));
+            restoredCount += c.closedPeriods.length;
+          }
         }
       }
     } catch (serverErr) {
@@ -797,6 +827,20 @@ export async function restoreRemoteDataIfLocalEmpty(userEmail?: string): Promise
           const list: any[] = [];
           assetSnap.forEach((d) => list.push({ id: d.id, ...d.data(), synced: true }));
           await db.fixedAssets.bulkPut(list);
+          restoredCount += list.length;
+        }
+        const partySnap = await getDocs(collection(firestore, 'parties'));
+        if (!partySnap.empty) {
+          const list: any[] = [];
+          partySnap.forEach((d) => list.push({ id: d.id, ...d.data(), synced: true }));
+          await db.parties.bulkPut(list);
+          restoredCount += list.length;
+        }
+        const periodSnap = await getDocs(collection(firestore, 'closedPeriods'));
+        if (!periodSnap.empty) {
+          const list: any[] = [];
+          periodSnap.forEach((d) => list.push({ id: d.id, ...d.data(), synced: true }));
+          await db.closedPeriods.bulkPut(list);
           restoredCount += list.length;
         }
       } catch (fsErr) {

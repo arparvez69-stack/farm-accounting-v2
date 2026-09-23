@@ -10,6 +10,8 @@ import { getAuth } from 'firebase-admin/auth';
 import { getFirestore } from 'firebase-admin/firestore';
 import firebaseConfig from './firebase-applet-config.json';
 import { validateBalancedLines } from './src/accounting/accountingEngine';
+import { DEFAULT_CHART_OF_ACCOUNTS } from './src/accounting/defaultAccounts';
+import { Account, ClosedPeriod } from './src/types';
 
 dotenv.config();
 
@@ -151,10 +153,171 @@ try {
 // Session tokens for persistent owner access
 const SESSION_SECRET = process.env.SESSION_SECRET || 'the-goated-farm-session-secret-salt-2025';
 
-function createSessionToken(email: string): string {
+export function createSessionToken(email: string): string {
   const payload = Buffer.from(JSON.stringify({ email: email.toLowerCase(), exp: Date.now() + 30 * 24 * 60 * 60 * 1000 })).toString('base64url');
   const signature = crypto.createHmac('sha256', SESSION_SECRET).update(payload).digest('base64url');
   return `${payload}.${signature}`;
+}
+
+// Chart of accounts cache for sync validation
+let cachedValidAccounts: Account[] | null = null;
+let lastAccountsFetch = 0;
+
+export async function getValidAccountsForValidation(): Promise<Account[]> {
+  const now = Date.now();
+  if (cachedValidAccounts && now - lastAccountsFetch < 60000) {
+    return cachedValidAccounts;
+  }
+  const accountsMap = new Map<string, Account>();
+  for (const acc of DEFAULT_CHART_OF_ACCOUNTS) {
+    accountsMap.set(acc.code, acc);
+  }
+  if (adminDb) {
+    try {
+      const snap = await adminDb.collection('accounts').get();
+      snap.forEach((doc) => {
+        const d = doc.data() as Account;
+        if (d && d.code) {
+          accountsMap.set(d.code, d);
+        }
+      });
+    } catch {
+      // Fallback to default accounts
+    }
+  }
+  cachedValidAccounts = Array.from(accountsMap.values());
+  lastAccountsFetch = now;
+  return cachedValidAccounts;
+}
+
+// In-memory store for sync operations (allows offline/dev environment fallback & fast lookup)
+export const inMemoryStores = new Map<string, Map<string, any>>();
+
+// Closed periods cache for server-side closed-period protection
+let cachedClosedPeriods: ClosedPeriod[] | null = null;
+let lastClosedPeriodsFetch = 0;
+
+export function clearClosedPeriodsCacheForTesting(): void {
+  cachedClosedPeriods = null;
+  lastClosedPeriodsFetch = 0;
+  if (inMemoryStores.has('closedPeriods')) {
+    inMemoryStores.get('closedPeriods')!.clear();
+  }
+}
+
+export async function getClosedPeriodsForValidation(): Promise<ClosedPeriod[]> {
+  const now = Date.now();
+  if (cachedClosedPeriods && now - lastClosedPeriodsFetch < 5000) {
+    return cachedClosedPeriods;
+  }
+  const periodsMap = new Map<string, ClosedPeriod>();
+  // 1. From in-memory store
+  const inMem = inMemoryStores.get('closedPeriods');
+  if (inMem) {
+    for (const [id, cp] of inMem.entries()) {
+      if (cp && cp.endDate) {
+        periodsMap.set(id, cp);
+      }
+    }
+  }
+  // 2. From Firestore Admin SDK if available
+  if (adminDb) {
+    try {
+      const snap = await adminDb.collection('closedPeriods').get();
+      snap.forEach((doc) => {
+        const d = doc.data() as ClosedPeriod;
+        if (d && d.endDate) {
+          periodsMap.set(doc.id, { ...d, id: doc.id });
+        }
+      });
+    } catch (err: any) {
+      console.warn('[The Goated Farm] Notice reading closedPeriods from Firestore:', err.message);
+    }
+  }
+  const periods = Array.from(periodsMap.values());
+  periods.sort((a, b) => (b.endDate || '').localeCompare(a.endDate || ''));
+  cachedClosedPeriods = periods;
+  lastClosedPeriodsFetch = now;
+  return periods;
+}
+
+export function extractTransactionDate(data: any): string | null {
+  if (!data || typeof data !== 'object') return null;
+  const rawDate =
+    data.date ||
+    data.transactionDate ||
+    data.purchaseDate ||
+    data.saleDate ||
+    data.paymentDate ||
+    data.disbursementDate ||
+    data.dateStr;
+  if (typeof rawDate === 'string') {
+    const trimmed = rawDate.trim();
+    if (/^\d{4}-\d{2}-\d{2}/.test(trimmed)) {
+      return trimmed.substring(0, 10);
+    }
+  }
+  return null;
+}
+
+export function extractAllTransactionDates(data: any): string[] {
+  const dates = new Set<string>();
+  const rootDate = extractTransactionDate(data);
+  if (rootDate) dates.add(rootDate);
+  if (Array.isArray(data?.lines)) {
+    for (const line of data.lines) {
+      const lineDate = extractTransactionDate(line);
+      if (lineDate) dates.add(lineDate);
+    }
+  }
+  return Array.from(dates);
+}
+
+export function checkClosedPeriodViolation(
+  txDate: string,
+  closedPeriods: ClosedPeriod[],
+  entryData?: any
+): { isClosed: boolean; closedPeriod?: ClosedPeriod; reason?: string } {
+  if (!txDate || !closedPeriods || closedPeriods.length === 0) {
+    return { isClosed: false };
+  }
+
+  // Check if entry is specifically the closing entry for a closed period
+  for (const cp of closedPeriods) {
+    const isClosingEntry =
+      Boolean(entryData?.isClosingEntry && (entryData.date === cp.endDate || entryData.closingDate === cp.endDate)) ||
+      Boolean(entryData?.reference && entryData.reference === `YEC-${cp.endDate}`) ||
+      Boolean(cp.journalEntryId && entryData?.id === cp.journalEntryId) ||
+      Boolean(cp.voucherNumber && entryData?.voucherNumber === cp.voucherNumber);
+
+    if (isClosingEntry) {
+      // It is the closing entry for this period cp.
+      // However, check if it violates an EARLIER closed period:
+      const earlierClosed = closedPeriods.find((p) => p.id !== cp.id && p.endDate >= txDate && p.endDate < cp.endDate);
+      if (earlierClosed) {
+        return {
+          isClosed: true,
+          closedPeriod: earlierClosed,
+          reason: `হিসাবকাল সমাপ্তি ত্রুটি: এই অর্থবছর বা তারিখ (${txDate}) ইতোমধ্যে বন্ধ সময়কালের (${earlierClosed.endDate}) অন্তর্ভুক্ত।`
+        };
+      }
+      return { isClosed: false };
+    }
+  }
+
+  // For any normal transaction:
+  // Sort descending by endDate
+  const latestClosed = closedPeriods[0];
+  if (latestClosed && txDate <= latestClosed.endDate) {
+    const matching = closedPeriods.find((cp) => (cp.startDate ? cp.startDate <= txDate : true) && cp.endDate >= txDate) || latestClosed;
+    return {
+      isClosed: true,
+      closedPeriod: matching,
+      reason: `হিসাবরক্ষণ সীমাবদ্ধতা: ${matching.endDate} বা তার পূর্বের সময়কালের হিসাব ইতোমধ্যে বছর সমাপ্তি (Closed Period) করা হয়েছে। বন্ধ সময়কালের কোনো তারিখে লেনদেন পোস্ট বা পরিবর্তন করা যাবে না (Cannot modify or post transactions in closed period ending ${matching.endDate}).`
+    };
+  }
+
+  return { isClosed: false };
 }
 
 function verifySessionToken(token: string): { email: string } | null {
@@ -790,7 +953,8 @@ const ALLOWED_SYNC_COLLECTIONS = [
   'auditLogs',
   'system',
   'payments',
-  'stockMovements'
+  'stockMovements',
+  'closedPeriods'
 ];
 
 async function handleSyncWrite(
@@ -817,24 +981,136 @@ async function handleSyncWrite(
       return res.status(400).json({ error: 'নথি আইডি (Document ID) অনুপস্থিত।' });
     }
 
-    // 2. Re-run balance and account validation for financial records
-    if (collectionName === 'journalEntries' || collectionName === 'journal-entry') {
-      if (!data.lines || !Array.isArray(data.lines) || data.lines.length < 2) {
+    const targetCol =
+      collectionName === 'journal-entry' || collectionName === 'journal' || collectionName === 'journals' || collectionName === 'journal_entries' || collectionName === 'journalEntries' ? 'journalEntries'
+      : collectionName === 'sale' ? 'sales'
+      : collectionName === 'purchase' ? 'purchases'
+      : collectionName === 'animal' ? 'animals'
+      : collectionName === 'payment' ? 'payments'
+      : collectionName === 'inventoryItem' ? 'inventoryItems'
+      : collectionName === 'stockMovement' ? 'stockMovements'
+      : collectionName === 'cashBankAccount' ? 'cashBankAccounts'
+      : collectionName === 'loan' ? 'loans'
+      : collectionName === 'investor' ? 'investors'
+      : collectionName === 'fixedAsset' ? 'fixedAssets'
+      : collectionName === 'party' || collectionName === 'customer' || collectionName === 'supplier' ? 'parties'
+      : collectionName === 'closedPeriod' ? 'closedPeriods'
+      : collectionName;
+
+    // 2. Closed-Period Protection:
+    // Reject any synced accounting transaction that modifies or posts into a closed accounting period.
+    if (targetCol !== 'closedPeriods' && targetCol !== 'auditLogs' && targetCol !== 'system' && targetCol !== 'parties' && targetCol !== 'cashBankAccounts') {
+      const closedPeriods = await getClosedPeriodsForValidation();
+      if (closedPeriods.length > 0) {
+        // Check A: If modifying an existing document, was the existing document in a closed period?
+        let existingDoc: any = null;
+        if (inMemoryStores.has(targetCol)) {
+          existingDoc = inMemoryStores.get(targetCol)!.get(docId) || null;
+        }
+        if (!existingDoc && adminDb) {
+          try {
+            const snap = await adminDb.collection(targetCol).doc(docId).get();
+            if (snap.exists) {
+              existingDoc = snap.data();
+            }
+          } catch {
+            // Ignore read error
+          }
+        }
+
+        if (existingDoc) {
+          const existingDates = extractAllTransactionDates(existingDoc);
+          for (const d of existingDates) {
+            const check = checkClosedPeriodViolation(d, closedPeriods, existingDoc);
+            if (check.isClosed) {
+              return res.status(400).json({
+                error: `হিসাবরক্ষণ সীমাবদ্ধতা: বিদ্যমান লেনদেনটি (#${docId}, তারিখ: ${d}) একটি সমাপ্ত হিসাবকালের (${check.closedPeriod?.endDate}) অন্তর্ভুক্ত। বন্ধ সময়কালের কোনো লেনদেন পরিবর্তন বা সংশোধন করা যাবে না (Cannot modify a transaction in closed period ending ${check.closedPeriod?.endDate}).`
+              });
+            }
+          }
+        }
+
+        // Check B: Does the incoming transaction date belong to a closed period?
+        const incomingDates = extractAllTransactionDates(data);
+        for (const d of incomingDates) {
+          const check = checkClosedPeriodViolation(d, closedPeriods, data);
+          if (check.isClosed) {
+            return res.status(400).json({
+              error: check.reason || `হিসাবরক্ষণ সীমাবদ্ধতা: ${d} তারিখটি ইতোমধ্যে বন্ধ হিসাবকালের (${check.closedPeriod?.endDate}) অন্তর্ভুক্ত। বন্ধ সময়কালের কোনো তারিখে লেনদেন পোস্ট বা পরিবর্তন করা যাবে না (Cannot modify or post transactions in closed period ending ${check.closedPeriod?.endDate}).`
+            });
+          }
+        }
+      }
+    }
+
+    // 3. Re-run balance and account validation for financial records
+    const isJournal =
+      collectionName === 'journalEntries' ||
+      collectionName === 'journal-entry' ||
+      collectionName === 'journal' ||
+      collectionName === 'journals' ||
+      collectionName === 'journal_entries';
+
+    if (isJournal) {
+      let lines = data.lines;
+      if (typeof lines === 'string') {
+        try {
+          lines = JSON.parse(lines);
+        } catch {
+          return res.status(400).json({
+            error: 'জাবেদা লাইন ফরম্যাট অবৈধ (Invalid journal lines JSON format)।'
+          });
+        }
+      }
+
+      if (!lines || !Array.isArray(lines) || lines.length < 2) {
         return res.status(400).json({
           error: 'জাবেদা ভাউচারে কমপক্ষে ২টি ভারসাম্যপূর্ণ লাইন থাকতে হবে (Journal entry must have at least 2 balanced lines).'
         });
       }
 
+      for (let i = 0; i < lines.length; i++) {
+        if (!lines[i] || typeof lines[i] !== 'object') {
+          return res.status(400).json({
+            error: `জাবেদা লাইন ${i + 1} একটি অবজেক্ট হতে হবে (Journal line ${i + 1} must be an object).`
+          });
+        }
+      }
+
       try {
-        const check = validateBalancedLines(data.lines);
+        const validAccounts = await getValidAccountsForValidation();
+        const check = validateBalancedLines(lines, validAccounts);
+
         if (!check.isBalanced) {
           return res.status(400).json({
             error: `জাবেদা ভারসাম্যহীন! ডেবিট: ৳${check.totalDebit}, ক্রেডিট: ৳${check.totalCredit}`
           });
         }
+
         if (check.totalDebit <= 0) {
-          return res.status(400).json({ error: 'ভাউচারের পরিমাণ শূন্য হতে পারে না।' });
+          return res.status(400).json({ error: 'ভাউচারের পরিমাণ শূন্য বা ঋণাত্মক হতে পারে না (Journal amount cannot be zero or negative)।' });
         }
+
+        // Header amount validations if provided
+        if (data.totalDebit !== undefined && data.totalDebit !== null) {
+          const numDebit = Number(data.totalDebit);
+          if (isNaN(numDebit) || !isFinite(numDebit) || numDebit <= 0 || Math.round(Math.abs(numDebit - check.totalDebit) * 100) / 100 !== 0) {
+            return res.status(400).json({
+              error: `ভাউচারের মোট ডেবিট অমিল বা অবৈধ (Expected: ৳${check.totalDebit}, Received: ৳${data.totalDebit})।`
+            });
+          }
+        }
+
+        if (data.totalCredit !== undefined && data.totalCredit !== null) {
+          const numCredit = Number(data.totalCredit);
+          if (isNaN(numCredit) || !isFinite(numCredit) || numCredit <= 0 || Math.round(Math.abs(numCredit - check.totalCredit) * 100) / 100 !== 0) {
+            return res.status(400).json({
+              error: `ভাউচারের মোট ক্রেডিট অমিল বা অবৈধ (Expected: ৳${check.totalCredit}, Received: ৳${data.totalCredit})।`
+            });
+          }
+        }
+
+        data.lines = lines;
         data.totalDebit = check.totalDebit;
         data.totalCredit = check.totalCredit;
       } catch (valErr: any) {
@@ -843,17 +1119,19 @@ async function handleSyncWrite(
         });
       }
     } else if (collectionName === 'sales' || collectionName === 'sale') {
-      if (data.lines && Array.isArray(data.lines)) {
+      if (data.lines && Array.isArray(data.lines) && data.lines.length > 0) {
         try {
-          validateBalancedLines(data.lines);
+          const validAccounts = await getValidAccountsForValidation();
+          validateBalancedLines(data.lines, validAccounts);
         } catch (valErr: any) {
           return res.status(400).json({ error: `বিক্রয় জাবেদা ত্রুটি: ${valErr.message}` });
         }
       }
     } else if (collectionName === 'purchases' || collectionName === 'purchase') {
-      if (data.lines && Array.isArray(data.lines)) {
+      if (data.lines && Array.isArray(data.lines) && data.lines.length > 0) {
         try {
-          validateBalancedLines(data.lines);
+          const validAccounts = await getValidAccountsForValidation();
+          validateBalancedLines(data.lines, validAccounts);
         } catch (valErr: any) {
           return res.status(400).json({ error: `ক্রয় জাবেদা ত্রুটি: ${valErr.message}` });
         }
@@ -867,21 +1145,17 @@ async function handleSyncWrite(
       syncedBy: owner.email
     };
 
-    // 3. Write via firebase-admin (which bypasses rules safely since it is trusted)
-    if (adminDb) {
-      const targetCol = collectionName === 'journal-entry' ? 'journalEntries'
-        : collectionName === 'sale' ? 'sales'
-        : collectionName === 'purchase' ? 'purchases'
-        : collectionName === 'animal' ? 'animals'
-        : collectionName === 'payment' ? 'payments'
-        : collectionName === 'inventoryItem' ? 'inventoryItems'
-        : collectionName === 'stockMovement' ? 'stockMovements'
-        : collectionName === 'cashBankAccount' ? 'cashBankAccounts'
-        : collectionName === 'loan' ? 'loans'
-        : collectionName === 'investor' ? 'investors'
-        : collectionName === 'fixedAsset' ? 'fixedAssets'
-        : collectionName;
+    if (!inMemoryStores.has(targetCol)) {
+      inMemoryStores.set(targetCol, new Map<string, any>());
+    }
+    inMemoryStores.get(targetCol)!.set(docId, recordToWrite);
 
+    if (targetCol === 'closedPeriods') {
+      cachedClosedPeriods = null;
+    }
+
+    // 4. Write via firebase-admin (which bypasses rules safely since it is trusted)
+    if (adminDb) {
       try {
         await adminDb.collection(targetCol).doc(docId).set(recordToWrite, { merge: true });
       } catch (adminErr: any) {
@@ -906,6 +1180,8 @@ async function handleSyncWrite(
 }
 
 // Dedicated sync endpoints
+app.post('/api/sync/journal', (req, res) => handleSyncWrite('journalEntries', req, res));
+app.post('/api/sync/journals', (req, res) => handleSyncWrite('journalEntries', req, res));
 app.post('/api/sync/journal-entry', (req, res) => handleSyncWrite('journalEntries', req, res));
 app.post('/api/sync/journalEntries', (req, res) => handleSyncWrite('journalEntries', req, res));
 app.post('/api/sync/sale', (req, res) => handleSyncWrite('sales', req, res));
@@ -928,6 +1204,14 @@ app.post('/api/sync/investor', (req, res) => handleSyncWrite('investors', req, r
 app.post('/api/sync/investors', (req, res) => handleSyncWrite('investors', req, res));
 app.post('/api/sync/fixedAsset', (req, res) => handleSyncWrite('fixedAssets', req, res));
 app.post('/api/sync/fixedAssets', (req, res) => handleSyncWrite('fixedAssets', req, res));
+app.post('/api/sync/party', (req, res) => handleSyncWrite('parties', req, res));
+app.post('/api/sync/parties', (req, res) => handleSyncWrite('parties', req, res));
+app.post('/api/sync/customer', (req, res) => handleSyncWrite('parties', req, res));
+app.post('/api/sync/customers', (req, res) => handleSyncWrite('parties', req, res));
+app.post('/api/sync/supplier', (req, res) => handleSyncWrite('parties', req, res));
+app.post('/api/sync/suppliers', (req, res) => handleSyncWrite('parties', req, res));
+app.post('/api/sync/closedPeriod', (req, res) => handleSyncWrite('closedPeriods', req, res));
+app.post('/api/sync/closedPeriods', (req, res) => handleSyncWrite('closedPeriods', req, res));
 
 // Generic sync endpoint: POST /api/sync/:collection
 app.post('/api/sync/:collection', (req, res) => {
@@ -935,6 +1219,9 @@ app.post('/api/sync/:collection', (req, res) => {
   if (
     !ALLOWED_SYNC_COLLECTIONS.includes(col) &&
     col !== 'journal-entry' &&
+    col !== 'journal' &&
+    col !== 'journals' &&
+    col !== 'journal_entries' &&
     col !== 'sale' &&
     col !== 'purchase' &&
     col !== 'animal' &&
@@ -944,7 +1231,13 @@ app.post('/api/sync/:collection', (req, res) => {
     col !== 'cashBankAccount' &&
     col !== 'loan' &&
     col !== 'investor' &&
-    col !== 'fixedAsset'
+    col !== 'fixedAsset' &&
+    col !== 'party' &&
+    col !== 'customer' &&
+    col !== 'customers' &&
+    col !== 'supplier' &&
+    col !== 'suppliers' &&
+    col !== 'closedPeriod'
   ) {
     return res.status(400).json({ error: `অননুমোদিত কালেকশন: ${col}` });
   }
@@ -983,7 +1276,8 @@ app.get('/api/sync/restore', async (req, res) => {
       'loans',
       'investors',
       'cashBankAccounts',
-      'reminders'
+      'reminders',
+      'closedPeriods'
     ];
 
     const result: Record<string, any[]> = {};

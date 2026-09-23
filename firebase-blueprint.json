@@ -268,6 +268,41 @@
         "synced": { "type": "boolean", "description": "Sync status" }
       },
       "required": ["id", "name", "category", "purchaseDate", "originalCost"]
+    },
+    "party": {
+      "title": "Party",
+      "description": "Customer, supplier, or vendor master profile",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Party unique ID" },
+        "type": { "type": "string", "enum": ["CUSTOMER", "SUPPLIER", "BOTH"] },
+        "name": { "type": "string", "description": "Party name" },
+        "phone": { "type": "string", "description": "Phone number" },
+        "address": { "type": "string", "description": "Address" },
+        "balance": { "type": "number", "description": "Current balance" },
+        "creditLimit": { "type": "number", "description": "Credit limit" },
+        "isActive": { "type": "boolean", "description": "Active status" },
+        "synced": { "type": "boolean", "description": "Sync status" }
+      },
+      "required": ["id", "type", "name", "phone"]
+    },
+    "closedPeriod": {
+      "title": "Closed Accounting Period",
+      "description": "Locked financial period closure record",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Closed period ID" },
+        "endDate": { "type": "string", "description": "Period end date" },
+        "startDate": { "type": "string", "description": "Period start date" },
+        "netProfitTransferred": { "type": "number", "description": "Net profit transferred to retained earnings" },
+        "closedAt": { "type": "string", "description": "Closure timestamp" },
+        "closedBy": { "type": "string", "description": "User who closed the period" },
+        "journalEntryId": { "type": "string", "description": "Closing journal entry ID" },
+        "voucherNumber": { "type": "string", "description": "Closing voucher number" },
+        "notes": { "type": "string", "description": "Notes" },
+        "synced": { "type": "boolean", "description": "Sync status" }
+      },
+      "required": ["id", "endDate", "netProfitTransferred", "closedAt"]
     }
   },
   "firestore": {
@@ -342,6 +377,14 @@
     "/fixedAssets/{assetId}": {
       "schema": "fixedAsset",
       "description": "Long-term farm property, plant, and equipment"
+    },
+    "/parties/{partyId}": {
+      "schema": "party",
+      "description": "Customer and supplier records"
+    },
+    "/closedPeriods/{periodId}": {
+      "schema": "closedPeriod",
+      "description": "Closed accounting periods"
     }
   }
 }
