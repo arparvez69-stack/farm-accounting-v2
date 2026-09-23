@@ -23,13 +23,13 @@ export async function runTaskB1Tests() {
 
   for (const acc of DEFAULT_CHART_OF_ACCOUNTS) {
     await db.accounts.add({
-      ...acc,
-      synced: false
+      ...acc
     });
   }
 
   const cashAccount = {
     id: 'cba-cash-01',
+    name: 'নগদ ক্যাশ (Main Cash)',
     accountName: 'নগদ ক্যাশ (Main Cash)',
     accountType: 'CASH' as const,
     accountNumber: '1010-01',

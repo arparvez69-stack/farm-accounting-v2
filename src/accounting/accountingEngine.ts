@@ -1,6 +1,6 @@
 import Dexie from 'dexie';
 import { db } from '../db/indexedDb';
-import { Account, AccountClass, ClosedPeriod, JournalEntry, JournalLine, NormalBalance, VoucherType, Sale, Purchase, AnimalEvent, PaymentRecord } from '../types';
+import { Account, AccountClass, ClosedPeriod, JournalEntry, JournalLine, NormalBalance, VoucherType, Sale, Purchase, AnimalEvent, PaymentRecord, Loan, Investor, FixedAsset, FishBatch, CropCycle, StockMovement } from '../types';
 import { generateTransactionNumber, generateUniqueId, safeInsert } from '../utils/idGenerator';
 import { DEFAULT_CHART_OF_ACCOUNTS } from './defaultAccounts';
 
@@ -332,7 +332,10 @@ export async function reverseJournalEntry(
       targetDb.animals,
       targetDb.payments,
       targetDb.loans,
+      targetDb.investors,
       targetDb.fixedAssets,
+      targetDb.fishBatches,
+      targetDb.cropCycles,
       targetDb.reminders,
       targetDb.accounts,
       targetDb.auditLogs,
@@ -345,7 +348,7 @@ export async function reverseJournalEntry(
       let original = targetDb.journalEntries?.get ? await targetDb.journalEntries.get(resolvedEntryId) : null;
 
       if (!original) {
-        // Try looking up via sale, purchase, payment, animalEvent
+        // Try looking up via sale, purchase, payment, animalEvent, fixedAsset, loan, investor, fishBatch, cropCycle
         if (targetDb.sales?.get) {
           const s = await targetDb.sales.get(originalEntryId);
           if (s?.journalEntryId) {
@@ -372,6 +375,57 @@ export async function reverseJournalEntry(
           if (evt?.journalEntryId) {
             resolvedEntryId = evt.journalEntryId;
             original = await targetDb.journalEntries.get(resolvedEntryId);
+          }
+        }
+        if (!original && targetDb.fixedAssets?.get) {
+          const ast = await targetDb.fixedAssets.get(originalEntryId);
+          if (ast?.disposalJournalId || ast?.journalEntryId) {
+            resolvedEntryId = ast.disposalJournalId || ast.journalEntryId!;
+            original = await targetDb.journalEntries.get(resolvedEntryId);
+          }
+        }
+        if (!original && targetDb.loans?.get) {
+          const ln = await targetDb.loans.get(originalEntryId);
+          if (ln && targetDb.journalEntries?.toArray) {
+            const allJ = await targetDb.journalEntries.toArray();
+            const j = allJ.slice().reverse().find((entry: any) => entry.reference === ln.id || entry.reference === ln.loanNumber);
+            if (j) {
+              resolvedEntryId = j.id;
+              original = j;
+            }
+          }
+        }
+        if (!original && targetDb.investors?.get) {
+          const inv = await targetDb.investors.get(originalEntryId);
+          if (inv && targetDb.journalEntries?.toArray) {
+            const allJ = await targetDb.journalEntries.toArray();
+            const j = allJ.slice().reverse().find((entry: any) => entry.reference === inv.id || (entry as any).relatedInvestorId === inv.id);
+            if (j) {
+              resolvedEntryId = j.id;
+              original = j;
+            }
+          }
+        }
+        if (!original && targetDb.fishBatches?.get) {
+          const fb = await targetDb.fishBatches.get(originalEntryId);
+          if (fb && targetDb.journalEntries?.toArray) {
+            const allJ = await targetDb.journalEntries.toArray();
+            const j = allJ.slice().reverse().find((entry: any) => entry.reference === fb.id);
+            if (j) {
+              resolvedEntryId = j.id;
+              original = j;
+            }
+          }
+        }
+        if (!original && targetDb.cropCycles?.get) {
+          const cc = await targetDb.cropCycles.get(originalEntryId);
+          if (cc && targetDb.journalEntries?.toArray) {
+            const allJ = await targetDb.journalEntries.toArray();
+            const j = allJ.slice().reverse().find((entry: any) => entry.reference === cc.id);
+            if (j) {
+              resolvedEntryId = j.id;
+              original = j;
+            }
           }
         }
       }
@@ -472,6 +526,56 @@ export async function reverseJournalEntry(
         status: 'REVERSED'
       };
 
+      // Helper function to create an appropriate reversal/counter stock movement linked to the original movement
+      // Preserves original stock movement for audit history without deletion
+      const recordStockMovementReversal = async (
+        originalSm: StockMovement,
+        revDate: string,
+        refId: string,
+        reason: string
+      ): Promise<StockMovement | null> => {
+        if (!targetDb.stockMovements) return null;
+        if (originalSm.reversedBy || originalSm.movementType === 'REVERSAL') {
+          return null; // Already reversed or is a reversal itself
+        }
+
+        const isOriginalInflow =
+          originalSm.movementType === 'PURCHASE' ||
+          originalSm.movementType === 'PRODUCTION' ||
+          originalSm.movementType === 'OPENING' ||
+          (originalSm as any).adjustmentType === 'INCREASE' ||
+          (originalSm as any).direction === 'IN';
+
+        const counterDirection = isOriginalInflow ? 'OUT' : 'IN';
+        const counterAdjType = isOriginalInflow ? 'DECREASE' : 'INCREASE';
+
+        const counterSm: StockMovement = {
+          id: generateUniqueId('sm_rev'),
+          date: revDate,
+          itemId: originalSm.itemId,
+          movementType: 'REVERSAL',
+          quantity: originalSm.quantity,
+          unitCost: originalSm.unitCost,
+          totalValue: originalSm.totalValue,
+          referenceId: refId || originalSm.referenceId || originalSm.id,
+          reversalOf: originalSm.id,
+          notes: `স্টক রিভার্সাল (${isOriginalInflow ? 'হ্রাস' : 'বৃদ্ধি'}): ${reason} (মূল মুভমেন্ট: ${originalSm.id})`,
+          direction: counterDirection,
+          adjustmentType: counterAdjType,
+          synced: false
+        };
+
+        await safeInsert(targetDb.stockMovements, counterSm, { idPrefix: 'sm' });
+
+        await targetDb.stockMovements.update(originalSm.id, {
+          reversedBy: counterSm.id,
+          status: 'REVERSED',
+          synced: false
+        });
+
+        return counterSm;
+      };
+
       // 3. Atomically reverse linked operational records and subledgers (cash/bank, inventory, stock movement, AR/AP, operational record)
       // Check for linked Sale
       let linkedSale: Sale | undefined;
@@ -499,16 +603,69 @@ export async function reverseJournalEntry(
           }
         }
 
-        // Stock movement cleanup / reversal
-        if (targetDb.stockMovements?.toArray && targetDb.stockMovements?.delete) {
+        // Stock movement reversal: create counter movement linked to original movement
+        if (targetDb.stockMovements?.toArray) {
           const movements = await targetDb.stockMovements.toArray();
-          const toDelete = movements.filter((m: any) =>
-            m.referenceId === linkedSale!.invoiceNumber ||
-            m.referenceId === linkedSale!.id ||
-            (m.movementType === 'SALE' && linkedSale!.items?.some((it: any) => it.itemId === m.itemId && it.quantity === m.quantity))
+          const toReverse = movements.filter((m: any) =>
+            !m.reversedBy &&
+            m.movementType !== 'REVERSAL' &&
+            (m.referenceId === linkedSale!.invoiceNumber ||
+              m.referenceId === linkedSale!.id ||
+              (m.movementType === 'SALE' && linkedSale!.items?.some((it: any) => it.itemId === m.itemId && it.quantity === m.quantity)))
           );
-          for (const sm of toDelete) {
-            await targetDb.stockMovements.delete(sm.id);
+          for (const sm of toReverse) {
+            await recordStockMovementReversal(
+              sm,
+              today,
+              linkedSale!.invoiceNumber || linkedSale!.id,
+              `বিক্রয় চালান ${linkedSale!.invoiceNumber || linkedSale!.id} বাতিল`
+            );
+          }
+        }
+
+        // Fish Batch harvest restoration
+        if (targetDb.fishBatches?.toArray && (linkedSale.category === 'FISH' || original.lines?.some((l: any) => l.accountCode === '4010'))) {
+          const allBatches = await targetDb.fishBatches.toArray();
+          const batch = allBatches.find(
+            (b: any) =>
+              b.id === original.reference ||
+              linkedSale!.items?.some((it: any) => it.itemId === b.id) ||
+              (original.narration && original.narration.includes(b.id))
+          );
+          if (batch) {
+            const soldQty = Number(linkedSale.items?.[0]?.quantity || 0);
+            const revAmt = Number(linkedSale.totalAmount || 0);
+            const newHarvestWeight = Math.max(0, Math.round(((batch.harvestWeightKg || 0) - soldQty) * 100) / 100);
+            const newHarvestRev = Math.max(0, Math.round(((batch.harvestRevenue || 0) - revAmt) * 100) / 100);
+            await targetDb.fishBatches.update(batch.id, {
+              harvestWeightKg: newHarvestWeight,
+              harvestRevenue: newHarvestRev,
+              status: batch.status === 'HARVESTED' ? 'ACTIVE' : batch.status,
+              synced: false
+            });
+          }
+        }
+
+        // Crop Cycle harvest restoration
+        if (targetDb.cropCycles?.toArray && (linkedSale.category === 'CROP' || original.lines?.some((l: any) => l.accountCode === '4020'))) {
+          const allCycles = await targetDb.cropCycles.toArray();
+          const cycle = allCycles.find(
+            (c: any) =>
+              c.id === original.reference ||
+              linkedSale!.items?.some((it: any) => it.itemId === c.id) ||
+              (original.narration && original.narration.includes(c.id))
+          );
+          if (cycle) {
+            const soldQty = Number(linkedSale.items?.[0]?.quantity || 0);
+            const revAmt = Number(linkedSale.totalAmount || 0);
+            const newHarvestQty = Math.max(0, Math.round(((cycle.totalHarvestQuantity || 0) - soldQty) * 100) / 100);
+            const newHarvestRev = Math.max(0, Math.round(((cycle.totalHarvestRevenue || 0) - revAmt) * 100) / 100);
+            await targetDb.cropCycles.update(cycle.id, {
+              totalHarvestQuantity: newHarvestQty,
+              totalHarvestRevenue: newHarvestRev,
+              status: (cycle.status === 'HARVESTED' || cycle.status === 'CLOSED') ? 'GROWING' : cycle.status,
+              synced: false
+            });
           }
         }
 
@@ -568,16 +725,23 @@ export async function reverseJournalEntry(
           }
         }
 
-        // Stock movement cleanup / reversal
-        if (targetDb.stockMovements?.toArray && targetDb.stockMovements?.delete) {
+        // Stock movement reversal: create counter movement linked to original movement
+        if (targetDb.stockMovements?.toArray) {
           const movements = await targetDb.stockMovements.toArray();
-          const toDelete = movements.filter((m: any) =>
-            m.referenceId === linkedPurchase!.invoiceNumber ||
-            m.referenceId === linkedPurchase!.id ||
-            (m.movementType === 'PURCHASE' && linkedPurchase!.items?.some((it: any) => it.itemId === m.itemId && it.quantity === m.quantity))
+          const toReverse = movements.filter((m: any) =>
+            !m.reversedBy &&
+            m.movementType !== 'REVERSAL' &&
+            (m.referenceId === linkedPurchase!.invoiceNumber ||
+              m.referenceId === linkedPurchase!.id ||
+              (m.movementType === 'PURCHASE' && linkedPurchase!.items?.some((it: any) => it.itemId === m.itemId && it.quantity === m.quantity)))
           );
-          for (const sm of toDelete) {
-            await targetDb.stockMovements.delete(sm.id);
+          for (const sm of toReverse) {
+            await recordStockMovementReversal(
+              sm,
+              today,
+              linkedPurchase!.invoiceNumber || linkedPurchase!.id,
+              `ক্রয় চালান ${linkedPurchase!.invoiceNumber || linkedPurchase!.id} বাতিল`
+            );
           }
         }
 
@@ -664,12 +828,21 @@ export async function reverseJournalEntry(
           }
         }
 
-        // Feed stock movement cleanup
-        if (targetDb.stockMovements?.toArray && targetDb.stockMovements?.delete) {
+        // Feed stock movement reversal: create counter movement linked to original movement
+        if (targetDb.stockMovements?.toArray) {
           const movements = await targetDb.stockMovements.toArray();
-          const toDelete = movements.filter((m: any) => m.referenceId === linkedEvent!.id);
-          for (const sm of toDelete) {
-            await targetDb.stockMovements.delete(sm.id);
+          const toReverse = movements.filter((m: any) =>
+            !m.reversedBy &&
+            m.movementType !== 'REVERSAL' &&
+            m.referenceId === linkedEvent!.id
+          );
+          for (const sm of toReverse) {
+            await recordStockMovementReversal(
+              sm,
+              today,
+              linkedEvent!.id,
+              `পশুর ইভেন্ট ${linkedEvent!.id} বাতিল`
+            );
           }
         }
 
@@ -768,6 +941,482 @@ export async function reverseJournalEntry(
         }
       }
 
+      // Check for linked FixedAsset
+      let linkedFixedAsset: FixedAsset | undefined;
+      if (targetDb.fixedAssets?.toArray) {
+        const allAssets = await targetDb.fixedAssets.toArray();
+        linkedFixedAsset = allAssets.find(
+          (a: any) =>
+            a.journalEntryId === original.id ||
+            a.disposalJournalId === original.id ||
+            (original.reference && a.id === original.reference) ||
+            (original.narration && original.narration.includes(a.id))
+        );
+      }
+
+      if (linkedFixedAsset) {
+        // Case A: Fixed Asset Disposal Reversal
+        const isDisposal =
+          original.id === linkedFixedAsset.disposalJournalId ||
+          original.voucherNumber?.startsWith('DISP') ||
+          (original.narration && (original.narration.includes('স্থায়ী সম্পদ অপসারণ') || original.narration.includes('Asset Disposal')));
+
+        if (isDisposal) {
+          await targetDb.fixedAssets.update(linkedFixedAsset.id, {
+            status: 'ACTIVE',
+            disposalJournalId: undefined,
+            disposalDate: undefined,
+            disposalProceeds: undefined,
+            gainLossOnDisposal: undefined,
+            synced: false
+          });
+        } else {
+          // Case B: Depreciation Entry Reversal
+          const deprLine = original.lines.find((l: any) => l.accountCode === '1590' && (l.credit || 0) > 0) ||
+            original.lines.find((l: any) => (l.accountCode === '6140' || l.accountCode === '6040') && (l.debit || 0) > 0);
+
+          if (deprLine) {
+            const deprAmt = Number(deprLine.credit || deprLine.debit || 0);
+            const newAccum = Math.max(0, Math.round(((linkedFixedAsset.accumulatedDepreciation || 0) - deprAmt) * 100) / 100);
+            const newBookValue = Math.round(((linkedFixedAsset.originalCost || 0) - newAccum) * 100) / 100;
+            await targetDb.fixedAssets.update(linkedFixedAsset.id, {
+              accumulatedDepreciation: newAccum,
+              currentBookValue: newBookValue,
+              synced: false
+            });
+          } else {
+            // Case C: Acquisition Reversal
+            if (linkedFixedAsset.status !== 'CANCELLED') {
+              await targetDb.fixedAssets.update(linkedFixedAsset.id, {
+                status: 'CANCELLED',
+                synced: false
+              });
+              // If purchased on credit, revert AP in parties
+              if (linkedFixedAsset.paymentMethod === 'CREDIT' && linkedFixedAsset.supplierId && targetDb.parties?.get) {
+                const supplier = await targetDb.parties.get(linkedFixedAsset.supplierId);
+                if (supplier) {
+                  await targetDb.parties.update(supplier.id, {
+                    balance: Math.round(((supplier.balance || 0) - linkedFixedAsset.originalCost) * 100) / 100,
+                    synced: false
+                  });
+                }
+              }
+            }
+          }
+        }
+      }
+
+      // Check for linked Loan
+      let linkedLoan: Loan | undefined;
+      if (targetDb.loans?.toArray) {
+        const allLoans = await targetDb.loans.toArray();
+        linkedLoan = allLoans.find(
+          (l: any) =>
+            l.id === original.reference ||
+            l.loanNumber === original.reference ||
+            (original as any).loanId === l.id ||
+            (l.schedule && l.schedule.some((s: any) => s.repaymentJournalId === original.id))
+        );
+      }
+
+      if (linkedLoan) {
+        const principalLine = original.lines.find(
+          (l: any) => (l.accountCode === '2110' || l.accountCode === '2120') && (l.debit || 0) > 0
+        );
+        const interestLine = original.lines.find(
+          (l: any) => l.accountCode === '8010' && (l.debit || 0) > 0
+        );
+        const hasRepaymentSchedule = linkedLoan.schedule?.some((s: any) => s.repaymentJournalId === original.id);
+
+        if (principalLine || interestLine || hasRepaymentSchedule) {
+          // Loan Repayment Reversal
+          const pAmt = Number(principalLine?.debit || 0);
+          const iAmt = Number(interestLine?.debit || 0);
+
+          const curRemP = linkedLoan.remainingPrincipal ?? linkedLoan.remainingBalance ?? 0;
+          const newRemP = Math.round((curRemP + pAmt) * 100) / 100;
+          const newTotalPaidP = Math.max(0, Math.round(((linkedLoan.totalPaidPrincipal || 0) - pAmt) * 100) / 100);
+          const newTotalPaidI = Math.max(0, Math.round(((linkedLoan.totalPaidInterest || 0) - iAmt) * 100) / 100);
+
+          let updatedSchedule = linkedLoan.schedule ? [...linkedLoan.schedule] : [];
+          if (updatedSchedule.length > 0) {
+            let matched = false;
+            updatedSchedule = updatedSchedule.map((s: any) => {
+              if (s.repaymentJournalId === original.id) {
+                matched = true;
+                return { ...s, isPaid: false, paidDate: undefined, repaymentJournalId: undefined };
+              }
+              return s;
+            });
+            if (!matched && (pAmt > 0 || iAmt > 0)) {
+              for (let i = updatedSchedule.length - 1; i >= 0; i--) {
+                if (updatedSchedule[i].isPaid) {
+                  updatedSchedule[i] = { ...updatedSchedule[i], isPaid: false, paidDate: undefined, repaymentJournalId: undefined };
+                  break;
+                }
+              }
+            }
+          }
+
+          await targetDb.loans.update(linkedLoan.id, {
+            remainingPrincipal: newRemP,
+            remainingBalance: newRemP,
+            totalPaidPrincipal: newTotalPaidP,
+            totalPaidInterest: newTotalPaidI,
+            schedule: updatedSchedule,
+            status: 'ACTIVE',
+            synced: false
+          });
+        } else {
+          // Loan Disbursement Reversal
+          const isDisbursement = original.lines.some(
+            (l: any) => (l.accountCode === '2110' || l.accountCode === '2120') && (l.credit || 0) > 0
+          );
+          if (isDisbursement && linkedLoan.status !== 'CANCELLED') {
+            await targetDb.loans.update(linkedLoan.id, {
+              status: 'CANCELLED',
+              synced: false
+            });
+          }
+        }
+      }
+
+      // Check for linked Investor
+      let linkedInvestor: Investor | undefined;
+      if (targetDb.investors?.toArray) {
+        const allInvestors = await targetDb.investors.toArray();
+        linkedInvestor = allInvestors.find(
+          (inv: any) =>
+            inv.id === original.reference ||
+            inv.id === (original as any).relatedInvestorId ||
+            (original.lines && original.lines.some((l: any) => l.memo && l.memo.includes(inv.name)))
+        );
+      }
+
+      if (linkedInvestor) {
+        const capCreditLine = original.lines.find((l: any) => l.accountCode === '3020' && (l.credit || 0) > 0);
+        const capDebitLine = original.lines.find((l: any) => l.accountCode === '3020' && (l.debit || 0) > 0);
+        const profitPayableCreditLine = original.lines.find((l: any) => l.accountCode === '2050' && (l.credit || 0) > 0);
+        const profitPayableDebitLine = original.lines.find((l: any) => l.accountCode === '2050' && (l.debit || 0) > 0);
+
+        if (capCreditLine) {
+          // Case 1: Reversal of Investor Capital Contribution
+          const contribAmt = Number(capCreditLine.credit || 0);
+          const newCapContrib = Math.max(0, Math.round(((linkedInvestor.capitalContributed || linkedInvestor.capitalAmount || 0) - contribAmt) * 100) / 100);
+          const newNetCap = Math.max(0, Math.round(((linkedInvestor.netCapital || linkedInvestor.currentBalance || 0) - contribAmt) * 100) / 100);
+          const newStatus = newNetCap <= 0 && newCapContrib <= 0 ? 'CANCELLED' : linkedInvestor.status;
+          await targetDb.investors.update(linkedInvestor.id, {
+            capitalContributed: newCapContrib,
+            capitalAmount: newCapContrib,
+            netCapital: newNetCap,
+            currentBalance: newNetCap,
+            currentEquityBalance: newNetCap,
+            status: newStatus,
+            synced: false
+          });
+        } else if (capDebitLine) {
+          // Case 2: Reversal of Capital Return / Withdrawal
+          const returnAmt = Number(capDebitLine.debit || 0);
+          const newCapReturned = Math.max(0, Math.round(((linkedInvestor.totalCapitalReturned || 0) - returnAmt) * 100) / 100);
+          const newWithdrawals = Math.max(0, Math.round(((linkedInvestor.withdrawals || linkedInvestor.totalWithdrawals || 0) - returnAmt) * 100) / 100);
+          const newNetCap = Math.round(((linkedInvestor.netCapital || 0) + returnAmt) * 100) / 100;
+          await targetDb.investors.update(linkedInvestor.id, {
+            totalCapitalReturned: newCapReturned,
+            withdrawals: newWithdrawals,
+            totalWithdrawals: newWithdrawals,
+            netCapital: newNetCap,
+            currentBalance: newNetCap,
+            currentEquityBalance: newNetCap,
+            status: 'ACTIVE',
+            synced: false
+          });
+        } else if (profitPayableCreditLine) {
+          // Case 3: Reversal of Profit Allocation
+          const allocAmt = Number(profitPayableCreditLine.credit || 0);
+          const newAlloc = Math.max(0, Math.round(((linkedInvestor.totalProfitAllocated || 0) - allocAmt) * 100) / 100);
+          const newPayable = Math.max(0, Math.round(((linkedInvestor.profitPayable || 0) - allocAmt) * 100) / 100);
+          await targetDb.investors.update(linkedInvestor.id, {
+            totalProfitAllocated: newAlloc,
+            profitPayable: newPayable,
+            synced: false
+          });
+        } else if (profitPayableDebitLine) {
+          // Case 4: Reversal of Profit Payment
+          const paidAmt = Number(profitPayableDebitLine.debit || 0);
+          const newTotalPaid = Math.max(0, Math.round(((linkedInvestor.totalProfitPaid || 0) - paidAmt) * 100) / 100);
+          const newPayable = Math.round(((linkedInvestor.profitPayable || 0) + paidAmt) * 100) / 100;
+          await targetDb.investors.update(linkedInvestor.id, {
+            totalProfitPaid: newTotalPaid,
+            profitPayable: newPayable,
+            synced: false
+          });
+        }
+      }
+
+      // Check for linked FishBatch (Stocking or Production Cost)
+      let linkedFishBatch: FishBatch | undefined;
+      if (targetDb.fishBatches?.toArray) {
+        const allFishBatches = await targetDb.fishBatches.toArray();
+        linkedFishBatch = allFishBatches.find(
+          (fb: any) =>
+            fb.id === original.reference ||
+            (original.narration && original.narration.includes(fb.id)) ||
+            (original.lines && original.lines.some((l: any) => l.memo && l.memo.includes(fb.id)))
+        );
+      }
+
+      if (linkedFishBatch) {
+        const costLine = original.lines.find(
+          (l: any) => (l.accountCode === '1580' || l.accountCode === '1054') && (l.debit || 0) > 0
+        );
+
+        const isStocking =
+          original.voucherType === 'PAYMENT' &&
+          (original.narration?.includes('পোনা মজুদ') ||
+            original.lines.some((l: any) => l.memo && l.memo.includes('[FINGERLING] পোনা মজুদ')));
+
+        if (isStocking && linkedFishBatch.status !== 'CANCELLED') {
+          await targetDb.fishBatches.update(linkedFishBatch.id, {
+            status: 'CANCELLED',
+            synced: false
+          });
+        } else if (costLine && costLine.debit) {
+          const costAmt = Number(costLine.debit);
+          const memo = (costLine.memo || original.narration || '').toUpperCase();
+
+          let fCost = linkedFishBatch.fingerlingCost || 0;
+          let feedCost = linkedFishBatch.totalFeedCost || 0;
+          let medCost = linkedFishBatch.medicineCost || 0;
+          let labCost = linkedFishBatch.labourCost || 0;
+          let elecCost = linkedFishBatch.electricityCost || 0;
+          let waterCost = linkedFishBatch.waterTreatmentCost || 0;
+          let otherCost = linkedFishBatch.otherCost || 0;
+
+          if (memo.includes('FINGERLING') || memo.includes('পোনা')) {
+            fCost = Math.max(0, Math.round((fCost - costAmt) * 100) / 100);
+          } else if (memo.includes('FEED') || memo.includes('খাদ্য')) {
+            feedCost = Math.max(0, Math.round((feedCost - costAmt) * 100) / 100);
+          } else if (memo.includes('MEDICINE') || memo.includes('ওষুধ')) {
+            medCost = Math.max(0, Math.round((medCost - costAmt) * 100) / 100);
+          } else if (memo.includes('LABOUR') || memo.includes('শ্রমিক')) {
+            labCost = Math.max(0, Math.round((labCost - costAmt) * 100) / 100);
+          } else if (memo.includes('ELECTRICITY') || memo.includes('বিদ্যুৎ')) {
+            elecCost = Math.max(0, Math.round((elecCost - costAmt) * 100) / 100);
+          } else if (memo.includes('WATER_TREATMENT') || memo.includes('পানি')) {
+            waterCost = Math.max(0, Math.round((waterCost - costAmt) * 100) / 100);
+          } else {
+            otherCost = Math.max(0, Math.round((otherCost - costAmt) * 100) / 100);
+          }
+
+          const newTotalCost = Math.round((fCost + feedCost + medCost + labCost + elecCost + waterCost + otherCost) * 100) / 100;
+
+          await targetDb.fishBatches.update(linkedFishBatch.id, {
+            fingerlingCost: fCost,
+            totalFeedCost: feedCost,
+            medicineCost: medCost,
+            labourCost: labCost,
+            electricityCost: elecCost,
+            waterTreatmentCost: waterCost,
+            otherCost,
+            totalCost: newTotalCost,
+            synced: false
+          });
+
+          // If feed inventory was consumed, restore inventory stock and record counter stock movement
+          if (targetDb.stockMovements?.toArray) {
+            const movements = await targetDb.stockMovements.toArray();
+            const sm = movements.find(
+              (m: any) =>
+                !m.reversedBy &&
+                m.movementType !== 'REVERSAL' &&
+                m.referenceId === linkedFishBatch!.id &&
+                (m.movementType === 'CONSUMPTION' || (m as any).referenceType === 'PRODUCTION') &&
+                (m.date === original.date || m.totalValue === costAmt)
+            );
+            if (sm) {
+              if (targetDb.inventoryItems?.get) {
+                const invItem = await targetDb.inventoryItems.get(sm.itemId);
+                if (invItem) {
+                  await targetDb.inventoryItems.update(invItem.id, {
+                    currentStock: Math.round(((invItem.currentStock || 0) + sm.quantity) * 100) / 100,
+                    synced: false
+                  });
+                }
+              }
+              await recordStockMovementReversal(
+                sm,
+                today,
+                linkedFishBatch!.id,
+                `মাছের খাদ্য/পোনা ব্যবহার বাতিল`
+              );
+            }
+          }
+        }
+      }
+
+      // Check for linked CropCycle (Production Cost)
+      let linkedCropCycle: CropCycle | undefined;
+      if (targetDb.cropCycles?.toArray) {
+        const allCycles = await targetDb.cropCycles.toArray();
+        linkedCropCycle = allCycles.find(
+          (cc: any) =>
+            cc.id === original.reference ||
+            (original.narration && original.narration.includes(cc.id)) ||
+            (original.lines && original.lines.some((l: any) => l.memo && l.memo.includes(cc.id)))
+        );
+      }
+
+      if (linkedCropCycle) {
+        const costLine = original.lines.find(
+          (l: any) => (l.accountCode === '1054' || l.accountCode === '1052' || l.accountCode === '1053') && (l.debit || 0) > 0
+        );
+
+        if (costLine && costLine.debit) {
+          const costAmt = Number(costLine.debit);
+          const memo = (costLine.memo || original.narration || '').toUpperCase();
+
+          let seedCost = linkedCropCycle.seedCost || 0;
+          let fertCost = linkedCropCycle.fertilizerCost || 0;
+          let irrigCost = linkedCropCycle.irrigationCost || 0;
+          let labCost = linkedCropCycle.labourCost || 0;
+          let protCost = linkedCropCycle.protectionCost || 0;
+          let machCost = linkedCropCycle.machineryCost || 0;
+          let otherCost = linkedCropCycle.otherCost || 0;
+
+          if (memo.includes('SEED') || memo.includes('বীজ')) {
+            seedCost = Math.max(0, Math.round((seedCost - costAmt) * 100) / 100);
+          } else if (memo.includes('FERTILIZER') || memo.includes('সার')) {
+            fertCost = Math.max(0, Math.round((fertCost - costAmt) * 100) / 100);
+          } else if (memo.includes('IRRIGATION') || memo.includes('সেচ')) {
+            irrigCost = Math.max(0, Math.round((irrigCost - costAmt) * 100) / 100);
+          } else if (memo.includes('LABOUR') || memo.includes('শ্রমিক')) {
+            labCost = Math.max(0, Math.round((labCost - costAmt) * 100) / 100);
+          } else if (memo.includes('PROTECTION') || memo.includes('বালাইনাশক') || memo.includes('কীটনাশক')) {
+            protCost = Math.max(0, Math.round((protCost - costAmt) * 100) / 100);
+          } else if (memo.includes('MACHINERY') || memo.includes('যন্ত্রপাতি') || memo.includes('চাষ')) {
+            machCost = Math.max(0, Math.round((machCost - costAmt) * 100) / 100);
+          } else {
+            otherCost = Math.max(0, Math.round((otherCost - costAmt) * 100) / 100);
+          }
+
+          const newTotalCost = Math.round((seedCost + fertCost + irrigCost + labCost + protCost + machCost + otherCost) * 100) / 100;
+
+          await targetDb.cropCycles.update(linkedCropCycle.id, {
+            seedCost,
+            fertilizerCost: fertCost,
+            irrigationCost: irrigCost,
+            labourCost: labCost,
+            protectionCost: protCost,
+            machineryCost: machCost,
+            otherCost,
+            totalCost: newTotalCost,
+            synced: false
+          });
+
+          // If inventory was consumed (fertilizer/seed), restore stock and record counter stock movement
+          if (targetDb.stockMovements?.toArray) {
+            const movements = await targetDb.stockMovements.toArray();
+            const sm = movements.find(
+              (m: any) =>
+                !m.reversedBy &&
+                m.movementType !== 'REVERSAL' &&
+                m.referenceId === linkedCropCycle!.id &&
+                m.movementType === 'CONSUMPTION' &&
+                (m.date === original.date || m.totalValue === costAmt)
+            );
+            if (sm) {
+              if (targetDb.inventoryItems?.get) {
+                const invItem = await targetDb.inventoryItems.get(sm.itemId);
+                if (invItem) {
+                  await targetDb.inventoryItems.update(invItem.id, {
+                    currentStock: Math.round(((invItem.currentStock || 0) + sm.quantity) * 100) / 100,
+                    synced: false
+                  });
+                }
+              }
+              await recordStockMovementReversal(
+                sm,
+                today,
+                linkedCropCycle!.id,
+                `ফসলের সার/বীজ ব্যবহার বাতিল`
+              );
+            }
+          }
+        }
+      }
+
+      // Check for Production Receipt (transfer from farm production to inventory)
+      const isProductionReceipt =
+        (original.narration?.includes('উৎপাদন প্রাপ্তি') ||
+          original.narration?.includes('খামার উৎপাদন হতে ইনভেন্টরিতে স্থানান্তর')) &&
+        original.lines.some((l: any) => l.accountCode >= '1051' && l.accountCode <= '1056' && (l.debit || 0) > 0);
+
+      if (isProductionReceipt && targetDb.stockMovements?.toArray) {
+        const movements = await targetDb.stockMovements.toArray();
+        const prMovements = movements.filter(
+          (m: any) =>
+            !m.reversedBy &&
+            m.movementType !== 'REVERSAL' &&
+            m.movementType === 'PRODUCTION' &&
+            (m.referenceId === original.reference || (original.lines && original.lines.some((l: any) => l.memo && l.memo.includes(m.referenceId))))
+        );
+        for (const sm of prMovements) {
+          if (targetDb.inventoryItems?.get) {
+            const invItem = await targetDb.inventoryItems.get(sm.itemId);
+            if (invItem) {
+              await targetDb.inventoryItems.update(invItem.id, {
+                currentStock: Math.max(0, Math.round(((invItem.currentStock || 0) - sm.quantity) * 100) / 100),
+                synced: false
+              });
+            }
+          }
+          await recordStockMovementReversal(
+            sm,
+            today,
+            original.reference || sm.referenceId,
+            `উৎপাদন প্রাপ্তি বাতিল`
+          );
+        }
+      }
+
+      // Generic check for any stock movements referencing this journal entry that haven't been reversed yet
+      if (targetDb.stockMovements?.toArray) {
+        const movements = await targetDb.stockMovements.toArray();
+        const orphanMovements = movements.filter((m: any) =>
+          !m.reversedBy &&
+          m.movementType !== 'REVERSAL' &&
+          (m.referenceId === original.id || m.referenceId === original.voucherNumber || (original.reference && m.referenceId === original.reference))
+        );
+        for (const sm of orphanMovements) {
+          await recordStockMovementReversal(
+            sm,
+            today,
+            original.voucherNumber || original.id,
+            `জাবেদা দাখিলা ${original.voucherNumber || original.id} রিভার্সাল`
+          );
+        }
+      }
+
+      // Check if there are AP credit lines that need party balance reduction (e.g. Fixed asset or production cost on credit)
+      if (!linkedPurchase && targetDb.parties?.get) {
+        const apLine = original.lines.find((l: any) => l.accountCode === '2010' && (l.credit || 0) > 0);
+        if (apLine) {
+          const supplierId =
+            linkedFixedAsset?.supplierId ||
+            (original as any).supplierId ||
+            (original as any).partyId;
+          if (supplierId) {
+            const party = await targetDb.parties.get(supplierId);
+            if (party) {
+              await targetDb.parties.update(party.id, {
+                balance: Math.round(((party.balance || 0) - (apLine.credit || 0)) * 100) / 100,
+                synced: false
+              });
+            }
+          }
+        }
+      }
+
       // If standalone journal entry with direct Cash/Bank movements (not covered by above)
       if (!linkedSale && !linkedPurchase && !linkedEvent && !linkedPayment && targetDb.cashBankAccounts?.where) {
         for (const line of original.lines) {
@@ -782,7 +1431,17 @@ export async function reverseJournalEntry(
               }
             }
           } else if (line.accountCode === '1030') {
-            const bankAcc = await targetDb.cashBankAccounts.where('accountType').equals('BANK').first();
+            let bankAcc: any;
+            const targetBankId =
+              linkedFixedAsset?.bankAccountId ||
+              (original as any).bankAccountId ||
+              (original as any).cashBankAccountId;
+            if (targetBankId && targetDb.cashBankAccounts?.get) {
+              bankAcc = await targetDb.cashBankAccounts.get(targetBankId);
+            }
+            if (!bankAcc && targetDb.cashBankAccounts?.where) {
+              bankAcc = await targetDb.cashBankAccounts.where('accountType').equals('BANK').first();
+            }
             if (bankAcc) {
               const netBankDelta = (line.credit || 0) - (line.debit || 0);
               if (netBankDelta !== 0) {
@@ -816,7 +1475,12 @@ export async function reverseJournalEntry(
         sale: linkedSale,
         purchase: linkedPurchase,
         animalEvent: linkedEvent,
-        payment: linkedPayment
+        payment: linkedPayment,
+        loan: linkedLoan,
+        investor: linkedInvestor,
+        fixedAsset: linkedFixedAsset,
+        fishBatch: linkedFishBatch,
+        cropCycle: linkedCropCycle
       };
     };
 

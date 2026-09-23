@@ -230,6 +230,17 @@ export function calculateHistoricalInventoryValuation(
         (m.notes || '').toLowerCase().includes('damage');
       return isDecrease ? -mQty : mQty;
     }
+    if (type === 'REVERSAL') {
+      const isDecrease =
+        (m as any).adjustmentType === 'DECREASE' ||
+        (m as any).direction === 'OUT' ||
+        Number(m.quantity) < 0 ||
+        (m.notes || '').includes('হ্রাস') ||
+        (m.notes || '').toLowerCase().includes('decrease') ||
+        (m.notes || '').toLowerCase().includes('purchase') ||
+        (m.notes || '').toLowerCase().includes('production');
+      return isDecrease ? -mQty : mQty;
+    }
     if (type === 'TRANSFER') {
       return Number(m.quantity) || 0;
     }
@@ -259,16 +270,27 @@ export function calculateHistoricalInventoryValuation(
     const mUnitCost = Number(m.unitCost) || 0;
     const mTotalVal = Number(m.totalValue) || round2(mQty * (mUnitCost || currentAvgCost));
 
+    const isRevInflow =
+      type === 'REVERSAL' &&
+      ((m as any).direction === 'IN' ||
+        (m as any).adjustmentType === 'INCREASE' ||
+        (m.notes || '').includes('বৃদ্ধি') ||
+        (m.notes || '').toLowerCase().includes('sale') ||
+        (m.notes || '').toLowerCase().includes('consumption'));
+    const isRevOutflow = type === 'REVERSAL' && !isRevInflow;
+
     const isInflow =
       type === 'PURCHASE' ||
       type === 'PRODUCTION' ||
       type === 'HARVEST' ||
-      type === 'OPENING';
+      type === 'OPENING' ||
+      isRevInflow;
     const isOutflow =
       type === 'CONSUMPTION' ||
       type === 'SALE' ||
       type === 'WASTE' ||
-      type === 'DAMAGE';
+      type === 'DAMAGE' ||
+      isRevOutflow;
 
     if (isInflow) {
       laterInflowQty = round2(laterInflowQty + mQty);
@@ -355,16 +377,27 @@ export function calculateHistoricalInventoryValuation(
     const mUnitCost = Number(m.unitCost) || 0;
     const mTotalVal = Number(m.totalValue) || (mQty * mUnitCost);
 
+    const isRevInflow =
+      type === 'REVERSAL' &&
+      ((m as any).direction === 'IN' ||
+        (m as any).adjustmentType === 'INCREASE' ||
+        (m.notes || '').includes('বৃদ্ধি') ||
+        (m.notes || '').toLowerCase().includes('sale') ||
+        (m.notes || '').toLowerCase().includes('consumption'));
+    const isRevOutflow = type === 'REVERSAL' && !isRevInflow;
+
     const isInflow =
       type === 'PURCHASE' ||
       type === 'PRODUCTION' ||
       type === 'HARVEST' ||
-      type === 'OPENING';
+      type === 'OPENING' ||
+      isRevInflow;
     const isOutflow =
       type === 'CONSUMPTION' ||
       type === 'SALE' ||
       type === 'WASTE' ||
-      type === 'DAMAGE';
+      type === 'DAMAGE' ||
+      isRevOutflow;
 
     if (isInflow) {
       const costAdded = mTotalVal > 0 ? mTotalVal : round2(mQty * (mUnitCost || runningAvgCost));

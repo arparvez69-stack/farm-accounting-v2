@@ -167,12 +167,32 @@ export async function executeUndo(
         }
       }
 
-      // 6. Clean up feed stock movements
-      if (targetDb.stockMovements?.toArray && targetDb.stockMovements?.delete) {
+      // 6. Record counter stock movement if not already reversed
+      if (targetDb.stockMovements?.toArray) {
         const movements = await targetDb.stockMovements.toArray();
-        const toDelete = movements.filter((m: any) => m.referenceId === action.eventId);
-        for (const sm of toDelete) {
-          await targetDb.stockMovements.delete(sm.id);
+        const toReverse = movements.filter((m: any) => m.referenceId === action.eventId && !m.reversedBy && m.movementType !== 'REVERSAL');
+        for (const sm of toReverse) {
+          const counterSm = {
+            id: `sm_rev_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+            date: new Date().toISOString().split('T')[0],
+            itemId: sm.itemId,
+            movementType: 'REVERSAL' as const,
+            quantity: sm.quantity,
+            unitCost: sm.unitCost,
+            totalValue: sm.totalValue,
+            referenceId: sm.referenceId || action.eventId,
+            reversalOf: sm.id,
+            notes: `ইভেন্ট বাতিল/রিভার্সাল (Reversal of feed movement ${sm.id})`,
+            direction: 'IN' as const,
+            adjustmentType: 'INCREASE' as const,
+            synced: false
+          };
+          await targetDb.stockMovements.add(counterSm);
+          await targetDb.stockMovements.update(sm.id, {
+            reversedBy: counterSm.id,
+            status: 'REVERSED',
+            synced: false
+          });
         }
       }
     } else if (action.type === 'SALE') {
@@ -200,16 +220,38 @@ export async function executeUndo(
         }
       }
 
-      // 5. Delete stock movement created by sale
-      if (targetDb.stockMovements?.toArray && targetDb.stockMovements?.delete) {
+      // 5. Record counter stock movement for sale if not already reversed by reverseJournalEntry
+      if (targetDb.stockMovements?.toArray) {
         const movements = await targetDb.stockMovements.toArray();
-        const toDelete = movements.filter((m: any) =>
-          (sale && (m.referenceId === sale.invoiceNumber || m.referenceId === sale.id)) ||
-          m.referenceId === action.saleId ||
-          (m.movementType === 'SALE' && m.itemId === action.itemId && m.quantity === action.quantity)
+        const toReverse = movements.filter((m: any) =>
+          !m.reversedBy &&
+          m.movementType !== 'REVERSAL' &&
+          ((sale && (m.referenceId === sale.invoiceNumber || m.referenceId === sale.id)) ||
+            m.referenceId === action.saleId ||
+            (m.movementType === 'SALE' && m.itemId === action.itemId && m.quantity === action.quantity))
         );
-        for (const sm of toDelete) {
-          await targetDb.stockMovements.delete(sm.id);
+        for (const sm of toReverse) {
+          const counterSm = {
+            id: `sm_rev_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+            date: new Date().toISOString().split('T')[0],
+            itemId: sm.itemId,
+            movementType: 'REVERSAL' as const,
+            quantity: sm.quantity,
+            unitCost: sm.unitCost,
+            totalValue: sm.totalValue,
+            referenceId: sm.referenceId || action.saleId,
+            reversalOf: sm.id,
+            notes: `বিক্রয় বাতিল/রিভার্সাল (Reversal of sale movement ${sm.id})`,
+            direction: 'IN' as const,
+            adjustmentType: 'INCREASE' as const,
+            synced: false
+          };
+          await targetDb.stockMovements.add(counterSm);
+          await targetDb.stockMovements.update(sm.id, {
+            reversedBy: counterSm.id,
+            status: 'REVERSED',
+            synced: false
+          });
         }
       }
 
@@ -263,16 +305,38 @@ export async function executeUndo(
         }
       }
 
-      // 5. Delete stock movement created by purchase
-      if (targetDb.stockMovements?.toArray && targetDb.stockMovements?.delete) {
+      // 5. Record counter stock movement for purchase if not already reversed by reverseJournalEntry
+      if (targetDb.stockMovements?.toArray) {
         const movements = await targetDb.stockMovements.toArray();
-        const toDelete = movements.filter((m: any) =>
-          (purchase && (m.referenceId === purchase.invoiceNumber || m.referenceId === purchase.id)) ||
-          m.referenceId === action.purchaseId ||
-          (m.movementType === 'PURCHASE' && m.itemId === action.itemId && m.quantity === action.quantity)
+        const toReverse = movements.filter((m: any) =>
+          !m.reversedBy &&
+          m.movementType !== 'REVERSAL' &&
+          ((purchase && (m.referenceId === purchase.invoiceNumber || m.referenceId === purchase.id)) ||
+            m.referenceId === action.purchaseId ||
+            (m.movementType === 'PURCHASE' && m.itemId === action.itemId && m.quantity === action.quantity))
         );
-        for (const sm of toDelete) {
-          await targetDb.stockMovements.delete(sm.id);
+        for (const sm of toReverse) {
+          const counterSm = {
+            id: `sm_rev_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+            date: new Date().toISOString().split('T')[0],
+            itemId: sm.itemId,
+            movementType: 'REVERSAL' as const,
+            quantity: sm.quantity,
+            unitCost: sm.unitCost,
+            totalValue: sm.totalValue,
+            referenceId: sm.referenceId || action.purchaseId,
+            reversalOf: sm.id,
+            notes: `ক্রয় বাতিল/রিভার্সাল (Reversal of purchase movement ${sm.id})`,
+            direction: 'OUT' as const,
+            adjustmentType: 'DECREASE' as const,
+            synced: false
+          };
+          await targetDb.stockMovements.add(counterSm);
+          await targetDb.stockMovements.update(sm.id, {
+            reversedBy: counterSm.id,
+            status: 'REVERSED',
+            synced: false
+          });
         }
       }
 

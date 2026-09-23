@@ -232,7 +232,7 @@ export interface FishBatch {
   initialStockedQty?: number;
   harvestQuantity?: number;
   totalHarvestedQty?: number;
-  status: 'ACTIVE' | 'HARVESTED' | 'CLOSED';
+  status: 'ACTIVE' | 'HARVESTED' | 'CLOSED' | 'CANCELLED';
   notes?: string;
   synced?: boolean;
 }
@@ -270,7 +270,7 @@ export interface CropCycle {
   expectedYieldKg?: number;
   totalAvailableYieldKg?: number;
   availableProductionKg?: number;
-  status: 'PLANTED' | 'GROWING' | 'HARVESTED' | 'CLOSED';
+  status: 'PLANTED' | 'GROWING' | 'HARVESTED' | 'CLOSED' | 'CANCELLED';
   synced?: boolean;
 }
 
@@ -375,12 +375,18 @@ export interface StockMovement {
     | 'SALE'
     | 'WASTE'
     | 'DAMAGE'
-    | 'ADJUSTMENT';
+    | 'ADJUSTMENT'
+    | 'REVERSAL';
   quantity: number;
   unitCost: number;
   totalValue: number;
   referenceId?: string;
   notes?: string;
+  reversalOf?: string;
+  reversedBy?: string;
+  status?: string;
+  direction?: 'IN' | 'OUT';
+  adjustmentType?: 'INCREASE' | 'DECREASE';
   synced?: boolean;
 }
 
@@ -557,7 +563,7 @@ export interface Loan {
   outstandingPrincipal?: number;
   remainingPrincipal?: number;
   schedule?: AmortizationScheduleItem[];
-  status: 'ACTIVE' | 'PAID_OFF';
+  status: 'ACTIVE' | 'PAID_OFF' | 'CANCELLED';
   synced?: boolean;
 }
 
@@ -605,7 +611,7 @@ export interface Investor {
   currentBalance?: number;
   currentEquityBalance?: number;
 
-  status: 'ACTIVE' | 'EXITED';
+  status: 'ACTIVE' | 'EXITED' | 'CANCELLED';
   notes?: string;
   synced?: boolean;
 
@@ -651,7 +657,7 @@ export interface FixedAsset {
   paymentMethod?: 'CASH' | 'BANK' | 'CREDIT';
   supplierId?: string;
   bankAccountId?: string;
-  status?: 'ACTIVE' | 'DISPOSED';
+  status?: 'ACTIVE' | 'DISPOSED' | 'CANCELLED';
   disposalDate?: string;
   disposalProceeds?: number;
   gainLossOnDisposal?: number;
