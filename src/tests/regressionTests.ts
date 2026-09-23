@@ -6925,6 +6925,478 @@ async function runRegressionTestsInternal(): Promise<TestResult> {
     const lineCashDraw = a5DrawJournal?.lines.find((l: any) => l.accountCode === '1010');
     assert(lineCashDraw !== undefined && lineCashDraw.credit === 15000, 'Task A5: Credit 1010 Cash Account verified.');
 
+    // ==========================================
+    // TASK A6: Sale Idempotency & Duplicate Protection Tests
+    // ==========================================
+    console.log('\n--- Running Task A6 Sale Idempotency Tests ---');
+    const a6Db = createMockAgroDatabase();
+    for (const acc of DEFAULT_CHART_OF_ACCOUNTS) {
+      await a6Db.accounts.put(acc);
+    }
+
+    await a6Db.cashBankAccounts.put({
+      id: 'cb_a6_cash',
+      accountName: 'Main Cash Drawer',
+      accountType: 'CASH',
+      accountNumber: '1010-A6',
+      currentBalance: 50000,
+      openingBalance: 50000,
+      isDefault: true,
+      synced: false
+    });
+
+    await a6Db.inventoryItems.put({
+      id: 'item_a6_feed',
+      code: 'FEED-001',
+      nameBn: 'স্টার্টার ফিড',
+      nameEn: 'Starter Feed',
+      category: 'FEED',
+      currentStock: 100,
+      reorderLevel: 10,
+      sellingPrice: 80,
+      unit: 'কেজি',
+      avgCostPrice: 50,
+      synced: false
+    });
+
+    await a6Db.parties.put({
+      id: 'cust_a6_1',
+      name: 'আকবর ট্রেডার্স',
+      type: 'CUSTOMER',
+      phone: '01800000000',
+      balance: 0,
+      synced: false
+    });
+
+    const a6Customer = (await a6Db.parties.get('cust_a6_1'))!;
+    const a6Item = (await a6Db.inventoryItems.get('item_a6_feed'))!;
+
+    // 1. Initial sale with idempotency key
+    const a6SaleRes1 = await executeSaleTransaction(
+      {
+        idempotencyKey: 'idemp_sale_a6_001',
+        customer: a6Customer,
+        item: a6Item,
+        quantity: 10,
+        unitPrice: 80,
+        paymentMethod: 'CASH',
+        bankAccountId: 'cb_a6_cash',
+        currentUserId: 'usr_admin',
+        date: '2026-05-12'
+      },
+      a6Db
+    );
+    assert(a6SaleRes1.sale !== undefined, 'Task A6: First sale with idempotencyKey must succeed.');
+    const salesCountAfter1 = (await a6Db.sales.toArray()).length;
+    const journalsCountAfter1 = (await a6Db.journalEntries.toArray()).length;
+    const stockAfter1 = (await a6Db.inventoryItems.get('item_a6_feed'))!.currentStock;
+    const cashAfter1 = (await a6Db.cashBankAccounts.get('cb_a6_cash'))!.currentBalance;
+
+    assert(salesCountAfter1 === 1, 'Task A6: Exactly 1 sale created initially.');
+    assert(journalsCountAfter1 === 1, 'Task A6: Exactly 1 journal entry created initially.');
+    assert(stockAfter1 === 90, 'Task A6: Stock reduced by 10 (100 -> 90).');
+    assert(cashAfter1 === 50800, 'Task A6: Cash increased by 800 (50000 + 800).');
+
+    // 2. Retry identical sale with same idempotency key
+    let a6RetryKeyFailed = false;
+    try {
+      await executeSaleTransaction(
+        {
+          idempotencyKey: 'idemp_sale_a6_001',
+          customer: a6Customer,
+          item: a6Item,
+          quantity: 10,
+          unitPrice: 80,
+          paymentMethod: 'CASH',
+          bankAccountId: 'cb_a6_cash',
+          currentUserId: 'usr_admin',
+          date: '2026-05-12'
+        },
+        a6Db
+      );
+    } catch (err: any) {
+      a6RetryKeyFailed = true;
+      assert(
+        err.message.includes('ডুপ্লিকেট') || err.message.includes('Duplicate'),
+        'Task A6: Error message indicates duplicate sale prevented.'
+      );
+    }
+    assert(a6RetryKeyFailed, 'Task A6: Duplicate sale retry with same idempotencyKey MUST be rejected.');
+
+    // Verify state after idempotency retry:
+    // a second sale must not be created
+    // a second journal must not be created
+    // a second stock reduction must not happen
+    // a second cash/AR effect must not happen
+    const salesCountAfterRetry = (await a6Db.sales.toArray()).length;
+    const journalsCountAfterRetry = (await a6Db.journalEntries.toArray()).length;
+    const stockAfterRetry = (await a6Db.inventoryItems.get('item_a6_feed'))!.currentStock;
+    const cashAfterRetry = (await a6Db.cashBankAccounts.get('cb_a6_cash'))!.currentBalance;
+
+    assert(salesCountAfterRetry === 1, 'Task A6: NO second sale created on idempotency retry.');
+    assert(journalsCountAfterRetry === 1, 'Task A6: NO second journal created on idempotency retry.');
+    assert(stockAfterRetry === 90, 'Task A6: NO second stock reduction on idempotency retry.');
+    assert(cashAfterRetry === 50800, 'Task A6: NO second cash effect on idempotency retry.');
+
+    // 3. Retry with same target sale ID
+    const a6SaleWithId = await executeSaleTransaction(
+      {
+        id: 'sal_custom_a6_unique',
+        customer: a6Customer,
+        item: (await a6Db.inventoryItems.get('item_a6_feed'))!,
+        quantity: 5,
+        unitPrice: 80,
+        paymentMethod: 'CASH',
+        bankAccountId: 'cb_a6_cash',
+        currentUserId: 'usr_admin',
+        date: '2026-05-12'
+      },
+      a6Db
+    );
+    assert(a6SaleWithId.sale.id === 'sal_custom_a6_unique', 'Task A6: Sale with custom ID created.');
+    const stockAfterIdSale = (await a6Db.inventoryItems.get('item_a6_feed'))!.currentStock;
+    assert(stockAfterIdSale === 85, 'Task A6: Stock reduced to 85.');
+
+    let a6RetryIdFailed = false;
+    try {
+      await executeSaleTransaction(
+        {
+          id: 'sal_custom_a6_unique',
+          customer: a6Customer,
+          item: (await a6Db.inventoryItems.get('item_a6_feed'))!,
+          quantity: 5,
+          unitPrice: 80,
+          paymentMethod: 'CASH',
+          bankAccountId: 'cb_a6_cash',
+          currentUserId: 'usr_admin',
+          date: '2026-05-12'
+        },
+        a6Db
+      );
+    } catch {
+      a6RetryIdFailed = true;
+    }
+    assert(a6RetryIdFailed, 'Task A6: Duplicate sale retry with same target ID MUST be rejected.');
+    assert((await a6Db.sales.toArray()).length === 2, 'Task A6: NO second sale created on ID collision.');
+    assert((await a6Db.inventoryItems.get('item_a6_feed'))!.currentStock === 85, 'Task A6: NO second stock reduction on ID collision.');
+
+    // 4. Retry with credit sale and verify AR protection
+    const preCreditAR = (await a6Db.parties.get('cust_a6_1'))!.balance;
+    const a6CreditSale = await executeSaleTransaction(
+      {
+        customer: a6Customer,
+        item: (await a6Db.inventoryItems.get('item_a6_feed'))!,
+        quantity: 5,
+        unitPrice: 100,
+        paymentMethod: 'CREDIT',
+        currentUserId: 'usr_admin',
+        date: '2026-05-12'
+      },
+      a6Db
+    );
+    assert(a6CreditSale.sale !== undefined, 'Task A6: Credit sale succeeded.');
+    const postCreditAR = (await a6Db.parties.get('cust_a6_1'))!.balance;
+    assert(postCreditAR === preCreditAR + 500, 'Task A6: AR balance increased by 500.');
+    const stockAfterCredit = (await a6Db.inventoryItems.get('item_a6_feed'))!.currentStock;
+    assert(stockAfterCredit === 80, 'Task A6: Stock reduced to 80.');
+
+    // Immediate identical retry of the credit sale
+    let a6RetryCreditFailed = false;
+    try {
+      await executeSaleTransaction(
+        {
+          customer: a6Customer,
+          item: (await a6Db.inventoryItems.get('item_a6_feed'))!,
+          quantity: 5,
+          unitPrice: 100,
+          paymentMethod: 'CREDIT',
+          currentUserId: 'usr_admin',
+          date: '2026-05-12'
+        },
+        a6Db
+      );
+    } catch {
+      a6RetryCreditFailed = true;
+    }
+    assert(a6RetryCreditFailed, 'Task A6: Immediate identical sale retry MUST be rejected.');
+    const arAfterFailedRetry = (await a6Db.parties.get('cust_a6_1'))!.balance;
+    assert(arAfterFailedRetry === postCreditAR, 'Task A6: NO second AR effect on duplicate credit sale retry.');
+    const stockAfterFailedRetry = (await a6Db.inventoryItems.get('item_a6_feed'))!.currentStock;
+    assert(stockAfterFailedRetry === 80, 'Task A6: NO second stock reduction on duplicate credit sale retry.');
+
+    // 5. Concurrent duplicate sale execution (Race Condition)
+    const currentFreshItem = (await a6Db.inventoryItems.get('item_a6_feed'))!;
+    const [resA, resB] = await Promise.allSettled([
+      executeSaleTransaction(
+        {
+          idempotencyKey: 'idemp_concurrent_sale_1',
+          customer: a6Customer,
+          item: currentFreshItem,
+          quantity: 2,
+          unitPrice: 80,
+          paymentMethod: 'CASH',
+          bankAccountId: 'cb_a6_cash',
+          currentUserId: 'usr_admin',
+          date: '2026-05-12'
+        },
+        a6Db
+      ),
+      executeSaleTransaction(
+        {
+          idempotencyKey: 'idemp_concurrent_sale_1',
+          customer: a6Customer,
+          item: currentFreshItem,
+          quantity: 2,
+          unitPrice: 80,
+          paymentMethod: 'CASH',
+          bankAccountId: 'cb_a6_cash',
+          currentUserId: 'usr_admin',
+          date: '2026-05-12'
+        },
+        a6Db
+      )
+    ]);
+    const fulfilledCount = (resA.status === 'fulfilled' ? 1 : 0) + (resB.status === 'fulfilled' ? 1 : 0);
+    const rejectedCount = (resA.status === 'rejected' ? 1 : 0) + (resB.status === 'rejected' ? 1 : 0);
+    assert(fulfilledCount === 1, 'Task A6: Exactly one concurrent sale call must succeed.');
+    assert(rejectedCount === 1, 'Task A6: Exactly one concurrent sale call must be rejected.');
+
+    // ==========================================
+    // TASK A7: Purchase Idempotency & Duplicate Protection Tests
+    // ==========================================
+    console.log('\n--- Running Task A7 Purchase Idempotency Tests ---');
+    const a7Db = createMockAgroDatabase();
+    for (const acc of DEFAULT_CHART_OF_ACCOUNTS) {
+      await a7Db.accounts.put(acc);
+    }
+
+    await a7Db.cashBankAccounts.put({
+      id: 'cb_a7_cash',
+      accountName: 'Main Cash Drawer',
+      accountType: 'CASH',
+      accountNumber: '1010-A7',
+      currentBalance: 50000,
+      openingBalance: 50000,
+      isDefault: true,
+      synced: false
+    });
+
+    await a7Db.inventoryItems.put({
+      id: 'item_a7_feed',
+      code: 'FEED-002',
+      nameBn: 'গ্রোয়ার ফিড',
+      nameEn: 'Grower Feed',
+      category: 'FEED',
+      currentStock: 20,
+      reorderLevel: 10,
+      sellingPrice: 70,
+      unit: 'কেজি',
+      avgCostPrice: 40,
+      synced: false
+    });
+
+    await a7Db.parties.put({
+      id: 'supp_a7_1',
+      name: 'মেসার্স জামান ফিড',
+      type: 'SUPPLIER',
+      phone: '01700000000',
+      balance: 0,
+      synced: false
+    });
+
+    const a7Supplier = (await a7Db.parties.get('supp_a7_1'))!;
+    const a7Item = (await a7Db.inventoryItems.get('item_a7_feed'))!;
+
+    // 1. Initial purchase with idempotency key
+    const a7PurRes1 = await executePurchaseTransaction(
+      {
+        idempotencyKey: 'idemp_pur_a7_001',
+        supplier: a7Supplier,
+        item: a7Item,
+        quantity: 10,
+        unitPrice: 45,
+        paymentMethod: 'CASH',
+        bankAccountId: 'cb_a7_cash',
+        currentUserId: 'usr_admin',
+        date: '2026-05-12'
+      },
+      a7Db
+    );
+    assert(a7PurRes1.purchase !== undefined, 'Task A7: First purchase with idempotencyKey must succeed.');
+    const purCountAfter1 = (await a7Db.purchases.toArray()).length;
+    const journalsCountAfterPur1 = (await a7Db.journalEntries.toArray()).length;
+    const stockAfterPur1 = (await a7Db.inventoryItems.get('item_a7_feed'))!.currentStock;
+    const cashAfterPur1 = (await a7Db.cashBankAccounts.get('cb_a7_cash'))!.currentBalance;
+
+    assert(purCountAfter1 === 1, 'Task A7: Exactly 1 purchase created initially.');
+    assert(journalsCountAfterPur1 === 1, 'Task A7: Exactly 1 journal entry created initially.');
+    assert(stockAfterPur1 === 30, 'Task A7: Stock increased by 10 (20 -> 30).');
+    assert(cashAfterPur1 === 49550, 'Task A7: Cash reduced by 450 (50000 - 450).');
+
+    // 2. Retry identical purchase with same idempotency key
+    let a7RetryKeyFailed = false;
+    try {
+      await executePurchaseTransaction(
+        {
+          idempotencyKey: 'idemp_pur_a7_001',
+          supplier: a7Supplier,
+          item: a7Item,
+          quantity: 10,
+          unitPrice: 45,
+          paymentMethod: 'CASH',
+          bankAccountId: 'cb_a7_cash',
+          currentUserId: 'usr_admin',
+          date: '2026-05-12'
+        },
+        a7Db
+      );
+    } catch (err: any) {
+      a7RetryKeyFailed = true;
+      assert(
+        err.message.includes('ডুপ্লিকেট') || err.message.includes('Duplicate'),
+        'Task A7: Error message indicates duplicate purchase prevented.'
+      );
+    }
+    assert(a7RetryKeyFailed, 'Task A7: Duplicate purchase retry with same idempotencyKey MUST be rejected.');
+
+    // Verify state after idempotency retry:
+    // a second purchase must not be created
+    // a second journal must not be created
+    // a second stock increase must not happen
+    // a second cash effect must not happen
+    const purCountAfterRetry = (await a7Db.purchases.toArray()).length;
+    const journalsCountAfterRetryPur = (await a7Db.journalEntries.toArray()).length;
+    const stockAfterRetryPur = (await a7Db.inventoryItems.get('item_a7_feed'))!.currentStock;
+    const cashAfterRetryPur = (await a7Db.cashBankAccounts.get('cb_a7_cash'))!.currentBalance;
+
+    assert(purCountAfterRetry === 1, 'Task A7: NO second purchase created on idempotency retry.');
+    assert(journalsCountAfterRetryPur === 1, 'Task A7: NO second journal created on idempotency retry.');
+    assert(stockAfterRetryPur === 30, 'Task A7: NO second stock increase on idempotency retry.');
+    assert(cashAfterRetryPur === 49550, 'Task A7: NO second cash effect on idempotency retry.');
+
+    // 3. Retry with same target purchase ID
+    const a7PurWithId = await executePurchaseTransaction(
+      {
+        id: 'pur_custom_a7_unique',
+        supplier: a7Supplier,
+        item: (await a7Db.inventoryItems.get('item_a7_feed'))!,
+        quantity: 5,
+        unitPrice: 45,
+        paymentMethod: 'CASH',
+        bankAccountId: 'cb_a7_cash',
+        currentUserId: 'usr_admin',
+        date: '2026-05-12'
+      },
+      a7Db
+    );
+    assert(a7PurWithId.purchase.id === 'pur_custom_a7_unique', 'Task A7: Purchase with custom ID created.');
+    const stockAfterIdPur = (await a7Db.inventoryItems.get('item_a7_feed'))!.currentStock;
+    assert(stockAfterIdPur === 35, 'Task A7: Stock increased to 35.');
+
+    let a7RetryIdFailed = false;
+    try {
+      await executePurchaseTransaction(
+        {
+          id: 'pur_custom_a7_unique',
+          supplier: a7Supplier,
+          item: (await a7Db.inventoryItems.get('item_a7_feed'))!,
+          quantity: 5,
+          unitPrice: 45,
+          paymentMethod: 'CASH',
+          bankAccountId: 'cb_a7_cash',
+          currentUserId: 'usr_admin',
+          date: '2026-05-12'
+        },
+        a7Db
+      );
+    } catch {
+      a7RetryIdFailed = true;
+    }
+    assert(a7RetryIdFailed, 'Task A7: Duplicate purchase retry with same target ID MUST be rejected.');
+    assert((await a7Db.purchases.toArray()).length === 2, 'Task A7: NO second purchase created on ID collision.');
+    assert((await a7Db.inventoryItems.get('item_a7_feed'))!.currentStock === 35, 'Task A7: NO second stock increase on ID collision.');
+
+    // 4. Retry with credit purchase and verify AP protection
+    const preCreditAP = (await a7Db.parties.get('supp_a7_1'))!.balance;
+    const a7CreditPur = await executePurchaseTransaction(
+      {
+        supplier: a7Supplier,
+        item: (await a7Db.inventoryItems.get('item_a7_feed'))!,
+        quantity: 10,
+        unitPrice: 50,
+        paymentMethod: 'CREDIT',
+        currentUserId: 'usr_admin',
+        date: '2026-05-12'
+      },
+      a7Db
+    );
+    assert(a7CreditPur.purchase !== undefined, 'Task A7: Credit purchase succeeded.');
+    const postCreditAP = (await a7Db.parties.get('supp_a7_1'))!.balance;
+    assert(postCreditAP === preCreditAP + 500, 'Task A7: AP balance increased by 500.');
+    const stockAfterCreditPur = (await a7Db.inventoryItems.get('item_a7_feed'))!.currentStock;
+    assert(stockAfterCreditPur === 45, 'Task A7: Stock increased to 45.');
+
+    // Immediate identical retry of the credit purchase
+    let a7RetryCreditFailed = false;
+    try {
+      await executePurchaseTransaction(
+        {
+          supplier: a7Supplier,
+          item: (await a7Db.inventoryItems.get('item_a7_feed'))!,
+          quantity: 10,
+          unitPrice: 50,
+          paymentMethod: 'CREDIT',
+          currentUserId: 'usr_admin',
+          date: '2026-05-12'
+        },
+        a7Db
+      );
+    } catch {
+      a7RetryCreditFailed = true;
+    }
+    assert(a7RetryCreditFailed, 'Task A7: Immediate identical purchase retry MUST be rejected.');
+    const apAfterFailedRetry = (await a7Db.parties.get('supp_a7_1'))!.balance;
+    assert(apAfterFailedRetry === postCreditAP, 'Task A7: NO second AP effect on duplicate credit purchase retry.');
+    const stockAfterFailedRetryPur = (await a7Db.inventoryItems.get('item_a7_feed'))!.currentStock;
+    assert(stockAfterFailedRetryPur === 45, 'Task A7: NO second stock increase on duplicate credit purchase retry.');
+
+    // 5. Concurrent duplicate purchase execution (Race Condition)
+    const currentFreshPurItem = (await a7Db.inventoryItems.get('item_a7_feed'))!;
+    const [purResA, purResB] = await Promise.allSettled([
+      executePurchaseTransaction(
+        {
+          idempotencyKey: 'idemp_concurrent_pur_1',
+          supplier: a7Supplier,
+          item: currentFreshPurItem,
+          quantity: 2,
+          unitPrice: 50,
+          paymentMethod: 'CASH',
+          bankAccountId: 'cb_a7_cash',
+          currentUserId: 'usr_admin',
+          date: '2026-05-12'
+        },
+        a7Db
+      ),
+      executePurchaseTransaction(
+        {
+          idempotencyKey: 'idemp_concurrent_pur_1',
+          supplier: a7Supplier,
+          item: currentFreshPurItem,
+          quantity: 2,
+          unitPrice: 50,
+          paymentMethod: 'CASH',
+          bankAccountId: 'cb_a7_cash',
+          currentUserId: 'usr_admin',
+          date: '2026-05-12'
+        },
+        a7Db
+      )
+    ]);
+    const fulfilledPurCount = (purResA.status === 'fulfilled' ? 1 : 0) + (purResB.status === 'fulfilled' ? 1 : 0);
+    const rejectedPurCount = (purResA.status === 'rejected' ? 1 : 0) + (purResB.status === 'rejected' ? 1 : 0);
+    assert(fulfilledPurCount === 1, 'Task A7: Exactly one concurrent purchase call must succeed.');
+    assert(rejectedPurCount === 1, 'Task A7: Exactly one concurrent purchase call must be rejected.');
+
 
 
 

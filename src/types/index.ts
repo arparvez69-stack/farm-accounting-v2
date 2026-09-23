@@ -429,6 +429,8 @@ export interface Purchase {
   dueAmount?: number;
   journalEntryId?: string;
   status?: 'PAID' | 'DUE' | 'PARTIAL' | string;
+  createdAt?: string;
+  idempotencyKey?: string;
   synced?: boolean;
 }
 
@@ -467,6 +469,8 @@ export interface Sale {
   totalCogs?: number;
   journalEntryId?: string;
   status?: 'PAID' | 'DUE' | 'PARTIAL' | string;
+  createdAt?: string;
+  idempotencyKey?: string;
   synced?: boolean;
 }
 

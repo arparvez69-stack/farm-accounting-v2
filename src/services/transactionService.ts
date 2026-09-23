@@ -40,11 +40,17 @@ import {
 } from '../types';
 import { generateAmortizationSchedule } from '../accounting/amortizationService';
 
+const activeSaleLocks = new Set<string>();
+
 /**
  * Atomic Execution of Sales Invoice Transaction
  */
 export async function executeSaleTransaction(
   params: {
+    id?: string;
+    saleId?: string;
+    idempotencyKey?: string;
+    invoiceNumber?: string;
     customer: Party;
     item: InventoryItem;
     quantity: number;
@@ -52,261 +58,376 @@ export async function executeSaleTransaction(
     discount?: number;
     paymentMethod: 'CASH' | 'BANK' | 'CREDIT';
     bankAccountId?: string;
+    cashBankAccountId?: string;
     currentUserId: string;
     date?: string;
+    note?: string;
   },
   dbInstance: any = db
 ): Promise<{ sale: Sale; journalEntryId: string }> {
-  return await dbInstance.transaction(
-    'rw',
-    [
-      dbInstance.journalEntries,
-      dbInstance.sales,
-      dbInstance.inventoryItems,
-      dbInstance.stockMovements,
-      dbInstance.parties,
-      dbInstance.cashBankAccounts,
-      dbInstance.accounts,
-      dbInstance.auditLogs,
-      dbInstance.closedPeriods
-    ],
-    async () => {
-      const { customer, item, quantity, unitPrice, discount = 0, paymentMethod, bankAccountId, currentUserId, date } = params;
+  const {
+    customer,
+    item,
+    quantity,
+    unitPrice,
+    discount = 0,
+    paymentMethod,
+    bankAccountId,
+    currentUserId,
+    date,
+    idempotencyKey,
+    id: paramId,
+    saleId: paramSaleId,
+    invoiceNumber: paramInvoiceNumber
+  } = params;
 
-      const todayStr = new Date().toISOString().split('T')[0];
-      const dateStr = date || todayStr;
-      if (dateStr > todayStr) {
-        throw new Error(`বিক্রয় চালানের তারিখ ভবিষ্যতের হতে পারে না (${todayStr} বা তার পূর্বের তারিখ নির্বাচন করুন)।`);
-      }
+  const targetSaleId = paramSaleId || paramId;
+  const lockKey = idempotencyKey
+    ? `sale_key_${idempotencyKey}`
+    : targetSaleId
+    ? `sale_id_${targetSaleId}`
+    : paramInvoiceNumber
+    ? `sale_inv_${paramInvoiceNumber}`
+    : `sale_${customer?.id || ''}_${item?.id || ''}_${quantity}_${unitPrice}_${paymentMethod}_${date || ''}`;
 
-      // Re-fetch fresh item state inside transaction
-      const freshItem = await dbInstance.inventoryItems.get(item.id);
-      if (!freshItem) {
-        throw new Error(`Item ${item.id} not found.`);
-      }
+  if (activeSaleLocks.has(lockKey)) {
+    throw new Error('এই বিক্রয় লেনদেনটি বর্তমানে প্রক্রিয়াধীন রয়েছে। ডুপ্লিকেট পোস্টিং প্রতিরোধ করা হয়েছে (Duplicate sale prevented)।');
+  }
+  activeSaleLocks.add(lockKey);
 
-      if (freshItem.currentStock < quantity) {
-        throw new Error(
-          `Insufficient stock for "${freshItem.nameBn}". Requested: ${quantity} ${freshItem.unit}, Available: ${freshItem.currentStock} ${freshItem.unit}.`
-        );
-      }
+  try {
+    return await dbInstance.transaction(
+      'rw',
+      [
+        dbInstance.journalEntries,
+        dbInstance.sales,
+        dbInstance.inventoryItems,
+        dbInstance.stockMovements,
+        dbInstance.parties,
+        dbInstance.cashBankAccounts,
+        dbInstance.accounts,
+        dbInstance.auditLogs,
+        dbInstance.closedPeriods
+      ],
+      async () => {
+        const todayStr = new Date().toISOString().split('T')[0];
+        const dateStr = date || todayStr;
+        if (dateStr > todayStr) {
+          throw new Error(`বিক্রয় চালানের তারিখ ভবিষ্যতের হতে পারে না (${todayStr} বা তার পূর্বের তারিখ নির্বাচন করুন)।`);
+        }
 
-      const subtotal = Math.round(quantity * unitPrice * 100) / 100;
-      const validDiscount = Math.min(subtotal, Math.max(0, Math.round((discount || 0) * 100) / 100));
-      const totalAmount = Math.max(0, Math.round((subtotal - validDiscount) * 100) / 100);
-      const totalCogs = Math.round(quantity * (freshItem.avgCostPrice || 0) * 100) / 100;
-
-      if (totalAmount <= 0) {
-        throw new Error('Sale total amount must be strictly greater than 0.');
-      }
-
-      const saleId = generateUniqueId('sal');
-      const invoiceNumber = generateTransactionNumber('SAL');
-      const displayNumber = await generateDisplayNumber('SAL', dateStr);
-
-      // Canonical account mappings:
-      // Credit sale -> 1040 AR
-      // Cash sale -> 1010 Cash
-      // Bank sale -> 1030 Bank
-      const paymentAccountCode = getPaymentAccount(paymentMethod, 'SALE');
-      const { revenueCode, cogsCode } = getRevenueAndCogsAccounts(freshItem);
-      const inventoryAssetCode = getInventoryAssetAccount(freshItem.category);
-
-      // Validate cash/bank account exists if paying via CASH or BANK
-      let cashAcc: CashBankAccount | undefined;
-      let bankAcc: CashBankAccount | undefined;
-      if (paymentMethod === 'BANK') {
-        const targetBankId = bankAccountId || (params as any).cashBankAccountId;
-        if (targetBankId) {
-          bankAcc = await dbInstance.cashBankAccounts.get(targetBankId);
-          if (!bankAcc) {
-            throw new Error(`নির্বাচিত ব্যাংক হিসাব (${targetBankId}) পাওয়া যায়নি।`);
+        // 1. Prevent duplicate posting via idempotency key
+        if (idempotencyKey) {
+          const existingSaleByKey = await dbInstance.sales
+            .filter((s: any) => s.idempotencyKey === idempotencyKey || s.id === idempotencyKey)
+            .first();
+          let existingJournalByKey = false;
+          if (dbInstance.journalEntries) {
+            const j = await dbInstance.journalEntries
+              .filter((j: any) => (j as any).idempotencyKey === idempotencyKey || j.reference === idempotencyKey)
+              .first();
+            if (j) existingJournalByKey = true;
           }
-        } else {
-          bankAcc = await dbInstance.cashBankAccounts.where('accountType').equals('BANK').first();
-          if (!bankAcc) {
-            throw new Error('ব্যাংক হিসাব (Bank Account) পাওয়া যায়নি।');
+          if (existingSaleByKey || existingJournalByKey) {
+            throw new Error('এই বিক্রয় চালানটি ইতোমধ্যে সম্পন্ন হয়েছে (ডুপ্লিকেট বিক্রয় প্রতিরোধ / Duplicate sale prevented)।');
           }
         }
-      } else if (paymentMethod === 'CASH') {
-        const targetAccId = (params as any).cashBankAccountId || bankAccountId;
-        if (targetAccId) {
-          cashAcc = await dbInstance.cashBankAccounts.get(targetAccId);
-          if (!cashAcc) {
-            throw new Error(`নির্বাচিত নগদ হিসাব (${targetAccId}) পাওয়া যায়নি।`);
-          }
-        } else {
-          cashAcc = await dbInstance.cashBankAccounts.where('accountType').equals('CASH').first();
-          if (!cashAcc) {
-            throw new Error('নগদ হিসাব (Cash Account) পাওয়া যায়নি।');
+
+        // 2. Prevent duplicate posting via explicit target sale ID
+        if (targetSaleId) {
+          const existingById = await dbInstance.sales.get(targetSaleId);
+          if (existingById) {
+            throw new Error(`এই বিক্রয় চালানটি (ID: ${targetSaleId}) ইতিমধ্যে বিদ্যমান রয়েছে (ডুপ্লিকেট বিক্রয় প্রতিরোধ / Duplicate sale prevented)।`);
           }
         }
-      }
 
-      const accounts = await dbInstance.accounts.toArray();
-      const journalLines: JournalLine[] = [
-        {
-          accountId: paymentAccountCode,
-          accountCode: paymentAccountCode,
-          accountName:
-            paymentMethod === 'CASH'
-              ? 'নগদ টাকা (Cash on Hand)'
-              : paymentMethod === 'BANK'
-              ? 'ব্যাংক হিসাব (Bank Accounts)'
-              : 'গ্রাহকের নিকট পাওনা (Accounts Receivable)',
-          debit: totalAmount,
-          credit: 0,
-          memo: `বিক্রয় চালান ${invoiceNumber}`
-        },
-        {
-          accountId: revenueCode,
-          accountCode: revenueCode,
-          accountName: 'পণ্য বিক্রয় রাজস্ব (Sales Revenue)',
-          debit: 0,
-          credit: totalAmount,
-          memo: `${freshItem.nameBn} বিক্রয়${validDiscount > 0 ? ` (মূল্যছাড়: ৳${validDiscount})` : ''}`
+        // 3. Prevent duplicate posting via explicit invoice number
+        if (paramInvoiceNumber) {
+          const existingByInvoice = await dbInstance.sales
+            .filter((s: any) => s.invoiceNumber === paramInvoiceNumber)
+            .first();
+          if (existingByInvoice) {
+            throw new Error(`এই বিক্রয় চালান নম্বর (${paramInvoiceNumber}) ইতিমধ্যে ব্যবহৃত হয়েছে (ডুপ্লিকেট বিক্রয় প্রতিরোধ / Duplicate sale prevented)।`);
+          }
         }
-      ];
 
-      // COGS & Inventory Asset movement
-      if (totalCogs > 0) {
-        journalLines.push(
+        // Re-fetch fresh item state inside transaction
+        const freshItem = await dbInstance.inventoryItems.get(item.id);
+        if (!freshItem) {
+          throw new Error(`Item ${item.id} not found.`);
+        }
+
+        if (freshItem.currentStock < quantity) {
+          throw new Error(
+            `Insufficient stock for "${freshItem.nameBn}". Requested: ${quantity} ${freshItem.unit}, Available: ${freshItem.currentStock} ${freshItem.unit}.`
+          );
+        }
+
+        const subtotal = Math.round(quantity * unitPrice * 100) / 100;
+        const validDiscount = Math.min(subtotal, Math.max(0, Math.round((discount || 0) * 100) / 100));
+        const totalAmount = Math.max(0, Math.round((subtotal - validDiscount) * 100) / 100);
+        const totalCogs = Math.round(quantity * (freshItem.avgCostPrice || 0) * 100) / 100;
+
+        if (totalAmount <= 0) {
+          throw new Error('Sale total amount must be strictly greater than 0.');
+        }
+
+        // 4. Duplicate prevention for identical rapid retry/resubmission (same customer, item, quantity, unit price, date, payment method)
+        const now = Date.now();
+        const existingSales = await dbInstance.sales
+          .filter((s: any) => s.customerId === customer.id && s.date === dateStr && s.paymentMethod === paymentMethod)
+          .toArray();
+
+        const isDuplicateRecent = existingSales.some((s: any) => {
+          const hasMatchingItem = (s.items || []).some(
+            (it: any) => it.itemId === item.id && Math.abs(it.quantity - quantity) < 0.0001 && Math.abs((it.unitPrice || 0) - unitPrice) < 0.01
+          );
+          if (!hasMatchingItem) return false;
+          if (Math.abs((s.totalAmount || 0) - totalAmount) > 0.01) return false;
+
+          if (s.createdAt) {
+            const createdTime = new Date(s.createdAt).getTime();
+            if (!isNaN(createdTime) && Math.abs(now - createdTime) < 15000) {
+              return true;
+            }
+          }
+          return false;
+        });
+
+        if (isDuplicateRecent) {
+          throw new Error('একই গ্রাহক ও পণ্যের বিক্রয় চালান ইতিমধ্যে প্রক্রিয়াধীন বা সম্পন্ন হয়েছে। ডুপ্লিকেট বিক্রয় প্রতিরোধ করা হলো (Duplicate sale prevented)।');
+        }
+
+        const saleId = targetSaleId || generateUniqueId('sal');
+        const invoiceNumber = paramInvoiceNumber || generateTransactionNumber('SAL');
+        const displayNumber = await generateDisplayNumber('SAL', dateStr);
+
+        // Canonical account mappings:
+        // Credit sale -> 1040 AR
+        // Cash sale -> 1010 Cash
+        // Bank sale -> 1030 Bank
+        const paymentAccountCode = getPaymentAccount(paymentMethod, 'SALE');
+        const { revenueCode, cogsCode } = getRevenueAndCogsAccounts(freshItem);
+        const inventoryAssetCode = getInventoryAssetAccount(freshItem.category);
+
+        // Validate cash/bank account exists if paying via CASH or BANK
+        let cashAcc: CashBankAccount | undefined;
+        let bankAcc: CashBankAccount | undefined;
+        if (paymentMethod === 'BANK') {
+          const targetBankId = bankAccountId || (params as any).cashBankAccountId;
+          if (targetBankId) {
+            bankAcc = await dbInstance.cashBankAccounts.get(targetBankId);
+            if (!bankAcc) {
+              throw new Error(`নির্বাচিত ব্যাংক হিসাব (${targetBankId}) পাওয়া যায়নি।`);
+            }
+          } else {
+            bankAcc = await dbInstance.cashBankAccounts.where('accountType').equals('BANK').first();
+            if (!bankAcc) {
+              throw new Error('ব্যাংক হিসাব (Bank Account) পাওয়া যায়নি।');
+            }
+          }
+        } else if (paymentMethod === 'CASH') {
+          const targetAccId = (params as any).cashBankAccountId || bankAccountId;
+          if (targetAccId) {
+            cashAcc = await dbInstance.cashBankAccounts.get(targetAccId);
+            if (!cashAcc) {
+              throw new Error(`নির্বাচিত নগদ হিসাব (${targetAccId}) পাওয়া যায়নি।`);
+            }
+          } else {
+            cashAcc = await dbInstance.cashBankAccounts.where('accountType').equals('CASH').first();
+            if (!cashAcc) {
+              throw new Error('নগদ হিসাব (Cash Account) পাওয়া যায়নি।');
+            }
+          }
+        }
+
+        const accounts = await dbInstance.accounts.toArray();
+        const journalLines: JournalLine[] = [
           {
-            accountId: cogsCode,
-            accountCode: cogsCode,
-            accountName: 'বিক্রিত পণ্যের উৎপাদন ব্যয় (COGS)',
-            debit: totalCogs,
+            accountId: paymentAccountCode,
+            accountCode: paymentAccountCode,
+            accountName:
+              paymentMethod === 'CASH'
+                ? 'নগদ টাকা (Cash on Hand)'
+                : paymentMethod === 'BANK'
+                ? 'ব্যাংক হিসাব (Bank Accounts)'
+                : 'গ্রাহকের নিকট পাওনা (Accounts Receivable)',
+            debit: totalAmount,
             credit: 0,
-            memo: 'COGS স্বীকৃতি'
+            memo: `বিক্রয় চালান ${invoiceNumber}`
           },
           {
-            accountId: inventoryAssetCode,
-            accountCode: inventoryAssetCode,
-            accountName: accounts.find((a) => a.code === inventoryAssetCode)?.nameBn || getInventoryAccountDetails(freshItem.category).nameBn,
+            accountId: revenueCode,
+            accountCode: revenueCode,
+            accountName: 'পণ্য বিক্রয় রাজস্ব (Sales Revenue)',
             debit: 0,
-            credit: totalCogs,
-            memo: 'মজুদ হ্রাস'
+            credit: totalAmount,
+            memo: `${freshItem.nameBn} বিক্রয়${validDiscount > 0 ? ` (মূল্যছাড়: ৳${validDiscount})` : ''}`
           }
-        );
-      }
+        ];
 
-      const voucherNumber = generateTransactionNumber('SLV');
-      const journalEntry = await postJournalEntry(
-        {
-          id: generateUniqueId('j_sale'),
-          voucherNumber,
-          voucherType: 'SALES',
-          date: dateStr,
-          narration: `বিক্রয় চালান: ${customer.name} কে ${quantity} ${freshItem.unit} ${freshItem.nameBn} বিক্রয়${validDiscount > 0 ? ` (ছাড়: ৳${validDiscount})` : ''}`,
-          reference: invoiceNumber,
-          lines: journalLines,
-          createdBy: currentUserId,
-          createdAt: new Date().toISOString()
-        },
-        { accounts, skipDbPut: true }
-      );
+        // COGS & Inventory Asset movement
+        if (totalCogs > 0) {
+          journalLines.push(
+            {
+              accountId: cogsCode,
+              accountCode: cogsCode,
+              accountName: 'বিক্রিত পণ্যের উৎপাদন ব্যয় (COGS)',
+              debit: totalCogs,
+              credit: 0,
+              memo: 'COGS স্বীকৃতি'
+            },
+            {
+              accountId: inventoryAssetCode,
+              accountCode: inventoryAssetCode,
+              accountName: accounts.find((a) => a.code === inventoryAssetCode)?.nameBn || getInventoryAccountDetails(freshItem.category).nameBn,
+              debit: 0,
+              credit: totalCogs,
+              memo: 'মজুদ হ্রাস'
+            }
+          );
+        }
 
-      // 1. Safe insert journal entry
-      await safeInsert(dbInstance.journalEntries, journalEntry, { idPrefix: 'j' });
-
-      // 2. Safe insert sales invoice
-      const saleRecord: Sale = {
-        id: saleId,
-        invoiceNumber,
-        displayNumber,
-        date: dateStr,
-        customerId: customer.id,
-        customerName: customer.name,
-        items: [
+        const voucherNumber = generateTransactionNumber('SLV');
+        const journalEntry = await postJournalEntry(
           {
-            itemId: freshItem.id,
-            itemName: freshItem.nameBn,
-            quantity,
-            unitPrice,
-            lineTotal: subtotal,
-            cogsAmount: totalCogs
+            id: generateUniqueId('j_sale'),
+            voucherNumber,
+            voucherType: 'SALES',
+            date: dateStr,
+            narration: `বিক্রয় চালান: ${customer.name} কে ${quantity} ${freshItem.unit} ${freshItem.nameBn} বিক্রয়${validDiscount > 0 ? ` (ছাড়: ৳${validDiscount})` : ''}`,
+            reference: invoiceNumber,
+            lines: journalLines,
+            createdBy: currentUserId,
+            createdAt: new Date().toISOString()
+          },
+          { accounts, skipDbPut: true }
+        );
+
+        if (idempotencyKey) {
+          (journalEntry as any).idempotencyKey = idempotencyKey;
+        }
+
+        // 1. Safe insert journal entry
+        await safeInsert(dbInstance.journalEntries, journalEntry, { idPrefix: 'j' });
+
+        // 2. Insert sales invoice
+        const saleRecord: Sale = {
+          id: saleId,
+          invoiceNumber,
+          displayNumber,
+          date: dateStr,
+          customerId: customer.id,
+          customerName: customer.name,
+          items: [
+            {
+              itemId: freshItem.id,
+              itemName: freshItem.nameBn,
+              quantity,
+              unitPrice,
+              lineTotal: subtotal,
+              cogsAmount: totalCogs
+            }
+          ],
+          subtotal: subtotal,
+          discount: validDiscount,
+          vatTax: 0,
+          totalAmount,
+          grandTotal: totalAmount,
+          paidAmount: paymentMethod === 'CREDIT' ? 0 : totalAmount,
+          dueAmount: paymentMethod === 'CREDIT' ? totalAmount : 0,
+          paymentMethod,
+          bankAccountId,
+          journalEntryId: journalEntry.id,
+          status: paymentMethod === 'CREDIT' ? 'DUE' : 'PAID',
+          createdAt: new Date().toISOString(),
+          ...(idempotencyKey ? { idempotencyKey } : {}),
+          synced: false
+        };
+
+        if (targetSaleId) {
+          await dbInstance.sales.add(saleRecord);
+        } else {
+          await safeInsert(dbInstance.sales, saleRecord, { idPrefix: 'sal' });
+        }
+
+        // 3. Deduct Inventory Stock
+        await dbInstance.inventoryItems.update(freshItem.id, {
+          currentStock: Math.round((freshItem.currentStock - quantity) * 100) / 100,
+          synced: false
+        });
+
+        // 4. Record StockMovement for SALE
+        const stockMovement: StockMovement = {
+          id: generateUniqueId('sm_sal'),
+          date: dateStr,
+          itemId: freshItem.id,
+          movementType: 'SALE',
+          quantity,
+          unitCost: freshItem.avgCostPrice || unitPrice,
+          totalValue: totalCogs || Math.round(quantity * (freshItem.avgCostPrice || unitPrice) * 100) / 100,
+          referenceId: invoiceNumber,
+          notes: `বিক্রয় চালান ${invoiceNumber}: ${customer.name} কে ${quantity} ${freshItem.unit} ${freshItem.nameBn} বিক্রয়`,
+          synced: false
+        };
+        if (idempotencyKey) {
+          (stockMovement as any).idempotencyKey = idempotencyKey;
+        }
+        await safeInsert(dbInstance.stockMovements, stockMovement, { idPrefix: 'sm' });
+
+        // 5. Update Customer AR balance if credit sale
+        if (paymentMethod === 'CREDIT') {
+          const freshCustomer = await dbInstance.parties.get(customer.id);
+          if (freshCustomer) {
+            await dbInstance.parties.update(customer.id, {
+              balance: Math.round(((freshCustomer.balance || 0) + totalAmount) * 100) / 100
+            });
           }
-        ],
-        subtotal: subtotal,
-        discount: validDiscount,
-        vatTax: 0,
-        totalAmount,
-        grandTotal: totalAmount,
-        paidAmount: paymentMethod === 'CREDIT' ? 0 : totalAmount,
-        dueAmount: paymentMethod === 'CREDIT' ? totalAmount : 0,
-        paymentMethod,
-        bankAccountId,
-        journalEntryId: journalEntry.id,
-        status: paymentMethod === 'CREDIT' ? 'DUE' : 'PAID',
-        synced: false
-      };
-      await safeInsert(dbInstance.sales, saleRecord, { idPrefix: 'sal' });
+        }
 
-      // 3. Deduct Inventory Stock
-      await dbInstance.inventoryItems.update(freshItem.id, {
-        currentStock: Math.round((freshItem.currentStock - quantity) * 100) / 100,
-        synced: false
-      });
-
-      // 4. Record StockMovement for SALE
-      const stockMovement: StockMovement = {
-        id: generateUniqueId('sm_sal'),
-        date: dateStr,
-        itemId: freshItem.id,
-        movementType: 'SALE',
-        quantity,
-        unitCost: freshItem.avgCostPrice || unitPrice,
-        totalValue: totalCogs || Math.round(quantity * (freshItem.avgCostPrice || unitPrice) * 100) / 100,
-        referenceId: invoiceNumber,
-        notes: `বিক্রয় চালান ${invoiceNumber}: ${customer.name} কে ${quantity} ${freshItem.unit} ${freshItem.nameBn} বিক্রয়`,
-        synced: false
-      };
-      await safeInsert(dbInstance.stockMovements, stockMovement, { idPrefix: 'sm' });
-
-      // 5. Update Customer AR balance if credit sale
-      if (paymentMethod === 'CREDIT') {
-        const freshCustomer = await dbInstance.parties.get(customer.id);
-        if (freshCustomer) {
-          await dbInstance.parties.update(customer.id, {
-            balance: Math.round(((freshCustomer.balance || 0) + totalAmount) * 100) / 100
+        // 6. Update Operational Cash / Bank balance consistently with GL
+        if (paymentMethod === 'CASH' && cashAcc) {
+          await dbInstance.cashBankAccounts.update(cashAcc.id, {
+            currentBalance: Math.round((cashAcc.currentBalance + totalAmount) * 100) / 100
+          });
+        } else if (paymentMethod === 'BANK' && bankAcc) {
+          await dbInstance.cashBankAccounts.update(bankAcc.id, {
+            currentBalance: Math.round((bankAcc.currentBalance + totalAmount) * 100) / 100
           });
         }
-      }
 
-      // 6. Update Operational Cash / Bank balance consistently with GL
-      if (paymentMethod === 'CASH' && cashAcc) {
-        await dbInstance.cashBankAccounts.update(cashAcc.id, {
-          currentBalance: Math.round((cashAcc.currentBalance + totalAmount) * 100) / 100
+        // 7. Record Audit Log
+        await safeInsert(dbInstance.auditLogs, {
+          id: generateUniqueId('audit'),
+          timestamp: new Date().toISOString(),
+          userId: currentUserId,
+          role: 'OWNER',
+          action: 'SALE_CREATE',
+          module: 'COMMERCE',
+          recordId: invoiceNumber,
+          status: 'SUCCESS',
+          details: `বিক্রয় চালান ${invoiceNumber} সম্পন্ন (৳${totalAmount})`
         });
-      } else if (paymentMethod === 'BANK' && bankAcc) {
-        await dbInstance.cashBankAccounts.update(bankAcc.id, {
-          currentBalance: Math.round((bankAcc.currentBalance + totalAmount) * 100) / 100
-        });
+
+        return { sale: saleRecord, journalEntryId: journalEntry.id };
       }
-
-      // 7. Record Audit Log
-      await safeInsert(dbInstance.auditLogs, {
-        id: generateUniqueId('audit'),
-        timestamp: new Date().toISOString(),
-        userId: currentUserId,
-        role: 'OWNER',
-        action: 'SALE_CREATE',
-        module: 'COMMERCE',
-        recordId: invoiceNumber,
-        status: 'SUCCESS',
-        details: `বিক্রয় চালান ${invoiceNumber} সম্পন্ন (৳${totalAmount})`
-      });
-
-      return { sale: saleRecord, journalEntryId: journalEntry.id };
-    }
-  );
+    );
+  } finally {
+    activeSaleLocks.delete(lockKey);
+  }
 }
+
+const activePurchaseLocks = new Set<string>();
 
 /**
  * Atomic Execution of Purchase Invoice Transaction
  */
 export async function executePurchaseTransaction(
   params: {
+    id?: string;
+    purchaseId?: string;
+    idempotencyKey?: string;
+    invoiceNumber?: string;
     supplier: Party;
     item: InventoryItem;
     quantity: number;
@@ -315,241 +436,351 @@ export async function executePurchaseTransaction(
     discount?: number;
     paymentMethod: 'CASH' | 'BANK' | 'CREDIT';
     bankAccountId?: string;
+    cashBankAccountId?: string;
     currentUserId: string;
     date?: string;
+    note?: string;
   },
   dbInstance: any = db
 ): Promise<{ purchase: Purchase; journalEntryId: string; stockMovement: StockMovement }> {
-  return await dbInstance.transaction(
-    'rw',
-    [
-      dbInstance.journalEntries,
-      dbInstance.purchases,
-      dbInstance.inventoryItems,
-      dbInstance.stockMovements,
-      dbInstance.parties,
-      dbInstance.cashBankAccounts,
-      dbInstance.accounts,
-      dbInstance.auditLogs,
-      dbInstance.closedPeriods
-    ],
-    async () => {
-      const { supplier, item, quantity, unitPrice, transportCost = 0, discount = 0, paymentMethod, bankAccountId, currentUserId, date } = params;
+  const {
+    supplier,
+    item,
+    quantity,
+    unitPrice,
+    transportCost = 0,
+    discount = 0,
+    paymentMethod,
+    bankAccountId,
+    currentUserId,
+    date,
+    idempotencyKey,
+    id: paramId,
+    purchaseId: paramPurchaseId,
+    invoiceNumber: paramInvoiceNumber
+  } = params;
 
-      const todayStr = new Date().toISOString().split('T')[0];
-      const dateStr = date || todayStr;
-      if (dateStr > todayStr) {
-        throw new Error(`ক্রয় চালানের তারিখ ভবিষ্যতের হতে পারে না (${todayStr} বা তার পূর্বের তারিখ নির্বাচন করুন)।`);
-      }
+  const targetPurchaseId = paramPurchaseId || paramId;
+  const lockKey = idempotencyKey
+    ? `pur_key_${idempotencyKey}`
+    : targetPurchaseId
+    ? `pur_id_${targetPurchaseId}`
+    : paramInvoiceNumber
+    ? `pur_inv_${paramInvoiceNumber}`
+    : `pur_${supplier?.id || ''}_${item?.id || ''}_${quantity}_${unitPrice}_${paymentMethod}_${date || ''}`;
 
-      const freshItem = await dbInstance.inventoryItems.get(item.id);
-      if (!freshItem) {
-        throw new Error(`Item ${item.id} not found.`);
-      }
+  if (activePurchaseLocks.has(lockKey)) {
+    throw new Error('এই ক্রয় লেনদেনটি বর্তমানে প্রক্রিয়াধীন রয়েছে। ডুপ্লিকেট পোস্টিং প্রতিরোধ করা হয়েছে (Duplicate purchase prevented)।');
+  }
+  activePurchaseLocks.add(lockKey);
 
-      const itemsTotal = Math.round(quantity * unitPrice * 100) / 100;
-      const validDiscount = Math.min(itemsTotal + transportCost, Math.max(0, Math.round((discount || 0) * 100) / 100));
-      const grandTotal = Math.max(0, Math.round((itemsTotal + transportCost - validDiscount) * 100) / 100);
+  try {
+    return await dbInstance.transaction(
+      'rw',
+      [
+        dbInstance.journalEntries,
+        dbInstance.purchases,
+        dbInstance.inventoryItems,
+        dbInstance.stockMovements,
+        dbInstance.parties,
+        dbInstance.cashBankAccounts,
+        dbInstance.accounts,
+        dbInstance.auditLogs,
+        dbInstance.closedPeriods
+      ],
+      async () => {
+        const todayStr = new Date().toISOString().split('T')[0];
+        const dateStr = date || todayStr;
+        if (dateStr > todayStr) {
+          throw new Error(`ক্রয় চালানের তারিখ ভবিষ্যতের হতে পারে না (${todayStr} বা তার পূর্বের তারিখ নির্বাচন করুন)।`);
+        }
 
-      if (grandTotal <= 0) {
-        throw new Error('Purchase total amount must be strictly greater than 0.');
-      }
-
-      // Validate cash/bank account exists & balance to prevent silent negative balances
-      let cashAcc: CashBankAccount | undefined;
-      let bankAcc: CashBankAccount | undefined;
-      if (paymentMethod === 'CASH') {
-        const targetAccId = (params as any).cashBankAccountId || bankAccountId;
-        if (targetAccId) {
-          cashAcc = await dbInstance.cashBankAccounts.get(targetAccId);
-          if (!cashAcc) {
-            throw new Error(`নির্বাচিত নগদ হিসাব (${targetAccId}) পাওয়া যায়নি।`);
+        // 1. Prevent duplicate posting via idempotency key
+        if (idempotencyKey) {
+          const existingPurchaseByKey = await dbInstance.purchases
+            .filter((p: any) => p.idempotencyKey === idempotencyKey || p.id === idempotencyKey)
+            .first();
+          let existingJournalByKey = false;
+          if (dbInstance.journalEntries) {
+            const j = await dbInstance.journalEntries
+              .filter((j: any) => (j as any).idempotencyKey === idempotencyKey || j.reference === idempotencyKey)
+              .first();
+            if (j) existingJournalByKey = true;
           }
-        } else {
-          cashAcc = await dbInstance.cashBankAccounts.where('accountType').equals('CASH').first();
-          if (!cashAcc) {
-            throw new Error('নগদ হিসাব (Cash Account) পাওয়া যায়নি।');
+          if (existingPurchaseByKey || existingJournalByKey) {
+            throw new Error('এই ক্রয় চালানটি ইতোমধ্যে সম্পন্ন হয়েছে (ডুপ্লিকেট ক্রয় প্রতিরোধ / Duplicate purchase prevented)।');
           }
         }
-        if (Number(cashAcc.currentBalance || 0) < grandTotal) {
-          throw new Error(`নগদ তহবিলে পর্যাপ্ত ব্যালেন্স নেই (Insufficient cash balance: ৳${cashAcc.currentBalance || 0}, ক্রয়ের পরিমাণ: ৳${grandTotal})। ক্যাশ ব্যালেন্স নেগেটিভ হওয়া অনুমোদিত নয়।`);
-        }
-      } else if (paymentMethod === 'BANK') {
-        const targetBankId = bankAccountId || (params as any).cashBankAccountId;
-        if (targetBankId) {
-          bankAcc = await dbInstance.cashBankAccounts.get(targetBankId);
-          if (!bankAcc) {
-            throw new Error(`নির্বাচিত ব্যাংক হিসাব (${targetBankId}) পাওয়া যায়নি।`);
-          }
-        } else {
-          bankAcc = await dbInstance.cashBankAccounts.where('accountType').equals('BANK').first();
-          if (!bankAcc) {
-            throw new Error('ব্যাংক হিসাব (Bank Account) পাওয়া যায়নি।');
+
+        // 2. Prevent duplicate posting via explicit target purchase ID
+        if (targetPurchaseId) {
+          const existingById = await dbInstance.purchases.get(targetPurchaseId);
+          if (existingById) {
+            throw new Error(`এই ক্রয় চালানটি (ID: ${targetPurchaseId}) ইতিমধ্যে বিদ্যমান রয়েছে (ডুপ্লিকেট ক্রয় প্রতিরোধ / Duplicate purchase prevented)।`);
           }
         }
-        if (Number(bankAcc.currentBalance || 0) < grandTotal) {
-          throw new Error(`ব্যাংক হিসাবে পর্যাপ্ত ব্যালেন্স নেই (Insufficient bank balance: ৳${bankAcc.currentBalance || 0}, ক্রয়ের পরিমাণ: ৳${grandTotal})। ব্যাংক ব্যালেন্স নেগেটিভ হওয়া অনুমোদিত নয়।`);
+
+        // 3. Prevent duplicate posting via explicit invoice number
+        if (paramInvoiceNumber) {
+          const existingByInvoice = await dbInstance.purchases
+            .filter((p: any) => p.invoiceNumber === paramInvoiceNumber)
+            .first();
+          if (existingByInvoice) {
+            throw new Error(`এই ক্রয় চালান নম্বর (${paramInvoiceNumber}) ইতিমধ্যে ব্যবহৃত হয়েছে (ডুপ্লিকেট ক্রয় প্রতিরোধ / Duplicate purchase prevented)।`);
+          }
         }
-      }
 
-      const purchaseId = generateUniqueId('pur');
-      const invoiceNumber = generateTransactionNumber('PUR');
-      const displayNumber = await generateDisplayNumber('PUR', dateStr);
-
-      // Canonical account mappings:
-      // Feed Purchase -> 1051 Feed Inventory!
-      // Other inventory -> 1052, 1053, 1055 (NEVER 1050)
-      // Cash -> 1010, Bank -> 1030, Credit -> 2010 AP
-      const inventoryAssetCode = getInventoryAssetAccount(freshItem.category);
-      const paymentAccountCode = getPaymentAccount(paymentMethod, 'PURCHASE');
-
-      const accounts = await dbInstance.accounts.toArray();
-      const invAccName = accounts.find((a: any) => a.code === inventoryAssetCode)?.nameBn || getInventoryAccountDetails(freshItem.category).nameBn;
-      const journalLines: JournalLine[] = [
-        {
-          accountId: inventoryAssetCode,
-          accountCode: inventoryAssetCode,
-          accountName: invAccName,
-          debit: grandTotal,
-          credit: 0,
-          memo: `ক্রয় চালান ${invoiceNumber} (পরিবহন ব্যয়${validDiscount > 0 ? ` ও মূল্যছাড় ৳${validDiscount}` : ''} সমন্বিত মূল্যায়ন)`
-        },
-        {
-          accountId: paymentAccountCode,
-          accountCode: paymentAccountCode,
-          accountName:
-            paymentMethod === 'CASH'
-              ? 'নগদ টাকা (Cash on Hand)'
-              : paymentMethod === 'BANK'
-              ? 'ব্যাংক হিসাব (Bank Accounts)'
-              : 'সরবরাহকারীর দেনা (Accounts Payable)',
-          debit: 0,
-          credit: grandTotal,
-          memo: `${supplier.name} থেকে ক্রয়`
+        const freshItem = await dbInstance.inventoryItems.get(item.id);
+        if (!freshItem) {
+          throw new Error(`Item ${item.id} not found.`);
         }
-      ];
 
-      const voucherNumber = generateTransactionNumber('PRV');
-      const journalEntry = await postJournalEntry(
-        {
-          id: generateUniqueId('j_pur'),
-          voucherNumber,
-          voucherType: 'PURCHASE',
-          date: dateStr,
-          narration: `ক্রয় চালান: ${supplier.name} এর নিকট থেকে ${quantity} ${freshItem.unit} ${freshItem.nameBn} ক্রয়${validDiscount > 0 ? ` (ছাড়: ৳${validDiscount})` : ''}`,
-          reference: invoiceNumber,
-          lines: journalLines,
-          createdBy: currentUserId,
-          createdAt: new Date().toISOString()
-        },
-        { accounts, skipDbPut: true }
-      );
+        const itemsTotal = Math.round(quantity * unitPrice * 100) / 100;
+        const validDiscount = Math.min(itemsTotal + transportCost, Math.max(0, Math.round((discount || 0) * 100) / 100));
+        const grandTotal = Math.max(0, Math.round((itemsTotal + transportCost - validDiscount) * 100) / 100);
 
-      // 1. Safe insert journal entry
-      await safeInsert(dbInstance.journalEntries, journalEntry, { idPrefix: 'j' });
+        if (grandTotal <= 0) {
+          throw new Error('Purchase total amount must be strictly greater than 0.');
+        }
 
-      // 2. Safe insert purchase invoice
-      const purchaseRecord: Purchase = {
-        id: purchaseId,
-        invoiceNumber,
-        displayNumber,
-        date: dateStr,
-        supplierId: supplier.id,
-        supplierName: supplier.name,
-        items: [
+        // 4. Duplicate prevention for identical rapid retry/resubmission (same supplier, item, quantity, unit price, date, payment method)
+        const now = Date.now();
+        const existingPurchases = await dbInstance.purchases
+          .filter((p: any) => p.supplierId === supplier.id && p.date === dateStr && p.paymentMethod === paymentMethod)
+          .toArray();
+
+        const isDuplicateRecent = existingPurchases.some((p: any) => {
+          const hasMatchingItem = (p.items || []).some(
+            (it: any) => it.itemId === item.id && Math.abs(it.quantity - quantity) < 0.0001 && Math.abs((it.unitPrice || 0) - unitPrice) < 0.01
+          );
+          if (!hasMatchingItem) return false;
+          if (Math.abs((p.grandTotal || 0) - grandTotal) > 0.01) return false;
+
+          if (p.createdAt) {
+            const createdTime = new Date(p.createdAt).getTime();
+            if (!isNaN(createdTime) && Math.abs(now - createdTime) < 15000) {
+              return true;
+            }
+          }
+          return false;
+        });
+
+        if (isDuplicateRecent) {
+          throw new Error('একই সরবরাহকারী ও পণ্যের ক্রয় চালান ইতিমধ্যে প্রক্রিয়াধীন বা সম্পন্ন হয়েছে। ডুপ্লিকেট ক্রয় প্রতিরোধ করা হলো (Duplicate purchase prevented)।');
+        }
+
+        // Validate cash/bank account exists & balance to prevent silent negative balances
+        let cashAcc: CashBankAccount | undefined;
+        let bankAcc: CashBankAccount | undefined;
+        if (paymentMethod === 'CASH') {
+          const targetAccId = (params as any).cashBankAccountId || bankAccountId;
+          if (targetAccId) {
+            cashAcc = await dbInstance.cashBankAccounts.get(targetAccId);
+            if (!cashAcc) {
+              throw new Error(`নির্বাচিত নগদ হিসাব (${targetAccId}) পাওয়া যায়নি।`);
+            }
+          } else {
+            cashAcc = await dbInstance.cashBankAccounts.where('accountType').equals('CASH').first();
+            if (!cashAcc) {
+              throw new Error('নগদ হিসাব (Cash Account) পাওয়া যায়নি।');
+            }
+          }
+          if (Number(cashAcc.currentBalance || 0) < grandTotal) {
+            throw new Error(`নগদ তহবিলে পর্যাপ্ত ব্যালেন্স নেই (Insufficient cash balance: ৳${cashAcc.currentBalance || 0}, ক্রয়ের পরিমাণ: ৳${grandTotal})। ক্যাশ ব্যালেন্স নেগেটিভ হওয়া অনুমোদিত নয়।`);
+          }
+        } else if (paymentMethod === 'BANK') {
+          const targetBankId = bankAccountId || (params as any).cashBankAccountId;
+          if (targetBankId) {
+            bankAcc = await dbInstance.cashBankAccounts.get(targetBankId);
+            if (!bankAcc) {
+              throw new Error(`নির্বাচিত ব্যাংক হিসাব (${targetBankId}) পাওয়া যায়নি।`);
+            }
+          } else {
+            bankAcc = await dbInstance.cashBankAccounts.where('accountType').equals('BANK').first();
+            if (!bankAcc) {
+              throw new Error('ব্যাংক হিসাব (Bank Account) পাওয়া যায়নি।');
+            }
+          }
+          if (Number(bankAcc.currentBalance || 0) < grandTotal) {
+            throw new Error(`ব্যাংক হিসাবে পর্যাপ্ত ব্যালেন্স নেই (Insufficient bank balance: ৳${bankAcc.currentBalance || 0}, ক্রয়ের পরিমাণ: ৳${grandTotal})। ব্যাংক ব্যালেন্স নেগেটিভ হওয়া অনুমোদিত নয়।`);
+          }
+        }
+
+        const purchaseId = targetPurchaseId || generateUniqueId('pur');
+        const invoiceNumber = paramInvoiceNumber || generateTransactionNumber('PUR');
+        const displayNumber = await generateDisplayNumber('PUR', dateStr);
+
+        // Canonical account mappings:
+        // Feed Purchase -> 1051 Feed Inventory!
+        // Other inventory -> 1052, 1053, 1055 (NEVER 1050)
+        // Cash -> 1010, Bank -> 1030, Credit -> 2010 AP
+        const inventoryAssetCode = getInventoryAssetAccount(freshItem.category);
+        const paymentAccountCode = getPaymentAccount(paymentMethod, 'PURCHASE');
+
+        const accounts = await dbInstance.accounts.toArray();
+        const invAccName = accounts.find((a: any) => a.code === inventoryAssetCode)?.nameBn || getInventoryAccountDetails(freshItem.category).nameBn;
+        const journalLines: JournalLine[] = [
           {
-            itemId: freshItem.id,
-            itemName: freshItem.nameBn,
-            quantity,
-            unitPrice,
-            lineTotal: itemsTotal
+            accountId: inventoryAssetCode,
+            accountCode: inventoryAssetCode,
+            accountName: invAccName,
+            debit: grandTotal,
+            credit: 0,
+            memo: `ক্রয় চালান ${invoiceNumber} (পরিবহন ব্যয়${validDiscount > 0 ? ` ও মূল্যছাড় ৳${validDiscount}` : ''} সমন্বিত মূল্যায়ন)`
+          },
+          {
+            accountId: paymentAccountCode,
+            accountCode: paymentAccountCode,
+            accountName:
+              paymentMethod === 'CASH'
+                ? 'নগদ টাকা (Cash on Hand)'
+                : paymentMethod === 'BANK'
+                ? 'ব্যাংক হিসাব (Bank Accounts)'
+                : 'সরবরাহকারীর দেনা (Accounts Payable)',
+            debit: 0,
+            credit: grandTotal,
+            memo: `${supplier.name} থেকে ক্রয়`
           }
-        ],
-        subtotal: itemsTotal,
-        transportCost,
-        discount: validDiscount,
-        grandTotal,
-        totalAmount: grandTotal,
-        paidAmount: paymentMethod === 'CREDIT' ? 0 : grandTotal,
-        dueAmount: paymentMethod === 'CREDIT' ? grandTotal : 0,
-        paymentMethod,
-        bankAccountId,
-        journalEntryId: journalEntry.id,
-        status: paymentMethod === 'CREDIT' ? 'DUE' : 'PAID',
-        synced: false
-      };
-      await safeInsert(dbInstance.purchases, purchaseRecord, { idPrefix: 'pur' });
+        ];
 
-      // 3. Update stock and weighted average cost price
-      const newStock = Math.round((freshItem.currentStock + quantity) * 100) / 100;
-      const prevTotalCost = (freshItem.currentStock || 0) * (freshItem.avgCostPrice || 0);
-      const newAvgCost = newStock > 0 ? Math.round(((prevTotalCost + grandTotal) / newStock) * 100) / 100 : unitPrice;
+        const voucherNumber = generateTransactionNumber('PRV');
+        const journalEntry = await postJournalEntry(
+          {
+            id: generateUniqueId('j_pur'),
+            voucherNumber,
+            voucherType: 'PURCHASE',
+            date: dateStr,
+            narration: `ক্রয় চালান: ${supplier.name} এর নিকট থেকে ${quantity} ${freshItem.unit} ${freshItem.nameBn} ক্রয়${validDiscount > 0 ? ` (ছাড়: ৳${validDiscount})` : ''}`,
+            reference: invoiceNumber,
+            lines: journalLines,
+            createdBy: currentUserId,
+            createdAt: new Date().toISOString()
+          },
+          { accounts, skipDbPut: true }
+        );
 
-      await dbInstance.inventoryItems.update(freshItem.id, {
-        currentStock: newStock,
-        avgCostPrice: newAvgCost,
-        lastRestockAmount: quantity,
-        synced: false
-      });
+        if (idempotencyKey) {
+          (journalEntry as any).idempotencyKey = idempotencyKey;
+        }
 
-      // 4. Record StockMovement for PURCHASE
-      // Consistency: totalValue = actual inventory cost added (grandTotal).
-      // unitCost = totalValue / quantity. Therefore: unitCost × quantity = totalValue.
-      const actualInventoryCostAdded = grandTotal;
-      const movementTotalValue = actualInventoryCostAdded;
-      const movementUnitCost = quantity > 0 ? (movementTotalValue / quantity) : 0;
+        // 1. Safe insert journal entry
+        await safeInsert(dbInstance.journalEntries, journalEntry, { idPrefix: 'j' });
 
-      const stockMovement: StockMovement = {
-        id: generateUniqueId('sm_pur'),
-        date: dateStr,
-        itemId: freshItem.id,
-        movementType: 'PURCHASE',
-        quantity,
-        unitCost: movementUnitCost,
-        totalValue: movementTotalValue,
-        referenceId: invoiceNumber,
-        notes: `ক্রয় চালান ${invoiceNumber}: ${supplier.name} থেকে ${quantity} ${freshItem.unit} ${freshItem.nameBn} ক্রয়`,
-        synced: false
-      };
-      await safeInsert(dbInstance.stockMovements, stockMovement, { idPrefix: 'sm' });
+        // 2. Insert purchase invoice
+        const purchaseRecord: Purchase = {
+          id: purchaseId,
+          invoiceNumber,
+          displayNumber,
+          date: dateStr,
+          supplierId: supplier.id,
+          supplierName: supplier.name,
+          items: [
+            {
+              itemId: freshItem.id,
+              itemName: freshItem.nameBn,
+              quantity,
+              unitPrice,
+              lineTotal: itemsTotal
+            }
+          ],
+          subtotal: itemsTotal,
+          transportCost,
+          discount: validDiscount,
+          grandTotal,
+          totalAmount: grandTotal,
+          paidAmount: paymentMethod === 'CREDIT' ? 0 : grandTotal,
+          dueAmount: paymentMethod === 'CREDIT' ? grandTotal : 0,
+          paymentMethod,
+          bankAccountId,
+          journalEntryId: journalEntry.id,
+          status: paymentMethod === 'CREDIT' ? 'DUE' : 'PAID',
+          createdAt: new Date().toISOString(),
+          ...(idempotencyKey ? { idempotencyKey } : {}),
+          synced: false
+        };
 
-      // 5. Update Supplier AP balance if credit purchase
-      if (paymentMethod === 'CREDIT') {
-        const freshSupplier = await dbInstance.parties.get(supplier.id);
-        if (freshSupplier) {
-          await dbInstance.parties.update(supplier.id, {
-            balance: Math.round(((freshSupplier.balance || 0) + grandTotal) * 100) / 100
+        if (targetPurchaseId) {
+          await dbInstance.purchases.add(purchaseRecord);
+        } else {
+          await safeInsert(dbInstance.purchases, purchaseRecord, { idPrefix: 'pur' });
+        }
+
+        // 3. Update stock and weighted average cost price
+        const newStock = Math.round((freshItem.currentStock + quantity) * 100) / 100;
+        const prevTotalCost = (freshItem.currentStock || 0) * (freshItem.avgCostPrice || 0);
+        const newAvgCost = newStock > 0 ? Math.round(((prevTotalCost + grandTotal) / newStock) * 100) / 100 : unitPrice;
+
+        await dbInstance.inventoryItems.update(freshItem.id, {
+          currentStock: newStock,
+          avgCostPrice: newAvgCost,
+          lastRestockAmount: quantity,
+          synced: false
+        });
+
+        // 4. Record StockMovement for PURCHASE
+        // Consistency: totalValue = actual inventory cost added (grandTotal).
+        // unitCost = totalValue / quantity. Therefore: unitCost × quantity = totalValue.
+        const actualInventoryCostAdded = grandTotal;
+        const movementTotalValue = actualInventoryCostAdded;
+        const movementUnitCost = quantity > 0 ? (movementTotalValue / quantity) : 0;
+
+        const stockMovement: StockMovement = {
+          id: generateUniqueId('sm_pur'),
+          date: dateStr,
+          itemId: freshItem.id,
+          movementType: 'PURCHASE',
+          quantity,
+          unitCost: movementUnitCost,
+          totalValue: movementTotalValue,
+          referenceId: invoiceNumber,
+          notes: `ক্রয় চালান ${invoiceNumber}: ${supplier.name} থেকে ${quantity} ${freshItem.unit} ${freshItem.nameBn} ক্রয়`,
+          synced: false
+        };
+        if (idempotencyKey) {
+          (stockMovement as any).idempotencyKey = idempotencyKey;
+        }
+        await safeInsert(dbInstance.stockMovements, stockMovement, { idPrefix: 'sm' });
+
+        // 5. Update Supplier AP balance if credit purchase
+        if (paymentMethod === 'CREDIT') {
+          const freshSupplier = await dbInstance.parties.get(supplier.id);
+          if (freshSupplier) {
+            await dbInstance.parties.update(supplier.id, {
+              balance: Math.round(((freshSupplier.balance || 0) + grandTotal) * 100) / 100
+            });
+          }
+        }
+
+        // 6. Update Operational Cash / Bank balance consistently with GL
+        if (paymentMethod === 'CASH' && cashAcc) {
+          await dbInstance.cashBankAccounts.update(cashAcc.id, {
+            currentBalance: Math.round((cashAcc.currentBalance - grandTotal) * 100) / 100
+          });
+        } else if (paymentMethod === 'BANK' && bankAcc) {
+          await dbInstance.cashBankAccounts.update(bankAcc.id, {
+            currentBalance: Math.round((bankAcc.currentBalance - grandTotal) * 100) / 100
           });
         }
-      }
 
-      // 6. Update Operational Cash / Bank balance consistently with GL
-      if (paymentMethod === 'CASH' && cashAcc) {
-        await dbInstance.cashBankAccounts.update(cashAcc.id, {
-          currentBalance: Math.round((cashAcc.currentBalance - grandTotal) * 100) / 100
+        // 7. Record Audit Log
+        await safeInsert(dbInstance.auditLogs, {
+          id: generateUniqueId('audit'),
+          timestamp: new Date().toISOString(),
+          userId: currentUserId,
+          role: 'OWNER',
+          action: 'PURCHASE_CREATE',
+          module: 'COMMERCE',
+          recordId: invoiceNumber,
+          status: 'SUCCESS',
+          details: `ক্রয় চালান ${invoiceNumber} সম্পন্ন (৳${grandTotal})`
         });
-      } else if (paymentMethod === 'BANK' && bankAcc) {
-        await dbInstance.cashBankAccounts.update(bankAcc.id, {
-          currentBalance: Math.round((bankAcc.currentBalance - grandTotal) * 100) / 100
-        });
+
+        return { purchase: purchaseRecord, journalEntryId: journalEntry.id, stockMovement };
       }
-
-      // 7. Record Audit Log
-      await safeInsert(dbInstance.auditLogs, {
-        id: generateUniqueId('audit'),
-        timestamp: new Date().toISOString(),
-        userId: currentUserId,
-        role: 'OWNER',
-        action: 'PURCHASE_CREATE',
-        module: 'COMMERCE',
-        recordId: invoiceNumber,
-        status: 'SUCCESS',
-        details: `ক্রয় চালান ${invoiceNumber} সম্পন্ন (৳${grandTotal})`
-      });
-
-      return { purchase: purchaseRecord, journalEntryId: journalEntry.id, stockMovement };
-    }
-  );
+    );
+  } finally {
+    activePurchaseLocks.delete(lockKey);
+  }
 }
 
 /**
@@ -6477,6 +6708,19 @@ export interface FishHarvestSaleParams {
   harvestPortionRatio?: number;
   remainingEstimatedWeightKg?: number;
   remainingFingerlingQty?: number;
+  soldWeightKg?: number;
+  soldWeight?: number;
+  saleWeightKg?: number;
+  saleWeight?: number;
+  soldQuantity?: number;
+  saleQuantity?: number;
+  soldQty?: number;
+  saleQty?: number;
+  availableWeightKg?: number;
+  availableWeight?: number;
+  totalAvailableWeightKg?: number;
+  expectedHarvestWeightKg?: number;
+  physicallyAvailableWeight?: number;
 }
 
 export async function executeFishHarvestAndSaleTransaction(
@@ -6681,6 +6925,94 @@ export async function executeFishHarvestAndSaleTransaction(
       const cleanWeight = Math.max(0, Number(harvestWeightKg) || 0);
       const cleanPrice = Math.max(0, Math.round((Number(salePrice) || 0) * 100) / 100);
 
+      // Determine physically available weight if known for the batch
+      const physicallyAvailableWeight = Number(
+        (params as any).physicallyAvailableWeight ??
+        (params as any).availableWeightKg ??
+        (params as any).availableWeight ??
+        (params as any).totalAvailableWeightKg ??
+        (params as any).expectedHarvestWeightKg ??
+        (freshBatch as any).availableWeightKg ??
+        (freshBatch as any).totalEstimatedWeightKg ??
+        (freshBatch as any).expectedHarvestWeightKg ??
+        freshBatch.currentEstimatedWeightKg ??
+        0
+      );
+
+      // Parse requested sold weight
+      let soldWeight: number | undefined = undefined;
+      if ((params as any).soldWeightKg !== undefined) {
+        soldWeight = Number((params as any).soldWeightKg);
+      } else if ((params as any).soldWeight !== undefined) {
+        soldWeight = Number((params as any).soldWeight);
+      } else if ((params as any).saleWeightKg !== undefined) {
+        soldWeight = Number((params as any).saleWeightKg);
+      } else if ((params as any).saleWeight !== undefined) {
+        soldWeight = Number((params as any).saleWeight);
+      } else if ((params as any).soldQuantity !== undefined) {
+        soldWeight = Number((params as any).soldQuantity);
+      } else if ((params as any).saleQuantity !== undefined) {
+        soldWeight = Number((params as any).saleQuantity);
+      } else if ((params as any).soldQty !== undefined) {
+        soldWeight = Number((params as any).soldQty);
+      } else if ((params as any).saleQty !== undefined) {
+        soldWeight = Number((params as any).saleQty);
+      } else if (Array.isArray((params as any).items) && (params as any).items[0]?.quantity !== undefined) {
+        soldWeight = Number((params as any).items[0].quantity);
+      }
+
+      if (soldWeight !== undefined && soldWeight < 0) {
+        throw new Error('বিক্রিত মাছের ওজন ঋণাত্মক হতে পারে না।');
+      }
+
+      // Requirement: A fish sale's sold weight must not exceed the physically available/harvested quantity represented by the transaction.
+      // Do not allow a harvest of one quantity while recording an unrelated larger sale weight.
+      if (soldWeight !== undefined && soldWeight > cleanWeight) {
+        throw new Error(
+          `বিক্রিত মাছের ওজন (${soldWeight} কেজি) আহরিত পরিমাণের (${cleanWeight} কেজি) চেয়ে বেশি হতে পারে না (A fish sale's sold weight cannot exceed harvested quantity)।`
+        );
+      }
+
+      if (physicallyAvailableWeight > 0 && cleanWeight > physicallyAvailableWeight) {
+        throw new Error(
+          `আহরিত মাছের ওজন (${cleanWeight} কেজি) ব্যাচের শারীরিকভাবে উপলব্ধ ওজনের (${physicallyAvailableWeight} কেজি) চেয়ে বেশি হতে পারে না (Harvest weight cannot exceed physically available weight)।`
+        );
+      }
+
+      if (physicallyAvailableWeight > 0 && soldWeight !== undefined && soldWeight > physicallyAvailableWeight) {
+        throw new Error(
+          `বিক্রিত মাছের ওজন (${soldWeight} কেজি) ব্যাচের শারীরিকভাবে উপলব্ধ ওজনের (${physicallyAvailableWeight} কেজি) চেয়ে বেশি হতে পারে না (Sold weight cannot exceed physically available weight)।`
+        );
+      }
+
+      // Do not allow a harvest of 0 quantity while recording an unrelated positive sale weight/revenue
+      if (requestedHarvestQty !== undefined && requestedHarvestQty === 0 && (cleanWeight > 0 || (soldWeight !== undefined && soldWeight > 0) || cleanPrice > 0)) {
+        throw new Error(
+          'আহরণের সংখ্যা ০ হলে কোনো মাছের ওজন বা বিক্রয় রেকর্ড করা যাবে না (Cannot record harvest weight or sale when harvest quantity is 0)।'
+        );
+      }
+
+      if (cleanPrice > 0 && (cleanWeight <= 0 || (soldWeight !== undefined && soldWeight <= 0))) {
+        throw new Error(
+          'মাছ বিক্রয় রেকর্ড করার জন্য আহরিত ও বিক্রিত মাছের ওজন অবশ্যই শূন্যের বেশি হতে হবে (Sale requires positive harvest and sold weight)।'
+        );
+      }
+
+      // Validate sold piece count if provided
+      const requestedSoldQty = (params as any).soldQuantity !== undefined
+        ? Number((params as any).soldQuantity)
+        : (params as any).saleQuantity !== undefined
+        ? Number((params as any).saleQuantity)
+        : undefined;
+
+      if (requestedSoldQty !== undefined && requestedHarvestQty !== undefined && requestedSoldQty > requestedHarvestQty) {
+        throw new Error(
+          `বিক্রিত মাছের সংখ্যা (${requestedSoldQty} টি) আহরিত মাছের সংখ্যা (${requestedHarvestQty} টি) অপেক্ষা বেশি হতে পারে না (Sold fish count cannot exceed harvested count)।`
+        );
+      }
+
+      const finalSoldWeight = soldWeight !== undefined ? soldWeight : cleanWeight;
+
       if (cleanWeight <= 0 && cleanPrice <= 0 && cleanMortality <= 0) {
         throw new Error('আহরণের ওজন অথবা বিক্রয়মূল্য অথবা মৃত্যু অবশ্যই শূন্যের বেশি হতে হবে।');
       }
@@ -6856,7 +7188,7 @@ export async function executeFishHarvestAndSaleTransaction(
             accountName: fishRevAcc.nameBn || 'মাছ বিক্রয় আয় (Fish Sales Revenue)',
             debit: 0,
             credit: cleanPrice,
-            memo: `মাছ বিক্রয় রাজস্ব: ব্যাচ ${freshBatch.id} (${cleanWeight} কেজি)`
+            memo: `মাছ বিক্রয় রাজস্ব: ব্যাচ ${freshBatch.id} (${finalSoldWeight} কেজি)`
           }
         ];
 
@@ -6872,7 +7204,7 @@ export async function executeFishHarvestAndSaleTransaction(
             voucherNumber: revenueVoucherNumber,
             voucherType: 'SALES',
             date: dateStr,
-            narration: `মাছ বিক্রয় রাজস্ব: ব্যাচ ${freshBatch.id} (${freshBatch.species} - ${freshBatch.pondName}) - ওজন: ${cleanWeight} কেজি, বিক্রয়মূল্য: ৳${cleanPrice}`,
+            narration: `মাছ বিক্রয় রাজস্ব: ব্যাচ ${freshBatch.id} (${freshBatch.species} - ${freshBatch.pondName}) - ওজন: ${finalSoldWeight} কেজি, বিক্রয়মূল্য: ৳${cleanPrice}`,
             reference: freshBatch.id,
             lines: revenueLines,
             createdBy: currentUserId,
@@ -6951,9 +7283,9 @@ export async function executeFishHarvestAndSaleTransaction(
             {
               itemId: freshBatch.id,
               itemName: `মাছ বিক্রয়: ${freshBatch.species} (${freshBatch.pondName})`,
-              quantity: cleanWeight,
+              quantity: finalSoldWeight,
               unit: 'কেজি',
-              unitPrice: cleanWeight > 0 ? Math.round((cleanPrice / cleanWeight) * 100) / 100 : cleanPrice,
+              unitPrice: finalSoldWeight > 0 ? Math.round((cleanPrice / finalSoldWeight) * 100) / 100 : cleanPrice,
               lineTotal: cleanPrice,
               cogsAmount: 0
             }
@@ -7248,7 +7580,7 @@ export async function executeFishHarvestAndSaleTransaction(
         freshBatch.status = 'ACTIVE';
         if (params.remainingEstimatedWeightKg !== undefined) {
           freshBatch.currentEstimatedWeightKg = params.remainingEstimatedWeightKg;
-        } else if (freshBatch.currentEstimatedWeightKg && freshBatch.currentEstimatedWeightKg > cleanWeight) {
+        } else if (freshBatch.currentEstimatedWeightKg !== undefined && freshBatch.currentEstimatedWeightKg > 0) {
           freshBatch.currentEstimatedWeightKg = Math.max(0, Math.round((freshBatch.currentEstimatedWeightKg - cleanWeight) * 100) / 100);
         }
       } else {
