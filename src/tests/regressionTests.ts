@@ -20,7 +20,9 @@ import {
   executeFishHarvestAndSaleTransaction,
   executeCropHarvestAndSaleTransaction,
   executeStockAdjustmentTransaction,
-  executeProductionReceiptTransaction
+  executeProductionReceiptTransaction,
+  executeLoanTransaction,
+  executeLoanRepaymentTransaction
 } from '../services/transactionService';
 import {
   executeFixedAssetAcquisitionTransaction,
@@ -6485,6 +6487,288 @@ async function runRegressionTestsInternal(): Promise<TestResult> {
     assert(a2Journals.length === 0, 'Task A2: No journal posted for failed asset cash disposal.');
     a2Cash = (await a2Db.cashBankAccounts.get('cb_cash_real'))!.currentBalance;
     assert(a2Cash === 50000, 'Task A2: Cash balance remains unchanged on failed asset cash disposal.');
+
+    // =========================================================================
+    // TASK A3: INVESTOR SOURCE ACCOUNT REGRESSION TESTS
+    // =========================================================================
+    const a3Db = createMockAgroDatabase();
+    for (const acc of DEFAULT_CHART_OF_ACCOUNTS) {
+      await a3Db.accounts.put(acc);
+    }
+    await a3Db.cashBankAccounts.put({
+      id: 'cb_first_available',
+      accountName: 'First Available Account (Never Fallback)',
+      accountType: 'BANK',
+      currentBalance: 100000,
+      synced: false
+    });
+    await a3Db.cashBankAccounts.put({
+      id: 'cb_second_available',
+      accountName: 'Second Available Cash',
+      accountType: 'CASH',
+      currentBalance: 50000,
+      synced: false
+    });
+
+    // 1. Investor Contribution with non-existent targetAccountId
+    let a3ContribFailed = false;
+    try {
+      await executeInvestorTransaction(
+        {
+          investorName: 'Test Investor A3',
+          contribution: 25000,
+          profitShare: 20,
+          profitSharingRatio: 20,
+          targetAccountId: 'non_existent_target_acc',
+          currentUserId: 'usr_admin',
+          date: '2026-04-15'
+        },
+        a3Db
+      );
+    } catch {
+      a3ContribFailed = true;
+    }
+    assert(a3ContribFailed, 'Task A3: executeInvestorTransaction must reject non-existent target account.');
+    let a3Journals = await a3Db.journalEntries.toArray();
+    assert(a3Journals.length === 0, 'Task A3: No journal entry created on rejected investor contribution.');
+    let a3FirstAcc = await a3Db.cashBankAccounts.get('cb_first_available');
+    assert(a3FirstAcc?.currentBalance === 100000, 'Task A3: First available account balance untouched on contribution failure.');
+    let a3Investors = await a3Db.investors.toArray();
+    assert(a3Investors.length === 0, 'Task A3: Investor record not created on failed contribution.');
+
+    // 2. Set up valid investor for profit payment and capital return tests
+    const validInvRes = await executeInvestorTransaction(
+      {
+        investorName: 'Valid Investor A3',
+        contribution: 50000,
+        profitShare: 20,
+        profitSharingRatio: 20,
+        targetAccountId: 'cb_first_available',
+        currentUserId: 'usr_admin',
+        date: '2026-04-15'
+      },
+      a3Db
+    );
+    const validInvId = validInvRes.investor.id;
+
+    // Allocate profit to create profit payable
+    await executeInvestorProfitAllocationTransaction(
+      {
+        investorId: validInvId,
+        finalizedDistributableProfit: 100000,
+        allocationDate: '2026-04-15',
+        currentUserId: 'usr_admin'
+      },
+      a3Db
+    );
+    const a3InvAfterAlloc = await a3Db.investors.get(validInvId);
+    assert((a3InvAfterAlloc?.profitPayable || 0) === 20000, 'Task A3: Profit allocated successfully.');
+
+    const journalCountBeforePay = (await a3Db.journalEntries.toArray()).length;
+    const firstBalBeforePay = (await a3Db.cashBankAccounts.get('cb_first_available'))!.currentBalance;
+
+    // 3. Investor Profit Payment with non-existent sourceAccountId
+    let a3PaymentFailed = false;
+    try {
+      await executeInvestorProfitPaymentTransaction(
+        {
+          investorId: validInvId,
+          amount: 5000,
+          sourceAccountId: 'non_existent_source_acc',
+          paymentDate: '2026-04-16',
+          currentUserId: 'usr_admin'
+        },
+        a3Db
+      );
+    } catch {
+      a3PaymentFailed = true;
+    }
+    assert(a3PaymentFailed, 'Task A3: executeInvestorProfitPaymentTransaction must reject non-existent source account.');
+    let journalCountAfterPay = (await a3Db.journalEntries.toArray()).length;
+    assert(journalCountAfterPay === journalCountBeforePay, 'Task A3: No journal posted on rejected profit payment.');
+    let firstBalAfterPay = (await a3Db.cashBankAccounts.get('cb_first_available'))!.currentBalance;
+    assert(firstBalAfterPay === firstBalBeforePay, 'Task A3: First available account untouched on profit payment failure.');
+    let a3InvAfterFailedPay = await a3Db.investors.get(validInvId);
+    assert(a3InvAfterFailedPay?.profitPayable === 20000, 'Task A3: Investor profit payable untouched on failed profit payment.');
+
+    // 4. Investor Capital Return with non-existent sourceAccountId
+    let a3CapReturnFailed = false;
+    try {
+      await executeInvestorCapitalReturnTransaction(
+        {
+          investorId: validInvId,
+          amount: 10000,
+          sourceAccountId: 'non_existent_source_acc',
+          returnDate: '2026-04-16',
+          currentUserId: 'usr_admin'
+        },
+        a3Db
+      );
+    } catch {
+      a3CapReturnFailed = true;
+    }
+    assert(a3CapReturnFailed, 'Task A3: executeInvestorCapitalReturnTransaction must reject non-existent source account.');
+    let journalCountAfterRet = (await a3Db.journalEntries.toArray()).length;
+    assert(journalCountAfterRet === journalCountBeforePay, 'Task A3: No journal posted on rejected capital return.');
+    let firstBalAfterRet = (await a3Db.cashBankAccounts.get('cb_first_available'))!.currentBalance;
+    assert(firstBalAfterRet === firstBalBeforePay, 'Task A3: First available account untouched on capital return failure.');
+    let a3InvAfterFailedRet = await a3Db.investors.get(validInvId);
+    assert((a3InvAfterFailedRet?.currentCapitalBalance || 0) === 50000, 'Task A3: Investor capital balance untouched on failed capital return.');
+
+    // =========================================================================
+    // TASK A4: LOAN SOURCE/TARGET ACCOUNT REGRESSION TESTS
+    // =========================================================================
+    const a4Db = createMockAgroDatabase();
+    for (const acc of DEFAULT_CHART_OF_ACCOUNTS) {
+      await a4Db.accounts.put(acc);
+    }
+    await a4Db.cashBankAccounts.put({
+      id: 'cb_first_loan_acc',
+      accountName: 'First Available Account (Never Default)',
+      accountType: 'BANK',
+      currentBalance: 100000,
+      synced: false
+    });
+    await a4Db.cashBankAccounts.put({
+      id: 'cb_actual_loan_acc',
+      accountName: 'Actual Selected Loan Account',
+      accountType: 'BANK',
+      currentBalance: 50000,
+      synced: false
+    });
+
+    // 1. Loan Disbursement with invalid / non-existent targetAccountId
+    let a4DisburseInvalidFailed = false;
+    try {
+      await executeLoanTransaction(
+        {
+          lenderName: 'Krishi Bank',
+          principal: 200000,
+          interestRate: 9,
+          tenureMonths: 12,
+          targetAccountId: 'non_existent_loan_target',
+          currentUserId: 'usr_admin',
+          startDate: '2026-05-01'
+        },
+        a4Db
+      );
+    } catch {
+      a4DisburseInvalidFailed = true;
+    }
+    assert(a4DisburseInvalidFailed, 'Task A4: executeLoanTransaction must reject non-existent target account.');
+
+    // Verify first available account was NOT silently used
+    const a4FirstAccBefore = await a4Db.cashBankAccounts.get('cb_first_loan_acc');
+    assert(a4FirstAccBefore?.currentBalance === 100000, 'Task A4: First account balance untouched on rejected loan disbursement.');
+    const a4LoansCountBefore = (await a4Db.loans.toArray()).length;
+    assert(a4LoansCountBefore === 0, 'Task A4: No loan record created on rejected disbursement.');
+    const a4JournalsCountBefore = (await a4Db.journalEntries.toArray()).length;
+    assert(a4JournalsCountBefore === 0, 'Task A4: No journal entry posted on rejected disbursement.');
+
+    // 2. Loan Disbursement with empty targetAccountId
+    let a4DisburseEmptyFailed = false;
+    try {
+      await executeLoanTransaction(
+        {
+          lenderName: 'Krishi Bank',
+          principal: 200000,
+          interestRate: 9,
+          tenureMonths: 12,
+          targetAccountId: '',
+          currentUserId: 'usr_admin',
+          startDate: '2026-05-01'
+        },
+        a4Db
+      );
+    } catch {
+      a4DisburseEmptyFailed = true;
+    }
+    assert(a4DisburseEmptyFailed, 'Task A4: executeLoanTransaction must reject empty target account ID.');
+
+    // 3. Valid Loan Disbursement into specific account
+    const a4ValidLoanRes = await executeLoanTransaction(
+      {
+        lenderName: 'Sonali Bank Agro',
+        principal: 120000,
+        interestRate: 10,
+        tenureMonths: 12,
+        targetAccountId: 'cb_actual_loan_acc',
+        currentUserId: 'usr_admin',
+        startDate: '2026-05-01'
+      },
+      a4Db
+    );
+    assert(a4ValidLoanRes.loan.id !== undefined, 'Task A4: Valid loan disbursed successfully.');
+    const a4ActualAccAfterDisburse = await a4Db.cashBankAccounts.get('cb_actual_loan_acc');
+    assert(a4ActualAccAfterDisburse?.currentBalance === 170000, 'Task A4: Selected account credited correctly on disbursement (50k + 120k).');
+    const a4FirstAccAfterValidDisburse = await a4Db.cashBankAccounts.get('cb_first_loan_acc');
+    assert(a4FirstAccAfterValidDisburse?.currentBalance === 100000, 'Task A4: First account still untouched after valid disbursement.');
+
+    const a4LoanId = a4ValidLoanRes.loan.id;
+
+    // 4. Loan Repayment with invalid / non-existent sourceAccountId
+    let a4RepayInvalidFailed = false;
+    const journalCountBeforeRepay = (await a4Db.journalEntries.toArray()).length;
+    try {
+      await executeLoanRepaymentTransaction(
+        {
+          loanId: a4LoanId,
+          sourceAccountId: 'non_existent_repay_acc',
+          principalAmount: 10000,
+          interestAmount: 1000,
+          installmentNumber: 1,
+          repaymentDate: '2026-06-01',
+          currentUserId: 'usr_admin'
+        },
+        a4Db
+      );
+    } catch {
+      a4RepayInvalidFailed = true;
+    }
+    assert(a4RepayInvalidFailed, 'Task A4: executeLoanRepaymentTransaction must reject non-existent source account.');
+    const a4FirstAccAfterFailedRepay = await a4Db.cashBankAccounts.get('cb_first_loan_acc');
+    assert(a4FirstAccAfterFailedRepay?.currentBalance === 100000, 'Task A4: First account was NOT silently used for failed loan repayment.');
+    const journalCountAfterFailedRepay = (await a4Db.journalEntries.toArray()).length;
+    assert(journalCountAfterFailedRepay === journalCountBeforeRepay, 'Task A4: No journal posted on rejected loan repayment.');
+
+    // 5. Loan Repayment with empty sourceAccountId
+    let a4RepayEmptyFailed = false;
+    try {
+      await executeLoanRepaymentTransaction(
+        {
+          loanId: a4LoanId,
+          sourceAccountId: '',
+          principalAmount: 10000,
+          interestAmount: 1000,
+          installmentNumber: 1,
+          repaymentDate: '2026-06-01',
+          currentUserId: 'usr_admin'
+        },
+        a4Db
+      );
+    } catch {
+      a4RepayEmptyFailed = true;
+    }
+    assert(a4RepayEmptyFailed, 'Task A4: executeLoanRepaymentTransaction must reject empty source account ID.');
+
+    // 6. Valid Loan Repayment from specific source account
+    const repayRes = await executeLoanRepaymentTransaction(
+      {
+        loanId: a4LoanId,
+        sourceAccountId: 'cb_actual_loan_acc',
+        principalAmount: 10000,
+        interestAmount: 1000,
+        installmentNumber: 1,
+        repaymentDate: '2026-06-01',
+        currentUserId: 'usr_admin'
+      },
+      a4Db
+    );
+    assert(repayRes.updatedLoan.remainingPrincipal === 110000, 'Task A4: Loan principal reduced accurately on repayment (120k - 10k).');
+    const a4ActualAccAfterRepay = await a4Db.cashBankAccounts.get('cb_actual_loan_acc');
+    assert(a4ActualAccAfterRepay?.currentBalance === 159000, 'Task A4: Selected source account deducted accurately (170k - 11k).');
+    const a4FirstAccFinal = await a4Db.cashBankAccounts.get('cb_first_loan_acc');
+    assert(a4FirstAccFinal?.currentBalance === 100000, 'Task A4: First account was never touched throughout loan tests.');
 
 
 

@@ -91,7 +91,7 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
   const [loanPrincipal, setLoanPrincipal] = useState('');
   const [annualInterestRatePercent, setAnnualInterestRatePercent] = useState('9');
   const [termMonths, setTermMonths] = useState('12');
-  const [loanDestinationAcc, setLoanDestinationAcc] = useState<'CASH' | 'BANK'>('BANK');
+  const [loanDestinationAcc, setLoanDestinationAcc] = useState('');
   const [loanStartDate, setLoanStartDate] = useState(new Date().toISOString().split('T')[0]);
 
   // Selected Loan & Schedule Detail View
@@ -117,7 +117,7 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
   const [investorPhone, setInvestorPhone] = useState('');
   const [investorAmount, setInvestorAmount] = useState('');
   const [investorSharePct, setInvestorSharePct] = useState('');
-  const [investorDestinationAcc, setInvestorDestinationAcc] = useState<'CASH' | 'BANK'>('BANK');
+  const [investorDestinationAcc, setInvestorDestinationAcc] = useState('');
 
   // Profit Allocation, Payment & Capital Return Modals
   const [allocatingInvestor, setAllocatingInvestor] = useState<Investor | null>(null);
@@ -250,6 +250,11 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
       return;
     }
 
+    if (!loanDestinationAcc) {
+      setMsg({ type: 'error', text: 'টাকা জমার হিসাব নির্বাচন করুন।' });
+      return;
+    }
+
     try {
       const res = await executeLoanTransaction({
         lenderName: loanLenderName.trim(),
@@ -270,6 +275,7 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
       setLoanPrincipal('');
       setAnnualInterestRatePercent('9');
       setTermMonths('12');
+      setLoanDestinationAcc('');
       setMsg({
         type: 'success',
         text: `ঋণ চুক্তি ${res.loan.loanNumber || res.loan.id} (৳${res.loan.principalAmount}) সফলভাবে গৃহীত এবং কিস্তির সূচি তৈরি হয়েছে!`
@@ -288,11 +294,7 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
     setRepaymentInstallmentNum(installment ? installment.installmentNumber : undefined);
     setRepaymentDate(installment?.date || new Date().toISOString().split('T')[0]);
     setRepaymentNote(installment ? `কিস্তি #${installment.installmentNumber} পরিশোধ` : 'ঋণ কিস্তি পরিশোধ');
-    // Default to first account or bank account
-    if (accounts.length > 0) {
-      const defaultAcc = accounts.find((a) => a.accountType === 'BANK' && a.currentBalance > 0) || accounts[0];
-      setRepaymentSourceAccId(defaultAcc.id);
-    }
+    setRepaymentSourceAccId('');
     setShowRepaymentModal(true);
   };
 
@@ -373,6 +375,11 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
       return;
     }
 
+    if (!investorDestinationAcc) {
+      setMsg({ type: 'error', text: 'বিনিয়োগ জমার জন্য ক্যাশ বা ব্যাংক হিসাব নির্বাচন করুন।' });
+      return;
+    }
+
     try {
       const res = await executeInvestorTransaction({
         investorName: investorName.trim(),
@@ -389,6 +396,7 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
       setInvestorPhone('');
       setInvestorAmount('');
       setInvestorSharePct('');
+      setInvestorDestinationAcc('');
       setMsg({
         type: 'success',
         text: `বিনিয়োগকারী ${res.investor.name} এর ৳${amt.toLocaleString()} মূলধন সরাসরি ৩০২০ (Investor Capital) এ ক্রেডিট ও ব্যাংকে ডেবিট করা হয়েছে!`
@@ -455,7 +463,7 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
       return;
     }
 
-    const accId = paymentSourceAccId || accounts[0]?.id;
+    const accId = paymentSourceAccId;
     if (!accId) {
       setMsg({ type: 'error', text: 'পরিশোধের জন্য ক্যাশ বা ব্যাংক হিসাব নির্বাচন করুন।' });
       return;
@@ -516,7 +524,7 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
       return;
     }
 
-    const accId = capitalReturnSourceAccId || accounts[0]?.id;
+    const accId = capitalReturnSourceAccId;
     if (!accId) {
       setMsg({ type: 'error', text: 'মূলধন ফেরতের জন্য ক্যাশ বা ব্যাংক হিসাব নির্বাচন করুন।' });
       return;
@@ -1079,14 +1087,21 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
                   </select>
                 </div>
                 <div>
-                  <label className="block text-[13px] font-medium text-gray-700 mb-1">টাকা জমার হিসাব</label>
+                  <label className="block text-[13px] font-medium text-gray-700 mb-1">
+                    টাকা জমার হিসাব (Target Account) <span className="text-red-500">*</span>
+                  </label>
                   <select
+                    required
                     value={loanDestinationAcc}
-                    onChange={(e) => setLoanDestinationAcc(e.target.value as any)}
+                    onChange={(e) => setLoanDestinationAcc(e.target.value)}
                     className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900"
                   >
-                    <option value="BANK">ব্যাংক একাউন্ট (1030)</option>
-                    <option value="CASH">নগদ ড্রয়ার (1010)</option>
+                    <option value="">হিসাব নির্বাচন করুন...</option>
+                    {accounts.map((acc) => (
+                      <option key={acc.id} value={acc.id}>
+                        {acc.accountName || acc.name || acc.accountNumber} ({acc.accountType === 'BANK' ? 'ব্যাংক' : 'নগদ'}) — স্থিতি: ৳{(acc.currentBalance || 0).toLocaleString()}
+                      </option>
+                    ))}
                   </select>
                 </div>
               </div>
@@ -1339,12 +1354,17 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
                 <div>
                   <label className="block text-[13px] font-medium text-gray-700 mb-1">জমার মাধ্যম (হিসাব) <span className="text-red-500">*</span></label>
                   <select
+                    required
                     value={investorDestinationAcc}
-                    onChange={(e) => setInvestorDestinationAcc(e.target.value as any)}
+                    onChange={(e) => setInvestorDestinationAcc(e.target.value)}
                     className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900"
                   >
-                    <option value="BANK">ব্যাংক জমা (1030 Bank Account)</option>
-                    <option value="CASH">নগদ তহবিল (1010 Cash Account)</option>
+                    <option value="">হিসাব নির্বাচন করুন...</option>
+                    {accounts.map((acc) => (
+                      <option key={acc.id} value={acc.id}>
+                        {acc.accountName || acc.name || acc.accountNumber} ({acc.accountType === 'BANK' ? 'ব্যাংক' : 'নগদ'})
+                      </option>
+                    ))}
                   </select>
                 </div>
               </div>
@@ -1761,13 +1781,15 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
                       তহবিল প্রদানকারী অ্যাকাউন্ট (Source Account) <span className="text-red-500">*</span>
                     </label>
                     <select
-                      value={paymentSourceAccId || accounts[0]?.id || ''}
+                      required
+                      value={paymentSourceAccId}
                       onChange={(e) => setPaymentSourceAccId(e.target.value)}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg text-xs"
                     >
+                      <option value="">হিসাব নির্বাচন করুন...</option>
                       {accounts.map((acc) => (
                         <option key={acc.id} value={acc.id}>
-                          {acc.name} ({acc.accountType === 'BANK' ? 'ব্যাংক' : 'ক্যাশ'}) — স্থিতি: ৳{(acc.currentBalance || 0).toLocaleString()}
+                          {acc.name || acc.accountName || acc.accountNumber} ({acc.accountType === 'BANK' ? 'ব্যাংক' : 'ক্যাশ'}) — স্থিতি: ৳{(acc.currentBalance || 0).toLocaleString()}
                         </option>
                       ))}
                     </select>

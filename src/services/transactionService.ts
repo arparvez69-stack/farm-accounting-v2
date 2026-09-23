@@ -555,27 +555,30 @@ export async function executePurchaseTransaction(
 /**
  * Atomic Execution of Bank / Agricultural Loan Transaction
  */
-export async function executeLoanTransaction(params: {
-  lenderName: string;
-  principal: number;
-  interestRate: number;
-  tenureMonths: number;
-  targetAccountId: string;
-  currentUserId: string;
-  annualInterestRatePercent?: number;
-  termMonths?: number;
-  startDate?: string;
-  loanType?: 'BANK' | 'NGO' | 'INDIVIDUAL';
-}): Promise<{ loan: Loan; journalEntryId: string }> {
-  return await db.transaction(
+export async function executeLoanTransaction(
+  params: {
+    lenderName: string;
+    principal: number;
+    interestRate: number;
+    tenureMonths: number;
+    targetAccountId: string;
+    currentUserId: string;
+    annualInterestRatePercent?: number;
+    termMonths?: number;
+    startDate?: string;
+    loanType?: 'BANK' | 'NGO' | 'INDIVIDUAL';
+  },
+  dbInstance: any = db
+): Promise<{ loan: Loan; journalEntryId: string }> {
+  return await dbInstance.transaction(
     'rw',
     [
-      db.journalEntries,
-      db.loans,
-      db.cashBankAccounts,
-      db.accounts,
-      db.auditLogs,
-      db.closedPeriods
+      dbInstance.journalEntries,
+      dbInstance.loans,
+      dbInstance.cashBankAccounts,
+      dbInstance.accounts,
+      dbInstance.auditLogs,
+      ...(dbInstance.closedPeriods ? [dbInstance.closedPeriods] : [])
     ],
     async () => {
       const {
@@ -591,11 +594,15 @@ export async function executeLoanTransaction(params: {
         loanType = 'BANK'
       } = params;
 
+      if (!targetAccountId) {
+        throw new Error('Target cash/bank account is required.');
+      }
+
       if (principal <= 0) {
         throw new Error('Loan principal must be strictly greater than 0.');
       }
 
-      const targetAcc = await db.cashBankAccounts.get(targetAccountId);
+      const targetAcc = await dbInstance.cashBankAccounts.get(targetAccountId);
       if (!targetAcc) {
         throw new Error(`Target cash/bank account ${targetAccountId} not found.`);
       }
@@ -613,13 +620,13 @@ export async function executeLoanTransaction(params: {
       const assetGlCode = getCashBankAccountGLCode(targetAcc.accountType);
       const liabilityGlCode = getLoanLiabilityAccount(effectiveMonths);
 
-      const accounts = await db.accounts.toArray();
-      const assetAcc = accounts.find((a) => a.code === assetGlCode) || {
+      const accounts = await dbInstance.accounts.toArray();
+      const assetAcc = accounts.find((a: any) => a.code === assetGlCode) || {
         id: `acc_${assetGlCode}`,
         code: assetGlCode,
         nameBn: targetAcc.accountName || targetAcc.name || 'ব্যাংক/নগদ তহবিল'
       };
-      const liabilityAcc = accounts.find((a) => a.code === liabilityGlCode) || {
+      const liabilityAcc = accounts.find((a: any) => a.code === liabilityGlCode) || {
         id: `acc_${liabilityGlCode}`,
         code: liabilityGlCode,
         nameBn:
@@ -664,7 +671,7 @@ export async function executeLoanTransaction(params: {
       );
 
       // 1. Safe insert journal entry
-      await safeInsert(db.journalEntries, journalEntry, { idPrefix: 'j' });
+      await safeInsert(dbInstance.journalEntries, journalEntry, { idPrefix: 'j' });
 
       // Generate Amortization Schedule (Reducing-Balance / Straight-Line)
       const schedule = generateAmortizationSchedule(principal, effectiveRate, effectiveMonths, dateStr);
@@ -692,15 +699,15 @@ export async function executeLoanTransaction(params: {
         status: 'ACTIVE',
         synced: false
       };
-      await safeInsert(db.loans, loanRecord, { idPrefix: 'ln' });
+      await safeInsert(dbInstance.loans, loanRecord, { idPrefix: 'ln' });
 
       // 3. Update target account operational balance
-      await db.cashBankAccounts.update(targetAcc.id, {
+      await dbInstance.cashBankAccounts.update(targetAcc.id, {
         currentBalance: Math.round((targetAcc.currentBalance + principal) * 100) / 100
       });
 
       // 4. Audit Log
-      await safeInsert(db.auditLogs, {
+      await safeInsert(dbInstance.auditLogs, {
         id: generateUniqueId('audit'),
         timestamp: new Date().toISOString(),
         userId: currentUserId,
@@ -805,6 +812,9 @@ export async function executeInvestorTransaction(
         }
       }
 
+      if (!targetAccountId) {
+        throw new Error('Target cash/bank account is required.');
+      }
       const targetAcc = await dbInstance.cashBankAccounts.get(targetAccountId);
       if (!targetAcc) {
         throw new Error(`Target cash/bank account ${targetAccountId} not found.`);
@@ -1345,6 +1355,9 @@ export async function executeInvestorProfitPaymentTransaction(
       }
 
       // 4. Source Account check
+      if (!sourceAccountId) {
+        throw new Error('Source cash/bank account is required.');
+      }
       const sourceAcc = await dbInstance.cashBankAccounts.get(sourceAccountId);
       if (!sourceAcc) {
         throw new Error(`Source cash/bank account ${sourceAccountId} not found.`);
@@ -1590,6 +1603,9 @@ export async function executeInvestorCapitalReturnTransaction(
       }
 
       // 6. Source Cash/Bank Account validation & Insufficient Balance / Overdraft check
+      if (!sourceAccountId) {
+        throw new Error('Source cash/bank account is required.');
+      }
       const sourceAcc = await dbInstance.cashBankAccounts.get(sourceAccountId);
       if (!sourceAcc) {
         throw new Error(`Source cash/bank account ${sourceAccountId} not found.`);
@@ -1839,6 +1855,15 @@ export async function executeLoanRepaymentTransaction(
           throw new Error('পরিশোধের পরিমাণ (আসল বা সুদ) ০ থেকে বেশি হতে হবে।');
         }
 
+        if (!sourceAccountId) {
+          throw new Error('উৎস পরিশোধ হিসাব নির্বাচন করা আবশ্যক।');
+        }
+
+        const sourceAcc = await dbInstance.cashBankAccounts.get(sourceAccountId);
+        if (!sourceAcc) {
+          throw new Error(`উৎস পরিশোধ হিসাব ${sourceAccountId} পাওয়া যায়নি।`);
+        }
+
         const loan = await dbInstance.loans.get(loanId);
         if (!loan) {
           throw new Error(`ঋণ চুক্তি ${loanId} পাওয়া যায়নি।`);
@@ -1993,11 +2018,6 @@ export async function executeLoanRepaymentTransaction(
           throw new Error(
             `আসল পরিশোধের পরিমাণ অবশিষ্ট আসলের চেয়ে বেশি (principal repayment exceeds remaining principal: ৳${pAmt} > ৳${remainingPrincipal})। অতিরিক্ত ঋণ পরিশোধ গ্রহণযোগ্য নয়।`
           );
-        }
-
-        const sourceAcc = await dbInstance.cashBankAccounts.get(sourceAccountId);
-        if (!sourceAcc) {
-          throw new Error(`উৎস পরিশোধ হিসাব ${sourceAccountId} পাওয়া যায়নি।`);
         }
 
         if (sourceAcc.currentBalance < totalRepayment) {
