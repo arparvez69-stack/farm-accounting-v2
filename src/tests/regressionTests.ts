@@ -22,7 +22,9 @@ import {
   executeStockAdjustmentTransaction,
   executeProductionReceiptTransaction,
   executeLoanTransaction,
-  executeLoanRepaymentTransaction
+  executeLoanRepaymentTransaction,
+  executeOwnerCapitalTransaction,
+  executeOwnerDrawingTransaction
 } from '../services/transactionService';
 import {
   executeFixedAssetAcquisitionTransaction,
@@ -6769,6 +6771,159 @@ async function runRegressionTestsInternal(): Promise<TestResult> {
     assert(a4ActualAccAfterRepay?.currentBalance === 159000, 'Task A4: Selected source account deducted accurately (170k - 11k).');
     const a4FirstAccFinal = await a4Db.cashBankAccounts.get('cb_first_loan_acc');
     assert(a4FirstAccFinal?.currentBalance === 100000, 'Task A4: First account was never touched throughout loan tests.');
+
+    // =========================================================================
+    // TASK A5: OWNER CAPITAL & DRAWINGS ACCOUNT REGRESSION TESTS
+    // =========================================================================
+    const a5Db = createMockAgroDatabase();
+    for (const acc of DEFAULT_CHART_OF_ACCOUNTS) {
+      await a5Db.accounts.put(acc);
+    }
+    await a5Db.cashBankAccounts.put({
+      id: 'cb_first_owner_acc',
+      accountName: 'First Available Account (Never Silently Used)',
+      accountType: 'BANK',
+      currentBalance: 80000,
+      synced: false
+    });
+    await a5Db.cashBankAccounts.put({
+      id: 'cb_actual_owner_acc',
+      accountName: 'Actual Selected Owner Account',
+      accountType: 'CASH',
+      currentBalance: 30000,
+      synced: false
+    });
+
+    // 1. Owner Capital with invalid / non-existent targetAccountId
+    let a5CapInvalidFailed = false;
+    try {
+      await executeOwnerCapitalTransaction(
+        {
+          amount: 50000,
+          targetAccountId: 'non_existent_capital_target',
+          currentUserId: 'usr_admin',
+          date: '2026-05-10',
+          notes: 'Capital injection'
+        },
+        a5Db
+      );
+    } catch {
+      a5CapInvalidFailed = true;
+    }
+    assert(a5CapInvalidFailed, 'Task A5: executeOwnerCapitalTransaction must reject non-existent target account.');
+
+    // Verify first available account was NOT silently used
+    const a5FirstBefore = await a5Db.cashBankAccounts.get('cb_first_owner_acc');
+    assert(a5FirstBefore?.currentBalance === 80000, 'Task A5: First account balance untouched on rejected capital transaction.');
+    const a5JournalsBefore = (await a5Db.journalEntries.toArray()).length;
+    assert(a5JournalsBefore === 0, 'Task A5: No journal entry created on rejected capital transaction.');
+
+    // 2. Owner Capital with empty targetAccountId
+    let a5CapEmptyFailed = false;
+    try {
+      await executeOwnerCapitalTransaction(
+        {
+          amount: 50000,
+          targetAccountId: '',
+          currentUserId: 'usr_admin',
+          date: '2026-05-10'
+        },
+        a5Db
+      );
+    } catch {
+      a5CapEmptyFailed = true;
+    }
+    assert(a5CapEmptyFailed, 'Task A5: executeOwnerCapitalTransaction must reject empty target account ID.');
+
+    // 3. Valid Owner Capital into specific account (cb_actual_owner_acc)
+    const a5CapRes = await executeOwnerCapitalTransaction(
+      {
+        amount: 25000,
+        targetAccountId: 'cb_actual_owner_acc',
+        currentUserId: 'usr_admin',
+        date: '2026-05-10',
+        notes: 'Owner initial cash infusion'
+      },
+      a5Db
+    );
+    assert(a5CapRes.journalEntryId !== undefined, 'Task A5: Valid owner capital posted.');
+    const a5ActualAfterCap = await a5Db.cashBankAccounts.get('cb_actual_owner_acc');
+    assert(a5ActualAfterCap?.currentBalance === 55000, 'Task A5: Selected account credited correctly on capital infusion (30k + 25k).');
+    const a5FirstAfterCap = await a5Db.cashBankAccounts.get('cb_first_owner_acc');
+    assert(a5FirstAfterCap?.currentBalance === 80000, 'Task A5: First available account untouched after valid capital infusion.');
+
+    // Verify 3010 Owner Capital accounting entry
+    const a5CapJournal = await a5Db.journalEntries.get(a5CapRes.journalEntryId);
+    assert(a5CapJournal !== undefined, 'Task A5: Capital journal found.');
+    const line3010 = a5CapJournal?.lines.find((l: any) => l.accountCode === '3010');
+    assert(line3010 !== undefined && line3010.credit === 25000, 'Task A5: Credit 3010 Owner Capital verified.');
+    const lineCashCap = a5CapJournal?.lines.find((l: any) => l.accountCode === '1010');
+    assert(lineCashCap !== undefined && lineCashCap.debit === 25000, 'Task A5: Debit 1010 Cash Account verified.');
+
+    // 4. Owner Drawing with invalid / non-existent sourceAccountId
+    let a5DrawInvalidFailed = false;
+    const journalCountBeforeDraw = (await a5Db.journalEntries.toArray()).length;
+    try {
+      await executeOwnerDrawingTransaction(
+        {
+          amount: 5000,
+          sourceAccountId: 'non_existent_draw_source',
+          currentUserId: 'usr_admin',
+          date: '2026-05-11',
+          notes: 'Personal drawing'
+        },
+        a5Db
+      );
+    } catch {
+      a5DrawInvalidFailed = true;
+    }
+    assert(a5DrawInvalidFailed, 'Task A5: executeOwnerDrawingTransaction must reject non-existent source account.');
+    const a5FirstAfterFailedDraw = await a5Db.cashBankAccounts.get('cb_first_owner_acc');
+    assert(a5FirstAfterFailedDraw?.currentBalance === 80000, 'Task A5: First account was NOT silently used for failed owner drawing.');
+    const journalCountAfterFailedDraw = (await a5Db.journalEntries.toArray()).length;
+    assert(journalCountAfterFailedDraw === journalCountBeforeDraw, 'Task A5: No journal posted on rejected owner drawing.');
+
+    // 5. Owner Drawing with empty sourceAccountId
+    let a5DrawEmptyFailed = false;
+    try {
+      await executeOwnerDrawingTransaction(
+        {
+          amount: 5000,
+          sourceAccountId: '',
+          currentUserId: 'usr_admin',
+          date: '2026-05-11'
+        },
+        a5Db
+      );
+    } catch {
+      a5DrawEmptyFailed = true;
+    }
+    assert(a5DrawEmptyFailed, 'Task A5: executeOwnerDrawingTransaction must reject empty source account ID.');
+
+    // 6. Valid Owner Drawing from specific source account (cb_actual_owner_acc)
+    const a5DrawRes = await executeOwnerDrawingTransaction(
+      {
+        amount: 15000,
+        sourceAccountId: 'cb_actual_owner_acc',
+        currentUserId: 'usr_admin',
+        date: '2026-05-11',
+        notes: 'Personal expense drawing'
+      },
+      a5Db
+    );
+    assert(a5DrawRes.journalEntryId !== undefined, 'Task A5: Valid owner drawing posted.');
+    const a5ActualAfterDraw = await a5Db.cashBankAccounts.get('cb_actual_owner_acc');
+    assert(a5ActualAfterDraw?.currentBalance === 40000, 'Task A5: Selected source account deducted correctly (55k - 15k).');
+    const a5FirstFinal = await a5Db.cashBankAccounts.get('cb_first_owner_acc');
+    assert(a5FirstFinal?.currentBalance === 80000, 'Task A5: First available account was never touched throughout owner drawing tests.');
+
+    // Verify 3040 Owner Drawings accounting entry
+    const a5DrawJournal = await a5Db.journalEntries.get(a5DrawRes.journalEntryId);
+    assert(a5DrawJournal !== undefined, 'Task A5: Drawing journal found.');
+    const line3040 = a5DrawJournal?.lines.find((l: any) => l.accountCode === '3040');
+    assert(line3040 !== undefined && line3040.debit === 15000, 'Task A5: Debit 3040 Owner Drawings verified.');
+    const lineCashDraw = a5DrawJournal?.lines.find((l: any) => l.accountCode === '1010');
+    assert(lineCashDraw !== undefined && lineCashDraw.credit === 15000, 'Task A5: Credit 1010 Cash Account verified.');
 
 
 

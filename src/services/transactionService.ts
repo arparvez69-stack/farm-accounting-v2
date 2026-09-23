@@ -5316,31 +5316,38 @@ export async function executeLivestockMortalityTransaction(params: {
  * Debit: Cash (1010) or Bank (1030)
  * Credit: Owner Capital (3010)
  */
-export async function executeOwnerCapitalTransaction(params: {
-  amount: number;
-  targetAccountId: string;
-  currentUserId: string;
-  date?: string;
-  notes?: string;
-}): Promise<{ journalEntryId: string; voucherNumber: string }> {
-  return await db.transaction(
+export async function executeOwnerCapitalTransaction(
+  params: {
+    amount: number;
+    targetAccountId: string;
+    currentUserId: string;
+    date?: string;
+    notes?: string;
+  },
+  dbInstance: any = db
+): Promise<{ journalEntryId: string; voucherNumber: string }> {
+  return await dbInstance.transaction(
     'rw',
     [
-      db.journalEntries,
-      db.cashBankAccounts,
-      db.accounts,
-      db.auditLogs,
-      db.closedPeriods
+      dbInstance.journalEntries,
+      dbInstance.cashBankAccounts,
+      dbInstance.accounts,
+      dbInstance.auditLogs,
+      ...(dbInstance.closedPeriods ? [dbInstance.closedPeriods] : [])
     ],
     async () => {
       const { amount, targetAccountId, currentUserId, date, notes } = params;
+
+      if (!targetAccountId) {
+        throw new Error('জমার জন্য ক্যাশ বা ব্যাংক হিসাব নির্বাচন করা আবশ্যক।');
+      }
 
       if (amount <= 0) {
         throw new Error('মূলধনের পরিমাণ ০ থেকে বেশি হতে হবে (Capital amount must be strictly greater than 0).');
       }
 
       const cleanAmount = Math.round(amount * 100) / 100;
-      const targetAcc = await db.cashBankAccounts.get(targetAccountId);
+      const targetAcc = await dbInstance.cashBankAccounts.get(targetAccountId);
       if (!targetAcc) {
         throw new Error(`তহবিল/ব্যাংক অ্যাকাউন্ট (${targetAccountId}) পাওয়া যায়নি।`);
       }
@@ -5355,7 +5362,7 @@ export async function executeOwnerCapitalTransaction(params: {
       const assetGlCode = getCashBankAccountGLCode(targetAcc.accountType);
       const capitalGlCode = CANONICAL_ACCOUNTS.OWNER_CAPITAL; // 3010
 
-      const accounts = await db.accounts.toArray();
+      const accounts = await dbInstance.accounts.toArray();
       const targetAccName = targetAcc.accountName || targetAcc.name || 'ব্যাংক/নগদ তহবিল';
 
       const journalLines: JournalLine[] = [
@@ -5396,17 +5403,17 @@ export async function executeOwnerCapitalTransaction(params: {
         },
         { accounts, skipDbPut: true }
       );
-      await safeInsert(db.journalEntries, journalEntry, { idPrefix: 'j' });
+      await safeInsert(dbInstance.journalEntries, journalEntry, { idPrefix: 'j' });
 
       // Update cash/bank balance
-      await db.cashBankAccounts.update(targetAcc.id, {
+      await dbInstance.cashBankAccounts.update(targetAcc.id, {
         currentBalance: Math.round((targetAcc.currentBalance + cleanAmount) * 100) / 100,
         synced: false
       });
 
       // Audit log
       await safeInsert(
-        db.auditLogs,
+        dbInstance.auditLogs,
         {
           id: generateUniqueId('aud'),
           timestamp: new Date().toISOString(),
@@ -5432,31 +5439,38 @@ export async function executeOwnerCapitalTransaction(params: {
  * Debit: Owner Drawings (3040)
  * Credit: Cash (1010) or Bank (1030)
  */
-export async function executeOwnerDrawingTransaction(params: {
-  amount: number;
-  sourceAccountId: string;
-  currentUserId: string;
-  date?: string;
-  notes?: string;
-}): Promise<{ journalEntryId: string; voucherNumber: string }> {
-  return await db.transaction(
+export async function executeOwnerDrawingTransaction(
+  params: {
+    amount: number;
+    sourceAccountId: string;
+    currentUserId: string;
+    date?: string;
+    notes?: string;
+  },
+  dbInstance: any = db
+): Promise<{ journalEntryId: string; voucherNumber: string }> {
+  return await dbInstance.transaction(
     'rw',
     [
-      db.journalEntries,
-      db.cashBankAccounts,
-      db.accounts,
-      db.auditLogs,
-      db.closedPeriods
+      dbInstance.journalEntries,
+      dbInstance.cashBankAccounts,
+      dbInstance.accounts,
+      dbInstance.auditLogs,
+      ...(dbInstance.closedPeriods ? [dbInstance.closedPeriods] : [])
     ],
     async () => {
       const { amount, sourceAccountId, currentUserId, date, notes } = params;
+
+      if (!sourceAccountId) {
+        throw new Error('উৎস তহবিল/ব্যাংক অ্যাকাউন্ট নির্বাচন করা আবশ্যক।');
+      }
 
       if (amount <= 0) {
         throw new Error('উত্তোলনের পরিমাণ ০ থেকে বেশি হতে হবে (Drawing amount must be strictly greater than 0).');
       }
 
       const cleanAmount = Math.round(amount * 100) / 100;
-      const targetAcc = await db.cashBankAccounts.get(sourceAccountId);
+      const targetAcc = await dbInstance.cashBankAccounts.get(sourceAccountId);
       if (!targetAcc) {
         throw new Error(`তহবিল/ব্যাংক অ্যাকাউন্ট (${sourceAccountId}) পাওয়া যায়নি।`);
       }
@@ -5478,7 +5492,7 @@ export async function executeOwnerDrawingTransaction(params: {
       const assetGlCode = getCashBankAccountGLCode(sourceAcc.accountType);
       const drawingsGlCode = CANONICAL_ACCOUNTS.OWNER_DRAWINGS; // 3040
 
-      const accounts = await db.accounts.toArray();
+      const accounts = await dbInstance.accounts.toArray();
       const sourceAccName = sourceAcc.accountName || sourceAcc.name || 'ব্যাংক/নগদ তহবিল';
 
       const journalLines: JournalLine[] = [
@@ -5519,17 +5533,17 @@ export async function executeOwnerDrawingTransaction(params: {
         },
         { accounts, skipDbPut: true }
       );
-      await safeInsert(db.journalEntries, journalEntry, { idPrefix: 'j' });
+      await safeInsert(dbInstance.journalEntries, journalEntry, { idPrefix: 'j' });
 
       // Update cash/bank balance
-      await db.cashBankAccounts.update(sourceAcc.id, {
+      await dbInstance.cashBankAccounts.update(sourceAcc.id, {
         currentBalance: Math.round((sourceAcc.currentBalance - cleanAmount) * 100) / 100,
         synced: false
       });
 
       // Audit log
       await safeInsert(
-        db.auditLogs,
+        dbInstance.auditLogs,
         {
           id: generateUniqueId('aud'),
           timestamp: new Date().toISOString(),

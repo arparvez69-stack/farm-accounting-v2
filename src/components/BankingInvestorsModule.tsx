@@ -574,8 +574,7 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
       setMsg({ type: 'error', text: 'মূলধনের পরিমাণ ০ থেকে বেশি হতে হবে।' });
       return;
     }
-    const accId = capitalTargetAccId || accounts[0]?.id;
-    if (!accId) {
+    if (!capitalTargetAccId) {
       setMsg({ type: 'error', text: 'জমার জন্য ক্যাশ বা ব্যাংক হিসাব নির্বাচন করুন।' });
       return;
     }
@@ -584,7 +583,7 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
     try {
       const res = await executeOwnerCapitalTransaction({
         amount: amt,
-        targetAccountId: accId,
+        targetAccountId: capitalTargetAccId,
         currentUserId,
         date: capitalDate,
         notes: capitalNotes
@@ -596,6 +595,7 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
       });
       setShowAddCapitalModal(false);
       setCapitalAmount('');
+      setCapitalTargetAccId('');
       setCapitalNotes('');
       window.dispatchEvent(new CustomEvent('accounting_entry_posted'));
       await loadFinanceData();
@@ -614,8 +614,7 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
       setMsg({ type: 'error', text: 'উত্তোলনের পরিমাণ ০ থেকে বেশি হতে হবে।' });
       return;
     }
-    const accId = drawingSourceAccId || accounts[0]?.id;
-    if (!accId) {
+    if (!drawingSourceAccId) {
       setMsg({ type: 'error', text: 'উত্তোলনের জন্য ক্যাশ বা ব্যাংক হিসাব নির্বাচন করুন।' });
       return;
     }
@@ -624,7 +623,7 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
     try {
       const res = await executeOwnerDrawingTransaction({
         amount: amt,
-        sourceAccountId: accId,
+        sourceAccountId: drawingSourceAccId,
         currentUserId,
         date: drawingDate,
         notes: drawingNotes
@@ -636,6 +635,7 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
       });
       setShowDrawingModal(false);
       setDrawingAmount('');
+      setDrawingSourceAccId('');
       setDrawingNotes('');
       window.dispatchEvent(new CustomEvent('accounting_entry_posted'));
       await loadFinanceData();
