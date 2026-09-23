@@ -527,6 +527,14 @@ export interface BankTransfer {
   transferFee: number;
   reference: string;
   type: 'CASH_TO_BANK' | 'BANK_TO_CASH' | 'BANK_TO_BANK' | 'CASH_TO_CASH';
+  journalEntryId?: string;
+  voucherNumber?: string;
+  narration?: string;
+  status?: string;
+  reversedBy?: string;
+  createdBy?: string;
+  createdAt?: string;
+  idempotencyKey?: string;
   synced?: boolean;
 }
 

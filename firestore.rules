@@ -157,6 +157,12 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // Access Logs
+    match /accessLogs/{logId} {
+      allow read: if isApprovedOwner();
+      allow write: if false;
+    }
+
     // Payments & Bank Transfers
     match /payments/{paymentId} {
       allow read: if isApprovedOwner();

@@ -10,6 +10,8 @@ import { getAuth } from 'firebase-admin/auth';
 import { getFirestore } from 'firebase-admin/firestore';
 import firebaseConfig from './firebase-applet-config.json';
 import { validateBalancedLines } from './src/accounting/accountingEngine';
+import { calculateHistoricalInventoryValuation } from './src/accounting/reconciliationService';
+import { CANONICAL_ACCOUNTS } from './src/accounting/accountMapping';
 import { DEFAULT_CHART_OF_ACCOUNTS } from './src/accounting/defaultAccounts';
 import { Account, ClosedPeriod } from './src/types';
 
@@ -193,6 +195,27 @@ export async function getValidAccountsForValidation(): Promise<Account[]> {
 
 // In-memory store for sync operations (allows offline/dev environment fallback & fast lookup)
 export const inMemoryStores = new Map<string, Map<string, any>>();
+
+export async function getCollectionRecordsForValidation(colName: string): Promise<any[]> {
+  const recordsMap = new Map<string, any>();
+  const inMem = inMemoryStores.get(colName);
+  if (inMem) {
+    for (const [id, rec] of inMem.entries()) {
+      if (rec) recordsMap.set(id, rec);
+    }
+  }
+  if (adminDb) {
+    try {
+      const snap = await adminDb.collection(colName).get();
+      snap.forEach((doc) => {
+        recordsMap.set(doc.id, { id: doc.id, ...doc.data() });
+      });
+    } catch {
+      // Dev/offline fallback
+    }
+  }
+  return Array.from(recordsMap.values());
+}
 
 // Closed periods cache for server-side closed-period protection
 let cachedClosedPeriods: ClosedPeriod[] | null = null;
@@ -945,16 +968,19 @@ const ALLOWED_SYNC_COLLECTIONS = [
   'stockMovements',
   'parties',
   'cashBankAccounts',
+  'bankTransfers',
   'loans',
   'investors',
   'investorTransactions',
   'fixedAssets',
   'internalFlows',
   'processingRuns',
+  'reminders',
+  'accessLogs',
+  'recurringExpenseTemplates',
   'auditLogs',
   'system',
   'payments',
-  'stockMovements',
   'closedPeriods'
 ];
 
@@ -1018,6 +1044,8 @@ async function handleSyncWrite(
         ? 'stockMovements'
         : collectionName === 'cashBankAccount' || collectionName === 'cashBankAccounts'
         ? 'cashBankAccounts'
+        : collectionName === 'bankTransfer' || collectionName === 'bankTransfers'
+        ? 'bankTransfers'
         : collectionName === 'loan' || collectionName === 'loans'
         ? 'loans'
         : collectionName === 'investor' || collectionName === 'investors'
@@ -1034,6 +1062,16 @@ async function handleSyncWrite(
         ? 'ponds'
         : collectionName === 'plot' || collectionName === 'plots'
         ? 'plots'
+        : collectionName === 'reminder' || collectionName === 'reminders'
+        ? 'reminders'
+        : collectionName === 'internalFlow' || collectionName === 'internalFlows'
+        ? 'internalFlows'
+        : collectionName === 'processingRun' || collectionName === 'processingRuns'
+        ? 'processingRuns'
+        : collectionName === 'accessLog' || collectionName === 'accessLogs'
+        ? 'accessLogs'
+        : collectionName === 'recurringExpenseTemplate' || collectionName === 'recurringExpenseTemplates'
+        ? 'recurringExpenseTemplates'
         : collectionName === 'closedPeriod' || collectionName === 'closedPeriods'
         ? 'closedPeriods'
         : collectionName;
@@ -1084,6 +1122,20 @@ async function handleSyncWrite(
           existingDoc = item;
           break;
         }
+        if (targetCol === 'bankTransfers') {
+          if (data.voucherNumber && item.voucherNumber === data.voucherNumber) {
+            existingDoc = item;
+            break;
+          }
+          if (data.reference && item.reference === data.reference) {
+            existingDoc = item;
+            break;
+          }
+          if (data.journalEntryId && item.journalEntryId === data.journalEntryId) {
+            existingDoc = item;
+            break;
+          }
+        }
       }
     }
 
@@ -1126,6 +1178,20 @@ async function handleSyncWrite(
             existingDoc = { id: qSnap.docs[0].id, ...qSnap.docs[0].data() };
           }
         }
+        if (!existingDoc && targetCol === 'bankTransfers') {
+          if (data.voucherNumber) {
+            const qSnap = await adminDb.collection(targetCol).where('voucherNumber', '==', data.voucherNumber).limit(1).get();
+            if (!qSnap.empty) {
+              existingDoc = { id: qSnap.docs[0].id, ...qSnap.docs[0].data() };
+            }
+          }
+          if (!existingDoc && data.reference) {
+            const qSnap = await adminDb.collection(targetCol).where('reference', '==', data.reference).limit(1).get();
+            if (!qSnap.empty) {
+              existingDoc = { id: qSnap.docs[0].id, ...qSnap.docs[0].data() };
+            }
+          }
+        }
       } catch {
         // Ignore query error
       }
@@ -1136,7 +1202,18 @@ async function handleSyncWrite(
 
     // 3. Closed-Period Protection:
     // Reject any synced accounting transaction that modifies or posts into a closed accounting period.
-    if (targetCol !== 'closedPeriods' && targetCol !== 'auditLogs' && targetCol !== 'system' && targetCol !== 'parties' && targetCol !== 'cashBankAccounts') {
+    if (
+      targetCol !== 'closedPeriods' &&
+      targetCol !== 'auditLogs' &&
+      targetCol !== 'system' &&
+      targetCol !== 'parties' &&
+      targetCol !== 'cashBankAccounts' &&
+      targetCol !== 'reminders' &&
+      targetCol !== 'accessLogs' &&
+      targetCol !== 'recurringExpenseTemplates' &&
+      targetCol !== 'ponds' &&
+      targetCol !== 'plots'
+    ) {
       const closedPeriods = await getClosedPeriodsForValidation();
       if (closedPeriods.length > 0) {
         // Check A: If modifying an existing document, was the existing document in a closed period?
@@ -1260,10 +1337,309 @@ async function handleSyncWrite(
       }
     }
 
+    // ========================================================
+    // 4. Server Operational-State Protection
+    // A sync request must not arbitrarily overwrite critical calculated fields:
+    // - inventory currentStock/avgCostPrice
+    // - cash/bank currentBalance
+    // - investor capital/payable balances
+    // - loan remaining balances
+    // Reuse existing business logic where possible. Do not create a second accounting engine.
+    // ========================================================
+    if (existingDoc) {
+      // 1. Inventory Items: currentStock / avgCostPrice
+      if (targetCol === 'inventoryItems') {
+        const existingStock = Number(existingDoc.currentStock ?? 0);
+        const incomingStock = data.currentStock !== undefined ? Number(data.currentStock) : undefined;
+        const hasStockMismatch = incomingStock !== undefined && Math.abs(incomingStock - existingStock) > 0.0001;
+
+        const existingAvgCost = Number(existingDoc.avgCostPrice ?? existingDoc.costPrice ?? 0);
+        const incomingAvgCost =
+          data.avgCostPrice !== undefined
+            ? Number(data.avgCostPrice)
+            : data.costPrice !== undefined
+            ? Number(data.costPrice)
+            : undefined;
+        const hasCostMismatch = incomingAvgCost !== undefined && Math.abs(incomingAvgCost - existingAvgCost) > 0.0001;
+
+        if (hasStockMismatch || hasCostMismatch) {
+          const allMovements = await getCollectionRecordsForValidation('stockMovements');
+          const itemMovements = allMovements.filter(
+            (m: any) =>
+              m.itemId === finalDocId ||
+              m.itemId === docId ||
+              (existingDoc.code && m.itemCode === existingDoc.code) ||
+              (data.code && m.itemCode === data.code)
+          );
+
+          if (itemMovements.length > 0) {
+            const valuation = calculateHistoricalInventoryValuation({ ...existingDoc, ...data }, itemMovements);
+            const stockMatches = Math.abs(valuation.stockMovementQuantity - (incomingStock ?? existingStock)) < 0.0001;
+            const costMatches = !hasCostMismatch || Math.abs(valuation.unitCost - (incomingAvgCost ?? existingAvgCost)) < 0.01;
+
+            if (!stockMatches || !costMatches) {
+              return res.status(400).json({
+                error: `হিসাবরক্ষণ সীমাবদ্ধতা: পণ্যের বর্তমান মজুদ বা গড় ক্রয়মূল্য সরাসরি ওভাররাইট করা যাবে না (Cannot arbitrarily overwrite inventory currentStock/avgCostPrice. Expected stock: ${valuation.stockMovementQuantity}, received: ${incomingStock}).`
+              });
+            }
+          } else {
+            return res.status(400).json({
+              error: `হিসাবরক্ষণ সীমাবদ্ধতা: বিদ্যমান পণ্যের বর্তমান মজুদ বা গড় ক্রয়মূল্য সরাসরি ওভাররাইট করা যাবে না (Cannot arbitrarily overwrite inventory currentStock/avgCostPrice without supporting stock movements).`
+            });
+          }
+        }
+      }
+
+      // 2. Cash/Bank Accounts: currentBalance
+      else if (targetCol === 'cashBankAccounts') {
+        const existingBal = Number(existingDoc.currentBalance ?? existingDoc.balance ?? 0);
+        const incomingBal =
+          data.currentBalance !== undefined
+            ? Number(data.currentBalance)
+            : data.balance !== undefined
+            ? Number(data.balance)
+            : undefined;
+        const hasBalMismatch = incomingBal !== undefined && Math.abs(incomingBal - existingBal) > 0.0001;
+
+        if (hasBalMismatch) {
+          const allJournals = await getCollectionRecordsForValidation('journalEntries');
+          const accCode = existingDoc.code || data.code;
+          let netJournalDelta = 0;
+          let hasAccountJournals = false;
+
+          for (const j of allJournals) {
+            const lines = Array.isArray(j.lines) ? j.lines : [];
+            for (const l of lines) {
+              const matchesAccount =
+                l.accountId === finalDocId ||
+                l.accountId === docId ||
+                (accCode && l.accountCode === accCode) ||
+                (l.memo && (l.memo.includes(finalDocId) || l.memo.includes(docId)));
+              if (matchesAccount) {
+                hasAccountJournals = true;
+                netJournalDelta += (Number(l.debit) || 0) - (Number(l.credit) || 0);
+              }
+            }
+          }
+
+          const opening = Number(existingDoc.openingBalance ?? 0);
+          const expectedBal = Math.round((opening + netJournalDelta) * 100) / 100;
+
+          if (!hasAccountJournals || Math.abs(expectedBal - incomingBal!) > 0.01) {
+            return res.status(400).json({
+              error: `হিসাবরক্ষণ সীমাবদ্ধতা: নগদ বা ব্যাংক হিসাবের বর্তমান ব্যালেন্স সরাসরি ওভাররাইট করা যাবে না (Cannot arbitrarily overwrite cash/bank currentBalance without supporting journal entries).`
+            });
+          }
+        }
+      }
+
+      // 3. Investors: capital / payable balances
+      else if (targetCol === 'investors') {
+        const capitalFields = [
+          'currentCapitalBalance',
+          'capitalAmount',
+          'capitalContributed',
+          'totalContribution',
+          'netCapital',
+          'currentBalance',
+          'currentEquityBalance',
+          'totalCapitalReturned',
+          'withdrawals',
+          'totalWithdrawals',
+          'drawings'
+        ];
+        const payableFields = [
+          'profitPayable',
+          'totalProfitAllocated',
+          'totalProfitPaid'
+        ];
+
+        let hasCapDiff = false;
+        for (const f of capitalFields) {
+          if (data[f] !== undefined && existingDoc[f] !== undefined) {
+            if (Math.abs(Number(data[f]) - Number(existingDoc[f])) > 0.0001) {
+              hasCapDiff = true;
+              break;
+            }
+          }
+        }
+
+        let hasPayDiff = false;
+        for (const f of payableFields) {
+          if (data[f] !== undefined && existingDoc[f] !== undefined) {
+            if (Math.abs(Number(data[f]) - Number(existingDoc[f])) > 0.0001) {
+              hasPayDiff = true;
+              break;
+            }
+          }
+        }
+
+        if (hasCapDiff || hasPayDiff) {
+          const allJournals = await getCollectionRecordsForValidation('journalEntries');
+          const investorJournals = allJournals.filter((j: any) => {
+            return (
+              j.reference === finalDocId ||
+              j.reference === docId ||
+              (j.narration && (j.narration.includes(existingDoc.name) || (data.name && j.narration.includes(data.name)))) ||
+              (j.lines &&
+                j.lines.some(
+                  (l: any) =>
+                    l.memo && (l.memo.includes(finalDocId) || l.memo.includes(docId) || l.memo.includes(existingDoc.name))
+                ))
+            );
+          });
+
+          if (investorJournals.length === 0) {
+            return res.status(400).json({
+              error: `হিসাবরক্ষণ সীমাবদ্ধতা: বিনিয়োগকারীর মূলধন বা প্রদেয় লভ্যাংশের ব্যালেন্স সরাসরি ওভাররাইট করা যাবে না (Cannot arbitrarily overwrite investor capital/payable balances without supporting journal entries).`
+            });
+          }
+
+          if (hasCapDiff) {
+            let netCapCredits = 0;
+            for (const j of investorJournals) {
+              for (const l of j.lines || []) {
+                if (l.accountCode === CANONICAL_ACCOUNTS.INVESTOR_CAPITAL) {
+                  netCapCredits += (Number(l.credit) || 0) - (Number(l.debit) || 0);
+                }
+              }
+            }
+            const initialCap = Number(existingDoc.initialCapital ?? existingDoc.capitalContributed ?? 0);
+            const expectedCap = Math.max(0, Math.round((initialCap + netCapCredits) * 100) / 100);
+            const incomingCapVal = Number(
+              data.currentCapitalBalance ?? data.capitalAmount ?? data.capitalContributed ?? data.totalContribution ?? 0
+            );
+            if (Math.abs(expectedCap - incomingCapVal) > 0.01) {
+              return res.status(400).json({
+                error: `হিসাবরক্ষণ সীমাবদ্ধতা: বিনিয়োগকারী মূলধন ব্যালেন্স GL 3020 এর সাথে অমিল (Cannot arbitrarily overwrite investor capital balance).`
+              });
+            }
+          }
+
+          if (hasPayDiff) {
+            let netPayCredits = 0;
+            for (const j of investorJournals) {
+              for (const l of j.lines || []) {
+                if (l.accountCode === CANONICAL_ACCOUNTS.INVESTOR_PROFIT_PAYABLE) {
+                  netPayCredits += (Number(l.credit) || 0) - (Number(l.debit) || 0);
+                }
+              }
+            }
+            const expectedPayable = Math.max(0, Math.round(netPayCredits * 100) / 100);
+            const incomingPayableVal = Number(data.profitPayable ?? 0);
+            if (Math.abs(expectedPayable - incomingPayableVal) > 0.01) {
+              return res.status(400).json({
+                error: `হিসাবরক্ষণ সীমাবদ্ধতা: বিনিয়োগকারী প্রদেয় লভ্যাংশ GL 2050 এর সাথে অমিল (Cannot arbitrarily overwrite investor payable balance).`
+              });
+            }
+          }
+        }
+      }
+
+      // 4. Loans: remaining balances
+      else if (targetCol === 'loans') {
+        const loanBalFields = [
+          'remainingBalance',
+          'outstandingPrincipal',
+          'remainingPrincipal',
+          'totalPaidPrincipal',
+          'totalPaidInterest'
+        ];
+        let hasLoanDiff = false;
+        for (const f of loanBalFields) {
+          if (data[f] !== undefined && existingDoc[f] !== undefined) {
+            if (Math.abs(Number(data[f]) - Number(existingDoc[f])) > 0.0001) {
+              hasLoanDiff = true;
+              break;
+            }
+          }
+        }
+
+        if (hasLoanDiff) {
+          const allJournals = await getCollectionRecordsForValidation('journalEntries');
+          const loanJournals = allJournals.filter((j: any) => {
+            return (
+              j.reference === finalDocId ||
+              j.reference === docId ||
+              (j.narration && (j.narration.includes(existingDoc.lenderName) || (data.lenderName && j.narration.includes(data.lenderName)))) ||
+              (j.lines &&
+                j.lines.some(
+                  (l: any) =>
+                    l.memo && (l.memo.includes(finalDocId) || l.memo.includes(docId) || l.memo.includes(existingDoc.lenderName))
+                ))
+            );
+          });
+
+          const hasSchedulePaid = Array.isArray(data.schedule) && data.schedule.some((s: any) => s.isPaid);
+
+          if (loanJournals.length === 0 && !hasSchedulePaid) {
+            return res.status(400).json({
+              error: `হিসাবরক্ষণ সীমাবদ্ধতা: ঋণের বকেয়া স্থিতি বা পরিশোধিত আসল সরাসরি ওভাররাইট করা যাবে না (Cannot arbitrarily overwrite loan remaining balances without supporting repayment entries).`
+            });
+          }
+
+          let repaidPrincipal = 0;
+          for (const j of loanJournals) {
+            for (const l of j.lines || []) {
+              if (l.accountCode === CANONICAL_ACCOUNTS.SHORT_TERM_LOANS || l.accountCode === CANONICAL_ACCOUNTS.LONG_TERM_LOANS) {
+                repaidPrincipal += (Number(l.debit) || 0) - (Number(l.credit) || 0);
+              }
+            }
+          }
+          if (repaidPrincipal <= 0 && Array.isArray(data.schedule)) {
+            for (const s of data.schedule) {
+              if (s.isPaid) {
+                repaidPrincipal += Number(s.principalPortion || 0);
+              }
+            }
+          }
+
+          const principal = Number(existingDoc.principalAmount || data.principalAmount || 0);
+          const expectedRemaining = Math.max(0, Math.round((principal - repaidPrincipal) * 100) / 100);
+          const incomingRemaining = Number(data.remainingBalance ?? data.outstandingPrincipal ?? data.remainingPrincipal ?? 0);
+
+          if (Math.abs(expectedRemaining - incomingRemaining) > 0.01) {
+            return res.status(400).json({
+              error: `হিসাবরক্ষণ সীমাবদ্ধতা: ঋণের বকেয়া ব্যালেন্সের অমিল (Cannot arbitrarily overwrite loan remaining balance. Expected: ৳${expectedRemaining}, Received: ৳${incomingRemaining}).`
+            });
+          }
+        }
+      }
+    }
+
+    // Mark synced metadata and safeguard calculated operational fields on partial updates
+    const protectedFields: Record<string, any> = {};
+    if (existingDoc) {
+      if (targetCol === 'inventoryItems') {
+        if (data.currentStock === undefined && existingDoc.currentStock !== undefined) {
+          protectedFields.currentStock = existingDoc.currentStock;
+        }
+        if (data.avgCostPrice === undefined && existingDoc.avgCostPrice !== undefined) {
+          protectedFields.avgCostPrice = existingDoc.avgCostPrice;
+        }
+      } else if (targetCol === 'cashBankAccounts') {
+        if (data.currentBalance === undefined && existingDoc.currentBalance !== undefined) {
+          protectedFields.currentBalance = existingDoc.currentBalance;
+        }
+      } else if (targetCol === 'investors') {
+        if (data.currentCapitalBalance === undefined && existingDoc.currentCapitalBalance !== undefined) {
+          protectedFields.currentCapitalBalance = existingDoc.currentCapitalBalance;
+        }
+        if (data.profitPayable === undefined && existingDoc.profitPayable !== undefined) {
+          protectedFields.profitPayable = existingDoc.profitPayable;
+        }
+      } else if (targetCol === 'loans') {
+        if (data.remainingBalance === undefined && existingDoc.remainingBalance !== undefined) {
+          protectedFields.remainingBalance = existingDoc.remainingBalance;
+        }
+      }
+    }
+
     // Mark synced metadata
     const recordToWrite = {
       ...(existingDoc || {}),
       ...data,
+      ...protectedFields,
       id: finalDocId,
       ...(effectiveIdempotencyKey ? { idempotencyKey: effectiveIdempotencyKey } : {}),
       syncedAt: new Date().toISOString(),
@@ -1296,7 +1672,8 @@ async function handleSyncWrite(
     return res.json({
       success: true,
       id: finalDocId,
-      collection: collectionName
+      collection: collectionName,
+      ...(existingDoc ? { duplicate: true } : {})
     });
   } catch (err: any) {
     console.error(`[The Goated Farm] Sync error for ${collectionName}:`, err);
@@ -1337,6 +1714,24 @@ app.post('/api/sync/customer', (req, res) => handleSyncWrite('parties', req, res
 app.post('/api/sync/customers', (req, res) => handleSyncWrite('parties', req, res));
 app.post('/api/sync/supplier', (req, res) => handleSyncWrite('parties', req, res));
 app.post('/api/sync/suppliers', (req, res) => handleSyncWrite('parties', req, res));
+app.post('/api/sync/bankTransfer', (req, res) => handleSyncWrite('bankTransfers', req, res));
+app.post('/api/sync/bankTransfers', (req, res) => handleSyncWrite('bankTransfers', req, res));
+app.post('/api/sync/reminder', (req, res) => handleSyncWrite('reminders', req, res));
+app.post('/api/sync/reminders', (req, res) => handleSyncWrite('reminders', req, res));
+app.post('/api/sync/internalFlow', (req, res) => handleSyncWrite('internalFlows', req, res));
+app.post('/api/sync/internalFlows', (req, res) => handleSyncWrite('internalFlows', req, res));
+app.post('/api/sync/processingRun', (req, res) => handleSyncWrite('processingRuns', req, res));
+app.post('/api/sync/processingRuns', (req, res) => handleSyncWrite('processingRuns', req, res));
+app.post('/api/sync/animalEvent', (req, res) => handleSyncWrite('animalEvents', req, res));
+app.post('/api/sync/animalEvents', (req, res) => handleSyncWrite('animalEvents', req, res));
+app.post('/api/sync/pond', (req, res) => handleSyncWrite('ponds', req, res));
+app.post('/api/sync/ponds', (req, res) => handleSyncWrite('ponds', req, res));
+app.post('/api/sync/plot', (req, res) => handleSyncWrite('plots', req, res));
+app.post('/api/sync/plots', (req, res) => handleSyncWrite('plots', req, res));
+app.post('/api/sync/accessLog', (req, res) => handleSyncWrite('accessLogs', req, res));
+app.post('/api/sync/accessLogs', (req, res) => handleSyncWrite('accessLogs', req, res));
+app.post('/api/sync/recurringExpenseTemplate', (req, res) => handleSyncWrite('recurringExpenseTemplates', req, res));
+app.post('/api/sync/recurringExpenseTemplates', (req, res) => handleSyncWrite('recurringExpenseTemplates', req, res));
 app.post('/api/sync/closedPeriod', (req, res) => handleSyncWrite('closedPeriods', req, res));
 app.post('/api/sync/closedPeriods', (req, res) => handleSyncWrite('closedPeriods', req, res));
 
@@ -1356,6 +1751,7 @@ app.post('/api/sync/:collection', (req, res) => {
     col !== 'inventoryItem' &&
     col !== 'stockMovement' &&
     col !== 'cashBankAccount' &&
+    col !== 'bankTransfer' &&
     col !== 'loan' &&
     col !== 'investor' &&
     col !== 'fixedAsset' &&
@@ -1364,6 +1760,14 @@ app.post('/api/sync/:collection', (req, res) => {
     col !== 'customers' &&
     col !== 'supplier' &&
     col !== 'suppliers' &&
+    col !== 'reminder' &&
+    col !== 'internalFlow' &&
+    col !== 'processingRun' &&
+    col !== 'animalEvent' &&
+    col !== 'pond' &&
+    col !== 'plot' &&
+    col !== 'accessLog' &&
+    col !== 'recurringExpenseTemplate' &&
     col !== 'closedPeriod'
   ) {
     return res.status(400).json({ error: `অননুমোদিত কালেকশন: ${col}` });
@@ -1399,8 +1803,14 @@ app.get('/api/sync/restore', async (req, res) => {
       'loans',
       'investors',
       'cashBankAccounts',
+      'bankTransfers',
       'reminders',
-      'closedPeriods'
+      'internalFlows',
+      'processingRuns',
+      'recurringExpenseTemplates',
+      'closedPeriods',
+      'auditLogs',
+      'accessLogs'
     ];
 
     const result: Record<string, any[]> = {};
@@ -1579,4 +1989,6 @@ async function startServer() {
   });
 }
 
-startServer();
+if (process.argv[1]?.includes('server')) {
+  startServer();
+}

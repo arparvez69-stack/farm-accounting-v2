@@ -382,6 +382,38 @@
       "schema": "party",
       "description": "Customer and supplier records"
     },
+    "/bankTransfers/{transferId}": {
+      "schema": "auditLog",
+      "description": "Bank and cash transfer transactions"
+    },
+    "/animalEvents/{eventId}": {
+      "schema": "auditLog",
+      "description": "Livestock feeding, healthcare, and growth logs"
+    },
+    "/internalFlows/{flowId}": {
+      "schema": "auditLog",
+      "description": "Internal farm resource and permaculture flows"
+    },
+    "/processingRuns/{runId}": {
+      "schema": "auditLog",
+      "description": "Processing and manufacturing runs"
+    },
+    "/ponds/{pondId}": {
+      "schema": "fishBatch",
+      "description": "Ponds and aquaculture water bodies"
+    },
+    "/plots/{plotId}": {
+      "schema": "cropCycle",
+      "description": "Agricultural land plots"
+    },
+    "/accessLogs/{logId}": {
+      "schema": "auditLog",
+      "description": "User security access logs"
+    },
+    "/recurringExpenseTemplates/{templateId}": {
+      "schema": "auditLog",
+      "description": "Monthly recurring auto-booking expense templates"
+    },
     "/closedPeriods/{periodId}": {
       "schema": "closedPeriod",
       "description": "Closed accounting periods"

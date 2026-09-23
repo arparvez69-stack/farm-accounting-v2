@@ -344,7 +344,7 @@ export const Dashboard: React.FC<Props> = ({ role, onNavigate, regressionTestRes
     e.stopPropagation();
     try {
       const target = reminders.find((r) => r.id === reminderId);
-      await db.reminders.update(reminderId, { status: 'DONE' });
+      await db.reminders.update(reminderId, { status: 'DONE', synced: false });
       setReminders((prev) => prev.filter((r) => r.id !== reminderId));
       triggerSuccessAnimation('রিমাইন্ডার সম্পন্ন হয়েছে!', target?.title || 'রিমাইন্ডার সম্পন্ন হিসেবে চিহ্নিত করা হয়েছে');
     } catch (err) {
@@ -355,7 +355,7 @@ export const Dashboard: React.FC<Props> = ({ role, onNavigate, regressionTestRes
   const handleSkip = async (reminderId: string, e: React.MouseEvent) => {
     e.stopPropagation();
     try {
-      await db.reminders.update(reminderId, { status: 'SKIPPED' });
+      await db.reminders.update(reminderId, { status: 'SKIPPED', synced: false });
       setReminders((prev) => prev.filter((r) => r.id !== reminderId));
     } catch (err) {
       console.error('Failed to skip reminder:', err);

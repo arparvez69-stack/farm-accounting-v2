@@ -36,7 +36,8 @@ import {
   CropProductionCostParams,
   StockMovement,
   PaymentRecord,
-  AmortizationScheduleItem
+  AmortizationScheduleItem,
+  BankTransfer
 } from '../types';
 import { generateAmortizationSchedule } from '../accounting/amortizationService';
 
@@ -1212,6 +1213,8 @@ export async function executeInvestorTransaction(
  * - Prevents duplicate allocation.
  * - Respects closed periods.
  */
+const activeInvestorAllocationLocks = new Set<string>();
+
 export async function executeInvestorProfitAllocationTransaction(
   params: {
     investorId: string;
@@ -1235,56 +1238,113 @@ export async function executeInvestorProfitAllocationTransaction(
   profitSharingRatio: number;
   workingPartnerRatio: number;
 }> {
-  return await dbInstance.transaction(
-    'rw',
-    [
-      dbInstance.journalEntries,
-      dbInstance.investors,
-      dbInstance.accounts,
-      dbInstance.auditLogs,
-      dbInstance.closedPeriods
-    ],
-    async () => {
-      const {
-        investorId,
-        finalizedDistributableProfit,
-        actualBusinessProfit,
-        allocatedProfit,
-        closedPeriodId,
-        allocationDate,
-        allocationReference,
-        idempotencyKey,
-        notes,
-        currentUserId
-      } = params;
-      const dateStr = allocationDate || new Date().toISOString().split('T')[0];
+  const {
+    investorId,
+    closedPeriodId,
+    allocationReference,
+    idempotencyKey,
+    allocationDate
+  } = params;
+  const dateStr = allocationDate || new Date().toISOString().split('T')[0];
 
-      // 1. Closed period validation - respect closed periods
-      if (dbInstance.closedPeriods) {
-        const closedPeriods = await dbInstance.closedPeriods.toArray();
-        const isClosed = closedPeriods.some((cp: any) => cp.endDate >= dateStr);
-        if (isClosed) {
-          throw new Error(`সীমাবদ্ধতা: ${dateStr} তারিখটি ইতোমধ্যে বন্ধ হিসাবকালের (Closed Period) অন্তর্ভুক্ত। বন্ধ হিসাবকালে নতুন বণ্টন দাখিলা দেওয়া যাবে না।`);
+  // In-memory concurrency lock to prevent simultaneous duplicate allocation
+  const lockKey = `${investorId}_${closedPeriodId || allocationReference || idempotencyKey || dateStr}`;
+  if (activeInvestorAllocationLocks.has(lockKey)) {
+    throw new Error('এই হিসাবকাল বা রেফারেন্সের জন্য লভ্যাংশ বণ্টন ইতোমধ্যে সম্পন্ন হয়েছে (Duplicate profit allocation prevented)।');
+  }
+  activeInvestorAllocationLocks.add(lockKey);
+
+  try {
+    return await dbInstance.transaction(
+      'rw',
+      [
+        dbInstance.journalEntries,
+        dbInstance.investors,
+        dbInstance.accounts,
+        dbInstance.auditLogs,
+        dbInstance.closedPeriods
+      ],
+      async () => {
+        const {
+          investorId,
+          finalizedDistributableProfit,
+          actualBusinessProfit,
+          allocatedProfit,
+          closedPeriodId,
+          allocationDate,
+          allocationReference,
+          idempotencyKey,
+          notes,
+          currentUserId
+        } = params;
+        const dateStr = allocationDate || new Date().toISOString().split('T')[0];
+        const distGlCode = getProfitDistributionAccount(); // '3070'
+        const payableGlCode = getInvestorProfitPayableAccount(); // '2050'
+
+        // 1. Fetch investor first
+        const investor = await dbInstance.investors.get(investorId);
+        if (!investor) {
+          throw new Error(`বিনিয়োগকারী পাওয়া যায়নি (Investor not found: ${investorId})।`);
         }
-      }
 
-      // 2. Prevent duplicate allocation
-      const allEntries = await dbInstance.journalEntries.toArray();
-      const isDuplicate = allEntries.some((j: any) => {
-        if (idempotencyKey && (j.reference === idempotencyKey || j.idempotencyKey === idempotencyKey)) return true;
-        if (allocationReference && j.reference === allocationReference && (j.relatedInvestorId === investorId || !j.relatedInvestorId)) return true;
-        if (closedPeriodId && j.relatedClosedPeriodId === closedPeriodId && j.relatedInvestorId === investorId) return true;
-        return false;
-      });
-      if (isDuplicate) {
-        throw new Error('এই হিসাবকাল বা রেফারেন্সের জন্য লভ্যাংশ বণ্টন ইতোমধ্যে সম্পন্ন হয়েছে (Duplicate profit allocation prevented)।');
-      }
+        // 2. Closed period validation - respect closed periods
+        if (dbInstance.closedPeriods) {
+          const closedPeriods = await dbInstance.closedPeriods.toArray();
+          const isClosed = closedPeriods.some((cp: any) => cp.endDate >= dateStr);
+          if (isClosed) {
+            throw new Error(`সীমাবদ্ধতা: ${dateStr} তারিখটি ইতোমধ্যে বন্ধ হিসাবকালের (Closed Period) অন্তর্ভুক্ত। বন্ধ হিসাবকালে নতুন বণ্টন দাখিলা দেওয়া যাবে না।`);
+          }
+        }
 
-      // 3. Fetch investor
-      const investor = await dbInstance.investors.get(investorId);
-      if (!investor) {
-        throw new Error(`বিনিয়োগকারী পাওয়া যায়নি (Investor not found: ${investorId})।`);
-      }
+        // 3. Prevent duplicate allocation: the same investor + closed period/reference must not create a second allocation
+        const allEntries = await dbInstance.journalEntries.toArray();
+        const isDuplicate = allEntries.some((j: any) => {
+          if (idempotencyKey && (j.reference === idempotencyKey || j.idempotencyKey === idempotencyKey)) return true;
+
+          const isSameInvestor =
+            j.relatedInvestorId === investorId ||
+            j.investorId === investorId ||
+            (investor && j.narration?.includes(investor.name) && (
+              j.reference === allocationReference ||
+              j.reference?.startsWith('INV-DIST') ||
+              j.lines?.some((l: any) => l.accountCode === payableGlCode)
+            ));
+
+          // Same investor + closed period
+          if (closedPeriodId && isSameInvestor) {
+            if (
+              j.relatedClosedPeriodId === closedPeriodId ||
+              j.closedPeriodId === closedPeriodId ||
+              j.reference === closedPeriodId ||
+              j.allocationReference === closedPeriodId
+            ) {
+              return true;
+            }
+          }
+
+          // Same investor + reference
+          if (allocationReference && isSameInvestor) {
+            if (
+              j.reference === allocationReference ||
+              j.allocationReference === allocationReference
+            ) {
+              return true;
+            }
+          }
+
+          // Fallback: same investor on the same date when neither closedPeriodId nor allocationReference was specified
+          if (!closedPeriodId && !allocationReference && j.date === dateStr && isSameInvestor) {
+            const hasDistributionLine = j.lines?.some((l: any) => l.accountCode === distGlCode || l.accountCode === payableGlCode);
+            if (hasDistributionLine) {
+              return true;
+            }
+          }
+
+          return false;
+        });
+        if (isDuplicate) {
+          throw new Error('এই হিসাবকাল বা রেফারেন্সের জন্য লভ্যাংশ বণ্টন ইতোমধ্যে সম্পন্ন হয়েছে (Duplicate profit allocation prevented)।');
+        }
 
       const ratio = investor.profitSharingRatio ?? investor.profitSharePercentage ?? investor.sharePercentage ?? 0;
       if (ratio <= 0 || ratio > 100) {
@@ -1334,10 +1394,6 @@ export async function executeInvestorProfitAllocationTransaction(
         );
       }
 
-      // GL Account Codes for Profit Distribution and Investor Profit Payable
-      const distGlCode = getProfitDistributionAccount(); // '3070'
-      const payableGlCode = getInvestorProfitPayableAccount(); // '2050'
-
       // Maximum permitted profit share for this investor according to their ratio
       // Rule: Each investor allocation cannot exceed that investor's agreed ratio of finalized distributable profit
       const permittedShare = Math.round(effectiveFinalizedProfit * (ratio / 100) * 100) / 100;
@@ -1367,12 +1423,13 @@ export async function executeInvestorProfitAllocationTransaction(
         );
       }
 
-      // Check sum of all investor allocations for this same closed period or allocation reference
+      // Check sum of all investor allocations for this same closed period, allocation reference, or allocation date cycle
       let priorAllocationsTotal = 0;
       for (const entry of allEntries) {
-        const isSamePeriod = closedPeriodId && (entry as any).relatedClosedPeriodId === closedPeriodId;
-        const isSameRef = allocationReference && entry.reference === allocationReference;
-        if (isSamePeriod || isSameRef) {
+        const isSamePeriod = Boolean(closedPeriodId && (entry as any).relatedClosedPeriodId === closedPeriodId);
+        const isSameRef = Boolean(allocationReference && entry.reference === allocationReference);
+        const isSameDateCycle = Boolean(!closedPeriodId && !allocationReference && entry.date === dateStr && (entry as any).relatedInvestorId);
+        if (isSamePeriod || isSameRef || isSameDateCycle) {
           const payableLine = entry.lines?.find((l: any) => l.accountCode === payableGlCode);
           if (payableLine) {
             priorAllocationsTotal += (payableLine.credit || 0);
@@ -1462,8 +1519,13 @@ export async function executeInvestorProfitAllocationTransaction(
       // Attach metadata for duplicate prevention
       if (closedPeriodId) {
         (journalEntry as any).relatedClosedPeriodId = closedPeriodId;
+        (journalEntry as any).closedPeriodId = closedPeriodId;
       }
       (journalEntry as any).relatedInvestorId = investorId;
+      (journalEntry as any).investorId = investorId;
+      if (allocationReference) {
+        (journalEntry as any).allocationReference = allocationReference;
+      }
       if (idempotencyKey) {
         (journalEntry as any).idempotencyKey = idempotencyKey;
       }
@@ -1506,7 +1568,20 @@ export async function executeInvestorProfitAllocationTransaction(
       };
     }
   );
+  } finally {
+    activeInvestorAllocationLocks.delete(lockKey);
+  }
 }
+
+/**
+ * In-memory concurrency locks to prevent concurrent duplicate investor profit payment execution
+ */
+const activeInvestorProfitPaymentLocks = new Set<string>();
+
+/**
+ * In-memory concurrency locks to prevent concurrent duplicate investor capital return execution
+ */
+const activeInvestorCapitalReturnLocks = new Set<string>();
 
 /**
  * Atomic Execution of Investor Profit Payment (Disbursement of Payable Profit)
@@ -1525,213 +1600,320 @@ export async function executeInvestorProfitPaymentTransaction(
     sourceAccountId: string;
     paymentDate?: string;
     paymentReference?: string;
+    reference?: string;
     idempotencyKey?: string;
+    paymentId?: string;
+    targetPaymentId?: string;
+    journalEntryId?: string;
+    voucherNumber?: string;
     notes?: string;
     currentUserId: string;
   },
   dbInstance: any = db
 ): Promise<{ investor: Investor; journalEntryId: string; paidAmount: number; remainingPayable: number }> {
-  return await dbInstance.transaction(
-    'rw',
-    [
-      dbInstance.journalEntries,
-      dbInstance.investors,
-      dbInstance.cashBankAccounts,
-      dbInstance.accounts,
-      dbInstance.auditLogs,
-      dbInstance.closedPeriods
-    ],
-    async () => {
-      const { investorId, amount, sourceAccountId, paymentDate, paymentReference, idempotencyKey, notes, currentUserId } = params;
-      const dateStr = paymentDate || new Date().toISOString().split('T')[0];
+  const {
+    investorId,
+    amount,
+    sourceAccountId,
+    paymentDate,
+    paymentReference,
+    reference,
+    idempotencyKey,
+    notes,
+    currentUserId
+  } = params;
+  const dateStr = paymentDate || new Date().toISOString().split('T')[0];
+  const explicitPaymentId = params.paymentId || params.targetPaymentId || params.journalEntryId;
+  const explicitVoucher = params.voucherNumber;
+  const refToCheck = paymentReference || reference || idempotencyKey || explicitVoucher;
 
-      if (amount <= 0) {
-        throw new Error('পরিশোধের পরিমাণ অবশ্যই ০ এর বেশি হতে হবে (Payment amount must be > 0).');
-      }
+  // In-memory concurrency lock to prevent simultaneous duplicate payment
+  const lockKey = idempotencyKey
+    ? `inv_pay_key_${idempotencyKey}`
+    : (explicitPaymentId
+        ? `inv_pay_id_${explicitPaymentId}`
+        : (refToCheck
+            ? `inv_pay_ref_${investorId}_${refToCheck}`
+            : `inv_pay_dup_${investorId}_${sourceAccountId}_${amount}_${dateStr}`));
 
-      // 1. Closed period validation - respect closed periods
-      if (dbInstance.closedPeriods) {
-        const closedPeriods = await dbInstance.closedPeriods.toArray();
-        const isClosed = closedPeriods.some((cp: any) => cp.endDate >= dateStr);
-        if (isClosed) {
-          throw new Error(`সীমাবদ্ধতা: ${dateStr} তারিখটি ইতোমধ্যে বন্ধ হিসাবকালের (Closed Period) অন্তর্ভুক্ত। বন্ধ হিসাবকালে নতুন পরিশোধ দাখিলা দেওয়া যাবে না।`);
+  if (activeInvestorProfitPaymentLocks.has(lockKey)) {
+    throw new Error('এই ভাউচার বা রেফারেন্সের জন্য লভ্যাংশ পরিশোধ ইতোমধ্যে সম্পন্ন হয়েছে (ডুপ্লিকেট পরিশোধ প্রতিরোধ / Duplicate profit payment prevented)।');
+  }
+  activeInvestorProfitPaymentLocks.add(lockKey);
+
+  try {
+    return await dbInstance.transaction(
+      'rw',
+      [
+        dbInstance.journalEntries,
+        dbInstance.investors,
+        dbInstance.cashBankAccounts,
+        dbInstance.accounts,
+        dbInstance.auditLogs,
+        dbInstance.closedPeriods,
+        ...((dbInstance as any).investorTransactions ? [(dbInstance as any).investorTransactions] : [])
+      ],
+      async () => {
+        if (amount <= 0) {
+          throw new Error('পরিশোধের পরিমাণ অবশ্যই ০ এর বেশি হতে হবে (Payment amount must be > 0).');
         }
-      }
 
-      // 2. Prevent duplicate payment
-      const allEntries = await dbInstance.journalEntries.toArray();
-      const isDuplicate = allEntries.some((j: any) => {
-        if (idempotencyKey && (j.reference === idempotencyKey || j.idempotencyKey === idempotencyKey)) return true;
-        if (paymentReference && j.reference === paymentReference) return true;
-        return false;
-      });
-      if (isDuplicate) {
-        throw new Error('এই ভাউচার বা রেফারেন্সের জন্য লভ্যাংশ পরিশোধ ইতোমধ্যে সম্পন্ন হয়েছে (Duplicate profit payment prevented)।');
-      }
+        // 1. Fetch investor to check existence
+        const investor = await dbInstance.investors.get(investorId);
+        if (!investor) {
+          throw new Error(`বিনিয়োগকারী পাওয়া যায়নি (Investor not found: ${investorId})।`);
+        }
 
-      // 3. Investor validation & Payable checks
-      const investor = await dbInstance.investors.get(investorId);
-      if (!investor) {
-        throw new Error(`বিনিয়োগকারী পাওয়া যায়নি (Investor not found: ${investorId})।`);
-      }
+        // 2. Closed period validation - respect closed periods
+        if (dbInstance.closedPeriods) {
+          const closedPeriods = await dbInstance.closedPeriods.toArray();
+          const isClosed = closedPeriods.some((cp: any) => cp.endDate >= dateStr);
+          if (isClosed) {
+            throw new Error(`সীমাবদ্ধতা: ${dateStr} তারিখটি ইতোমধ্যে বন্ধ হিসাবকালের (Closed Period) অন্তর্ভুক্ত। বন্ধ হিসাবকালে নতুন পরিশোধ দাখিলা দেওয়া যাবে না।`);
+          }
+        }
 
-      const currentPayable = investor.profitPayable || 0;
-      if (currentPayable <= 0) {
-        throw new Error(`এই বিনিয়োগকারীর কোনো বকেয়া বা প্রদেয় লভ্যাংশ নেই (No profit payable to disburse: ৳${currentPayable})।`);
-      }
-      if (amount > currentPayable) {
-        throw new Error(
-          `পাওনা লভ্যাংশের চেয়ে বেশি পরিশোধ করা সম্ভব নয়। বর্তমান প্রদেয় লভ্যাংশ: ৳${currentPayable}, পরিশোধের আবেদন: ৳${amount}।`
+        // 3. Prevent duplicate payment (Idempotency check)
+        const allEntries = await dbInstance.journalEntries.toArray();
+        const isDuplicate = allEntries.some((j: any) => {
+          const isSameInvestor =
+            !j.relatedInvestorId ||
+            j.relatedInvestorId === investorId ||
+            (j as any).investorId === investorId ||
+            (investor && j.narration?.includes(investor.name));
+
+          // A. Idempotency key check
+          if (idempotencyKey) {
+            if (
+              j.reference === idempotencyKey ||
+              (j as any).idempotencyKey === idempotencyKey ||
+              (j as any).paymentReference === idempotencyKey
+            ) {
+              return true;
+            }
+          }
+
+          // B. Explicit payment ID / journal ID check
+          if (explicitPaymentId) {
+            if (
+              j.id === explicitPaymentId ||
+              (j as any).paymentId === explicitPaymentId ||
+              (j as any).journalEntryId === explicitPaymentId
+            ) {
+              return true;
+            }
+          }
+
+          // C. Explicit voucher check
+          if (explicitVoucher) {
+            if (j.voucherNumber === explicitVoucher) {
+              return true;
+            }
+          }
+
+          // D. Reference / paymentReference check
+          if (refToCheck && isSameInvestor) {
+            if (
+              j.reference === refToCheck ||
+              (j as any).paymentReference === refToCheck ||
+              (j as any).referenceParam === refToCheck ||
+              (j as any).idempotencyKey === refToCheck ||
+              j.voucherNumber === refToCheck
+            ) {
+              return true;
+            }
+          }
+
+          // E. Fallback retry detection when no reference/key was passed:
+          if (!refToCheck && !idempotencyKey && isSameInvestor && j.date === dateStr) {
+            const isPayJournal =
+              (j as any).isInvestorProfitPayment === true ||
+              j.lines?.some((l: any) => l.accountCode === '2050' && Math.abs(l.debit - amount) < 0.01) ||
+              (j.narration?.includes('লভ্যাংশ পরিশোধ') && j.lines?.some((l: any) => Math.abs(l.debit - amount) < 0.01));
+            if (isPayJournal) {
+              return true;
+            }
+          }
+
+          return false;
+        });
+
+        if (isDuplicate) {
+          throw new Error('এই ভাউচার বা রেফারেন্সের জন্য লভ্যাংশ পরিশোধ ইতোমধ্যে সম্পন্ন হয়েছে (ডুপ্লিকেট পরিশোধ প্রতিরোধ / Duplicate profit payment prevented)।');
+        }
+
+        // 4. Investor validation & Payable checks
+        const currentPayable = investor.profitPayable || 0;
+        if (currentPayable <= 0) {
+          throw new Error(`এই বিনিয়োগকারীর কোনো বকেয়া বা প্রদেয় লভ্যাংশ নেই (No profit payable to disburse: ৳${currentPayable})।`);
+        }
+        if (amount > currentPayable) {
+          throw new Error(
+            `পাওনা লভ্যাংশের চেয়ে বেশি পরিশোধ করা সম্ভব নয়। বর্তমান প্রদেয় লভ্যাংশ: ৳${currentPayable}, পরিশোধের আবেদন: ৳${amount}।`
+          );
+        }
+
+        // 5. Source Account check
+        if (!sourceAccountId) {
+          throw new Error('Source cash/bank account is required.');
+        }
+        const sourceAcc = await dbInstance.cashBankAccounts.get(sourceAccountId);
+        if (!sourceAcc) {
+          throw new Error(`Source cash/bank account ${sourceAccountId} not found.`);
+        }
+
+        // 6. Source Cash/Bank Balance validation - verify source Cash/Bank current balance >= payment amount
+        const currentSourceBalance = Number(sourceAcc.currentBalance || 0);
+        const allowOverdraft = Boolean(
+          (sourceAcc as any).allowOverdraft ||
+            (typeof (sourceAcc as any).overdraftLimit === 'number' && (sourceAcc as any).overdraftLimit > 0)
         );
-      }
+        const overdraftLimit = Number((sourceAcc as any).overdraftLimit || 0);
 
-      // 4. Source Account check
-      if (!sourceAccountId) {
-        throw new Error('Source cash/bank account is required.');
-      }
-      const sourceAcc = await dbInstance.cashBankAccounts.get(sourceAccountId);
-      if (!sourceAcc) {
-        throw new Error(`Source cash/bank account ${sourceAccountId} not found.`);
-      }
-
-      // 5. Source Cash/Bank Balance validation - verify source Cash/Bank current balance >= payment amount
-      const currentSourceBalance = Number(sourceAcc.currentBalance || 0);
-      const allowOverdraft = Boolean(
-        (sourceAcc as any).allowOverdraft ||
-          (typeof (sourceAcc as any).overdraftLimit === 'number' && (sourceAcc as any).overdraftLimit > 0)
-      );
-      const overdraftLimit = Number((sourceAcc as any).overdraftLimit || 0);
-
-      // Do not allow operational cash/bank balance to become negative unless explicit overdraft support exists
-      if (!allowOverdraft) {
-        if (currentSourceBalance < amount) {
-          throw new Error(
-            `উৎস নগদ বা ব্যাংক হিসাবে পর্যাপ্ত ব্যালেন্স নেই (Insufficient cash/bank balance)। বর্তমান ব্যালেন্স: ৳${currentSourceBalance}, পরিশোধের আবেদন: ৳${amount}। ক্যাশ/ব্যাংক ব্যালেন্স নেগেটিভ হওয়া অনুমোদিত নয়।`
-          );
+        // Do not allow operational cash/bank balance to become negative unless explicit overdraft support exists
+        if (!allowOverdraft) {
+          if (currentSourceBalance < amount) {
+            throw new Error(
+              `উৎস নগদ বা ব্যাংক হিসাবে পর্যাপ্ত ব্যালেন্স নেই (Insufficient cash/bank balance)। বর্তমান ব্যালেন্স: ৳${currentSourceBalance}, পরিশোধের আবেদন: ৳${amount}। ক্যাশ/ব্যাংক ব্যালেন্স নেগেটিভ হওয়া অনুমোদিত নয়।`
+            );
+          }
+        } else {
+          if (currentSourceBalance - amount < -overdraftLimit) {
+            throw new Error(
+              `ওভারড্রাফট সীমা অতিক্রম করেছে (Overdraft limit exceeded)। বর্তমান ব্যালেন্স: ৳${currentSourceBalance}, অনুমোদিত ওভারড্রাফট সীমা: ৳${overdraftLimit}।`
+            );
+          }
         }
-      } else {
-        if (currentSourceBalance - amount < -overdraftLimit) {
-          throw new Error(
-            `ওভারড্রাফট সীমা অতিক্রম করেছে (Overdraft limit exceeded)। বর্তমান ব্যালেন্স: ৳${currentSourceBalance}, অনুমোদিত ওভারড্রাফট সীমা: ৳${overdraftLimit}।`
-          );
+
+        // 7. Canonical GL accounts
+        // Payment is NOT an operating expense!
+        // Dr 2050 Investor Profit Payable (Liability reduction)
+        // Cr 1010 Cash or 1030 Bank (Asset reduction)
+        const assetGlCode = getCashBankAccountGLCode(sourceAcc.accountType);
+        const payableGlCode = getInvestorProfitPayableAccount(); // '2050'
+
+        const accounts = await dbInstance.accounts.toArray();
+        const assetAcc = accounts.find((a: any) => a.code === assetGlCode) || {
+          id: `acc_${assetGlCode}`,
+          code: assetGlCode,
+          nameBn: sourceAcc.accountName || sourceAcc.name || 'ব্যাংক/নগদ তহবিল',
+          accountClass: 'ASSET',
+          normalBalance: 'DEBIT',
+          isSystem: true,
+          isActive: true
+        };
+        if (!accounts.some((a: any) => a.code === assetGlCode)) {
+          accounts.push(assetAcc);
         }
-      }
 
-      // 6. Canonical GL accounts
-      // Payment is NOT an operating expense!
-      // Dr 2050 Investor Profit Payable (Liability reduction)
-      // Cr 1010 Cash or 1030 Bank (Asset reduction)
-      const assetGlCode = getCashBankAccountGLCode(sourceAcc.accountType);
-      const payableGlCode = getInvestorProfitPayableAccount(); // '2050'
-
-      const accounts = await dbInstance.accounts.toArray();
-      const assetAcc = accounts.find((a: any) => a.code === assetGlCode) || {
-        id: `acc_${assetGlCode}`,
-        code: assetGlCode,
-        nameBn: sourceAcc.accountName || sourceAcc.name || 'ব্যাংক/নগদ তহবিল',
-        accountClass: 'ASSET',
-        normalBalance: 'DEBIT',
-        isSystem: true,
-        isActive: true
-      };
-      if (!accounts.some((a: any) => a.code === assetGlCode)) {
-        accounts.push(assetAcc);
-      }
-
-      const payableAcc = accounts.find((a: any) => a.code === payableGlCode) || {
-        id: `acc_${payableGlCode}`,
-        code: payableGlCode,
-        nameBn: 'বিনিয়োগকারীর লভ্যাংশ প্রদেয় (Investor Profit Payable)',
-        accountClass: 'LIABILITY',
-        normalBalance: 'CREDIT',
-        isSystem: true,
-        isActive: true
-      };
-      if (!accounts.some((a: any) => a.code === payableGlCode)) {
-        accounts.push(payableAcc);
-      }
-
-      const journalLines: JournalLine[] = [
-        {
-          accountId: payableAcc.id,
-          accountCode: payableGlCode,
-          accountName: payableAcc.nameBn,
-          debit: amount,
-          credit: 0,
-          memo: `${investor.name} কে লভ্যাংশ প্রদান`
-        },
-        {
-          accountId: assetAcc.id,
-          accountCode: assetGlCode,
-          accountName: sourceAcc.accountName || sourceAcc.name || assetAcc.nameBn,
-          debit: 0,
-          credit: amount,
-          memo: `লভ্যাংশ পরিশোধ বাবদ তহবিল হ্রাস`
+        const payableAcc = accounts.find((a: any) => a.code === payableGlCode) || {
+          id: `acc_${payableGlCode}`,
+          code: payableGlCode,
+          nameBn: 'বিনিয়োগকারীর লভ্যাংশ প্রদেয় (Investor Profit Payable)',
+          accountClass: 'LIABILITY',
+          normalBalance: 'CREDIT',
+          isSystem: true,
+          isActive: true
+        };
+        if (!accounts.some((a: any) => a.code === payableGlCode)) {
+          accounts.push(payableAcc);
         }
-      ];
 
-      const refNumber = paymentReference || idempotencyKey || generateTransactionNumber('INV-PAY');
-      const voucherNumber = generateTransactionNumber('INV-PAY-V');
-      const journalEntry = await postJournalEntry(
-        {
-          id: generateUniqueId('j_inv_pay'),
-          voucherNumber,
-          voucherType: 'PAYMENT',
-          date: dateStr,
-          narration: `বিনিয়োগকারীর লভ্যাংশ পরিশোধ: ${investor.name} কে প্রদান ৳${amount}`,
-          reference: refNumber,
-          lines: journalLines,
-          createdBy: currentUserId,
-          createdAt: new Date().toISOString()
-        },
-        { accounts, skipDbPut: true }
-      );
+        const journalLines: JournalLine[] = [
+          {
+            accountId: payableAcc.id,
+            accountCode: payableGlCode,
+            accountName: payableAcc.nameBn,
+            debit: amount,
+            credit: 0,
+            memo: `${investor.name} কে লভ্যাংশ প্রদান`
+          },
+          {
+            accountId: assetAcc.id,
+            accountCode: assetGlCode,
+            accountName: sourceAcc.accountName || sourceAcc.name || assetAcc.nameBn,
+            debit: 0,
+            credit: amount,
+            memo: `লভ্যাংশ পরিশোধ বাবদ তহবিল হ্রাস`
+          }
+        ];
 
-      (journalEntry as any).relatedInvestorId = investorId;
-      if (idempotencyKey) {
-        (journalEntry as any).idempotencyKey = idempotencyKey;
+        const refNumber = refToCheck || generateTransactionNumber('INV-PAY');
+        const voucherNumber = explicitVoucher || generateTransactionNumber('INV-PAY-V');
+        const journalEntry = await postJournalEntry(
+          {
+            id: explicitPaymentId || generateUniqueId('j_inv_pay'),
+            voucherNumber,
+            voucherType: 'PAYMENT',
+            date: dateStr,
+            narration: `বিনিয়োগকারীর লভ্যাংশ পরিশোধ: ${investor.name} কে প্রদান ৳${amount}`,
+            reference: refNumber,
+            lines: journalLines,
+            createdBy: currentUserId,
+            createdAt: new Date().toISOString()
+          },
+          { accounts, skipDbPut: true }
+        );
+
+        (journalEntry as any).relatedInvestorId = investorId;
+        (journalEntry as any).investorId = investorId;
+        (journalEntry as any).isInvestorProfitPayment = true;
+        (journalEntry as any).sourceAccountId = sourceAccountId;
+        (journalEntry as any).paymentAmount = amount;
+        if (idempotencyKey) {
+          (journalEntry as any).idempotencyKey = idempotencyKey;
+        }
+        if (refToCheck) {
+          (journalEntry as any).paymentReference = refToCheck;
+          (journalEntry as any).referenceParam = refToCheck;
+        }
+        if (explicitPaymentId) {
+          (journalEntry as any).paymentId = explicitPaymentId;
+        }
+
+        await safeInsert(dbInstance.journalEntries, journalEntry, { idPrefix: 'j' });
+
+        // 8. Update source cash/bank operational balance
+        await dbInstance.cashBankAccounts.update(sourceAcc.id, {
+          currentBalance: Math.round(((sourceAcc.currentBalance || 0) - amount) * 100) / 100
+        });
+
+        // 9. Update investor state
+        const remaining = Math.round(Math.max(0, currentPayable - amount) * 100) / 100;
+        const updatedInvestor: Investor = {
+          ...investor,
+          totalProfitPaid: Math.round(((investor.totalProfitPaid || 0) + amount) * 100) / 100,
+          profitPayable: remaining,
+          lastProfitPaymentDate: dateStr,
+          notes: notes ? (investor.notes ? `${investor.notes}\n${notes}` : notes) : investor.notes,
+          synced: false
+        };
+        await dbInstance.investors.put(updatedInvestor);
+
+        // 10. Audit Log
+        await safeInsert(dbInstance.auditLogs, {
+          id: generateUniqueId('audit'),
+          timestamp: new Date().toISOString(),
+          userId: currentUserId,
+          role: 'OWNER',
+          action: 'INVESTOR_PROFIT_PAYMENT',
+          module: 'FINANCE',
+          recordId: investor.id,
+          status: 'SUCCESS',
+          details: `বিনিয়োগকারী ${investor.name} কে লভ্যাংশ পরিশোধ ৳${amount} (অবশিষ্ট প্রদেয়: ৳${remaining})`
+        });
+
+        return {
+          investor: updatedInvestor,
+          journalEntryId: journalEntry.id,
+          paidAmount: amount,
+          remainingPayable: remaining
+        };
       }
-
-      await safeInsert(dbInstance.journalEntries, journalEntry, { idPrefix: 'j' });
-
-      // 6. Update source cash/bank operational balance
-      await dbInstance.cashBankAccounts.update(sourceAcc.id, {
-        currentBalance: Math.round(((sourceAcc.currentBalance || 0) - amount) * 100) / 100
-      });
-
-      // 7. Update investor state
-      const remaining = Math.round(Math.max(0, currentPayable - amount) * 100) / 100;
-      const updatedInvestor: Investor = {
-        ...investor,
-        totalProfitPaid: Math.round(((investor.totalProfitPaid || 0) + amount) * 100) / 100,
-        profitPayable: remaining,
-        lastProfitPaymentDate: dateStr,
-        notes: notes ? (investor.notes ? `${investor.notes}\n${notes}` : notes) : investor.notes,
-        synced: false
-      };
-      await dbInstance.investors.put(updatedInvestor);
-
-      // 8. Audit Log
-      await safeInsert(dbInstance.auditLogs, {
-        id: generateUniqueId('audit'),
-        timestamp: new Date().toISOString(),
-        userId: currentUserId,
-        role: 'OWNER',
-        action: 'INVESTOR_PROFIT_PAYMENT',
-        module: 'FINANCE',
-        recordId: investor.id,
-        status: 'SUCCESS',
-        details: `বিনিয়োগকারী ${investor.name} কে লভ্যাংশ পরিশোধ ৳${amount} (অবশিষ্ট প্রদেয়: ৳${remaining})`
-      });
-
-      return {
-        investor: updatedInvestor,
-        journalEntryId: journalEntry.id,
-        paidAmount: amount,
-        remainingPayable: remaining
-      };
-    }
-  );
+    );
+  } finally {
+    activeInvestorProfitPaymentLocks.delete(lockKey);
+  }
 }
 
 /**
@@ -1760,263 +1942,353 @@ export async function executeInvestorCapitalReturnTransaction(
     returnDate?: string;
     returnReference?: string;
     reference?: string;
+    paymentReference?: string;
     idempotencyKey?: string;
+    returnId?: string;
+    targetReturnId?: string;
+    journalEntryId?: string;
+    voucherNumber?: string;
     notes?: string;
     currentUserId: string;
   },
   dbInstance: any = db
 ): Promise<{ investor: Investor; journalEntryId: string; returnedAmount: number; voucherNumber: string }> {
-  return await dbInstance.transaction(
-    'rw',
-    [
-      dbInstance.journalEntries,
-      dbInstance.investors,
-      dbInstance.cashBankAccounts,
-      dbInstance.accounts,
-      dbInstance.auditLogs,
-      dbInstance.closedPeriods
-    ],
-    async () => {
-      const {
-        investorId,
-        amount,
-        sourceAccountId,
-        returnDate,
-        returnReference,
-        reference,
-        idempotencyKey,
-        notes,
-        currentUserId
-      } = params;
-      const dateStr = returnDate || new Date().toISOString().split('T')[0];
+  const {
+    investorId,
+    amount,
+    sourceAccountId,
+    returnDate,
+    returnReference,
+    reference,
+    idempotencyKey,
+    notes,
+    currentUserId
+  } = params;
+  const dateStr = returnDate || new Date().toISOString().split('T')[0];
+  const explicitReturnId = params.returnId || params.targetReturnId || params.journalEntryId;
+  const explicitVoucher = params.voucherNumber;
+  const refToCheck = returnReference || reference || params.paymentReference || idempotencyKey || explicitVoucher;
 
-      // 1. Amount validation (amount must be strictly > 0)
-      if (amount <= 0) {
-        throw new Error('মূলধন ফেরতের পরিমাণ অবশ্যই ০ এর বেশি হতে হবে (Return amount must be > 0).');
-      }
+  // In-memory concurrency lock to prevent simultaneous duplicate capital return
+  const lockKey = idempotencyKey
+    ? `inv_ret_key_${idempotencyKey}`
+    : (explicitReturnId
+        ? `inv_ret_id_${explicitReturnId}`
+        : (refToCheck
+            ? `inv_ret_ref_${investorId}_${refToCheck}`
+            : `inv_ret_dup_${investorId}_${sourceAccountId}_${amount}_${dateStr}`));
 
-      // 2. Closed period validation
-      if (dbInstance.closedPeriods) {
-        const closedPeriods = await dbInstance.closedPeriods.toArray();
-        const isClosed = closedPeriods.some((cp: any) => cp.endDate >= dateStr);
-        if (isClosed) {
-          throw new Error(`সীমাবদ্ধতা: ${dateStr} তারিখটি ইতোমধ্যে বন্ধ হিসাবকালের (Closed Period) অন্তর্ভুক্ত।`);
+  if (activeInvestorCapitalReturnLocks.has(lockKey)) {
+    throw new Error('এই ভাউচার বা রেফারেন্সের জন্য মূলধন ফেরত ইতোমধ্যে সম্পন্ন হয়েছে (ডুপ্লিকেট মূলধন ফেরত প্রতিরোধ / Duplicate capital return prevented)।');
+  }
+  activeInvestorCapitalReturnLocks.add(lockKey);
+
+  try {
+    return await dbInstance.transaction(
+      'rw',
+      [
+        dbInstance.journalEntries,
+        dbInstance.investors,
+        dbInstance.cashBankAccounts,
+        dbInstance.accounts,
+        dbInstance.auditLogs,
+        dbInstance.closedPeriods,
+        ...((dbInstance as any).investorTransactions ? [(dbInstance as any).investorTransactions] : [])
+      ],
+      async () => {
+        // 1. Amount validation (amount must be strictly > 0)
+        if (amount <= 0) {
+          throw new Error('মূলধন ফেরতের পরিমাণ অবশ্যই ০ এর বেশি হতে হবে (Return amount must be > 0).');
         }
-      }
 
-      // 3. Prevent duplicate capital return
-      const refToCheck = returnReference || reference || idempotencyKey;
-      if (refToCheck) {
+        // 2. Investor validation
+        const investor = await dbInstance.investors.get(investorId);
+        if (!investor) {
+          throw new Error(`বিনিয়োগকারী পাওয়া যায়নি (Investor not found: ${investorId})।`);
+        }
+
+        // 3. Closed period validation
+        if (dbInstance.closedPeriods) {
+          const closedPeriods = await dbInstance.closedPeriods.toArray();
+          const isClosed = closedPeriods.some((cp: any) => cp.endDate >= dateStr);
+          if (isClosed) {
+            throw new Error(`সীমাবদ্ধতা: ${dateStr} তারিখটি ইতোমধ্যে বন্ধ হিসাবকালের (Closed Period) অন্তর্ভুক্ত।`);
+          }
+        }
+
+        // 4. Prevent duplicate capital return (Idempotency check)
         const allEntries = await dbInstance.journalEntries.toArray();
         const isDuplicate = allEntries.some((j: any) => {
-          if (idempotencyKey && (j.reference === idempotencyKey || (j as any).idempotencyKey === idempotencyKey)) return true;
-          if (returnReference && (j.reference === returnReference || (j as any).returnReference === returnReference)) return true;
-          if (reference && (j.reference === reference || (j as any).reference === reference)) return true;
+          const isSameInvestor =
+            !j.relatedInvestorId ||
+            j.relatedInvestorId === investorId ||
+            (j as any).investorId === investorId ||
+            (investor && j.narration?.includes(investor.name));
+
+          // A. Idempotency key check
+          if (idempotencyKey) {
+            if (
+              j.reference === idempotencyKey ||
+              (j as any).idempotencyKey === idempotencyKey ||
+              (j as any).returnReference === idempotencyKey
+            ) {
+              return true;
+            }
+          }
+
+          // B. Explicit return ID / journal ID check
+          if (explicitReturnId) {
+            if (
+              j.id === explicitReturnId ||
+              (j as any).returnId === explicitReturnId ||
+              (j as any).journalEntryId === explicitReturnId
+            ) {
+              return true;
+            }
+          }
+
+          // C. Explicit voucher check
+          if (explicitVoucher) {
+            if (j.voucherNumber === explicitVoucher) {
+              return true;
+            }
+          }
+
+          // D. Reference / returnReference check
+          if (refToCheck && isSameInvestor) {
+            if (
+              j.reference === refToCheck ||
+              (j as any).returnReference === refToCheck ||
+              (j as any).paymentReference === refToCheck ||
+              (j as any).referenceParam === refToCheck ||
+              (j as any).idempotencyKey === refToCheck ||
+              j.voucherNumber === refToCheck
+            ) {
+              return true;
+            }
+          }
+
+          // E. Fallback retry detection when no reference/key was passed:
+          if (!refToCheck && !idempotencyKey && isSameInvestor && j.date === dateStr) {
+            const isRetJournal =
+              (j as any).isCapitalReturn === true ||
+              j.lines?.some((l: any) => l.accountCode === '3020' && Math.abs(l.debit - amount) < 0.01) ||
+              (j.narration?.includes('মূলধন ফেরত') && j.lines?.some((l: any) => Math.abs(l.debit - amount) < 0.01));
+            if (isRetJournal) {
+              return true;
+            }
+          }
+
           return false;
         });
+
         if (isDuplicate) {
-          throw new Error('এই ভাউচার বা রেফারেন্সের জন্য মূলধন ফেরত ইতোমধ্যে সম্পন্ন হয়েছে (Duplicate capital return prevented)।');
+          throw new Error('এই ভাউচার বা রেফারেন্সের জন্য মূলধন ফেরত ইতোমধ্যে সম্পন্ন হয়েছে (ডুপ্লিকেট মূলধন ফেরত প্রতিরোধ / Duplicate capital return prevented)।');
         }
-      }
 
-      // 4. Investor validation
-      const investor = await dbInstance.investors.get(investorId);
-      if (!investor) {
-        throw new Error(`বিনিয়োগকারী পাওয়া যায়নি (Investor not found: ${investorId})।`);
-      }
+        // 5. Current capital balance validation (amount cannot exceed current capital)
+        const currentCapital = investor.currentCapitalBalance ?? investor.capitalAmount ?? investor.capitalContributed ?? 0;
+        if (amount > currentCapital) {
+          throw new Error(
+            `মূলধন ফেরতের পরিমাণ বিদ্যমান মূলধনের চেয়ে বেশি হতে পারে না। বর্তমান মূলধন স্থিতি: ৳${currentCapital}, ফেরত আবেদন: ৳${amount}।`
+          );
+        }
 
-      // 5. Current capital balance validation (amount cannot exceed current capital)
-      const currentCapital = investor.currentCapitalBalance ?? investor.capitalAmount ?? investor.capitalContributed ?? 0;
-      if (amount > currentCapital) {
-        throw new Error(
-          `মূলধন ফেরতের পরিমাণ বিদ্যমান মূলধনের চেয়ে বেশি হতে পারে না। বর্তমান মূলধন স্থিতি: ৳${currentCapital}, ফেরত আবেদন: ৳${amount}।`
+        // 6. Source Cash/Bank Account validation & Insufficient Balance / Overdraft check
+        if (!sourceAccountId) {
+          throw new Error('Source cash/bank account is required.');
+        }
+        const sourceAcc = await dbInstance.cashBankAccounts.get(sourceAccountId);
+        if (!sourceAcc) {
+          throw new Error(`Source cash/bank account ${sourceAccountId} not found.`);
+        }
+
+        const currentSourceBalance = Number(sourceAcc.currentBalance || 0);
+        const allowOverdraft = Boolean(
+          (sourceAcc as any).allowOverdraft ||
+            (typeof (sourceAcc as any).overdraftLimit === 'number' && (sourceAcc as any).overdraftLimit > 0)
         );
-      }
+        const overdraftLimit = Number((sourceAcc as any).overdraftLimit || 0);
 
-      // 6. Source Cash/Bank Account validation & Insufficient Balance / Overdraft check
-      if (!sourceAccountId) {
-        throw new Error('Source cash/bank account is required.');
-      }
-      const sourceAcc = await dbInstance.cashBankAccounts.get(sourceAccountId);
-      if (!sourceAcc) {
-        throw new Error(`Source cash/bank account ${sourceAccountId} not found.`);
-      }
-
-      const currentSourceBalance = Number(sourceAcc.currentBalance || 0);
-      const allowOverdraft = Boolean(
-        (sourceAcc as any).allowOverdraft ||
-          (typeof (sourceAcc as any).overdraftLimit === 'number' && (sourceAcc as any).overdraftLimit > 0)
-      );
-      const overdraftLimit = Number((sourceAcc as any).overdraftLimit || 0);
-
-      // Do not allow the operational cash/bank balance to become negative unless explicit overdraft support already exists
-      if (!allowOverdraft) {
-        if (currentSourceBalance < amount) {
-          throw new Error(
-            `উৎস নগদ বা ব্যাংক হিসাবে পর্যাপ্ত ব্যালেন্স নেই (Insufficient cash/bank balance)। বর্তমান ব্যালেন্স: ৳${currentSourceBalance}, ফেরত দাবি: ৳${amount}। ক্যাশ/ব্যাংক ব্যালেন্স নেগেটিভ হওয়া অনুমোদিত নয়।`
-          );
+        // Do not allow the operational cash/bank balance to become negative unless explicit overdraft support already exists
+        if (!allowOverdraft) {
+          if (currentSourceBalance < amount) {
+            throw new Error(
+              `উৎস নগদ বা ব্যাংক হিসাবে পর্যাপ্ত ব্যালেন্স নেই (Insufficient cash/bank balance)। বর্তমান ব্যালেন্স: ৳${currentSourceBalance}, ফেরত দাবি: ৳${amount}। ক্যাশ/ব্যাংক ব্যালেন্স নেগেটিভ হওয়া অনুমোদিত নয়।`
+            );
+          }
+        } else {
+          if (currentSourceBalance - amount < -overdraftLimit) {
+            throw new Error(
+              `ওভারড্রাফট সীমা অতিক্রম করেছে (Overdraft limit exceeded)। বর্তমান ব্যালেন্স: ৳${currentSourceBalance}, অনুমোদিত ওভারড্রাফট সীমা: ৳${overdraftLimit}।`
+            );
+          }
         }
-      } else {
-        if (currentSourceBalance - amount < -overdraftLimit) {
-          throw new Error(
-            `ওভারড্রাফট সীমা অতিক্রম করেছে (Overdraft limit exceeded)। বর্তমান ব্যালেন্স: ৳${currentSourceBalance}, অনুমোদিত ওভারড্রাফট সীমা: ৳${overdraftLimit}।`
-          );
+
+        // 7. Canonical GL Accounts
+        // Correct accounting:
+        // Dr Investor Capital (3020 - Equity reduction)
+        // Cr Cash/Bank (1010/1030 - Asset reduction)
+        // NOT operating expense (no 5xxx/6xxx), NOT owner drawing (no 3040), NOT investor profit (no 2050/3070), NOT interest (no 8010/7010).
+        const assetGlCode = getCashBankAccountGLCode(sourceAcc.accountType);
+        const equityGlCode = getInvestorCapitalAccount(); // '3020'
+
+        const accounts = await dbInstance.accounts.toArray();
+        const assetAcc = accounts.find((a: any) => a.code === assetGlCode) || {
+          id: `acc_${assetGlCode}`,
+          code: assetGlCode,
+          nameBn: sourceAcc.accountName || sourceAcc.name || 'ব্যাংক/নগদ তহবিল',
+          accountClass: 'ASSET',
+          normalBalance: 'DEBIT',
+          isSystem: true,
+          isActive: true
+        };
+        if (!accounts.some((a: any) => a.code === assetGlCode)) {
+          accounts.push(assetAcc);
         }
-      }
 
-      // 7. Canonical GL Accounts
-      // Correct accounting:
-      // Dr Investor Capital (3020 - Equity reduction)
-      // Cr Cash/Bank (1010/1030 - Asset reduction)
-      // NOT operating expense (no 5xxx/6xxx), NOT owner drawing (no 3040), NOT investor profit (no 2050/3070), NOT interest (no 8010/7010).
-      const assetGlCode = getCashBankAccountGLCode(sourceAcc.accountType);
-      const equityGlCode = getInvestorCapitalAccount(); // '3020'
-
-      const accounts = await dbInstance.accounts.toArray();
-      const assetAcc = accounts.find((a: any) => a.code === assetGlCode) || {
-        id: `acc_${assetGlCode}`,
-        code: assetGlCode,
-        nameBn: sourceAcc.accountName || sourceAcc.name || 'ব্যাংক/নগদ তহবিল',
-        accountClass: 'ASSET',
-        normalBalance: 'DEBIT',
-        isSystem: true,
-        isActive: true
-      };
-      if (!accounts.some((a: any) => a.code === assetGlCode)) {
-        accounts.push(assetAcc);
-      }
-
-      const equityAcc = accounts.find((a: any) => a.code === equityGlCode) || {
-        id: `acc_${equityGlCode}`,
-        code: equityGlCode,
-        nameBn: 'বিনিয়োগকারীর মূলধন (Investor Capital)',
-        accountClass: 'EQUITY',
-        normalBalance: 'CREDIT',
-        isSystem: true,
-        isActive: true
-      };
-      if (!accounts.some((a: any) => a.code === equityGlCode)) {
-        accounts.push(equityAcc);
-      }
-
-      const journalLines: JournalLine[] = [
-        {
-          accountId: equityAcc.id,
-          accountCode: equityGlCode,
-          accountName: equityAcc.nameBn,
-          debit: amount,
-          credit: 0,
-          memo: `${investor.name} এর মূলধন ফেরত`
-        },
-        {
-          accountId: assetAcc.id,
-          accountCode: assetGlCode,
-          accountName: sourceAcc.accountName || sourceAcc.name || assetAcc.nameBn,
-          debit: 0,
-          credit: amount,
-          memo: `মূলধন ফেরত বাবদ তহবিল হ্রাস`
+        const equityAcc = accounts.find((a: any) => a.code === equityGlCode) || {
+          id: `acc_${equityGlCode}`,
+          code: equityGlCode,
+          nameBn: 'বিনিয়োগকারীর মূলধন (Investor Capital)',
+          accountClass: 'EQUITY',
+          normalBalance: 'CREDIT',
+          isSystem: true,
+          isActive: true
+        };
+        if (!accounts.some((a: any) => a.code === equityGlCode)) {
+          accounts.push(equityAcc);
         }
-      ];
 
-      const refNumber = refToCheck || generateTransactionNumber('INV-RET');
-      const voucherNumber = generateTransactionNumber('INV-RET-V');
-      const journalEntry = await postJournalEntry(
-        {
-          id: generateUniqueId('j_inv_ret'),
-          voucherNumber,
-          voucherType: 'PAYMENT',
-          date: dateStr,
-          narration: `বিনিয়োগকারীর মূলধন ফেরত: ${investor.name} কে ফেরত ৳${amount}`,
-          reference: refNumber,
-          lines: journalLines,
-          createdBy: currentUserId,
-          createdAt: new Date().toISOString()
-        },
-        { accounts, skipDbPut: true }
-      );
+        const journalLines: JournalLine[] = [
+          {
+            accountId: equityAcc.id,
+            accountCode: equityGlCode,
+            accountName: equityAcc.nameBn,
+            debit: amount,
+            credit: 0,
+            memo: `${investor.name} কে মূলধন ফেরত`
+          },
+          {
+            accountId: assetAcc.id,
+            accountCode: assetGlCode,
+            accountName: sourceAcc.accountName || sourceAcc.name || assetAcc.nameBn,
+            debit: 0,
+            credit: amount,
+            memo: `মূলধন ফেরত বাবদ তহবিল হ্রাস`
+          }
+        ];
 
-      (journalEntry as any).relatedInvestorId = investorId;
-      (journalEntry as any).isCapitalReturn = true;
-      if (idempotencyKey) {
-        (journalEntry as any).idempotencyKey = idempotencyKey;
-      }
-      if (refToCheck) {
-        (journalEntry as any).returnReference = refToCheck;
-      }
+        const refNumber = refToCheck || generateTransactionNumber('INV-RET');
+        const voucherNumber = explicitVoucher || generateTransactionNumber('INV-RET-V');
+        const journalEntry = await postJournalEntry(
+          {
+            id: explicitReturnId || generateUniqueId('j_inv_ret'),
+            voucherNumber,
+            voucherType: 'PAYMENT',
+            date: dateStr,
+            narration: `বিনিয়োগকারীর মূলধন ফেরত: ${investor.name} কে ফেরত ৳${amount}`,
+            reference: refNumber,
+            lines: journalLines,
+            createdBy: currentUserId,
+            createdAt: new Date().toISOString()
+          },
+          { accounts, skipDbPut: true }
+        );
 
-      await safeInsert(dbInstance.journalEntries, journalEntry, { idPrefix: 'j' });
-
-      // 8. Update source cash/bank operational balance
-      await dbInstance.cashBankAccounts.update(sourceAcc.id, {
-        currentBalance: Math.round(((sourceAcc.currentBalance || 0) - amount) * 100) / 100
-      });
-
-      // 9. Update investor state:
-      // Track separately:
-      // * capital contributed
-      // * capital returned
-      // * current capital balance
-      // Capital return is NOT owner drawings or withdrawals:
-      // Do NOT increase investor drawings or owner-style withdrawals!
-      const initialCapitalContributed = investor.capitalContributed ?? investor.capitalAmount ?? 0;
-      const newCapBalance = Math.round(Math.max(0, currentCapital - amount) * 100) / 100;
-      const totalReturned = Math.round(((investor.totalCapitalReturned || 0) + amount) * 100) / 100;
-
-      const updatedInvestor: Investor = {
-        ...investor,
-        capitalContributed: initialCapitalContributed,
-        totalCapitalReturned: totalReturned,
-        currentCapitalBalance: newCapBalance,
-        currentBalance: newCapBalance,
-        currentEquityBalance: newCapBalance,
-        netCapital: newCapBalance,
-        // Preserve drawings and withdrawals without increasing them
-        drawings: investor.drawings ?? 0,
-        withdrawals: investor.withdrawals ?? 0,
-        totalWithdrawals: investor.totalWithdrawals ?? 0,
-        lastCapitalReturnDate: dateStr,
-        status: newCapBalance === 0 && (investor.profitPayable || 0) === 0 ? 'EXITED' : investor.status,
-        notes: notes ? (investor.notes ? `${investor.notes}\n${notes}` : notes) : investor.notes,
-        synced: false
-      };
-      await dbInstance.investors.put(updatedInvestor);
-
-      // 10. If investor exited, recalculate unified working partner ratio for remaining active investors
-      if (updatedInvestor.status === 'EXITED') {
-        const remainingActive = (await dbInstance.investors.toArray())
-          .filter((inv: any) => inv.id !== investor.id && inv.status !== 'EXITED');
-        const newTotalActiveRatio = Math.round(
-          remainingActive.reduce((sum: number, inv: any) => {
-            return sum + (inv.profitSharingRatio ?? inv.profitSharePercentage ?? inv.sharePercentage ?? 0);
-          }, 0) * 100
-        ) / 100;
-        const newWorkingRatio = Math.max(0, Math.round((100 - newTotalActiveRatio) * 100) / 100);
-        for (const remInv of remainingActive) {
-          await dbInstance.investors.update(remInv.id, { workingPartnerShareRatio: newWorkingRatio });
+        (journalEntry as any).relatedInvestorId = investorId;
+        (journalEntry as any).investorId = investorId;
+        (journalEntry as any).isCapitalReturn = true;
+        (journalEntry as any).sourceAccountId = sourceAccountId;
+        (journalEntry as any).returnedAmount = amount;
+        if (idempotencyKey) {
+          (journalEntry as any).idempotencyKey = idempotencyKey;
         }
+        if (refToCheck) {
+          (journalEntry as any).returnReference = refToCheck;
+          (journalEntry as any).paymentReference = refToCheck;
+          (journalEntry as any).referenceParam = refToCheck;
+        }
+        if (explicitReturnId) {
+          (journalEntry as any).returnId = explicitReturnId;
+        }
+
+        await safeInsert(dbInstance.journalEntries, journalEntry, { idPrefix: 'j' });
+
+        // 8. Update source cash/bank operational balance
+        await dbInstance.cashBankAccounts.update(sourceAcc.id, {
+          currentBalance: Math.round(((sourceAcc.currentBalance || 0) - amount) * 100) / 100
+        });
+
+        // 9. Update investor state:
+        // Track separately:
+        // * capital contributed
+        // * capital returned
+        // * current capital balance
+        // Capital return is NOT owner drawings or withdrawals:
+        // Do NOT increase investor drawings or owner-style withdrawals!
+        const initialCapitalContributed = investor.capitalContributed ?? investor.capitalAmount ?? 0;
+        const newCapBalance = Math.round(Math.max(0, currentCapital - amount) * 100) / 100;
+        const totalReturned = Math.round(((investor.totalCapitalReturned || 0) + amount) * 100) / 100;
+
+        const updatedInvestor: Investor = {
+          ...investor,
+          capitalContributed: initialCapitalContributed,
+          totalCapitalReturned: totalReturned,
+          currentCapitalBalance: newCapBalance,
+          currentBalance: newCapBalance,
+          currentEquityBalance: newCapBalance,
+          netCapital: newCapBalance,
+          // Preserve drawings and withdrawals without increasing them
+          drawings: investor.drawings ?? 0,
+          withdrawals: investor.withdrawals ?? 0,
+          totalWithdrawals: investor.totalWithdrawals ?? 0,
+          lastCapitalReturnDate: dateStr,
+          status: newCapBalance === 0 && (investor.profitPayable || 0) === 0 ? 'EXITED' : investor.status,
+          notes: notes ? (investor.notes ? `${investor.notes}\n${notes}` : notes) : investor.notes,
+          synced: false
+        };
+        await dbInstance.investors.put(updatedInvestor);
+
+        // 10. If investor exited, recalculate unified working partner ratio for remaining active investors
+        if (updatedInvestor.status === 'EXITED') {
+          const remainingActive = (await dbInstance.investors.toArray())
+            .filter((inv: any) => inv.id !== investor.id && inv.status !== 'EXITED');
+          const newTotalActiveRatio = Math.round(
+            remainingActive.reduce((sum: number, inv: any) => {
+              return sum + (inv.profitSharingRatio ?? inv.profitSharePercentage ?? inv.sharePercentage ?? 0);
+            }, 0) * 100
+          ) / 100;
+          const newWorkingRatio = Math.max(0, Math.round((100 - newTotalActiveRatio) * 100) / 100);
+          for (const remInv of remainingActive) {
+            await dbInstance.investors.update(remInv.id, { workingPartnerShareRatio: newWorkingRatio });
+          }
+        }
+
+        // 11. Audit Log
+        await safeInsert(dbInstance.auditLogs, {
+          id: generateUniqueId('audit'),
+          timestamp: new Date().toISOString(),
+          userId: currentUserId,
+          role: 'OWNER',
+          action: 'INVESTOR_CAPITAL_RETURN',
+          module: 'FINANCE',
+          recordId: investor.id,
+          status: 'SUCCESS',
+          details: `বিনিয়োগকারী ${investor.name} কে মূলধন ফেরত ৳${amount} (অবশিষ্ট মূলধন: ৳${newCapBalance})`
+        });
+
+        return {
+          investor: updatedInvestor,
+          journalEntryId: journalEntry.id,
+          returnedAmount: amount,
+          voucherNumber
+        };
       }
-
-      // 11. Audit Log
-      await safeInsert(dbInstance.auditLogs, {
-        id: generateUniqueId('audit'),
-        timestamp: new Date().toISOString(),
-        userId: currentUserId,
-        role: 'OWNER',
-        action: 'INVESTOR_CAPITAL_RETURN',
-        module: 'FINANCE',
-        recordId: investor.id,
-        status: 'SUCCESS',
-        details: `বিনিয়োগকারী ${investor.name} কে মূলধন ফেরত ৳${amount} (অবশিষ্ট মূলধন: ৳${newCapBalance})`
-      });
-
-      return {
-        investor: updatedInvestor,
-        journalEntryId: journalEntry.id,
-        returnedAmount: amount,
-        voucherNumber
-      };
-    }
-  );
+    );
+  } finally {
+    activeInvestorCapitalReturnLocks.delete(lockKey);
+  }
 }
 
 /**
@@ -2443,6 +2715,8 @@ export async function executeLoanRepaymentTransaction(
   }
 }
 
+const activeContraTransferLocks = new Set<string>();
+
 /**
  * Atomic Execution of Contra Cash/Bank Transfer
  */
@@ -2452,18 +2726,111 @@ export async function executeContraTransferTransaction(params: {
   amount: number;
   narration?: string;
   currentUserId: string;
-}): Promise<{ voucherNumber: string; journalEntryId: string }> {
-  return await db.transaction(
-    'rw',
-    [
-      db.journalEntries,
-      db.cashBankAccounts,
-      db.accounts,
-      db.auditLogs,
-      db.closedPeriods
-    ],
-    async () => {
-      const { fromAccountId, toAccountId, amount, narration, currentUserId } = params;
+  date?: string;
+  reference?: string;
+  transferFee?: number;
+  bankTransferId?: string;
+  transferId?: string;
+  id?: string;
+  idempotencyKey?: string;
+  dbInstance?: any;
+}): Promise<{
+  voucherNumber: string;
+  journalEntryId: string;
+  bankTransferId?: string;
+  bankTransfer?: BankTransfer;
+}> {
+  const explicitTransferId = params.bankTransferId || params.transferId || params.id;
+  const lockKey = params.idempotencyKey
+    ? `contra_key_${params.idempotencyKey}`
+    : explicitTransferId
+    ? `contra_id_${explicitTransferId}`
+    : params.reference
+    ? `contra_ref_${params.reference}`
+    : `contra_${params.fromAccountId}_${params.toAccountId}_${params.amount}_${params.date || ''}`;
+
+  if (activeContraTransferLocks.has(lockKey)) {
+    throw new Error('এই কন্ট্রা স্থানান্তর লেনদেনটি বর্তমানে প্রক্রিয়াধীন রয়েছে। ডুপ্লিকেট পোস্টিং প্রতিরোধ করা হয়েছে (Duplicate contra transfer prevented)।');
+  }
+  activeContraTransferLocks.add(lockKey);
+
+  try {
+    const targetDb = params.dbInstance || db;
+    const transactionTables = [
+      targetDb.journalEntries,
+      targetDb.cashBankAccounts,
+      targetDb.accounts,
+      targetDb.auditLogs,
+      targetDb.closedPeriods,
+      targetDb.bankTransfers
+    ].filter(Boolean);
+
+    const execute = async () => {
+      const { fromAccountId, toAccountId, amount, narration, currentUserId, idempotencyKey } = params;
+
+      // 1. Prevent duplicate posting via idempotency key
+      if (idempotencyKey) {
+        let existingTransferByKey = false;
+        if (targetDb.bankTransfers?.filter) {
+          const bt = await targetDb.bankTransfers
+            .filter((t: any) => t.idempotencyKey === idempotencyKey || t.id === idempotencyKey)
+            .first();
+          if (bt && (bt.journalEntryId || bt.status === 'COMPLETED')) existingTransferByKey = true;
+        } else if (targetDb.bankTransfers?.toArray) {
+          const allTransfers = await targetDb.bankTransfers.toArray();
+          if (allTransfers.some((t: any) => (t.idempotencyKey === idempotencyKey || t.id === idempotencyKey) && (t.journalEntryId || t.status === 'COMPLETED'))) {
+            existingTransferByKey = true;
+          }
+        }
+
+        let existingJournalByKey = false;
+        if (targetDb.journalEntries?.filter) {
+          const j = await targetDb.journalEntries
+            .filter((j: any) => (j as any).idempotencyKey === idempotencyKey || j.reference === idempotencyKey)
+            .first();
+          if (j) existingJournalByKey = true;
+        } else if (targetDb.journalEntries?.toArray) {
+          const allJournals = await targetDb.journalEntries.toArray();
+          if (allJournals.some((j: any) => (j as any).idempotencyKey === idempotencyKey || j.reference === idempotencyKey)) {
+            existingJournalByKey = true;
+          }
+        }
+
+        if (existingTransferByKey || existingJournalByKey) {
+          throw new Error('এই কন্ট্রা স্থানান্তরটি ইতোমধ্যে সম্পন্ন হয়েছে (ডুপ্লিকেট স্থানান্তর প্রতিরোধ / Duplicate contra transfer prevented)।');
+        }
+      }
+
+      // 2. Prevent duplicate posting via explicit target bank transfer ID
+      if (explicitTransferId) {
+        let existingById: any = null;
+        if (targetDb.bankTransfers?.get) {
+          existingById = await targetDb.bankTransfers.get(explicitTransferId);
+        }
+        if (existingById && (existingById.journalEntryId || existingById.status === 'COMPLETED' || existingById.status === 'REVERSED')) {
+          throw new Error(`এই কন্ট্রা স্থানান্তরটি (ID: ${explicitTransferId}) ইতিমধ্যে সম্পন্ন হয়েছে (ডুপ্লিকেট স্থানান্তর প্রতিরোধ / Duplicate contra transfer prevented)।`);
+        }
+      }
+
+      // 3. Prevent duplicate posting via explicit reference
+      if (params.reference) {
+        let existingByRef = false;
+        if (targetDb.bankTransfers?.toArray) {
+          const allTransfers = await targetDb.bankTransfers.toArray();
+          if (allTransfers.some((t: any) => t.reference === params.reference && (t.journalEntryId || t.status === 'COMPLETED'))) {
+            existingByRef = true;
+          }
+        }
+        if (targetDb.journalEntries?.toArray && !existingByRef) {
+          const allJournals = await targetDb.journalEntries.toArray();
+          if (allJournals.some((j: any) => j.reference === params.reference && j.voucherType === 'CONTRA')) {
+            existingByRef = true;
+          }
+        }
+        if (existingByRef) {
+          throw new Error(`এই রেফারেন্স নম্বর (${params.reference}) ইতিমধ্যে ব্যবহৃত হয়েছে (ডুপ্লিকেট স্থানান্তর প্রতিরোধ / Duplicate contra transfer prevented)।`);
+        }
+      }
 
       if (fromAccountId === toAccountId) {
         throw new Error('উৎস ও গন্তব্য হিসাব ভিন্ন হতে হবে (Source and destination accounts must be different).');
@@ -2473,8 +2840,8 @@ export async function executeContraTransferTransaction(params: {
         throw new Error('স্থানান্তরের পরিমাণ ০ থেকে বেশি হতে হবে (Transfer amount must be greater than 0).');
       }
 
-      const fromAcc = await db.cashBankAccounts.get(fromAccountId);
-      const toAcc = await db.cashBankAccounts.get(toAccountId);
+      const fromAcc = await targetDb.cashBankAccounts.get(fromAccountId);
+      const toAcc = await targetDb.cashBankAccounts.get(toAccountId);
 
       if (!fromAcc || !toAcc) {
         throw new Error('উৎস বা গন্তব্য হিসাব পাওয়া যায়নি (Account not found).');
@@ -2486,7 +2853,7 @@ export async function executeContraTransferTransaction(params: {
         );
       }
 
-      const dateStr = new Date().toISOString().split('T')[0];
+      const dateStr = params.date || new Date().toISOString().split('T')[0];
       const voucherNumber = generateTransactionNumber('CNV');
 
       // Canonical GL Mapping:
@@ -2495,7 +2862,7 @@ export async function executeContraTransferTransaction(params: {
       const toCode = getCashBankAccountGLCode(toAcc.accountType);
       const fromCode = getCashBankAccountGLCode(fromAcc.accountType);
 
-      const accounts = await db.accounts.toArray();
+      const accounts = await targetDb.accounts.toArray();
       const journalLines: JournalLine[] = [
         {
           accountId: toCode,
@@ -2522,41 +2889,120 @@ export async function executeContraTransferTransaction(params: {
           voucherType: 'CONTRA',
           date: dateStr,
           narration: narration?.trim() || `কন্ট্রা তহবিল স্থানান্তর: ${fromAcc.accountName || fromAcc.name} থেকে ${toAcc.accountName || toAcc.name}`,
-          reference: voucherNumber,
+          reference: params.reference || voucherNumber,
           lines: journalLines,
           createdBy: currentUserId,
           createdAt: new Date().toISOString()
         },
-        { accounts, skipDbPut: true }
+        { accounts, skipDbPut: true, dbInstance: targetDb }
       );
 
+      if (idempotencyKey) {
+        (journalEntry as any).idempotencyKey = idempotencyKey;
+      }
+
       // 1. Safe insert journal entry
-      await safeInsert(db.journalEntries, journalEntry, { idPrefix: 'j' });
+      await safeInsert(targetDb.journalEntries, journalEntry, { idPrefix: 'j' });
 
       // 2. Atomically update balances
-      await db.cashBankAccounts.update(fromAcc.id, {
+      await targetDb.cashBankAccounts.update(fromAcc.id, {
         currentBalance: Math.round((fromAcc.currentBalance - amount) * 100) / 100
       });
-      await db.cashBankAccounts.update(toAcc.id, {
+      await targetDb.cashBankAccounts.update(toAcc.id, {
         currentBalance: Math.round((toAcc.currentBalance + amount) * 100) / 100
       });
 
-      // 3. Audit Log
-      await safeInsert(db.auditLogs, {
-        id: generateUniqueId('audit'),
-        timestamp: new Date().toISOString(),
-        userId: currentUserId,
-        role: 'OWNER',
-        action: 'CONTRA_TRANSFER',
-        module: 'FINANCE',
-        recordId: voucherNumber,
-        status: 'SUCCESS',
-        details: `কন্ট্রা স্থানান্তর ${voucherNumber} সম্পন্ন (৳${amount})`
-      });
+      // 3. Determine transfer type
+      const isFromCash = fromAcc.accountType === 'CASH';
+      const isToCash = toAcc.accountType === 'CASH';
+      let transferType: 'CASH_TO_BANK' | 'BANK_TO_CASH' | 'BANK_TO_BANK' | 'CASH_TO_CASH' = 'BANK_TO_BANK';
+      if (isFromCash && !isToCash) {
+        transferType = 'CASH_TO_BANK';
+      } else if (!isFromCash && isToCash) {
+        transferType = 'BANK_TO_CASH';
+      } else if (isFromCash && isToCash) {
+        transferType = 'CASH_TO_CASH';
+      } else {
+        transferType = 'BANK_TO_BANK';
+      }
 
-      return { voucherNumber, journalEntryId: journalEntry.id };
+      // 4. Create or update the existing bankTransfers operational record
+      let existingTransfer: any = null;
+      if (explicitTransferId && targetDb.bankTransfers?.get) {
+        existingTransfer = await targetDb.bankTransfers.get(explicitTransferId);
+      } else if (targetDb.bankTransfers?.toArray) {
+        const allTransfers = await targetDb.bankTransfers.toArray();
+        existingTransfer = allTransfers.find(
+          (t: any) =>
+            (!t.journalEntryId || t.journalEntryId === journalEntry.id) &&
+            t.fromAccountId === fromAccountId &&
+            t.toAccountId === toAccountId &&
+            t.amount === amount
+        );
+      }
+
+      const transferRecord: BankTransfer = {
+        id: existingTransfer?.id || explicitTransferId || (idempotencyKey ? `bt_${idempotencyKey}` : generateUniqueId('bt')),
+        date: dateStr,
+        fromAccountId: fromAcc.id,
+        fromAccountName: fromAcc.accountName || fromAcc.name || '',
+        toAccountId: toAcc.id,
+        toAccountName: toAcc.accountName || toAcc.name || '',
+        amount,
+        transferFee: params.transferFee !== undefined ? params.transferFee : (existingTransfer?.transferFee || 0),
+        reference: params.reference || existingTransfer?.reference || voucherNumber,
+        type: transferType,
+        journalEntryId: journalEntry.id,
+        voucherNumber: voucherNumber,
+        narration: narration?.trim() || existingTransfer?.narration,
+        status: 'COMPLETED',
+        idempotencyKey: idempotencyKey,
+        createdBy: currentUserId,
+        createdAt: existingTransfer?.createdAt || new Date().toISOString(),
+        synced: false
+      };
+
+      if (targetDb.bankTransfers?.put) {
+        await targetDb.bankTransfers.put(transferRecord);
+      } else if (targetDb.bankTransfers?.add) {
+        if (existingTransfer && targetDb.bankTransfers?.update) {
+          await targetDb.bankTransfers.update(transferRecord.id, transferRecord);
+        } else {
+          await targetDb.bankTransfers.add(transferRecord);
+        }
+      }
+
+      // 5. Audit Log
+      if (targetDb.auditLogs) {
+        await safeInsert(targetDb.auditLogs, {
+          id: generateUniqueId('audit'),
+          timestamp: new Date().toISOString(),
+          userId: currentUserId,
+          role: 'OWNER',
+          action: 'CONTRA_TRANSFER',
+          module: 'FINANCE',
+          recordId: voucherNumber,
+          status: 'SUCCESS',
+          details: `কন্ট্রা স্থানান্তর ${voucherNumber} সম্পন্ন (৳${amount})`
+        });
+      }
+
+      return {
+        voucherNumber,
+        journalEntryId: journalEntry.id,
+        bankTransferId: transferRecord.id,
+        bankTransfer: transferRecord
+      };
+    };
+
+    if (typeof targetDb.transaction === 'function') {
+      return await targetDb.transaction('rw', transactionTables, execute);
+    } else {
+      return await execute();
     }
-  );
+  } finally {
+    activeContraTransferLocks.delete(lockKey);
+  }
 }
 
 /**

@@ -193,28 +193,47 @@ export async function exportAllToExcel(companyName = 'Agro-ERP'): Promise<void> 
 }
 
 /**
+ * Safe table reader helper
+ */
+async function safeTableToArray(table: any): Promise<any[]> {
+  if (!table) return [];
+  try {
+    if (typeof table.toArray === 'function') {
+      return await table.toArray();
+    }
+    if (Array.isArray(table)) {
+      return [...table];
+    }
+  } catch (err) {
+    console.warn('Error reading table for backup:', err);
+  }
+  return [];
+}
+
+/**
  * Full JSON Backup creation for disaster recovery
  */
-export async function createFullJsonBackup(): Promise<string> {
+export async function createFullJsonBackup(targetDb: any = db): Promise<string> {
+  const activeDb = targetDb || db;
   const [
     rawPayments,
     journalEntries,
     sales,
     purchases
   ] = await Promise.all([
-    db.payments.toArray(),
-    db.journalEntries.toArray(),
-    db.sales.toArray(),
-    db.purchases.toArray()
+    safeTableToArray(activeDb.payments),
+    safeTableToArray(activeDb.journalEntries),
+    safeTableToArray(activeDb.sales),
+    safeTableToArray(activeDb.purchases)
   ]);
 
-  const jeById = new Map(journalEntries.map((j) => [j.id, j]));
-  const jeByVoucher = new Map(journalEntries.map((j) => [j.voucherNumber, j]));
-  const saleById = new Map(sales.map((s) => [s.id, s]));
-  const purchaseById = new Map(purchases.map((p) => [p.id, p]));
+  const jeById = new Map(journalEntries.map((j: any) => [j.id, j]));
+  const jeByVoucher = new Map(journalEntries.map((j: any) => [j.voucherNumber, j]));
+  const saleById = new Map(sales.map((s: any) => [s.id, s]));
+  const purchaseById = new Map(purchases.map((p: any) => [p.id, p]));
 
   const paymentMapByParent = new Map<string, number>();
-  const mappedPayments: PaymentRecord[] = rawPayments.map((p) => {
+  const mappedPayments: PaymentRecord[] = rawPayments.map((p: any) => {
     let journalEntryId = p.journalEntryId;
     let voucherNumber = p.voucherNumber;
 
@@ -323,41 +342,53 @@ export async function createFullJsonBackup(): Promise<string> {
   const backup = {
     version: '1.0.0',
     timestamp: new Date().toISOString(),
-    systemConfig: await db.systemConfig.toArray(),
-    accounts: await db.accounts.toArray(),
-    journalEntries: await db.journalEntries.toArray(),
-    closedPeriods: await db.closedPeriods.toArray(),
-    animals: await db.animals.toArray(),
-    animalEvents: await db.animalEvents.toArray(),
-    ponds: await db.ponds.toArray(),
-    fishBatches: await db.fishBatches.toArray(),
-    plots: await db.plots.toArray(),
-    cropCycles: await db.cropCycles.toArray(),
-    internalFlows: await db.internalFlows.toArray(),
-    processingRuns: await db.processingRuns.toArray(),
-    inventory: await db.inventoryItems.toArray(),
-    inventoryItems: await db.inventoryItems.toArray(),
-    stockMovements: await db.stockMovements.toArray(),
-    parties: await db.parties.toArray(),
-    purchases: await db.purchases.toArray(),
-    sales: await db.sales.toArray(),
+    systemConfig: await safeTableToArray(activeDb.systemConfig),
+    accounts: await safeTableToArray(activeDb.accounts),
+    journalEntries: await safeTableToArray(activeDb.journalEntries),
+    closedPeriods: await safeTableToArray(activeDb.closedPeriods),
+    recurringExpenseTemplates: await safeTableToArray(activeDb.recurringExpenseTemplates),
+    animals: await safeTableToArray(activeDb.animals),
+    animalEvents: await safeTableToArray(activeDb.animalEvents),
+    reminders: await safeTableToArray(activeDb.reminders),
+    ponds: await safeTableToArray(activeDb.ponds),
+    fishBatches: await safeTableToArray(activeDb.fishBatches),
+    plots: await safeTableToArray(activeDb.plots),
+    cropCycles: await safeTableToArray(activeDb.cropCycles),
+    internalFlows: await safeTableToArray(activeDb.internalFlows),
+    processingRuns: await safeTableToArray(activeDb.processingRuns),
+    inventory: await safeTableToArray(activeDb.inventoryItems),
+    inventoryItems: await safeTableToArray(activeDb.inventoryItems),
+    stockMovements: await safeTableToArray(activeDb.stockMovements),
+    parties: await safeTableToArray(activeDb.parties),
+    purchases: await safeTableToArray(activeDb.purchases),
+    sales: await safeTableToArray(activeDb.sales),
     payments: paymentsToBackup,
-    cashBankAccounts: await db.cashBankAccounts.toArray(),
-    bankTransfers: await db.bankTransfers.toArray(),
-    loans: await db.loans.toArray(),
-    investors: await db.investors.toArray(),
-    fixedAssets: await db.fixedAssets.toArray(),
-    auditLogs: await db.auditLogs.toArray()
+    cashBankAccounts: await safeTableToArray(activeDb.cashBankAccounts),
+    bankTransfers: await safeTableToArray(activeDb.bankTransfers),
+    loans: await safeTableToArray(activeDb.loans),
+    investors: await safeTableToArray(activeDb.investors),
+    fixedAssets: await safeTableToArray(activeDb.fixedAssets),
+    accessLogs: await safeTableToArray(activeDb.accessLogs),
+    auditLogs: await safeTableToArray(activeDb.auditLogs),
+    ...((activeDb as any).investorTransactions
+      ? { investorTransactions: await safeTableToArray((activeDb as any).investorTransactions) }
+      : {})
   };
 
   const jsonStr = JSON.stringify(backup, null, 2);
-  const blob = new Blob([jsonStr], { type: 'application/json' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `Agro_ERP_Full_Backup_${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
-  a.click();
-  URL.revokeObjectURL(url);
+  if (typeof window !== 'undefined' && typeof document !== 'undefined' && typeof URL?.createObjectURL === 'function') {
+    try {
+      const blob = new Blob([jsonStr], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `Agro_ERP_Full_Backup_${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      // Ignore DOM trigger error in non-browser/test environments
+    }
+  }
   recordExportTime();
 
   return jsonStr;
@@ -368,7 +399,8 @@ export async function createFullJsonBackup(): Promise<string> {
  */
 export async function restoreFromJsonBackup(
   jsonString: string,
-  currentUserUid: string
+  currentUserUid = 'owner',
+  targetDb: any = db
 ): Promise<{ success: boolean; message: string; recordCounts?: Record<string, number> }> {
   try {
     const data = JSON.parse(jsonString);
@@ -376,165 +408,306 @@ export async function restoreFromJsonBackup(
       return { success: false, message: 'অবৈধ ব্যাকআপ ফাইল (Invalid backup structure or missing core financial tables).' };
     }
 
-    // Safety step: clear and replace tables safely
-    await db.transaction(
-      'rw',
-      [
-        db.systemConfig,
-        db.accounts,
-        db.journalEntries,
-        db.closedPeriods,
-        db.animals,
-        db.animalEvents,
-        db.ponds,
-        db.fishBatches,
-        db.plots,
-        db.cropCycles,
-        db.internalFlows,
-        db.processingRuns,
-        db.inventoryItems,
-        db.stockMovements,
-        db.parties,
-        db.purchases,
-        db.sales,
-        db.payments,
-        db.cashBankAccounts,
-        db.bankTransfers,
-        db.loans,
-        db.investors,
-        db.fixedAssets,
-        db.auditLogs
-      ],
-      async () => {
-        if (data.systemConfig?.length) {
-          await db.systemConfig.clear();
-          await db.systemConfig.bulkPut(data.systemConfig);
-        }
-        if (data.accounts?.length) {
-          await db.accounts.clear();
-          await db.accounts.bulkPut(data.accounts);
-        }
-        if (data.journalEntries?.length) {
-          await db.journalEntries.clear();
-          await db.journalEntries.bulkPut(data.journalEntries);
-        }
-        if (data.closedPeriods?.length) {
-          await db.closedPeriods.clear();
-          await db.closedPeriods.bulkPut(data.closedPeriods);
-        }
-        if (data.animals?.length) {
-          await db.animals.clear();
-          await db.animals.bulkPut(data.animals);
-        }
-        if (data.animalEvents?.length) {
-          await db.animalEvents.clear();
-          await db.animalEvents.bulkPut(data.animalEvents);
-        }
-        if (data.ponds?.length) {
-          await db.ponds.clear();
-          await db.ponds.bulkPut(data.ponds);
-        }
-        if (data.fishBatches?.length) {
-          await db.fishBatches.clear();
-          await db.fishBatches.bulkPut(data.fishBatches);
-        }
-        if (data.plots?.length) {
-          await db.plots.clear();
-          await db.plots.bulkPut(data.plots);
-        }
-        if (data.cropCycles?.length) {
-          await db.cropCycles.clear();
-          await db.cropCycles.bulkPut(data.cropCycles);
-        }
-        if (data.internalFlows?.length) {
-          await db.internalFlows.clear();
-          await db.internalFlows.bulkPut(data.internalFlows);
-        }
-        if (data.processingRuns?.length) {
-          await db.processingRuns.clear();
-          await db.processingRuns.bulkPut(data.processingRuns);
-        }
-        const inventoryData = (data.inventory?.length ? data.inventory : undefined) || (data.inventoryItems?.length ? data.inventoryItems : undefined);
-        if (inventoryData?.length) {
-          await db.inventoryItems.clear();
-          await db.inventoryItems.bulkPut(inventoryData);
-        }
-        if (data.stockMovements?.length) {
-          await db.stockMovements.clear();
-          await db.stockMovements.bulkPut(data.stockMovements);
-        }
-        if (data.parties?.length) {
-          await db.parties.clear();
-          await db.parties.bulkPut(data.parties);
-        }
-        if (data.purchases?.length) {
-          await db.purchases.clear();
-          await db.purchases.bulkPut(data.purchases);
-        }
-        if (data.sales?.length) {
-          await db.sales.clear();
-          await db.sales.bulkPut(data.sales);
-        }
-        if (data.payments?.length) {
-          await db.payments.clear();
-          await db.payments.bulkPut(data.payments);
-        }
-        if (data.cashBankAccounts?.length) {
-          await db.cashBankAccounts.clear();
-          await db.cashBankAccounts.bulkPut(data.cashBankAccounts);
-        }
-        if (data.bankTransfers?.length) {
-          await db.bankTransfers.clear();
-          await db.bankTransfers.bulkPut(data.bankTransfers);
-        }
-        if (data.loans?.length) {
-          await db.loans.clear();
-          await db.loans.bulkPut(data.loans);
-        }
-        if (data.investors?.length) {
-          await db.investors.clear();
-          await db.investors.bulkPut(data.investors);
-        }
-        if (data.fixedAssets?.length) {
-          await db.fixedAssets.clear();
-          await db.fixedAssets.bulkPut(data.fixedAssets);
+    const activeDb = targetDb || db;
+
+    // Helper to normalize data items (array or single object)
+    const normalizeItems = (val: any): any[] | undefined => {
+      if (Array.isArray(val)) return val;
+      if (val && typeof val === 'object' && Object.keys(val).length > 0) {
+        return [val];
+      }
+      return undefined;
+    };
+
+    // Helper to safely clear and restore table
+    const restoreTable = async (table: any, items: any[] | undefined) => {
+      if (!table || items === undefined) return;
+      if (typeof table.clear === 'function') {
+        await table.clear();
+      }
+      if (items.length > 0) {
+        if (typeof table.bulkPut === 'function') {
+          await table.bulkPut(items);
+        } else if (typeof table.put === 'function') {
+          for (const item of items) {
+            await table.put(item);
+          }
         }
       }
-    );
+    };
 
-    // Record restore audit
-    await db.auditLogs.put({
-      id: `audit_restore_${Date.now()}`,
-      timestamp: new Date().toISOString(),
-      userId: currentUserUid,
-      role: 'OWNER',
-      action: 'SYSTEM_RESTORE',
-      module: 'BACKUP',
-      recordId: 'indexedDb',
-      status: 'SUCCESS',
-      details: `ডাটাবেজ সফলভাবে রিস্টোর করা হয়েছে (ব্যাকআপ তারিখ: ${data.timestamp})`
-    });
+    // Table resolver helper
+    const getTable = (fieldName: string): any => {
+      if (!activeDb) return null;
+      if (activeDb[fieldName]) return activeDb[fieldName];
+
+      const aliasMap: Record<string, string> = {
+        system: 'systemConfig',
+        systemConfig: 'systemConfig',
+        inventory: 'inventoryItems',
+        inventoryItems: 'inventoryItems',
+        salesInvoices: 'sales',
+        sales: 'sales',
+        purchaseInvoices: 'purchases',
+        purchases: 'purchases',
+        recurringExpenses: 'recurringExpenseTemplates',
+        recurringExpenseTemplates: 'recurringExpenseTemplates',
+        bankAccounts: 'cashBankAccounts',
+        cashBankAccounts: 'cashBankAccounts',
+        transfers: 'bankTransfers',
+        bankTransfers: 'bankTransfers',
+        assets: 'fixedAssets',
+        fixedAssets: 'fixedAssets'
+      };
+
+      const mapped = aliasMap[fieldName];
+      if (mapped && activeDb[mapped]) return activeDb[mapped];
+
+      if (typeof activeDb.table === 'function') {
+        try {
+          const t = activeDb.table(fieldName);
+          if (t) return t;
+        } catch {
+          // ignore
+        }
+      }
+      return null;
+    };
+
+    const tablesToLock = (
+      Array.isArray(activeDb.tables) && activeDb.tables.length > 0
+        ? activeDb.tables
+        : [
+            activeDb.systemConfig,
+            activeDb.accounts,
+            activeDb.journalEntries,
+            activeDb.closedPeriods,
+            activeDb.recurringExpenseTemplates,
+            activeDb.animals,
+            activeDb.animalEvents,
+            activeDb.reminders,
+            activeDb.ponds,
+            activeDb.fishBatches,
+            activeDb.plots,
+            activeDb.cropCycles,
+            activeDb.internalFlows,
+            activeDb.processingRuns,
+            activeDb.inventoryItems,
+            activeDb.stockMovements,
+            activeDb.parties,
+            activeDb.purchases,
+            activeDb.sales,
+            activeDb.payments,
+            activeDb.cashBankAccounts,
+            activeDb.bankTransfers,
+            activeDb.loans,
+            activeDb.investors,
+            activeDb.fixedAssets,
+            activeDb.accessLogs,
+            activeDb.auditLogs,
+            ...((activeDb as any).investorTransactions ? [(activeDb as any).investorTransactions] : [])
+          ]
+    ).filter(Boolean);
+
+    const recordCounts: Record<string, number> = {};
+
+    const performRestores = async () => {
+      // 1. Core financial & operational tables
+      const systemData = normalizeItems(data.systemConfig !== undefined ? data.systemConfig : data.system);
+      await restoreTable(activeDb.systemConfig, systemData);
+      if (systemData !== undefined) recordCounts.systemConfig = systemData.length;
+
+      const accountsData = normalizeItems(data.accounts);
+      await restoreTable(activeDb.accounts, accountsData);
+      if (accountsData !== undefined) recordCounts.accounts = accountsData.length;
+
+      const jeData = normalizeItems(data.journalEntries);
+      await restoreTable(activeDb.journalEntries, jeData);
+      if (jeData !== undefined) recordCounts.journalEntries = jeData.length;
+
+      const cpData = normalizeItems(data.closedPeriods);
+      await restoreTable(activeDb.closedPeriods, cpData);
+      if (cpData !== undefined) recordCounts.closedPeriods = cpData.length;
+
+      const recData = normalizeItems(data.recurringExpenseTemplates !== undefined ? data.recurringExpenseTemplates : data.recurringExpenses);
+      await restoreTable(activeDb.recurringExpenseTemplates, recData);
+      if (recData !== undefined) recordCounts.recurringExpenseTemplates = recData.length;
+
+      const animData = normalizeItems(data.animals);
+      await restoreTable(activeDb.animals, animData);
+      if (animData !== undefined) recordCounts.animals = animData.length;
+
+      const aeData = normalizeItems(data.animalEvents);
+      await restoreTable(activeDb.animalEvents, aeData);
+      if (aeData !== undefined) recordCounts.animalEvents = aeData.length;
+
+      const remData = normalizeItems(data.reminders);
+      await restoreTable(activeDb.reminders, remData);
+      if (remData !== undefined) recordCounts.reminders = remData.length;
+
+      const pndData = normalizeItems(data.ponds);
+      await restoreTable(activeDb.ponds, pndData);
+      if (pndData !== undefined) recordCounts.ponds = pndData.length;
+
+      const fbData = normalizeItems(data.fishBatches);
+      await restoreTable(activeDb.fishBatches, fbData);
+      if (fbData !== undefined) recordCounts.fishBatches = fbData.length;
+
+      const pltData = normalizeItems(data.plots);
+      await restoreTable(activeDb.plots, pltData);
+      if (pltData !== undefined) recordCounts.plots = pltData.length;
+
+      const ccData = normalizeItems(data.cropCycles);
+      await restoreTable(activeDb.cropCycles, ccData);
+      if (ccData !== undefined) recordCounts.cropCycles = ccData.length;
+
+      const ifData = normalizeItems(data.internalFlows);
+      await restoreTable(activeDb.internalFlows, ifData);
+      if (ifData !== undefined) recordCounts.internalFlows = ifData.length;
+
+      const prData = normalizeItems(data.processingRuns);
+      await restoreTable(activeDb.processingRuns, prData);
+      if (prData !== undefined) recordCounts.processingRuns = prData.length;
+
+      const invData = normalizeItems(data.inventoryItems !== undefined ? data.inventoryItems : data.inventory);
+      await restoreTable(activeDb.inventoryItems, invData);
+      if (invData !== undefined) {
+        recordCounts.inventoryItems = invData.length;
+        recordCounts.inventory = invData.length;
+      }
+
+      const smData = normalizeItems(data.stockMovements);
+      await restoreTable(activeDb.stockMovements, smData);
+      if (smData !== undefined) recordCounts.stockMovements = smData.length;
+
+      const ptyData = normalizeItems(data.parties);
+      await restoreTable(activeDb.parties, ptyData);
+      if (ptyData !== undefined) recordCounts.parties = ptyData.length;
+
+      const purData = normalizeItems(data.purchases !== undefined ? data.purchases : data.purchaseInvoices);
+      await restoreTable(activeDb.purchases, purData);
+      if (purData !== undefined) recordCounts.purchases = purData.length;
+
+      const salData = normalizeItems(data.sales !== undefined ? data.sales : data.salesInvoices);
+      await restoreTable(activeDb.sales, salData);
+      if (salData !== undefined) recordCounts.sales = salData.length;
+
+      const pmtData = normalizeItems(data.payments);
+      await restoreTable(activeDb.payments, pmtData);
+      if (pmtData !== undefined) recordCounts.payments = pmtData.length;
+
+      const cbData = normalizeItems(data.cashBankAccounts !== undefined ? data.cashBankAccounts : data.bankAccounts);
+      await restoreTable(activeDb.cashBankAccounts, cbData);
+      if (cbData !== undefined) recordCounts.cashBankAccounts = cbData.length;
+
+      const btData = normalizeItems(data.bankTransfers !== undefined ? data.bankTransfers : data.transfers);
+      await restoreTable(activeDb.bankTransfers, btData);
+      if (btData !== undefined) recordCounts.bankTransfers = btData.length;
+
+      const lnData = normalizeItems(data.loans);
+      await restoreTable(activeDb.loans, lnData);
+      if (lnData !== undefined) recordCounts.loans = lnData.length;
+
+      const invUserData = normalizeItems(data.investors);
+      await restoreTable(activeDb.investors, invUserData);
+      if (invUserData !== undefined) recordCounts.investors = invUserData.length;
+
+      const faData = normalizeItems(data.fixedAssets !== undefined ? data.fixedAssets : data.assets);
+      await restoreTable(activeDb.fixedAssets, faData);
+      if (faData !== undefined) recordCounts.fixedAssets = faData.length;
+
+      const aclData = normalizeItems(data.accessLogs);
+      await restoreTable(activeDb.accessLogs, aclData);
+      if (aclData !== undefined) recordCounts.accessLogs = aclData.length;
+
+      const audData = normalizeItems(data.auditLogs);
+      await restoreTable(activeDb.auditLogs, audData);
+      if (audData !== undefined) recordCounts.auditLogs = audData.length;
+
+      // 2. investorTransactions if present
+      if (data.investorTransactions !== undefined) {
+        const itxTable = getTable('investorTransactions');
+        if (itxTable) {
+          const itxData = normalizeItems(data.investorTransactions);
+          await restoreTable(itxTable, itxData);
+          if (itxData !== undefined) recordCounts.investorTransactions = itxData.length;
+        }
+      }
+
+      // 3. Scan for any remaining persistent tables in backup not explicitly covered
+      const handledKeys = new Set([
+        'version', 'timestamp', 'metadata', 'exportDate',
+        'systemConfig', 'system',
+        'accounts',
+        'journalEntries',
+        'closedPeriods',
+        'recurringExpenseTemplates', 'recurringExpenses',
+        'animals',
+        'animalEvents',
+        'reminders',
+        'ponds',
+        'fishBatches',
+        'plots',
+        'cropCycles',
+        'internalFlows',
+        'processingRuns',
+        'inventory', 'inventoryItems',
+        'stockMovements',
+        'parties',
+        'purchases', 'purchaseInvoices',
+        'sales', 'salesInvoices',
+        'payments',
+        'cashBankAccounts', 'bankAccounts',
+        'bankTransfers', 'transfers',
+        'loans',
+        'investors',
+        'fixedAssets', 'assets',
+        'accessLogs',
+        'auditLogs',
+        'investorTransactions'
+      ]);
+
+      for (const key of Object.keys(data)) {
+        if (!handledKeys.has(key)) {
+          const targetTable = getTable(key);
+          const items = normalizeItems(data[key]);
+          if (targetTable && items !== undefined) {
+            await restoreTable(targetTable, items);
+            recordCounts[key] = items.length;
+          }
+        }
+      }
+
+      // 4. Record restore audit inside atomic transaction
+      if (activeDb.auditLogs && typeof activeDb.auditLogs.put === 'function') {
+        try {
+          await activeDb.auditLogs.put({
+            id: `audit_restore_${Date.now()}`,
+            timestamp: new Date().toISOString(),
+            userId: currentUserUid,
+            role: 'OWNER',
+            action: 'SYSTEM_RESTORE',
+            module: 'BACKUP',
+            recordId: 'indexedDb',
+            status: 'SUCCESS',
+            details: `ডাটাবেজ সফলভাবে রিস্টোর করা হয়েছে (ব্যাকআপ তারিখ: ${data.timestamp})`
+          });
+        } catch {
+          // Non-blocking if audit logging fails
+        }
+      }
+    };
+
+    if (typeof activeDb.transaction === 'function' && tablesToLock.length > 0) {
+      await activeDb.transaction('rw', tablesToLock, performRestores);
+    } else {
+      await performRestores();
+    }
 
     return {
       success: true,
       message: 'ডাটাবেজ সফলভাবে রিস্টোর সম্পন্ন হয়েছে!',
-      recordCounts: {
-        journalEntries: data.journalEntries?.length || 0,
-        accounts: data.accounts?.length || 0,
-        stockMovements: data.stockMovements?.length || 0,
-        inventory: (data.inventory || data.inventoryItems)?.length || 0,
-        inventoryItems: (data.inventory || data.inventoryItems)?.length || 0,
-        cashBankAccounts: data.cashBankAccounts?.length || 0,
-        loans: data.loans?.length || 0,
-        investors: data.investors?.length || 0,
-        fixedAssets: data.fixedAssets?.length || 0,
-        closedPeriods: data.closedPeriods?.length || 0,
-        animals: data.animals?.length || 0,
-        fishBatches: data.fishBatches?.length || 0,
-        cropCycles: data.cropCycles?.length || 0,
-        sales: data.sales?.length || 0,
-        payments: data.payments?.length || 0
-      }
+      recordCounts
     };
   } catch (err: any) {
     return { success: false, message: `রিস্টোর ব্যর্থ হয়েছে: ${err.message}` };
@@ -544,7 +717,11 @@ export async function restoreFromJsonBackup(
 // Convenient alias exports
 export const exportMultiSheetExcel = exportAllToExcel;
 export const exportSystemBackupJson = createFullJsonBackup;
-export const restoreSystemBackupJson = (jsonString: string, uid = 'owner') => restoreFromJsonBackup(jsonString, uid);
+export const exportDatabaseToJson = createFullJsonBackup;
+export const exportFullJsonBackup = createFullJsonBackup;
+export const getFullJsonBackup = createFullJsonBackup;
+export const restoreSystemBackupJson = (jsonString: string, uid = 'owner', targetDb = db) =>
+  restoreFromJsonBackup(jsonString, uid, targetDb);
 
 /**
  * Track last successful cloud sync timestamp

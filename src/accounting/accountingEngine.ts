@@ -181,10 +181,10 @@ export async function getLatestClosedPeriod(dbInstance?: any): Promise<ClosedPer
 export async function getClosedPeriods(dbInstance?: any): Promise<ClosedPeriod[]> {
   const targetDb = dbInstance || db;
   try {
-    if (targetDb && targetDb !== db && targetDb.closedPeriods) {
+    if (targetDb?.closedPeriods) {
       if (typeof targetDb.closedPeriods.toArray === 'function') {
         const periods = await targetDb.closedPeriods.toArray();
-        return (periods as ClosedPeriod[] || []).sort((a: any, b: any) => (b.endDate || '').localeCompare(a.endDate || ''));
+        return ((periods as ClosedPeriod[]) || []).sort((a: any, b: any) => (b.endDate || '').localeCompare(a.endDate || ''));
       }
       if (typeof targetDb.closedPeriods.values === 'function') {
         const periods = Array.from(targetDb.closedPeriods.values()) as ClosedPeriod[];
@@ -210,7 +210,7 @@ export async function getClosedPeriods(dbInstance?: any): Promise<ClosedPeriod[]
       try {
         if (typeof targetDb.closedPeriods.toArray === 'function') {
           const periods = await targetDb.closedPeriods.toArray();
-          return (periods as ClosedPeriod[] || []).sort((a: any, b: any) => (b.endDate || '').localeCompare(a.endDate || ''));
+          return ((periods as ClosedPeriod[]) || []).sort((a: any, b: any) => (b.endDate || '').localeCompare(a.endDate || ''));
         }
         if (typeof targetDb.closedPeriods.values === 'function') {
           const periods = Array.from(targetDb.closedPeriods.values()) as ClosedPeriod[];
@@ -339,7 +339,8 @@ export async function reverseJournalEntry(
       targetDb.reminders,
       targetDb.accounts,
       targetDb.auditLogs,
-      targetDb.closedPeriods
+      targetDb.closedPeriods,
+      targetDb.bankTransfers
     ].filter(Boolean);
 
     const performReversal = async (): Promise<{ original: JournalEntry; reversal: JournalEntry; [key: string]: any }> => {
@@ -430,6 +431,14 @@ export async function reverseJournalEntry(
         }
       }
 
+      if (!original && targetDb.bankTransfers?.get) {
+        const bt = await targetDb.bankTransfers.get(originalEntryId);
+        if (bt && bt.journalEntryId) {
+          resolvedEntryId = bt.journalEntryId;
+          original = targetDb.journalEntries?.get ? await targetDb.journalEntries.get(resolvedEntryId) : null;
+        }
+      }
+
       if (!original) {
         throw new Error(`মূল জাবেদা দাখিলা (ID: ${originalEntryId}) খুঁজে পাওয়া যায়নি।`);
       }
@@ -466,21 +475,92 @@ export async function reverseJournalEntry(
       }
 
       const today = customReversalDate || new Date().toISOString().split('T')[0];
-      let latestClosed: ClosedPeriod | null = null;
-      if (targetDb.closedPeriods?.toArray) {
-        try {
-          const closedPeriods = await targetDb.closedPeriods.toArray();
-          const sorted = closedPeriods.sort((a: any, b: any) => (b.endDate || '').localeCompare(a.endDate || ''));
-          latestClosed = sorted[0] || null;
-        } catch {}
-      } else {
-        latestClosed = await getLatestClosedPeriod();
+
+      // Task B5: Reversal Closed-Period Protection
+      // A reversal must not create an accounting entry inside a closed period.
+      // Use existing closed-period rules.
+      const closedPeriods = await getClosedPeriods(targetDb);
+      const latestClosed = closedPeriods.length > 0 ? closedPeriods[0] : null;
+
+      const conflictingClosed = closedPeriods.find((cp: any) =>
+        cp.startDate ? today >= cp.startDate && today <= cp.endDate : today <= cp.endDate
+      ) || (latestClosed && today <= latestClosed.endDate ? latestClosed : null);
+
+      if (conflictingClosed) {
+        throw new Error(
+          `হিসাবরক্ষণ সীমাবদ্ধতা: সর্বশেষ সমাপ্ত হিসাবকাল ${conflictingClosed.endDate} পর্যন্ত বন্ধ। সংশোধনী আজকের তারিখে (${today}) পোস্ট করতে হবে যা বন্ধ সময়কালের পরবর্তী হতে হবে (Cannot create reversal entry dated on or before closed period end date: ${conflictingClosed.endDate})।`
+        );
       }
 
-      if (latestClosed && today <= latestClosed.endDate) {
-        throw new Error(
-          `হিসাবরক্ষণ সীমাবদ্ধতা: সর্বশেষ সমাপ্ত হিসাবকাল ${latestClosed.endDate} পর্যন্ত বন্ধ। সংশোধনী আজকের তারিখে (${today}) পোস্ট করতে হবে যা বন্ধ সময়কালের পরবর্তী হতে হবে।`
+      // ----------------------------------------------------
+      // Task B4: Locate linked purchase & verify sufficient stock BEFORE making any changes
+      // ----------------------------------------------------
+      let linkedPurchase: Purchase | undefined;
+      if (targetDb.purchases?.get) {
+        if (original.reference) {
+          const pByRef = await targetDb.purchases.get(original.reference);
+          if (pByRef) linkedPurchase = pByRef;
+        }
+        if (!linkedPurchase) {
+          const pById = await targetDb.purchases.get(originalEntryId);
+          if (pById && (pById.journalEntryId === original.id || pById.invoiceNumber === original.reference || pById.id === original.reference)) {
+            linkedPurchase = pById;
+          }
+        }
+      }
+      if (!linkedPurchase && targetDb.purchases?.toArray) {
+        const allPurchases = await targetDb.purchases.toArray();
+        linkedPurchase = allPurchases.find(
+          (p: any) =>
+            p.journalEntryId === original.id ||
+            (original.reference && (p.invoiceNumber === original.reference || p.id === original.reference)) ||
+            p.id === originalEntryId
         );
+      }
+
+      // Check if this transaction represents a purchase reversal
+      const purchaseQtyByItem = new Map<string, { quantity: number; name: string }>();
+
+      if (linkedPurchase && linkedPurchase.status !== 'CANCELLED' && Array.isArray(linkedPurchase.items)) {
+        for (const it of linkedPurchase.items) {
+          const cur = purchaseQtyByItem.get(it.itemId) || { quantity: 0, name: it.itemName || '' };
+          cur.quantity += Number(it.quantity || 0);
+          if (it.itemName) cur.name = it.itemName;
+          purchaseQtyByItem.set(it.itemId, cur);
+        }
+      }
+
+      // Also check unreversed PURCHASE stock movements if not already covered by linkedPurchase
+      if (purchaseQtyByItem.size === 0 && targetDb.stockMovements?.toArray) {
+        const movements = await targetDb.stockMovements.toArray();
+        const purMovements = movements.filter((m: any) =>
+          !m.reversedBy &&
+          m.movementType === 'PURCHASE' &&
+          ((linkedPurchase && (m.referenceId === linkedPurchase.invoiceNumber || m.referenceId === linkedPurchase.id)) ||
+            m.referenceId === original.reference ||
+            m.referenceId === original.id ||
+            m.referenceId === original.voucherNumber)
+        );
+        for (const sm of purMovements) {
+          const cur = purchaseQtyByItem.get(sm.itemId) || { quantity: 0, name: '' };
+          cur.quantity += Number(sm.quantity || 0);
+          purchaseQtyByItem.set(sm.itemId, cur);
+        }
+      }
+
+      // TASK B4: Verify sufficient current stock exists to remove the purchased quantity.
+      // If insufficient: reject reversal, make no partial changes. Never silently clamp stock to zero.
+      if (purchaseQtyByItem.size > 0 && targetDb.inventoryItems?.get) {
+        for (const [itemId, info] of purchaseQtyByItem.entries()) {
+          const invItem = await targetDb.inventoryItems.get(itemId);
+          const currentStock = Number(invItem?.currentStock || 0);
+          if (currentStock < info.quantity) {
+            const name = invItem?.nameBn || invItem?.nameEn || info.name || itemId;
+            throw new Error(
+              `ক্রয় চালান রিভার্সাল ব্যর্থ: '${name}' এর পর্যাপ্ত স্টক নেই (বর্তমান স্টক: ${currentStock}, কর্তন প্রয়োজন: ${info.quantity})। স্টক নেগেটিভ করা যাবে না (Insufficient stock for purchase reversal).`
+            );
+          }
+        }
       }
 
       // Swap every debit/credit line exactly (equal and opposite)
@@ -699,26 +779,25 @@ export async function reverseJournalEntry(
         }
       }
 
-      // Check for linked Purchase
-      let linkedPurchase: Purchase | undefined;
-      if (targetDb.purchases?.toArray) {
-        const allPurchases = await targetDb.purchases.toArray();
-        linkedPurchase = allPurchases.find(
-          (p: any) => p.journalEntryId === original.id || (original.reference && (p.invoiceNumber === original.reference || p.id === original.reference))
-        );
-      }
-
+      // Process linked Purchase reversal
       if (linkedPurchase && linkedPurchase.status !== 'CANCELLED') {
         // Operational record
         await targetDb.purchases.update(linkedPurchase.id, { status: 'CANCELLED', synced: false });
 
-        // Inventory deduction
+        // Inventory deduction - verified sufficient above, never silently clamp to zero
         if (targetDb.inventoryItems?.get && Array.isArray(linkedPurchase.items)) {
           for (const it of linkedPurchase.items) {
             const invItem = await targetDb.inventoryItems.get(it.itemId);
             if (invItem) {
+              const currentStock = Number(invItem.currentStock || 0);
+              const deductQty = Number(it.quantity || 0);
+              if (currentStock < deductQty) {
+                throw new Error(
+                  `ক্রয় চালান রিভার্সাল ব্যর্থ: '${invItem.nameBn || it.itemName}' এর পর্যাপ্ত স্টক নেই (বর্তমান স্টক: ${currentStock}, কর্তন প্রয়োজন: ${deductQty})। স্টক নেগেটিভ করা যাবে না।`
+                );
+              }
               await targetDb.inventoryItems.update(invItem.id, {
-                currentStock: Math.max(0, Math.round(((invItem.currentStock || 0) - it.quantity) * 100) / 100),
+                currentStock: Math.round((currentStock - deductQty) * 100) / 100,
                 synced: false
               });
             }
@@ -1388,6 +1467,22 @@ export async function reverseJournalEntry(
           (m.referenceId === original.id || m.referenceId === original.voucherNumber || (original.reference && m.referenceId === original.reference))
         );
         for (const sm of orphanMovements) {
+          if (!linkedPurchase && sm.movementType === 'PURCHASE' && targetDb.inventoryItems?.get) {
+            const invItem = await targetDb.inventoryItems.get(sm.itemId);
+            if (invItem) {
+              const currentStock = Number(invItem.currentStock || 0);
+              const deductQty = Number(sm.quantity || 0);
+              if (currentStock < deductQty) {
+                throw new Error(
+                  `ক্রয় চালান রিভার্সাল ব্যর্থ: '${invItem.nameBn || sm.itemId}' এর পর্যাপ্ত স্টক নেই (বর্তমান স্টক: ${currentStock}, কর্তন প্রয়োজন: ${deductQty})। স্টক নেগেটিভ করা যাবে না।`
+                );
+              }
+              await targetDb.inventoryItems.update(invItem.id, {
+                currentStock: Math.round((currentStock - deductQty) * 100) / 100,
+                synced: false
+              });
+            }
+          }
           await recordStockMovementReversal(
             sm,
             today,
@@ -1417,8 +1512,47 @@ export async function reverseJournalEntry(
         }
       }
 
+      // Check for linked BankTransfer (Contra cash/bank transfer)
+      let linkedBankTransfer: any;
+      if (targetDb.bankTransfers?.toArray) {
+        const allTransfers = await targetDb.bankTransfers.toArray();
+        linkedBankTransfer = allTransfers.find(
+          (bt: any) =>
+            bt.journalEntryId === original.id ||
+            bt.voucherNumber === original.voucherNumber ||
+            (original.reference && bt.reference === original.reference)
+        );
+      }
+
+      if (linkedBankTransfer) {
+        if (targetDb.bankTransfers?.update) {
+          await targetDb.bankTransfers.update(linkedBankTransfer.id, {
+            status: 'REVERSED',
+            reversedBy: reversalEntry.id,
+            synced: false
+          });
+        }
+
+        if (targetDb.cashBankAccounts?.get) {
+          const fromAcc = await targetDb.cashBankAccounts.get(linkedBankTransfer.fromAccountId);
+          const toAcc = await targetDb.cashBankAccounts.get(linkedBankTransfer.toAccountId);
+          if (fromAcc) {
+            await targetDb.cashBankAccounts.update(fromAcc.id, {
+              currentBalance: Math.round(((fromAcc.currentBalance || 0) + linkedBankTransfer.amount) * 100) / 100,
+              synced: false
+            });
+          }
+          if (toAcc) {
+            await targetDb.cashBankAccounts.update(toAcc.id, {
+              currentBalance: Math.round(((toAcc.currentBalance || 0) - linkedBankTransfer.amount) * 100) / 100,
+              synced: false
+            });
+          }
+        }
+      }
+
       // If standalone journal entry with direct Cash/Bank movements (not covered by above)
-      if (!linkedSale && !linkedPurchase && !linkedEvent && !linkedPayment && targetDb.cashBankAccounts?.where) {
+      if (!linkedSale && !linkedPurchase && !linkedEvent && !linkedPayment && !linkedBankTransfer && targetDb.cashBankAccounts?.where) {
         for (const line of original.lines) {
           if (line.accountCode === '1010') {
             const cashAcc = await targetDb.cashBankAccounts.where('accountType').equals('CASH').first();

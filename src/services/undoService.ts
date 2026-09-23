@@ -1,5 +1,5 @@
 import { db } from '../db/indexedDb';
-import { reverseJournalEntry } from '../accounting/accountingEngine';
+import { reverseJournalEntry, getClosedPeriods } from '../accounting/accountingEngine';
 
 export type UndoableAction =
   | {
@@ -109,6 +109,19 @@ export async function executeUndo(
   ].filter(Boolean);
 
   const performUndo = async (): Promise<{ success: boolean; message: string }> => {
+    const today = new Date().toISOString().split('T')[0];
+    const closedPeriods = await getClosedPeriods(targetDb);
+    const latestClosed = closedPeriods.length > 0 ? closedPeriods[0] : null;
+    const conflictingClosed = closedPeriods.find((cp: any) =>
+      cp.startDate ? today >= cp.startDate && today <= cp.endDate : today <= cp.endDate
+    ) || (latestClosed && today <= latestClosed.endDate ? latestClosed : null);
+
+    if (conflictingClosed) {
+      throw new Error(
+        `হিসাবরক্ষণ সীমাবদ্ধতা: সর্বশেষ সমাপ্ত হিসাবকাল ${conflictingClosed.endDate} পর্যন্ত বন্ধ। বন্ধ সময়কালে কোনো লেনদেন বাতিল বা পরিবর্তন করা যাবে না (Cannot undo/reverse inside closed period ending ${conflictingClosed.endDate})।`
+      );
+    }
+
     if (action.type === 'JOURNAL_ENTRY') {
       if (action.journalEntryId) {
         await reverseJournalEntry(action.journalEntryId, action.currentUserId, undefined, targetDb);
@@ -281,32 +294,65 @@ export async function executeUndo(
         }
       }
     } else if (action.type === 'PURCHASE') {
-      // 1. Get purchase details for stock movement cleanup
+      // 0. Task B4: Verify sufficient stock exists BEFORE making any changes or calling reverseJournalEntry
       const purchase = targetDb.purchases?.get ? await targetDb.purchases.get(action.purchaseId) : null;
-
-      // 2. Reverse the journal entry
-      if (action.journalEntryId) {
-        await reverseJournalEntry(action.journalEntryId, action.currentUserId, undefined, targetDb);
+      const itemsToCheck: { itemId: string; quantity: number }[] = [];
+      if (purchase?.items && Array.isArray(purchase.items) && purchase.items.length > 0) {
+        for (const it of purchase.items) {
+          itemsToCheck.push({ itemId: it.itemId, quantity: Number(it.quantity || 0) });
+        }
+      } else if (action.itemId && action.quantity) {
+        itemsToCheck.push({ itemId: action.itemId, quantity: Number(action.quantity || 0) });
       }
 
-      // 3. Remove purchase record
+      const requiredQtyByItem = new Map<string, number>();
+      for (const it of itemsToCheck) {
+        requiredQtyByItem.set(it.itemId, (requiredQtyByItem.get(it.itemId) || 0) + it.quantity);
+      }
+
+      if (targetDb.inventoryItems?.get) {
+        for (const [itemId, requiredQty] of requiredQtyByItem.entries()) {
+          const item = await targetDb.inventoryItems.get(itemId);
+          const currentStock = Number(item?.currentStock || 0);
+          if (currentStock < requiredQty) {
+            throw new Error(
+              `ক্রয় বাতিল ব্যর্থ: '${item?.nameBn || item?.nameEn || itemId}' এর পর্যাপ্ত স্টক নেই (বর্তমান স্টক: ${currentStock}, কর্তন প্রয়োজন: ${requiredQty})। স্টক নেগেটিভ করা যাবে না (Insufficient stock for purchase reversal).`
+            );
+          }
+        }
+      }
+
+      // 1. Reverse the journal entry (which will handle linked purchase and inventory deduction atomically)
+      let journalReversed = false;
+      if (action.journalEntryId) {
+        await reverseJournalEntry(action.journalEntryId, action.currentUserId, undefined, targetDb);
+        journalReversed = true;
+      }
+
+      // 2. Remove purchase record
       if (targetDb.purchases?.delete) {
         await targetDb.purchases.delete(action.purchaseId);
       }
 
-      // 4. Deduct stock added by purchase
-      if (targetDb.inventoryItems?.get) {
+      // 3. Deduct stock added by purchase ONLY if not already deducted by reverseJournalEntry
+      if (!journalReversed && targetDb.inventoryItems?.get) {
         const item = await targetDb.inventoryItems.get(action.itemId);
         if (item) {
+          const currentStock = Number(item.currentStock || 0);
+          if (currentStock < action.quantity) {
+            throw new Error(
+              `ক্রয় বাতিল ব্যর্থ: পর্যাপ্ত স্টক নেই (বর্তমান স্টক: ${currentStock}, কর্তন প্রয়োজন: ${action.quantity})।`
+            );
+          }
           await targetDb.inventoryItems.update(item.id, {
-            currentStock: Math.max(0, Math.round(((item.currentStock || 0) - action.quantity) * 100) / 100),
+            currentStock: Math.round((currentStock - action.quantity) * 100) / 100,
             synced: false
           });
         }
       }
 
-      // 5. Record counter stock movement for purchase if not already reversed by reverseJournalEntry
-      if (targetDb.stockMovements?.toArray) {
+      // 4. Record counter stock movement for purchase if not already reversed by reverseJournalEntry
+      if (!journalReversed && targetDb.stockMovements?.toArray) {
         const movements = await targetDb.stockMovements.toArray();
         const toReverse = movements.filter((m: any) =>
           !m.reversedBy &&
@@ -340,29 +386,31 @@ export async function executeUndo(
         }
       }
 
-      // 6. Revert party AP/AR if credit
-      if (action.paymentMethod === 'CREDIT' && targetDb.parties?.get) {
-        const supplier = await targetDb.parties.get(action.supplierId);
-        if (supplier) {
-          await targetDb.parties.update(supplier.id, {
-            balance: Math.round(((supplier.balance || 0) - action.grandTotal) * 100) / 100
-          });
-        }
-      } else if (action.paymentMethod === 'CASH' && targetDb.cashBankAccounts?.where) {
-        const cashAcc = await targetDb.cashBankAccounts.where('accountType').equals('CASH').first();
-        if (cashAcc) {
-          await targetDb.cashBankAccounts.update(cashAcc.id, {
-            currentBalance: Math.round(((cashAcc.currentBalance || 0) + action.grandTotal) * 100) / 100
-          });
-        }
-      } else if (action.paymentMethod === 'BANK' && targetDb.cashBankAccounts) {
-        const bankAcc = action.bankAccountId && targetDb.cashBankAccounts.get
-          ? await targetDb.cashBankAccounts.get(action.bankAccountId)
-          : await targetDb.cashBankAccounts.where('accountType').equals('BANK').first();
-        if (bankAcc) {
-          await targetDb.cashBankAccounts.update(bankAcc.id, {
-            currentBalance: Math.round(((bankAcc.currentBalance || 0) + action.grandTotal) * 100) / 100
-          });
+      // 5. Revert party AP/AR if credit
+      if (!journalReversed) {
+        if (action.paymentMethod === 'CREDIT' && targetDb.parties?.get) {
+          const supplier = await targetDb.parties.get(action.supplierId);
+          if (supplier) {
+            await targetDb.parties.update(supplier.id, {
+              balance: Math.round(((supplier.balance || 0) - action.grandTotal) * 100) / 100
+            });
+          }
+        } else if (action.paymentMethod === 'CASH' && targetDb.cashBankAccounts?.where) {
+          const cashAcc = await targetDb.cashBankAccounts.where('accountType').equals('CASH').first();
+          if (cashAcc) {
+            await targetDb.cashBankAccounts.update(cashAcc.id, {
+              currentBalance: Math.round(((cashAcc.currentBalance || 0) + action.grandTotal) * 100) / 100
+            });
+          }
+        } else if (action.paymentMethod === 'BANK' && targetDb.cashBankAccounts) {
+          const bankAcc = action.bankAccountId && targetDb.cashBankAccounts.get
+            ? await targetDb.cashBankAccounts.get(action.bankAccountId)
+            : await targetDb.cashBankAccounts.where('accountType').equals('BANK').first();
+          if (bankAcc) {
+            await targetDb.cashBankAccounts.update(bankAcc.id, {
+              currentBalance: Math.round(((bankAcc.currentBalance || 0) + action.grandTotal) * 100) / 100
+            });
+          }
         }
       }
     }

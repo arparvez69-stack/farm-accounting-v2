@@ -475,6 +475,114 @@ export async function synchronizePendingData(): Promise<{ syncedCount: number; e
         errors.push(`Closed Period ${period.id}: ${err.message}`);
       }
     }
+
+    // 17. Sync Bank Transfers (Operational & contra records)
+    const pendingTransfers = await db.bankTransfers.filter((t) => !t.synced).toArray();
+    for (const bt of pendingTransfers) {
+      try {
+        await syncRecordToServer('bankTransfers', bt);
+        await db.bankTransfers.update(bt.id, { synced: true });
+        count++;
+      } catch (err: any) {
+        errors.push(`Bank Transfer ${bt.id}: ${err.message}`);
+      }
+    }
+
+    // 18. Sync Animal Events (Feed, treatment, vaccine, etc.)
+    const pendingAnimalEvents = await db.animalEvents.filter((e) => !e.synced).toArray();
+    for (const ev of pendingAnimalEvents) {
+      try {
+        await syncRecordToServer('animalEvents', ev);
+        await db.animalEvents.update(ev.id, { synced: true });
+        count++;
+      } catch (err: any) {
+        errors.push(`Animal Event ${ev.id}: ${err.message}`);
+      }
+    }
+
+    // 19. Sync Reminders
+    const pendingReminders = await db.reminders.filter((r) => !r.synced).toArray();
+    for (const rem of pendingReminders) {
+      try {
+        await syncRecordToServer('reminders', rem);
+        await db.reminders.update(rem.id, { synced: true });
+        count++;
+      } catch (err: any) {
+        errors.push(`Reminder ${rem.id}: ${err.message}`);
+      }
+    }
+
+    // 20. Sync Internal Resource Flows (Permaculture)
+    const pendingFlows = await db.internalFlows.filter((f) => !f.synced).toArray();
+    for (const fl of pendingFlows) {
+      try {
+        await syncRecordToServer('internalFlows', fl);
+        await db.internalFlows.update(fl.id, { synced: true });
+        count++;
+      } catch (err: any) {
+        errors.push(`Internal Flow ${fl.id}: ${err.message}`);
+      }
+    }
+
+    // 21. Sync Processing & Recipe Runs
+    const pendingProcessing = await db.processingRuns.filter((pr) => !pr.synced).toArray();
+    for (const pr of pendingProcessing) {
+      try {
+        await syncRecordToServer('processingRuns', pr);
+        await db.processingRuns.update(pr.id, { synced: true });
+        count++;
+      } catch (err: any) {
+        errors.push(`Processing Run ${pr.id}: ${err.message}`);
+      }
+    }
+
+    // 22. Sync Ponds
+    const pendingPonds = await db.ponds.filter((p) => !p.synced).toArray();
+    for (const p of pendingPonds) {
+      try {
+        await syncRecordToServer('ponds', p);
+        await db.ponds.update(p.id, { synced: true });
+        count++;
+      } catch (err: any) {
+        errors.push(`Pond ${p.id}: ${err.message}`);
+      }
+    }
+
+    // 23. Sync Plots
+    const pendingPlots = await db.plots.filter((p) => !p.synced).toArray();
+    for (const p of pendingPlots) {
+      try {
+        await syncRecordToServer('plots', p);
+        await db.plots.update(p.id, { synced: true });
+        count++;
+      } catch (err: any) {
+        errors.push(`Plot ${p.id}: ${err.message}`);
+      }
+    }
+
+    // 24. Sync Security Access Logs
+    const pendingAccessLogs = await db.accessLogs.filter((al) => !al.synced).toArray();
+    for (const al of pendingAccessLogs) {
+      try {
+        await syncRecordToServer('accessLogs', al);
+        await db.accessLogs.update(al.id, { synced: true });
+        count++;
+      } catch (err: any) {
+        errors.push(`Access Log ${al.id}: ${err.message}`);
+      }
+    }
+
+    // 25. Sync Recurring Expense Templates
+    const pendingRecurring = await db.recurringExpenseTemplates.filter((rt) => !rt.synced).toArray();
+    for (const rt of pendingRecurring) {
+      try {
+        await syncRecordToServer('recurringExpenseTemplates', rt);
+        await db.recurringExpenseTemplates.update(rt.id, { synced: true });
+        count++;
+      } catch (err: any) {
+        errors.push(`Recurring Template ${rt.id}: ${err.message}`);
+      }
+    }
   } catch (globalErr: any) {
     errors.push(`Sync failed: ${globalErr.message}`);
   }
@@ -538,7 +646,40 @@ export function listenToOnlineSync(
       const pAssets = await db.fixedAssets.filter((fa) => !fa.synced).count();
       const pParties = await db.parties.filter((p) => !p.synced).count();
       const pClosedPeriods = await db.closedPeriods.filter((cp) => !cp.synced).count();
-      const total = pAnimals + pFish + pCrops + pJournals + pPurchases + pSales + pPayments + pInventory + pStock + pAccounts + pLoans + pInvestors + pAssets + pParties + pClosedPeriods;
+      const pTransfers = await db.bankTransfers.filter((t) => !t.synced).count();
+      const pEvents = await db.animalEvents.filter((e) => !e.synced).count();
+      const pReminders = await db.reminders.filter((r) => !r.synced).count();
+      const pFlows = await db.internalFlows.filter((f) => !f.synced).count();
+      const pProcessing = await db.processingRuns.filter((pr) => !pr.synced).count();
+      const pPonds = await db.ponds.filter((p) => !p.synced).count();
+      const pPlots = await db.plots.filter((p) => !p.synced).count();
+      const pAccessLogs = await db.accessLogs.filter((al) => !al.synced).count();
+      const pRecurring = await db.recurringExpenseTemplates.filter((rt) => !rt.synced).count();
+      const total =
+        pAnimals +
+        pFish +
+        pCrops +
+        pJournals +
+        pPurchases +
+        pSales +
+        pPayments +
+        pInventory +
+        pStock +
+        pAccounts +
+        pLoans +
+        pInvestors +
+        pAssets +
+        pParties +
+        pClosedPeriods +
+        pTransfers +
+        pEvents +
+        pReminders +
+        pFlows +
+        pProcessing +
+        pPonds +
+        pPlots +
+        pAccessLogs +
+        pRecurring;
       onPendingChange(total);
       if (!navigator.onLine) {
         onStateChange('OFFLINE');
@@ -576,8 +717,10 @@ export function listenToOnlineSync(
     onStateChange('OFFLINE');
   };
 
-  window.addEventListener('online', handleOnline);
-  window.addEventListener('offline', handleOffline);
+  if (typeof window !== 'undefined') {
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+  }
 
   updatePending();
   const interval = setInterval(() => {
@@ -585,8 +728,10 @@ export function listenToOnlineSync(
   }, 10000);
 
   return () => {
-    window.removeEventListener('online', handleOnline);
-    window.removeEventListener('offline', handleOffline);
+    if (typeof window !== 'undefined') {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    }
     clearInterval(interval);
   };
 }
@@ -623,18 +768,42 @@ if (typeof window !== 'undefined') {
  * and NO internet connection available to check Firestore, returns offlineEmptyWarning: true
  * so a clear warning can be displayed instead of silently acting like a brand-new account.
  */
-export async function restoreRemoteDataIfLocalEmpty(userEmail?: string): Promise<{
+export async function restoreRemoteDataIfLocalEmpty(userEmail?: string, force?: boolean): Promise<{
   restored: boolean;
   count: number;
   offlineEmptyWarning: boolean;
 }> {
   try {
-    const animalCount = await db.animals.count();
-    const journalCount = await db.journalEntries.count();
+    const localOperationalCounts = await Promise.all([
+      db.animals.count(),
+      db.animalEvents.count(),
+      db.journalEntries.count(),
+      db.sales.count(),
+      db.purchases.count(),
+      db.payments.count(),
+      db.cropCycles.count(),
+      db.fishBatches.count(),
+      db.ponds.count(),
+      db.plots.count(),
+      db.inventoryItems.count(),
+      db.stockMovements.count(),
+      db.parties.count(),
+      db.fixedAssets.count(),
+      db.loans.count(),
+      db.investors.count(),
+      db.cashBankAccounts.count(),
+      db.bankTransfers.count(),
+      db.reminders.count(),
+      db.internalFlows.count(),
+      db.processingRuns.count(),
+      db.recurringExpenseTemplates.count(),
+      db.closedPeriods.count()
+    ]);
+    const totalLocalRecords = localOperationalCounts.reduce((a, b) => a + b, 0);
 
-    // If local IndexedDB already has records, no cloud restore is needed
-    if (animalCount > 0 || journalCount > 0) {
-      return { restored: false, count: animalCount + journalCount, offlineEmptyWarning: false };
+    // If local IndexedDB already has records, no cloud restore is needed unless forced
+    if (totalLocalRecords > 0 && !force) {
+      return { restored: false, count: totalLocalRecords, offlineEmptyWarning: false };
     }
 
     // Known owner email check
@@ -643,7 +812,7 @@ export async function restoreRemoteDataIfLocalEmpty(userEmail?: string): Promise
     const isKnownOwner = allowed.length === 0 || (cleanEmail && allowed.includes(cleanEmail));
 
     // If genuinely empty and no internet connection available
-    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) {
       if (isKnownOwner) {
         console.warn('[The Goated Farm] Known owner opened app with empty local database while offline.');
         return { restored: false, count: 0, offlineEmptyWarning: true };
@@ -660,7 +829,7 @@ export async function restoreRemoteDataIfLocalEmpty(userEmail?: string): Promise
         token = await auth.currentUser.getIdToken();
       } catch {}
     }
-    if (!token && typeof window !== 'undefined') {
+    if (!token && typeof localStorage !== 'undefined') {
       try {
         const raw = localStorage.getItem('goted_owner_session');
         if (raw) {
@@ -672,7 +841,10 @@ export async function restoreRemoteDataIfLocalEmpty(userEmail?: string): Promise
 
     // 1. Try server restore endpoint (fastest, Admin-privileged, complete)
     try {
-      const res = await fetch('/api/sync/restore', {
+      const endpoint = typeof window !== 'undefined' && window.location?.origin
+        ? `${window.location.origin}/api/sync/restore`
+        : (typeof process !== 'undefined' && process.env?.PORT ? `http://localhost:${process.env.PORT}/api/sync/restore` : 'http://localhost:3000/api/sync/restore');
+      const res = await fetch(endpoint, {
         headers: {
           'Content-Type': 'application/json',
           ...(token ? { Authorization: `Bearer ${token}` } : {})
@@ -682,83 +854,45 @@ export async function restoreRemoteDataIfLocalEmpty(userEmail?: string): Promise
         const payload = await res.json();
         if (payload.success && payload.collections) {
           const c = payload.collections;
-          if (Array.isArray(c.animals) && c.animals.length > 0) {
-            await db.animals.bulkPut(c.animals.map((item: any) => ({ ...item, synced: true })));
-            restoredCount += c.animals.length;
-          }
-          if (Array.isArray(c.animalEvents) && c.animalEvents.length > 0) {
-            await db.animalEvents.bulkPut(c.animalEvents.map((item: any) => ({ ...item, synced: true })));
-            restoredCount += c.animalEvents.length;
-          }
-          if (Array.isArray(c.journalEntries) && c.journalEntries.length > 0) {
-            await db.journalEntries.bulkPut(c.journalEntries.map((item: any) => ({ ...item, synced: true })));
-            restoredCount += c.journalEntries.length;
-          }
-          if (Array.isArray(c.sales) && c.sales.length > 0) {
-            await db.sales.bulkPut(c.sales.map((item: any) => ({ ...item, synced: true })));
-            restoredCount += c.sales.length;
-          }
-          if (Array.isArray(c.purchases) && c.purchases.length > 0) {
-            await db.purchases.bulkPut(c.purchases.map((item: any) => ({ ...item, synced: true })));
-            restoredCount += c.purchases.length;
-          }
-          if (Array.isArray(c.cropCycles) && c.cropCycles.length > 0) {
-            await db.cropCycles.bulkPut(c.cropCycles.map((item: any) => ({ ...item, synced: true })));
-            restoredCount += c.cropCycles.length;
-          }
-          if (Array.isArray(c.fishBatches) && c.fishBatches.length > 0) {
-            await db.fishBatches.bulkPut(c.fishBatches.map((item: any) => ({ ...item, synced: true })));
-            restoredCount += c.fishBatches.length;
-          }
-          if (Array.isArray(c.ponds) && c.ponds.length > 0) {
-            await db.ponds.bulkPut(c.ponds.map((item: any) => ({ ...item, synced: true })));
-            restoredCount += c.ponds.length;
-          }
-          if (Array.isArray(c.plots) && c.plots.length > 0) {
-            await db.plots.bulkPut(c.plots.map((item: any) => ({ ...item, synced: true })));
-            restoredCount += c.plots.length;
-          }
+
+          const restoreTableItems = async (table: any, items: any[] | undefined) => {
+            if (Array.isArray(items) && items.length > 0 && table && typeof table.bulkPut === 'function') {
+              const prepared = items.map((item: any) => ({
+                ...item,
+                id: item.id,
+                synced: true
+              }));
+              await table.bulkPut(prepared);
+              restoredCount += prepared.length;
+            }
+          };
+
+          await restoreTableItems(db.animals, c.animals);
+          await restoreTableItems(db.animalEvents, c.animalEvents);
+          await restoreTableItems(db.journalEntries, c.journalEntries);
+          await restoreTableItems(db.sales, c.sales);
+          await restoreTableItems(db.purchases, c.purchases);
+          await restoreTableItems(db.payments, c.payments);
+          await restoreTableItems(db.cropCycles, c.cropCycles);
+          await restoreTableItems(db.fishBatches, c.fishBatches);
+          await restoreTableItems(db.ponds, c.ponds);
+          await restoreTableItems(db.plots, c.plots);
           const invList = (Array.isArray(c.inventory) && c.inventory.length > 0) ? c.inventory : ((Array.isArray(c.inventoryItems) && c.inventoryItems.length > 0) ? c.inventoryItems : []);
-          if (invList.length > 0) {
-            await db.inventoryItems.bulkPut(invList.map((item: any) => ({ ...item, synced: true })));
-            restoredCount += invList.length;
-          }
-          if (Array.isArray(c.parties) && c.parties.length > 0) {
-            await db.parties.bulkPut(c.parties.map((item: any) => ({ ...item, synced: true })));
-            restoredCount += c.parties.length;
-          }
-          if (Array.isArray(c.fixedAssets) && c.fixedAssets.length > 0) {
-            await db.fixedAssets.bulkPut(c.fixedAssets.map((item: any) => ({ ...item, synced: true })));
-            restoredCount += c.fixedAssets.length;
-          }
-          if (Array.isArray(c.loans) && c.loans.length > 0) {
-            await db.loans.bulkPut(c.loans.map((item: any) => ({ ...item, synced: true })));
-            restoredCount += c.loans.length;
-          }
-          if (Array.isArray(c.investors) && c.investors.length > 0) {
-            await db.investors.bulkPut(c.investors.map((item: any) => ({ ...item, synced: true })));
-            restoredCount += c.investors.length;
-          }
-          if (Array.isArray(c.cashBankAccounts) && c.cashBankAccounts.length > 0) {
-            await db.cashBankAccounts.bulkPut(c.cashBankAccounts.map((item: any) => ({ ...item, synced: true })));
-            restoredCount += c.cashBankAccounts.length;
-          }
-          if (Array.isArray(c.reminders) && c.reminders.length > 0) {
-            await db.reminders.bulkPut(c.reminders.map((item: any) => ({ ...item, synced: true })));
-            restoredCount += c.reminders.length;
-          }
-          if (Array.isArray(c.payments) && c.payments.length > 0) {
-            await db.payments.bulkPut(c.payments.map((item: any) => ({ ...item, synced: true })));
-            restoredCount += c.payments.length;
-          }
-          if (Array.isArray(c.stockMovements) && c.stockMovements.length > 0) {
-            await db.stockMovements.bulkPut(c.stockMovements.map((item: any) => ({ ...item, synced: true })));
-            restoredCount += c.stockMovements.length;
-          }
-          if (Array.isArray(c.closedPeriods) && c.closedPeriods.length > 0) {
-            await db.closedPeriods.bulkPut(c.closedPeriods.map((item: any) => ({ ...item, synced: true })));
-            restoredCount += c.closedPeriods.length;
-          }
+          await restoreTableItems(db.inventoryItems, invList);
+          await restoreTableItems(db.stockMovements, c.stockMovements);
+          await restoreTableItems(db.parties, c.parties);
+          await restoreTableItems(db.fixedAssets, c.fixedAssets);
+          await restoreTableItems(db.loans, c.loans);
+          await restoreTableItems(db.investors, c.investors);
+          await restoreTableItems(db.cashBankAccounts, c.cashBankAccounts);
+          await restoreTableItems(db.bankTransfers, c.bankTransfers);
+          await restoreTableItems(db.reminders, c.reminders);
+          await restoreTableItems(db.internalFlows, c.internalFlows);
+          await restoreTableItems(db.processingRuns, c.processingRuns);
+          await restoreTableItems(db.recurringExpenseTemplates, c.recurringExpenseTemplates);
+          await restoreTableItems(db.accessLogs, c.accessLogs);
+          await restoreTableItems(db.auditLogs, c.auditLogs);
+          await restoreTableItems(db.closedPeriods, c.closedPeriods);
         }
       }
     } catch (serverErr) {
@@ -768,82 +902,55 @@ export async function restoreRemoteDataIfLocalEmpty(userEmail?: string): Promise
     // 2. Direct Firestore fallback if server restore was not possible
     if (restoredCount === 0 && auth.currentUser) {
       try {
-        const animalSnap = await getDocs(collection(firestore, 'animals'));
-        if (!animalSnap.empty) {
-          const list: any[] = [];
-          animalSnap.forEach((d) => list.push({ id: d.id, ...d.data(), synced: true }));
-          await db.animals.bulkPut(list);
-          restoredCount += list.length;
-        }
-        const journalSnap = await getDocs(collection(firestore, 'journalEntries'));
-        if (!journalSnap.empty) {
-          const list: any[] = [];
-          journalSnap.forEach((d) => list.push({ id: d.id, ...d.data(), synced: true }));
-          await db.journalEntries.bulkPut(list);
-          restoredCount += list.length;
-        }
-        const paymentSnap = await getDocs(collection(firestore, 'payments'));
-        if (!paymentSnap.empty) {
-          const list: any[] = [];
-          paymentSnap.forEach((d) => list.push({ id: d.id, ...d.data(), synced: true }));
-          await db.payments.bulkPut(list);
-          restoredCount += list.length;
-        }
-        const invSnap = await getDocs(collection(firestore, 'inventoryItems'));
-        if (!invSnap.empty) {
-          const list: any[] = [];
-          invSnap.forEach((d) => list.push({ id: d.id, ...d.data(), synced: true }));
-          await db.inventoryItems.bulkPut(list);
-          restoredCount += list.length;
-        }
-        const smSnap = await getDocs(collection(firestore, 'stockMovements'));
-        if (!smSnap.empty) {
-          const list: any[] = [];
-          smSnap.forEach((d) => list.push({ id: d.id, ...d.data(), synced: true }));
-          await db.stockMovements.bulkPut(list);
-          restoredCount += list.length;
-        }
-        const cashSnap = await getDocs(collection(firestore, 'cashBankAccounts'));
-        if (!cashSnap.empty) {
-          const list: any[] = [];
-          cashSnap.forEach((d) => list.push({ id: d.id, ...d.data(), synced: true }));
-          await db.cashBankAccounts.bulkPut(list);
-          restoredCount += list.length;
-        }
-        const loanSnap = await getDocs(collection(firestore, 'loans'));
-        if (!loanSnap.empty) {
-          const list: any[] = [];
-          loanSnap.forEach((d) => list.push({ id: d.id, ...d.data(), synced: true }));
-          await db.loans.bulkPut(list);
-          restoredCount += list.length;
-        }
-        const investorSnap = await getDocs(collection(firestore, 'investors'));
-        if (!investorSnap.empty) {
-          const list: any[] = [];
-          investorSnap.forEach((d) => list.push({ id: d.id, ...d.data(), synced: true }));
-          await db.investors.bulkPut(list);
-          restoredCount += list.length;
-        }
-        const assetSnap = await getDocs(collection(firestore, 'fixedAssets'));
-        if (!assetSnap.empty) {
-          const list: any[] = [];
-          assetSnap.forEach((d) => list.push({ id: d.id, ...d.data(), synced: true }));
-          await db.fixedAssets.bulkPut(list);
-          restoredCount += list.length;
-        }
-        const partySnap = await getDocs(collection(firestore, 'parties'));
-        if (!partySnap.empty) {
-          const list: any[] = [];
-          partySnap.forEach((d) => list.push({ id: d.id, ...d.data(), synced: true }));
-          await db.parties.bulkPut(list);
-          restoredCount += list.length;
-        }
-        const periodSnap = await getDocs(collection(firestore, 'closedPeriods'));
-        if (!periodSnap.empty) {
-          const list: any[] = [];
-          periodSnap.forEach((d) => list.push({ id: d.id, ...d.data(), synced: true }));
-          await db.closedPeriods.bulkPut(list);
-          restoredCount += list.length;
+        const collectionsToFetchFromFirestore: Array<{ col: string; table: any }> = [
+          { col: 'animals', table: db.animals },
+          { col: 'animalEvents', table: db.animalEvents },
+          { col: 'journalEntries', table: db.journalEntries },
+          { col: 'sales', table: db.sales },
+          { col: 'purchases', table: db.purchases },
+          { col: 'payments', table: db.payments },
+          { col: 'cropCycles', table: db.cropCycles },
+          { col: 'fishBatches', table: db.fishBatches },
+          { col: 'ponds', table: db.ponds },
+          { col: 'plots', table: db.plots },
+          { col: 'inventoryItems', table: db.inventoryItems },
+          { col: 'stockMovements', table: db.stockMovements },
+          { col: 'parties', table: db.parties },
+          { col: 'fixedAssets', table: db.fixedAssets },
+          { col: 'loans', table: db.loans },
+          { col: 'investors', table: db.investors },
+          { col: 'cashBankAccounts', table: db.cashBankAccounts },
+          { col: 'bankTransfers', table: db.bankTransfers },
+          { col: 'reminders', table: db.reminders },
+          { col: 'internalFlows', table: db.internalFlows },
+          { col: 'processingRuns', table: db.processingRuns },
+          { col: 'recurringExpenseTemplates', table: db.recurringExpenseTemplates },
+          { col: 'closedPeriods', table: db.closedPeriods },
+          { col: 'auditLogs', table: db.auditLogs },
+          { col: 'accessLogs', table: db.accessLogs }
+        ];
+
+        for (const { col, table } of collectionsToFetchFromFirestore) {
+          try {
+            const snap = await getDocs(collection(firestore, col));
+            if (!snap.empty) {
+              const list: any[] = [];
+              snap.forEach((d) => {
+                const data = d.data();
+                list.push({
+                  ...data,
+                  id: data.id || d.id,
+                  synced: true
+                });
+              });
+              if (table && typeof table.bulkPut === 'function') {
+                await table.bulkPut(list);
+                restoredCount += list.length;
+              }
+            }
+          } catch (colErr: any) {
+            console.warn(`[The Goated Farm] Direct Firestore restore fallback note for ${col}:`, colErr.message);
+          }
         }
       } catch (fsErr) {
         console.warn('[The Goated Farm] Direct Firestore restore fallback note:', fsErr);
