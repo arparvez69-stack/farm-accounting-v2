@@ -1,6 +1,7 @@
 import {
   runAccountingReconciliation,
   reconcileInventorySubledger,
+  generateInventoryReport,
   reconcileCustomerBalances,
   reconcileSupplierBalances,
   reconcileFishBatchProduction,
@@ -113,6 +114,16 @@ async function testAsOfDateReconciliation() {
   console.assert(invRecAsOf.isMatched === true, `Inventory should match as of ${asOfDate}`);
   console.log('✓ Check 1 (Inventory) correctly reconciles as-of date');
 
+  // 3b. Test Inventory Report reconciliation with stock movements, inventory records, and GL balance
+  const invReport = await generateInventoryReport(mockDbInventory as any, asOfDate);
+  console.assert(invReport.totalQuantity === 100, `Inventory quantity should be 100 as of ${asOfDate}, got ${invReport.totalQuantity}`);
+  console.assert(invReport.totalValue === 5000, `Inventory value should be 5000 as of ${asOfDate}, got ${invReport.totalValue}`);
+  console.assert(invReport.glAmount === 5000, `Inventory GL should be 5000 as of ${asOfDate}, got ${invReport.glAmount}`);
+  console.assert(invReport.isQuantityMatched === true, 'Inventory quantity must reconcile between movements and records');
+  console.assert(invReport.isGlMatched === true, 'Inventory value must reconcile with corresponding GL balance');
+  console.assert(invReport.isAllMatched === true, 'Inventory report must reconcile across all three dimensions');
+  console.log('✓ Inventory Report strictly reconciles quantity/value with movements, records, and GL');
+
   // 4. Test AR (Customer Balances) as of date
   const mockDbAR = {
     parties: {
@@ -151,6 +162,49 @@ async function testAsOfDateReconciliation() {
   console.assert(arRecAsOf.isMatched === true, `AR should match as of ${asOfDate}`);
   console.log('✓ Check 2 (Customer Balances / AR) correctly reconciles as-of date');
 
+  // 4b. Test AR with partial and full payments across dates
+  const mockDbARWithPayments = {
+    parties: {
+      toArray: async () => [
+        // Cust-1 had 10,000 on 2026-03-01. Paid 3,000 on 2026-03-05 -> bal as of 2026-03-10 = 7,000.
+        // On 2026-03-15 bought 5,000 (bal as of 2026-03-15 = 12,000). On 2026-03-20 paid 4,000 (bal as of 2026-03-25 = 8,000).
+        { id: 'cust-1', name: 'Rahim Traders', type: 'CUSTOMER', balance: 8000 }
+      ]
+    },
+    sales: {
+      toArray: async () => [
+        { id: 's-1', customerId: 'cust-1', date: '2026-03-01', paymentMethod: 'CREDIT', totalAmount: 10000, paidAmount: 3000, dueAmount: 7000 },
+        { id: 's-2', customerId: 'cust-1', date: '2026-03-15', paymentMethod: 'CREDIT', totalAmount: 5000, paidAmount: 4000, dueAmount: 1000 }
+      ]
+    },
+    payments: {
+      toArray: async () => [
+        { id: 'pmt-1', parentId: 's-1', parentType: 'SALE', customerId: 'cust-1', date: '2026-03-05', amount: 3000 },
+        { id: 'pmt-2', parentId: 's-2', parentType: 'SALE', customerId: 'cust-1', date: '2026-03-20', amount: 4000 }
+      ]
+    },
+    journalEntries: {
+      toArray: async () => [
+        { id: 'je-1', date: '2026-03-01', lines: [{ accountCode: CANONICAL_ACCOUNTS.ACCOUNTS_RECEIVABLE, debit: 10000, credit: 0 }] },
+        { id: 'je-2', date: '2026-03-05', lines: [{ accountCode: CANONICAL_ACCOUNTS.ACCOUNTS_RECEIVABLE, debit: 0, credit: 3000 }] },
+        { id: 'je-3', date: '2026-03-15', lines: [{ accountCode: CANONICAL_ACCOUNTS.ACCOUNTS_RECEIVABLE, debit: 5000, credit: 0 }] },
+        { id: 'je-4', date: '2026-03-20', lines: [{ accountCode: CANONICAL_ACCOUNTS.ACCOUNTS_RECEIVABLE, debit: 0, credit: 4000 }] }
+      ]
+    }
+  };
+  // As of 2026-03-10 (before s-2 and pmt-2)
+  const arRecBefore = await reconcileCustomerBalances(mockDbARWithPayments, undefined, '2026-03-10');
+  console.assert(arRecBefore.operationalAmount === 7000, `AR op as of 2026-03-10 should be 7000, got ${arRecBefore.operationalAmount}`);
+  console.assert(arRecBefore.glAmount === 7000, `AR GL as of 2026-03-10 should be 7000, got ${arRecBefore.glAmount}`);
+  console.assert(arRecBefore.isMatched === true, 'AR should match as of 2026-03-10');
+
+  // As of 2026-03-15 (after s-2, before pmt-2)
+  const arRecWithPmts = await reconcileCustomerBalances(mockDbARWithPayments, undefined, '2026-03-15');
+  console.assert(arRecWithPmts.operationalAmount === 12000, `AR operational as of 2026-03-15 should be 12000, got ${arRecWithPmts.operationalAmount}`);
+  console.assert(arRecWithPmts.glAmount === 12000, `AR GL as of 2026-03-15 should be 12000, got ${arRecWithPmts.glAmount}`);
+  console.assert(arRecWithPmts.isMatched === true, 'AR should match as of 2026-03-15');
+  console.log('✓ Check 2b (Customer Balances with post-date partial payments) correctly reconciles');
+
   // 5. Test AP (Supplier Balances) as of date
   const mockDbAP = {
     parties: {
@@ -188,6 +242,85 @@ async function testAsOfDateReconciliation() {
   console.assert(apRecAsOf.glAmount === 4000, `AP GL as of ${asOfDate} should be 4000, got ${apRecAsOf.glAmount}`);
   console.assert(apRecAsOf.isMatched === true, `AP should match as of ${asOfDate}`);
   console.log('✓ Check 3 (Supplier Balances / AP) correctly reconciles as-of date');
+
+  // 5b. Test AP with post-date payments and Aging report agreement
+  const mockDbAPWithPayments = {
+    parties: {
+      toArray: async () => [
+        // Sup-1 had 20,000 on 2026-03-01. Paid 5,000 on 2026-03-05 -> bal as of 2026-03-10 = 15,000.
+        // On 2026-03-15 purchased 10,000 (bal as of 2026-03-15 = 25,000). On 2026-03-20 paid 8,000 (bal as of 2026-03-25 = 17,000).
+        { id: 'sup-1', name: 'Agro Supplies', type: 'SUPPLIER', balance: 17000 }
+      ]
+    },
+    purchases: {
+      toArray: async () => [
+        { id: 'p-1', supplierId: 'sup-1', date: '2026-03-01', paymentMethod: 'CREDIT', totalAmount: 20000, paidAmount: 5000, dueAmount: 15000 },
+        { id: 'p-2', supplierId: 'sup-1', date: '2026-03-15', paymentMethod: 'CREDIT', totalAmount: 10000, paidAmount: 8000, dueAmount: 2000 }
+      ]
+    },
+    payments: {
+      toArray: async () => [
+        { id: 'pmt-p1', parentId: 'p-1', parentType: 'PURCHASE', supplierId: 'sup-1', date: '2026-03-05', amount: 5000 },
+        { id: 'pmt-p2', parentId: 'p-2', parentType: 'PURCHASE', supplierId: 'sup-1', date: '2026-03-20', amount: 8000 }
+      ]
+    },
+    journalEntries: {
+      toArray: async () => [
+        { id: 'je-p1', date: '2026-03-01', lines: [{ accountCode: CANONICAL_ACCOUNTS.ACCOUNTS_PAYABLE, debit: 0, credit: 20000 }] },
+        { id: 'je-p2', date: '2026-03-05', lines: [{ accountCode: CANONICAL_ACCOUNTS.ACCOUNTS_PAYABLE, debit: 5000, credit: 0 }] },
+        { id: 'je-p3', date: '2026-03-15', lines: [{ accountCode: CANONICAL_ACCOUNTS.ACCOUNTS_PAYABLE, debit: 0, credit: 10000 }] },
+        { id: 'je-p4', date: '2026-03-20', lines: [{ accountCode: CANONICAL_ACCOUNTS.ACCOUNTS_PAYABLE, debit: 8000, credit: 0 }] }
+      ]
+    }
+  };
+  // As of 2026-03-10
+  const apRecBefore = await reconcileSupplierBalances(mockDbAPWithPayments, undefined, '2026-03-10');
+  console.assert(apRecBefore.operationalAmount === 15000, `AP op as of 2026-03-10 should be 15000, got ${apRecBefore.operationalAmount}`);
+  console.assert(apRecBefore.glAmount === 15000, `AP GL as of 2026-03-10 should be 15000, got ${apRecBefore.glAmount}`);
+  console.assert(apRecBefore.isMatched === true, 'AP should match as of 2026-03-10');
+
+  // As of 2026-03-15
+  const apRecWithPmts = await reconcileSupplierBalances(mockDbAPWithPayments, undefined, '2026-03-15');
+  console.assert(apRecWithPmts.operationalAmount === 25000, `AP op as of 2026-03-15 should be 25000, got ${apRecWithPmts.operationalAmount}`);
+  console.assert(apRecWithPmts.glAmount === 25000, `AP GL as of 2026-03-15 should be 25000, got ${apRecWithPmts.glAmount}`);
+  console.assert(apRecWithPmts.isMatched === true, 'AP should match as of 2026-03-15');
+  console.log('✓ Check 3b (Supplier Balances with post-date partial payments) correctly reconciles');
+
+  // 5c. Test Aging Report (AR/AP report) agreement with GL and Subledger
+  const { generateAgingReport } = await import('../accounting/reconciliationService');
+  const combinedMockDb = {
+    sales: mockDbARWithPayments.sales,
+    purchases: mockDbAPWithPayments.purchases,
+    payments: {
+      toArray: async () => [
+        ...(await mockDbARWithPayments.payments.toArray()),
+        ...(await mockDbAPWithPayments.payments.toArray())
+      ]
+    },
+    parties: {
+      toArray: async () => [
+        ...(await mockDbARWithPayments.parties.toArray()),
+        ...(await mockDbAPWithPayments.parties.toArray())
+      ]
+    },
+    journalEntries: {
+      toArray: async () => [
+        ...(await mockDbARWithPayments.journalEntries.toArray()),
+        ...(await mockDbAPWithPayments.journalEntries.toArray())
+      ]
+    }
+  };
+  const agingReportAsOf = await generateAgingReport(combinedMockDb, '2026-03-10');
+  console.assert(agingReportAsOf.totalReceivables === 7000, `Aging AR should be 7000, got ${agingReportAsOf.totalReceivables}`);
+  console.assert(agingReportAsOf.glReceivables === 7000, `Aging GL AR should be 7000, got ${agingReportAsOf.glReceivables}`);
+  console.assert(agingReportAsOf.subledgerReceivables === 7000, `Aging Subledger AR should be 7000, got ${agingReportAsOf.subledgerReceivables}`);
+  console.assert(agingReportAsOf.isReceivablesMatched === true, 'Aging AR must agree with GL and subledger');
+
+  console.assert(agingReportAsOf.totalPayables === 15000, `Aging AP should be 15000, got ${agingReportAsOf.totalPayables}`);
+  console.assert(agingReportAsOf.glPayables === 15000, `Aging GL AP should be 15000, got ${agingReportAsOf.glPayables}`);
+  console.assert(agingReportAsOf.subledgerPayables === 15000, `Aging Subledger AP should be 15000, got ${agingReportAsOf.subledgerPayables}`);
+  console.assert(agingReportAsOf.isPayablesMatched === true, 'Aging AP must agree with GL and subledger');
+  console.log('✓ AR and AP report balances strictly agree with corresponding GL and subledger balances as of the same date');
 
   // 6. Test Fixed Assets & Accumulated Depreciation as of date
   const mockDbAssets = {

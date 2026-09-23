@@ -130,17 +130,34 @@ export function calculateHistoricalInventoryValuation(
   item: InventoryItem,
   movements: StockMovement[],
   asOfDate?: string
-): { quantity: number; unitCost: number; totalValue: number } {
+): {
+  quantity: number;
+  unitCost: number;
+  totalValue: number;
+  stockMovementQuantity: number;
+  recordQuantity: number;
+  stockMovementValue: number;
+  recordValue: number;
+  isQuantityMatched: boolean;
+  isValueMatched: boolean;
+} {
   const currentStock = Math.max(0, Number(item.currentStock) || 0);
   const currentAvgCost = Math.max(0, Number(item.avgCostPrice) || Number((item as any).costPrice) || 0);
+  const recordCurrentVal = round2(currentStock * currentAvgCost);
 
   // When asOfDate is not specified, preserve current weighted-average behavior
   if (!asOfDate) {
-    const totalVal = round2(currentStock * currentAvgCost);
+    const totalVal = recordCurrentVal;
     return {
       quantity: currentStock,
       unitCost: currentAvgCost,
-      totalValue: totalVal
+      totalValue: totalVal,
+      stockMovementQuantity: currentStock,
+      recordQuantity: currentStock,
+      stockMovementValue: totalVal,
+      recordValue: totalVal,
+      isQuantityMatched: true,
+      isValueMatched: true
     };
   }
 
@@ -149,19 +166,36 @@ export function calculateHistoricalInventoryValuation(
 
   // If item was created after asOfDate, it did not exist yet
   const createdAfter = Boolean(
-    (item as any).createdAt && String((item as any).createdAt).slice(0, 10) > cleanAsOf
+    ((item as any).createdAt && String((item as any).createdAt).slice(0, 10) > cleanAsOf) ||
+    ((item as any).date && String((item as any).date).slice(0, 10) > cleanAsOf)
   );
   if (createdAfter) {
-    return { quantity: 0, unitCost: 0, totalValue: 0 };
+    return {
+      quantity: 0,
+      unitCost: 0,
+      totalValue: 0,
+      stockMovementQuantity: 0,
+      recordQuantity: 0,
+      stockMovementValue: 0,
+      recordValue: 0,
+      isQuantityMatched: true,
+      isValueMatched: true
+    };
   }
 
   // If there are no movements recorded for this item
   if (itemMovements.length === 0) {
-    const totalVal = round2(currentStock * currentAvgCost);
+    const totalVal = recordCurrentVal;
     return {
       quantity: currentStock,
       unitCost: currentAvgCost,
-      totalValue: totalVal
+      totalValue: totalVal,
+      stockMovementQuantity: currentStock,
+      recordQuantity: currentStock,
+      stockMovementValue: totalVal,
+      recordValue: totalVal,
+      isQuantityMatched: true,
+      isValueMatched: true
     };
   }
 
@@ -213,20 +247,65 @@ export function calculateHistoricalInventoryValuation(
   const untrackedBase = Math.max(0, currentStock - allMovementsNet);
   const baseStock = untrackedBase;
 
-  // Compute cost before later inflows (to avoid using today's average cost when later purchases occurred)
+  // Unwind post-date inflows and outflows to compute unwound record stock and cost
   let laterInflowQty = 0;
   let laterInflowCost = 0;
+  let laterOutflowQty = 0;
+  let laterOutflowCost = 0;
+
   for (const m of movementsAfterAsOf) {
     const type = String(m.movementType || '').toUpperCase();
-    if (type === 'PURCHASE' || type === 'PRODUCTION' || type === 'HARVEST' || type === 'OPENING') {
-      const mQty = Math.abs(Number(m.quantity) || 0);
-      const mCost = Number(m.totalValue) || (mQty * (Number(m.unitCost) || 0));
-      laterInflowQty += mQty;
-      laterInflowCost += mCost;
+    const mQty = Math.abs(Number(m.quantity) || 0);
+    const mUnitCost = Number(m.unitCost) || 0;
+    const mTotalVal = Number(m.totalValue) || round2(mQty * (mUnitCost || currentAvgCost));
+
+    const isInflow =
+      type === 'PURCHASE' ||
+      type === 'PRODUCTION' ||
+      type === 'HARVEST' ||
+      type === 'OPENING';
+    const isOutflow =
+      type === 'CONSUMPTION' ||
+      type === 'SALE' ||
+      type === 'WASTE' ||
+      type === 'DAMAGE';
+
+    if (isInflow) {
+      laterInflowQty = round2(laterInflowQty + mQty);
+      laterInflowCost = round2(laterInflowCost + mTotalVal);
+    } else if (isOutflow) {
+      laterOutflowQty = round2(laterOutflowQty + mQty);
+      laterOutflowCost = round2(laterOutflowCost + mTotalVal);
+    } else if (type === 'ADJUSTMENT') {
+      const isDecrease =
+        (m as any).adjustmentType === 'DECREASE' ||
+        Number(m.quantity) < 0 ||
+        (m.notes || '').includes('হ্রাস') ||
+        (m.notes || '').toLowerCase().includes('decrease') ||
+        (m.notes || '').toLowerCase().includes('loss') ||
+        (m.notes || '').toLowerCase().includes('damage');
+      if (isDecrease) {
+        laterOutflowQty = round2(laterOutflowQty + mQty);
+        laterOutflowCost = round2(laterOutflowCost + mTotalVal);
+      } else {
+        laterInflowQty = round2(laterInflowQty + mQty);
+        laterInflowCost = round2(laterInflowCost + mTotalVal);
+      }
+    } else if (type === 'TRANSFER') {
+      const delta = Number(m.quantity) || 0;
+      if (delta >= 0) {
+        laterInflowQty = round2(laterInflowQty + delta);
+        laterInflowCost = round2(laterInflowCost + mTotalVal);
+      } else {
+        laterOutflowQty = round2(laterOutflowQty + Math.abs(delta));
+        laterOutflowCost = round2(laterOutflowCost + mTotalVal);
+      }
     }
   }
-  const preLaterTotalCost = Math.max(0, (currentStock * currentAvgCost) - laterInflowCost);
-  const preLaterStock = Math.max(0, currentStock - laterInflowQty);
+
+  // Cost before later inflows/outflows
+  const preLaterTotalCost = Math.max(0, recordCurrentVal - laterInflowCost + laterOutflowCost);
+  const preLaterStock = Math.max(0, currentStock - laterInflowQty + laterOutflowQty);
   const costBeforeLaterInflows = preLaterStock > 0 ? (preLaterTotalCost / preLaterStock) : currentAvgCost;
 
   // Sort prior movements chronologically: date asc, then inflows before outflows, then id
@@ -288,16 +367,19 @@ export function calculateHistoricalInventoryValuation(
       type === 'DAMAGE';
 
     if (isInflow) {
-      const costAdded = mTotalVal > 0 ? mTotalVal : (mQty * (mUnitCost || runningAvgCost));
+      const costAdded = mTotalVal > 0 ? mTotalVal : round2(mQty * (mUnitCost || runningAvgCost));
       const newQty = round2(runningQty + mQty);
       const newTotalValue = round2(runningTotalValue + costAdded);
-      runningAvgCost = newQty > 0 ? round2(newTotalValue / newQty) : (mUnitCost || runningAvgCost);
+      runningAvgCost = newQty > 0 ? (newTotalValue / newQty) : (mUnitCost || runningAvgCost);
       runningQty = newQty;
       runningTotalValue = newTotalValue;
     } else if (isOutflow) {
+      const outflowCost = mTotalVal > 0 ? mTotalVal : round2(mQty * runningAvgCost);
       const newQty = Math.max(0, round2(runningQty - mQty));
-      runningTotalValue = newQty > 0 ? round2(newQty * runningAvgCost) : 0;
+      const newTotalValue = newQty > 0 ? Math.max(0, round2(runningTotalValue - outflowCost)) : 0;
+      runningAvgCost = newQty > 0 ? (newTotalValue / newQty) : runningAvgCost;
       runningQty = newQty;
+      runningTotalValue = newTotalValue;
     } else if (type === 'ADJUSTMENT') {
       const isDec =
         (m as any).adjustmentType === 'DECREASE' ||
@@ -308,42 +390,62 @@ export function calculateHistoricalInventoryValuation(
         (m.notes || '').toLowerCase().includes('damage');
 
       if (isDec) {
+        const outflowCost = mTotalVal > 0 ? mTotalVal : round2(mQty * runningAvgCost);
         const newQty = Math.max(0, round2(runningQty - mQty));
-        runningTotalValue = newQty > 0 ? round2(newQty * runningAvgCost) : 0;
+        const newTotalValue = newQty > 0 ? Math.max(0, round2(runningTotalValue - outflowCost)) : 0;
+        runningAvgCost = newQty > 0 ? (newTotalValue / newQty) : runningAvgCost;
         runningQty = newQty;
+        runningTotalValue = newTotalValue;
       } else {
-        const adjCost = mTotalVal > 0 ? mTotalVal : (mQty * (mUnitCost || runningAvgCost));
+        const adjCost = mTotalVal > 0 ? mTotalVal : round2(mQty * (mUnitCost || runningAvgCost));
         const newQty = round2(runningQty + mQty);
         const newTotalValue = round2(runningTotalValue + adjCost);
-        runningAvgCost = newQty > 0 ? round2(newTotalValue / newQty) : runningAvgCost;
+        runningAvgCost = newQty > 0 ? (newTotalValue / newQty) : runningAvgCost;
         runningQty = newQty;
         runningTotalValue = newTotalValue;
       }
     } else if (type === 'TRANSFER') {
       const delta = Number(m.quantity) || 0;
       if (delta >= 0) {
-        const addedVal = mTotalVal > 0 ? mTotalVal : (delta * (mUnitCost || runningAvgCost));
+        const addedVal = mTotalVal > 0 ? mTotalVal : round2(delta * (mUnitCost || runningAvgCost));
         const newQty = round2(runningQty + delta);
         const newTotalValue = round2(runningTotalValue + addedVal);
-        runningAvgCost = newQty > 0 ? round2(newTotalValue / newQty) : runningAvgCost;
+        runningAvgCost = newQty > 0 ? (newTotalValue / newQty) : runningAvgCost;
         runningQty = newQty;
         runningTotalValue = newTotalValue;
       } else {
+        const outflowCost = mTotalVal > 0 ? mTotalVal : round2(Math.abs(delta) * runningAvgCost);
         const newQty = Math.max(0, round2(runningQty + delta));
-        runningTotalValue = newQty > 0 ? round2(newQty * runningAvgCost) : 0;
+        const newTotalValue = newQty > 0 ? Math.max(0, round2(runningTotalValue - outflowCost)) : 0;
+        runningAvgCost = newQty > 0 ? (newTotalValue / newQty) : runningAvgCost;
         runningQty = newQty;
+        runningTotalValue = newTotalValue;
       }
     }
   }
 
-  const finalQty = Math.max(0, round2(runningQty));
-  const finalValue = Math.max(0, round2(runningTotalValue));
-  const finalUnitCost = finalQty > 0 ? round2(finalValue / finalQty) : round2(runningAvgCost);
+  const movementQty = Math.max(0, round2(runningQty));
+  const movementVal = Math.max(0, round2(runningTotalValue));
+
+  // Record unwinding
+  const recordQty = Math.max(0, round2(currentStock - laterInflowQty + laterOutflowQty));
+  const recordVal = Math.max(0, round2(recordCurrentVal - laterInflowCost + laterOutflowCost));
+
+  // Determine reconciled values
+  const finalQty = movementQty;
+  const finalValue = movementVal;
+  const finalUnitCost = finalQty > 0 ? round2(finalValue / finalQty) : (recordQty > 0 ? round2(recordVal / recordQty) : round2(runningAvgCost));
 
   return {
     quantity: finalQty,
     unitCost: finalUnitCost,
-    totalValue: finalValue
+    totalValue: finalValue,
+    stockMovementQuantity: movementQty,
+    recordQuantity: recordQty,
+    stockMovementValue: movementVal,
+    recordValue: recordVal,
+    isQuantityMatched: Math.abs(movementQty - recordQty) < 0.001,
+    isValueMatched: Math.abs(movementVal - recordVal) < 0.01
   };
 }
 
@@ -389,31 +491,55 @@ export async function reconcileInventorySubledger(
   const cleanAsOf = asOfDate ? asOfDate.slice(0, 10) : undefined;
 
   let totalOperational = 0;
-  const categoryBreakdown: Record<string, { name: string; opVal: number; glCode: string }> = {
-    '1051': { name: 'মজুদ খাদ্য (Feed Inventory - 1051)', opVal: 0, glCode: CANONICAL_ACCOUNTS.FEED_INVENTORY },
-    '1052': { name: 'মজুদ বীজ ও সার (Seed & Fert - 1052)', opVal: 0, glCode: CANONICAL_ACCOUNTS.SEED_FERT_INVENTORY },
-    '1053': { name: 'মজুদ কাঁচামাল ও ওষুধ (Raw Materials - 1053)', opVal: 0, glCode: CANONICAL_ACCOUNTS.RAW_MATERIALS },
-    '1055': { name: 'উৎপাদিত পণ্য মজুদ (Finished Goods - 1055)', opVal: 0, glCode: CANONICAL_ACCOUNTS.FINISHED_GOODS },
-    '1056': { name: 'প্যাকেজিং সামগ্রী (Packaging - 1056)', opVal: 0, glCode: CANONICAL_ACCOUNTS.PACKAGING_INVENTORY }
+  let totalStockMovementsQty = 0;
+  let totalInventoryRecordsQty = 0;
+  let allItemsQtyMatched = true;
+
+  const categoryBreakdown: Record<string, { name: string; opVal: number; glCode: string; qty: number }> = {
+    '1051': { name: 'মজুদ খাদ্য (Feed Inventory - 1051)', opVal: 0, glCode: CANONICAL_ACCOUNTS.FEED_INVENTORY, qty: 0 },
+    '1052': { name: 'মজুদ বীজ ও সার (Seed & Fert - 1052)', opVal: 0, glCode: CANONICAL_ACCOUNTS.SEED_FERT_INVENTORY, qty: 0 },
+    '1053': { name: 'মজুদ কাঁচামাল ও ওষুধ (Raw Materials - 1053)', opVal: 0, glCode: CANONICAL_ACCOUNTS.RAW_MATERIALS, qty: 0 },
+    '1055': { name: 'উৎপাদিত পণ্য মজুদ (Finished Goods - 1055)', opVal: 0, glCode: CANONICAL_ACCOUNTS.FINISHED_GOODS, qty: 0 },
+    '1056': { name: 'প্যাকেজিং সামগ্রী (Packaging - 1056)', opVal: 0, glCode: CANONICAL_ACCOUNTS.PACKAGING_INVENTORY, qty: 0 }
   };
+
+  const itemDetails: ReconciliationSubItem[] = [];
 
   for (const item of items) {
     const valuation = calculateHistoricalInventoryValuation(item, movements, cleanAsOf);
     const itemVal = valuation.totalValue;
+    const itemQty = valuation.quantity;
     totalOperational = round2(totalOperational + itemVal);
+    totalStockMovementsQty = round2(totalStockMovementsQty + valuation.stockMovementQuantity);
+    totalInventoryRecordsQty = round2(totalInventoryRecordsQty + valuation.recordQuantity);
+
+    if (!valuation.isQuantityMatched) {
+      allItemsQtyMatched = false;
+    }
 
     const cat = String(item.category || '').toUpperCase();
+    let catKey = '1055';
     if (cat.includes('FEED')) {
-      categoryBreakdown['1051'].opVal = round2(categoryBreakdown['1051'].opVal + itemVal);
+      catKey = '1051';
     } else if (cat.includes('SEED') || cat.includes('FERT')) {
-      categoryBreakdown['1052'].opVal = round2(categoryBreakdown['1052'].opVal + itemVal);
+      catKey = '1052';
     } else if (cat.includes('RAW') || cat.includes('MEDICINE')) {
-      categoryBreakdown['1053'].opVal = round2(categoryBreakdown['1053'].opVal + itemVal);
+      catKey = '1053';
     } else if (cat.includes('PACKAGING')) {
-      categoryBreakdown['1056'].opVal = round2(categoryBreakdown['1056'].opVal + itemVal);
-    } else {
-      categoryBreakdown['1055'].opVal = round2(categoryBreakdown['1055'].opVal + itemVal);
+      catKey = '1056';
     }
+
+    categoryBreakdown[catKey].opVal = round2(categoryBreakdown[catKey].opVal + itemVal);
+    categoryBreakdown[catKey].qty = round2(categoryBreakdown[catKey].qty + itemQty);
+
+    itemDetails.push({
+      id: `inv_item_${item.id}`,
+      name: `${item.nameBn || item.nameEn || item.id} (${item.code || ''})`,
+      operationalAmount: itemVal,
+      difference: valuation.isQuantityMatched ? 0 : round2(valuation.stockMovementQuantity - valuation.recordQuantity),
+      status: (valuation.isQuantityMatched && valuation.isValueMatched) ? 'MATCHED' : 'MISMATCH',
+      notes: `মজুদ: ${itemQty} ${item.unit || ''} (মুভমেন্ট: ${valuation.stockMovementQuantity}, রেকর্ড: ${valuation.recordQuantity}) | মূল্য: ৳${itemVal}`
+    });
   }
 
   const inventoryCodes = [
@@ -427,9 +553,9 @@ export async function reconcileInventorySubledger(
 
   const glAmount = calculateGlBalanceForAccounts(entries, inventoryCodes, 'DEBIT', asOfDate);
   const difference = round2(totalOperational - glAmount);
-  const isMatched = Math.abs(difference) < 0.01;
+  const isMatched = Math.abs(difference) < 0.01 && allItemsQtyMatched;
 
-  const details: ReconciliationSubItem[] = Object.entries(categoryBreakdown).map(([code, cat]) => {
+  const categoryDetails: ReconciliationSubItem[] = Object.entries(categoryBreakdown).map(([code, cat]) => {
     const catGl = calculateGlBalanceForAccounts(entries, [cat.glCode], 'DEBIT', asOfDate);
     const diff = round2(cat.opVal - catGl);
     return {
@@ -439,9 +565,11 @@ export async function reconcileInventorySubledger(
       glAmount: catGl,
       difference: diff,
       status: Math.abs(diff) < 0.01 ? 'MATCHED' : 'MISMATCH',
-      notes: `অপারেশনাল মজুদ মূল্য: ৳${cat.opVal}, জিএল ব্যালেন্স: ৳${catGl}`
+      notes: `অপারেশনাল মজুদ মূল্য: ৳${cat.opVal} (পরিমাণ: ${cat.qty}), জিএল ব্যালেন্স: ৳${catGl}`
     };
   });
+
+  const allDetails = [...categoryDetails, ...itemDetails];
 
   return {
     id: 'check_1_inventory',
@@ -457,9 +585,10 @@ export async function reconcileInventorySubledger(
     isMatched,
     status: isMatched ? 'MATCHED' : 'MISMATCH',
     notesBn: isMatched
-      ? 'ইনভেন্টরি সাবলেজারের মোট মজুদ মূল্য এবং সাধারণ খতিয়ান (GL) সম্পূর্ণ মিলেছে।'
-      : `ইনভেন্টরি সাবলেজারের মূল্য এবং GL ব্যালেন্সের মধ্যে ৳${Math.abs(difference)} এর অমিল পাওয়া গেছে।`,
-    details
+      ? 'ইনভেন্টরি সাবলেজারের মোট মজুদ পরিমাণ/মূল্য, স্টক মুভমেন্টস এবং সাধারণ খতিয়ান (GL) সম্পূর্ণ মিলেছে।'
+      : `ইনভেন্টরি সাবলেজার ও GL-এর মধ্যে ৳${Math.abs(difference)} এর অমিল পাওয়া গেছে।`,
+    details: allDetails,
+    subItems: allDetails
   };
 }
 
@@ -493,8 +622,9 @@ export async function reconcileCustomerBalances(
       );
       let postCreditSales = 0;
       for (const s of postSales) {
-        if (s.paymentMethod === 'CREDIT' || (s.dueAmount && s.dueAmount > 0)) {
-          postCreditSales += Number(s.dueAmount ?? s.totalAmount) || 0;
+        const isCredit = s.paymentMethod === 'CREDIT' || (s.dueAmount !== undefined && s.dueAmount > 0) || s.status === 'DUE' || s.status === 'PARTIAL';
+        if (isCredit) {
+          postCreditSales += Number(s.grandTotal ?? s.totalAmount ?? s.dueAmount) || 0;
         }
       }
 
@@ -502,7 +632,7 @@ export async function reconcileCustomerBalances(
       const postPayments = payments.filter((pmt) => {
         if (pmt.parentType !== 'SALE' || !pmt.date || String(pmt.date).slice(0, 10) <= cleanAsOf) return false;
         const s = sales.find((sale) => sale.id === pmt.parentId);
-        return s && s.customerId === c.id;
+        return pmt.customerId === c.id || pmt.partyId === c.id || (s && s.customerId === c.id);
       });
       const postPaymentsTotal = postPayments.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
 
@@ -576,8 +706,9 @@ export async function reconcileSupplierBalances(
       );
       let postCreditPurchases = 0;
       for (const p of postPurchases) {
-        if (p.paymentMethod === 'CREDIT' || (p.dueAmount && p.dueAmount > 0)) {
-          postCreditPurchases += Number(p.dueAmount ?? p.totalAmount) || 0;
+        const isCredit = p.paymentMethod === 'CREDIT' || (p.dueAmount !== undefined && p.dueAmount > 0) || p.status === 'DUE' || p.status === 'PARTIAL';
+        if (isCredit) {
+          postCreditPurchases += Number(p.grandTotal ?? p.totalAmount ?? p.dueAmount) || 0;
         }
       }
 
@@ -585,7 +716,7 @@ export async function reconcileSupplierBalances(
       const postPayments = payments.filter((pmt) => {
         if (pmt.parentType !== 'PURCHASE' || !pmt.date || String(pmt.date).slice(0, 10) <= cleanAsOf) return false;
         const pur = purchases.find((p) => p.id === pmt.parentId);
-        return pur && pur.supplierId === s.id;
+        return pmt.supplierId === s.id || pmt.partyId === s.id || (pur && pur.supplierId === s.id);
       });
       const postPaymentsTotal = postPayments.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
 
@@ -1428,5 +1559,368 @@ export async function runAccountingReconciliation(
     matchedCount,
     mismatchCount,
     isAllMatched: mismatchCount === 0
+  };
+}
+
+export interface AgingItem {
+  id: string;
+  invoiceNumber: string;
+  partyName: string;
+  date: string;
+  totalAmount: number;
+  paidAmount: number;
+  dueAmount: number;
+  daysOverdue: number;
+}
+
+export interface AgingReportResult {
+  asOfDate: string;
+  receivables: AgingItem[];
+  payables: AgingItem[];
+  totalReceivables: number;
+  totalPayables: number;
+  glReceivables: number;
+  glPayables: number;
+  subledgerReceivables: number;
+  subledgerPayables: number;
+  isReceivablesMatched: boolean;
+  isPayablesMatched: boolean;
+}
+
+/**
+ * Generates receivables and payables aging report as of a specific date,
+ * guaranteed to agree with AR and AP GL accounts and party subledgers as of the same date.
+ */
+export async function generateAgingReport(
+  dbInstance: any = db,
+  asOfDate?: string
+): Promise<AgingReportResult> {
+  const cleanAsOf = asOfDate ? String(asOfDate).slice(0, 10) : undefined;
+  const [sales, purchases, payments, entries]: [Sale[], Purchase[], PaymentRecord[], JournalEntry[]] = await Promise.all([
+    dbInstance.sales ? dbInstance.sales.toArray() : [],
+    dbInstance.purchases ? dbInstance.purchases.toArray() : [],
+    dbInstance.payments ? dbInstance.payments.toArray() : [],
+    dbInstance.journalEntries ? dbInstance.journalEntries.toArray() : []
+  ]);
+
+  // Aggregate payments by parentId on or before cleanAsOf
+  const paymentsByParent = new Map<string, number>();
+  for (const pmt of payments) {
+    if (cleanAsOf && pmt.date && String(pmt.date).slice(0, 10) > cleanAsOf) {
+      continue;
+    }
+    const prev = paymentsByParent.get(pmt.parentId) || 0;
+    paymentsByParent.set(pmt.parentId, prev + (Number(pmt.amount) || 0));
+  }
+
+  const refDate = cleanAsOf ? new Date(cleanAsOf) : new Date();
+  refDate.setHours(0, 0, 0, 0);
+
+  const calcDaysOverdue = (dateStr: string): number => {
+    if (!dateStr) return 0;
+    const invDate = new Date(dateStr);
+    invDate.setHours(0, 0, 0, 0);
+    const diffMs = refDate.getTime() - invDate.getTime();
+    const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+    return Math.max(0, diffDays);
+  };
+
+  const rec: AgingItem[] = [];
+  const custSalesDueMap = new Map<string, number>();
+  for (const s of sales) {
+    if (cleanAsOf && s.date && String(s.date).slice(0, 10) > cleanAsOf) {
+      continue;
+    }
+    const isCredit = s.paymentMethod === 'CREDIT' || (s.dueAmount !== undefined && s.dueAmount > 0) || s.status === 'DUE' || s.status === 'PARTIAL';
+    if (!isCredit) {
+      continue;
+    }
+
+    const total = Number(s.grandTotal ?? s.totalAmount ?? s.dueAmount ?? 0);
+    const pmtSum = paymentsByParent.get(s.id);
+    const paid = pmtSum !== undefined ? pmtSum : (payments.length === 0 ? Number(s.paidAmount || 0) : 0);
+    const due = Math.max(0, round2(total - paid));
+
+    if (due > 0) {
+      rec.push({
+        id: s.id,
+        invoiceNumber: s.invoiceNumber || s.id,
+        partyName: s.customerName || 'গ্রাহক',
+        date: s.date || '',
+        totalAmount: total,
+        paidAmount: paid,
+        dueAmount: due,
+        daysOverdue: calcDaysOverdue(s.date)
+      });
+      if (s.customerId) {
+        custSalesDueMap.set(s.customerId, round2((custSalesDueMap.get(s.customerId) || 0) + due));
+      }
+    }
+  }
+
+  const pay: AgingItem[] = [];
+  const supPurchDueMap = new Map<string, number>();
+  for (const p of purchases) {
+    if (cleanAsOf && p.date && String(p.date).slice(0, 10) > cleanAsOf) {
+      continue;
+    }
+    const isCredit = p.paymentMethod === 'CREDIT' || (p.dueAmount !== undefined && p.dueAmount > 0) || p.status === 'DUE' || p.status === 'PARTIAL';
+    if (!isCredit) {
+      continue;
+    }
+
+    const total = Number(p.grandTotal ?? p.totalAmount ?? p.dueAmount ?? 0);
+    const pmtSum = paymentsByParent.get(p.id);
+    const paid = pmtSum !== undefined ? pmtSum : (payments.length === 0 ? Number(p.paidAmount || 0) : 0);
+    const due = Math.max(0, round2(total - paid));
+
+    if (due > 0) {
+      pay.push({
+        id: p.id,
+        invoiceNumber: p.invoiceNumber || p.id,
+        partyName: p.supplierName || 'সরবরাহকারী',
+        date: p.date || '',
+        totalAmount: total,
+        paidAmount: paid,
+        dueAmount: due,
+        daysOverdue: calcDaysOverdue(p.date)
+      });
+      if (p.supplierId) {
+        supPurchDueMap.set(p.supplierId, round2((supPurchDueMap.get(p.supplierId) || 0) + due));
+      }
+    }
+  }
+
+  // Subledger reconciliations
+  const custRecon = await reconcileCustomerBalances(dbInstance, entries, asOfDate);
+  const suppRecon = await reconcileSupplierBalances(dbInstance, entries, asOfDate);
+
+  // If customer has subledger balance from opening balance not covered by sales invoices, add opening item
+  for (const cDetail of custRecon.details || []) {
+    const fromSales = custSalesDueMap.get(cDetail.id) || 0;
+    const diff = round2(cDetail.operationalAmount - fromSales);
+    if (diff > 0.01) {
+      rec.push({
+        id: `opening_${cDetail.id}`,
+        invoiceNumber: `OPENING-${cDetail.id.slice(-6)}`,
+        partyName: cDetail.name || 'গ্রাহক',
+        date: cleanAsOf || '',
+        totalAmount: diff,
+        paidAmount: 0,
+        dueAmount: diff,
+        daysOverdue: 0
+      });
+    }
+  }
+
+  // If supplier has subledger balance from opening balance not covered by purchase invoices, add opening item
+  for (const sDetail of suppRecon.details || []) {
+    const fromPurch = supPurchDueMap.get(sDetail.id) || 0;
+    const diff = round2(sDetail.operationalAmount - fromPurch);
+    if (diff > 0.01) {
+      pay.push({
+        id: `opening_${sDetail.id}`,
+        invoiceNumber: `OPENING-${sDetail.id.slice(-6)}`,
+        partyName: sDetail.name || 'সরবরাহকারী',
+        date: cleanAsOf || '',
+        totalAmount: diff,
+        paidAmount: 0,
+        dueAmount: diff,
+        daysOverdue: 0
+      });
+    }
+  }
+
+  rec.sort((a, b) => b.daysOverdue - a.daysOverdue);
+  pay.sort((a, b) => b.daysOverdue - a.daysOverdue);
+
+  const totalReceivables = round2(rec.reduce((sum, item) => sum + item.dueAmount, 0));
+  const totalPayables = round2(pay.reduce((sum, item) => sum + item.dueAmount, 0));
+
+  return {
+    asOfDate: cleanAsOf || new Date().toISOString().slice(0, 10),
+    receivables: rec,
+    payables: pay,
+    totalReceivables,
+    totalPayables,
+    glReceivables: custRecon.glAmount,
+    glPayables: suppRecon.glAmount,
+    subledgerReceivables: custRecon.operationalAmount,
+    subledgerPayables: suppRecon.operationalAmount,
+    isReceivablesMatched: Math.abs(round2(totalReceivables - custRecon.glAmount)) < 0.01,
+    isPayablesMatched: Math.abs(round2(totalPayables - suppRecon.glAmount)) < 0.01
+  };
+}
+
+export interface InventoryReportItem {
+  id: string;
+  code: string;
+  name: string;
+  category: string;
+  categoryName?: string;
+  accountCode: string;
+  unit: string;
+  unitCost: number;
+  quantity: number; // reconciled quantity as of asOfDate
+  stockMovementQuantity: number; // quantity from stock movements as of asOfDate
+  recordQuantity: number; // quantity from unwound inventory record as of asOfDate
+  value: number; // reconciled value as of asOfDate
+  stockMovementValue: number; // value from stock movements as of asOfDate
+  recordValue: number; // value from unwound inventory record as of asOfDate
+  isQuantityMatched: boolean;
+  isValueMatched: boolean;
+  isMatched: boolean;
+}
+
+export interface InventoryReportResult {
+  asOfDate: string;
+  items: InventoryReportItem[];
+  totalQuantity: number;
+  totalValue: number;
+  operationalAmount: number;
+  glAmount: number;
+  glValue: number;
+  difference: number;
+  isMatched: boolean;
+  isGlMatched: boolean;
+  isQuantityMatched: boolean;
+  isAllMatched: boolean;
+  categoryBreakdown: Record<string, {
+    accountCode: string;
+    name: string;
+    quantity: number;
+    operationalAmount: number;
+    glAmount: number;
+    difference: number;
+    isMatched: boolean;
+  }>;
+}
+
+/**
+ * Generates an Inventory Valuation & Reconciliation Report as of a specific date.
+ * Reconciles inventory quantity and value across:
+ * 1. stock movements
+ * 2. inventory records
+ * 3. corresponding GL balance
+ * strictly using the exact same asOfDate.
+ */
+export async function generateInventoryReport(
+  dbInstance: any = db,
+  asOfDate?: string
+): Promise<InventoryReportResult> {
+  const cleanAsOf = asOfDate ? asOfDate.slice(0, 10) : undefined;
+  const items: InventoryItem[] = await dbInstance.inventoryItems.toArray();
+  const entries: JournalEntry[] = await dbInstance.journalEntries.toArray();
+  const movements: StockMovement[] = dbInstance.stockMovements ? await dbInstance.stockMovements.toArray() : [];
+
+  const inventoryCodes = [
+    CANONICAL_ACCOUNTS.FEED_INVENTORY,
+    CANONICAL_ACCOUNTS.SEED_FERT_INVENTORY,
+    CANONICAL_ACCOUNTS.RAW_MATERIALS,
+    CANONICAL_ACCOUNTS.FINISHED_GOODS,
+    CANONICAL_ACCOUNTS.PACKAGING_INVENTORY,
+    '1050'
+  ];
+
+  const categoryBreakdown: Record<string, {
+    accountCode: string;
+    name: string;
+    quantity: number;
+    operationalAmount: number;
+    glAmount: number;
+    difference: number;
+    isMatched: boolean;
+  }> = {
+    '1051': { accountCode: CANONICAL_ACCOUNTS.FEED_INVENTORY, name: 'মজুদ খাদ্য (Feed Inventory)', quantity: 0, operationalAmount: 0, glAmount: 0, difference: 0, isMatched: true },
+    '1052': { accountCode: CANONICAL_ACCOUNTS.SEED_FERT_INVENTORY, name: 'মজুদ বীজ ও সার (Seed & Fert)', quantity: 0, operationalAmount: 0, glAmount: 0, difference: 0, isMatched: true },
+    '1053': { accountCode: CANONICAL_ACCOUNTS.RAW_MATERIALS, name: 'মজুদ কাঁচামাল ও ওষুধ (Raw Materials)', quantity: 0, operationalAmount: 0, glAmount: 0, difference: 0, isMatched: true },
+    '1055': { accountCode: CANONICAL_ACCOUNTS.FINISHED_GOODS, name: 'উৎপাদিত পণ্য মজুদ (Finished Goods)', quantity: 0, operationalAmount: 0, glAmount: 0, difference: 0, isMatched: true },
+    '1056': { accountCode: CANONICAL_ACCOUNTS.PACKAGING_INVENTORY, name: 'প্যাকেজিং সামগ্রী (Packaging)', quantity: 0, operationalAmount: 0, glAmount: 0, difference: 0, isMatched: true }
+  };
+
+  const reportItems: InventoryReportItem[] = [];
+  let totalQuantity = 0;
+  let totalValue = 0;
+  let allItemsQuantityMatched = true;
+
+  for (const item of items) {
+    const valuation = calculateHistoricalInventoryValuation(item, movements, cleanAsOf);
+    const itemQty = valuation.quantity;
+    const itemVal = valuation.totalValue;
+
+    totalQuantity = round2(totalQuantity + itemQty);
+    totalValue = round2(totalValue + itemVal);
+
+    if (!valuation.isQuantityMatched) {
+      allItemsQuantityMatched = false;
+    }
+
+    const cat = String(item.category || '').toUpperCase();
+    let catKey = '1055';
+    let accountCode: string = CANONICAL_ACCOUNTS.FINISHED_GOODS;
+    if (cat.includes('FEED')) {
+      catKey = '1051';
+      accountCode = CANONICAL_ACCOUNTS.FEED_INVENTORY;
+    } else if (cat.includes('SEED') || cat.includes('FERT')) {
+      catKey = '1052';
+      accountCode = CANONICAL_ACCOUNTS.SEED_FERT_INVENTORY;
+    } else if (cat.includes('RAW') || cat.includes('MEDICINE')) {
+      catKey = '1053';
+      accountCode = CANONICAL_ACCOUNTS.RAW_MATERIALS;
+    } else if (cat.includes('PACKAGING')) {
+      catKey = '1056';
+      accountCode = CANONICAL_ACCOUNTS.PACKAGING_INVENTORY;
+    }
+
+    categoryBreakdown[catKey].quantity = round2(categoryBreakdown[catKey].quantity + itemQty);
+    categoryBreakdown[catKey].operationalAmount = round2(categoryBreakdown[catKey].operationalAmount + itemVal);
+
+    reportItems.push({
+      id: item.id,
+      code: item.code || '',
+      name: item.nameBn || item.nameEn || item.id,
+      category: item.category,
+      categoryName: categoryBreakdown[catKey].name,
+      accountCode,
+      unit: item.unit || '',
+      unitCost: valuation.unitCost,
+      quantity: itemQty,
+      stockMovementQuantity: valuation.stockMovementQuantity,
+      recordQuantity: valuation.recordQuantity,
+      value: itemVal,
+      stockMovementValue: valuation.stockMovementValue,
+      recordValue: valuation.recordValue,
+      isQuantityMatched: valuation.isQuantityMatched,
+      isValueMatched: valuation.isValueMatched,
+      isMatched: valuation.isQuantityMatched && valuation.isValueMatched
+    });
+  }
+
+  // Calculate GL amounts for each category
+  for (const [key, cat] of Object.entries(categoryBreakdown)) {
+    cat.glAmount = calculateGlBalanceForAccounts(entries, [cat.accountCode], 'DEBIT', cleanAsOf);
+    cat.difference = round2(cat.operationalAmount - cat.glAmount);
+    cat.isMatched = Math.abs(cat.difference) < 0.01;
+  }
+
+  const glAmount = calculateGlBalanceForAccounts(entries, inventoryCodes, 'DEBIT', cleanAsOf);
+  const difference = round2(totalValue - glAmount);
+  const isGlMatched = Math.abs(difference) < 0.01;
+  const isAllMatched = isGlMatched && allItemsQuantityMatched;
+
+  return {
+    asOfDate: cleanAsOf || new Date().toISOString().slice(0, 10),
+    items: reportItems,
+    totalQuantity,
+    totalValue,
+    operationalAmount: totalValue,
+    glAmount,
+    glValue: glAmount,
+    difference,
+    isMatched: isAllMatched,
+    isGlMatched,
+    isQuantityMatched: allItemsQuantityMatched,
+    isAllMatched,
+    categoryBreakdown
   };
 }

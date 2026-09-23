@@ -41,7 +41,9 @@ import {
 import {
   FullReconciliationReport,
   ReconciliationCheck,
-  runAccountingReconciliation
+  runAccountingReconciliation,
+  generateAgingReport,
+  AgingReportResult
 } from '../accounting/reconciliationService';
 import {
   BalanceSheetReport,
@@ -435,6 +437,7 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
   const [agingSubTab, setAgingSubTab] = useState<'receivables' | 'payables'>('receivables');
   const [receivablesList, setReceivablesList] = useState<AgingItem[]>([]);
   const [payablesList, setPayablesList] = useState<AgingItem[]>([]);
+  const [agingReconInfo, setAgingReconInfo] = useState<AgingReportResult | null>(null);
   const [agingSearchQuery, setAgingSearchQuery] = useState<string>('');
   const [agingBucketFilter, setAgingBucketFilter] = useState<'ALL' | AgingBucketKey>('ALL');
 
@@ -798,80 +801,12 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
     setCropRows(rows);
   };
 
-  const loadAgingReport = async () => {
-    const [sales, purchases, payments] = await Promise.all([
-      db.sales.toArray(),
-      db.purchases.toArray(),
-      db.payments.toArray()
-    ]);
-
-    // Aggregate payments by parentId from Tier 2 payment log
-    const paymentsByParent = new Map<string, number>();
-    for (const pmt of payments) {
-      const prev = paymentsByParent.get(pmt.parentId) || 0;
-      paymentsByParent.set(pmt.parentId, prev + (Number(pmt.amount) || 0));
-    }
-
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-
-    const calcDaysOverdue = (dateStr: string): number => {
-      if (!dateStr) return 0;
-      const invDate = new Date(dateStr);
-      invDate.setHours(0, 0, 0, 0);
-      const diffMs = today.getTime() - invDate.getTime();
-      const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-      return Math.max(0, diffDays);
-    };
-
-    const rec: AgingItem[] = [];
-    for (const s of sales) {
-      const total = Number(s.grandTotal || s.totalAmount || 0);
-      const pmtSum = paymentsByParent.get(s.id);
-      const paid = pmtSum !== undefined ? pmtSum : Number(s.paidAmount || 0);
-      const due = Math.max(0, total - paid);
-
-      if (due > 0) {
-        rec.push({
-          id: s.id,
-          invoiceNumber: s.invoiceNumber || s.id,
-          partyName: s.customerName || 'গ্রাহক',
-          date: s.date || '',
-          totalAmount: total,
-          paidAmount: paid,
-          dueAmount: due,
-          daysOverdue: calcDaysOverdue(s.date)
-        });
-      }
-    }
-
-    const pay: AgingItem[] = [];
-    for (const p of purchases) {
-      const total = Number(p.grandTotal || p.totalAmount || 0);
-      const pmtSum = paymentsByParent.get(p.id);
-      const paid = pmtSum !== undefined ? pmtSum : Number(p.paidAmount || 0);
-      const due = Math.max(0, total - paid);
-
-      if (due > 0) {
-        pay.push({
-          id: p.id,
-          invoiceNumber: p.invoiceNumber || p.id,
-          partyName: p.supplierName || 'সরবরাহকারী',
-          date: p.date || '',
-          totalAmount: total,
-          paidAmount: paid,
-          dueAmount: due,
-          daysOverdue: calcDaysOverdue(p.date)
-        });
-      }
-    }
-
-    // Sort with oldest/most overdue at top of each list
-    rec.sort((a, b) => b.daysOverdue - a.daysOverdue);
-    pay.sort((a, b) => b.daysOverdue - a.daysOverdue);
-
-    setReceivablesList(rec);
-    setPayablesList(pay);
+  const loadAgingReport = async (overrideDate?: string) => {
+    const targetDate = overrideDate || endDate || new Date().toISOString().split('T')[0];
+    const result = await generateAgingReport(db, targetDate);
+    setReceivablesList(result.receivables);
+    setPayablesList(result.payables);
+    setAgingReconInfo(result);
   };
 
   const loadCashFlowReport = async () => {
@@ -1159,7 +1094,7 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
       } else if (activeReport === 'cropProfitability') {
         await loadCropProfitability();
       } else if (activeReport === 'aging') {
-        await loadAgingReport();
+        await loadAgingReport(endDate);
       } else if (activeReport === 'cashFlow') {
         await loadCashFlowReport();
       } else if (activeReport === 'vatSummary') {
@@ -2159,8 +2094,8 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
         </button>
       </div>
 
-      {/* Date Range Control (Visible for Financial Reports: pl, balanceSheet, trialBalance, animalProfitability, vatSummary, reconciliation) */}
-      {activeReport !== 'backup' && activeReport !== 'aging' && activeReport !== 'yoyComparison' && (
+      {/* Date Range Control (Visible for Financial Reports: pl, balanceSheet, trialBalance, animalProfitability, vatSummary, reconciliation, aging) */}
+      {activeReport !== 'backup' && activeReport !== 'yoyComparison' && (
         <div className="p-4 rounded-2xl bg-white border border-gray-200 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-3">
           <div className="flex items-center gap-2.5">
             <div className="w-9 h-9 rounded-xl bg-teal-50 text-teal-700 border border-teal-100 flex items-center justify-center shrink-0">
@@ -4199,6 +4134,31 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
                 </div>
               );
             })()}
+
+            {/* Reconciliation agreement banner */}
+            {agingReconInfo && (
+              <div className={`p-3 rounded-xl border flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs font-semibold ${
+                (agingSubTab === 'receivables' ? agingReconInfo.isReceivablesMatched : agingReconInfo.isPayablesMatched)
+                  ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                  : 'bg-amber-50 text-amber-800 border-amber-200'
+              }`}>
+                <div className="flex items-center gap-2">
+                  <ShieldCheck className="w-4 h-4 shrink-0 text-emerald-600" />
+                  <span>
+                    {agingSubTab === 'receivables' ? 'AR রিকনসিলিয়েশন স্ট্যাটাস' : 'AP রিকনসিলিয়েশন স্ট্যাটাস'}: {
+                      (agingSubTab === 'receivables' ? agingReconInfo.isReceivablesMatched : agingReconInfo.isPayablesMatched)
+                        ? 'রিপোর্ট ব্যালেন্স, সাবলেজার ও GL নিখুঁতভাবে মিলেছে (MATCHED)'
+                        : 'ব্যালেন্সের মাঝে অমিল বিদ্যমান'
+                    }
+                  </span>
+                </div>
+                <div className="flex items-center gap-3 font-mono text-[11px]">
+                  <span>রিপোর্ট: {fmt(agingSubTab === 'receivables' ? agingReconInfo.totalReceivables : agingReconInfo.totalPayables)}</span>
+                  <span>সাবলেজার: {fmt(agingSubTab === 'receivables' ? agingReconInfo.subledgerReceivables : agingReconInfo.subledgerPayables)}</span>
+                  <span>GL: {fmt(agingSubTab === 'receivables' ? agingReconInfo.glReceivables : agingReconInfo.glPayables)}</span>
+                </div>
+              </div>
+            )}
 
             {/* Filter & Search Bar */}
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 pt-1">
