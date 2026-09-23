@@ -718,9 +718,10 @@ export async function restoreRemoteDataIfLocalEmpty(userEmail?: string): Promise
             await db.plots.bulkPut(c.plots.map((item: any) => ({ ...item, synced: true })));
             restoredCount += c.plots.length;
           }
-          if (Array.isArray(c.inventoryItems) && c.inventoryItems.length > 0) {
-            await db.inventoryItems.bulkPut(c.inventoryItems.map((item: any) => ({ ...item, synced: true })));
-            restoredCount += c.inventoryItems.length;
+          const invList = (Array.isArray(c.inventory) && c.inventory.length > 0) ? c.inventory : ((Array.isArray(c.inventoryItems) && c.inventoryItems.length > 0) ? c.inventoryItems : []);
+          if (invList.length > 0) {
+            await db.inventoryItems.bulkPut(invList.map((item: any) => ({ ...item, synced: true })));
+            restoredCount += invList.length;
           }
           if (Array.isArray(c.parties) && c.parties.length > 0) {
             await db.parties.bulkPut(c.parties.map((item: any) => ({ ...item, synced: true })));

@@ -335,6 +335,7 @@ export async function createFullJsonBackup(): Promise<string> {
     cropCycles: await db.cropCycles.toArray(),
     internalFlows: await db.internalFlows.toArray(),
     processingRuns: await db.processingRuns.toArray(),
+    inventory: await db.inventoryItems.toArray(),
     inventoryItems: await db.inventoryItems.toArray(),
     stockMovements: await db.stockMovements.toArray(),
     parties: await db.parties.toArray(),
@@ -453,9 +454,10 @@ export async function restoreFromJsonBackup(
           await db.processingRuns.clear();
           await db.processingRuns.bulkPut(data.processingRuns);
         }
-        if (data.inventoryItems?.length) {
+        const inventoryData = (data.inventory?.length ? data.inventory : undefined) || (data.inventoryItems?.length ? data.inventoryItems : undefined);
+        if (inventoryData?.length) {
           await db.inventoryItems.clear();
-          await db.inventoryItems.bulkPut(data.inventoryItems);
+          await db.inventoryItems.bulkPut(inventoryData);
         }
         if (data.stockMovements?.length) {
           await db.stockMovements.clear();
@@ -518,6 +520,15 @@ export async function restoreFromJsonBackup(
       message: 'ডাটাবেজ সফলভাবে রিস্টোর সম্পন্ন হয়েছে!',
       recordCounts: {
         journalEntries: data.journalEntries?.length || 0,
+        accounts: data.accounts?.length || 0,
+        stockMovements: data.stockMovements?.length || 0,
+        inventory: (data.inventory || data.inventoryItems)?.length || 0,
+        inventoryItems: (data.inventory || data.inventoryItems)?.length || 0,
+        cashBankAccounts: data.cashBankAccounts?.length || 0,
+        loans: data.loans?.length || 0,
+        investors: data.investors?.length || 0,
+        fixedAssets: data.fixedAssets?.length || 0,
+        closedPeriods: data.closedPeriods?.length || 0,
         animals: data.animals?.length || 0,
         fishBatches: data.fishBatches?.length || 0,
         cropCycles: data.cropCycles?.length || 0,
