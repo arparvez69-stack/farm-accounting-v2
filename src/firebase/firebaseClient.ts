@@ -366,6 +366,90 @@ export async function synchronizePendingData(): Promise<{ syncedCount: number; e
         errors.push(`Audit ${a.id}: ${err.message}`);
       }
     }
+
+    // 8. Sync Payments
+    const pendingPayments = await db.payments.filter((p) => !p.synced).toArray();
+    for (const p of pendingPayments) {
+      try {
+        await syncRecordToServer('payments', p);
+        await db.payments.update(p.id, { synced: true });
+        count++;
+      } catch (err: any) {
+        errors.push(`Payment ${p.id}: ${err.message}`);
+      }
+    }
+
+    // 9. Sync Inventory Items
+    const pendingInventory = await db.inventoryItems.filter((item) => !item.synced).toArray();
+    for (const item of pendingInventory) {
+      try {
+        await syncRecordToServer('inventoryItems', item);
+        await db.inventoryItems.update(item.id, { synced: true });
+        count++;
+      } catch (err: any) {
+        errors.push(`Inventory item ${item.id}: ${err.message}`);
+      }
+    }
+
+    // 10. Sync Stock Movements
+    const pendingStock = await db.stockMovements.filter((m) => !m.synced).toArray();
+    for (const sm of pendingStock) {
+      try {
+        await syncRecordToServer('stockMovements', sm);
+        await db.stockMovements.update(sm.id, { synced: true });
+        count++;
+      } catch (err: any) {
+        errors.push(`Stock movement ${sm.id}: ${err.message}`);
+      }
+    }
+
+    // 11. Sync Cash & Bank Accounts
+    const pendingAccounts = await db.cashBankAccounts.filter((acc) => !acc.synced).toArray();
+    for (const acc of pendingAccounts) {
+      try {
+        await syncRecordToServer('cashBankAccounts', acc);
+        await db.cashBankAccounts.update(acc.id, { synced: true });
+        count++;
+      } catch (err: any) {
+        errors.push(`Cash/Bank Account ${acc.id}: ${err.message}`);
+      }
+    }
+
+    // 12. Sync Loans
+    const pendingLoans = await db.loans.filter((loan) => !loan.synced).toArray();
+    for (const loan of pendingLoans) {
+      try {
+        await syncRecordToServer('loans', loan);
+        await db.loans.update(loan.id, { synced: true });
+        count++;
+      } catch (err: any) {
+        errors.push(`Loan ${loan.id}: ${err.message}`);
+      }
+    }
+
+    // 13. Sync Investors
+    const pendingInvestors = await db.investors.filter((inv) => !inv.synced).toArray();
+    for (const inv of pendingInvestors) {
+      try {
+        await syncRecordToServer('investors', inv);
+        await db.investors.update(inv.id, { synced: true });
+        count++;
+      } catch (err: any) {
+        errors.push(`Investor ${inv.id}: ${err.message}`);
+      }
+    }
+
+    // 14. Sync Fixed Assets
+    const pendingAssets = await db.fixedAssets.filter((asset) => !asset.synced).toArray();
+    for (const asset of pendingAssets) {
+      try {
+        await syncRecordToServer('fixedAssets', asset);
+        await db.fixedAssets.update(asset.id, { synced: true });
+        count++;
+      } catch (err: any) {
+        errors.push(`Fixed Asset ${asset.id}: ${err.message}`);
+      }
+    }
   } catch (globalErr: any) {
     errors.push(`Sync failed: ${globalErr.message}`);
   }
@@ -420,7 +504,14 @@ export function listenToOnlineSync(
       const pJournals = await db.journalEntries.filter((j) => j.synced === false).count();
       const pPurchases = await db.purchases.filter((p) => p.synced === false).count();
       const pSales = await db.sales.filter((s) => s.synced === false).count();
-      const total = pAnimals + pFish + pCrops + pJournals + pPurchases + pSales;
+      const pPayments = await db.payments.filter((p) => !p.synced).count();
+      const pInventory = await db.inventoryItems.filter((i) => !i.synced).count();
+      const pStock = await db.stockMovements.filter((m) => !m.synced).count();
+      const pAccounts = await db.cashBankAccounts.filter((a) => !a.synced).count();
+      const pLoans = await db.loans.filter((l) => !l.synced).count();
+      const pInvestors = await db.investors.filter((i) => !i.synced).count();
+      const pAssets = await db.fixedAssets.filter((fa) => !fa.synced).count();
+      const total = pAnimals + pFish + pCrops + pJournals + pPurchases + pSales + pPayments + pInventory + pStock + pAccounts + pLoans + pInvestors + pAssets;
       onPendingChange(total);
       if (!navigator.onLine) {
         onStateChange('OFFLINE');
@@ -628,6 +719,14 @@ export async function restoreRemoteDataIfLocalEmpty(userEmail?: string): Promise
             await db.reminders.bulkPut(c.reminders.map((item: any) => ({ ...item, synced: true })));
             restoredCount += c.reminders.length;
           }
+          if (Array.isArray(c.payments) && c.payments.length > 0) {
+            await db.payments.bulkPut(c.payments.map((item: any) => ({ ...item, synced: true })));
+            restoredCount += c.payments.length;
+          }
+          if (Array.isArray(c.stockMovements) && c.stockMovements.length > 0) {
+            await db.stockMovements.bulkPut(c.stockMovements.map((item: any) => ({ ...item, synced: true })));
+            restoredCount += c.stockMovements.length;
+          }
         }
       }
     } catch (serverErr) {
@@ -649,6 +748,55 @@ export async function restoreRemoteDataIfLocalEmpty(userEmail?: string): Promise
           const list: any[] = [];
           journalSnap.forEach((d) => list.push({ id: d.id, ...d.data(), synced: true }));
           await db.journalEntries.bulkPut(list);
+          restoredCount += list.length;
+        }
+        const paymentSnap = await getDocs(collection(firestore, 'payments'));
+        if (!paymentSnap.empty) {
+          const list: any[] = [];
+          paymentSnap.forEach((d) => list.push({ id: d.id, ...d.data(), synced: true }));
+          await db.payments.bulkPut(list);
+          restoredCount += list.length;
+        }
+        const invSnap = await getDocs(collection(firestore, 'inventoryItems'));
+        if (!invSnap.empty) {
+          const list: any[] = [];
+          invSnap.forEach((d) => list.push({ id: d.id, ...d.data(), synced: true }));
+          await db.inventoryItems.bulkPut(list);
+          restoredCount += list.length;
+        }
+        const smSnap = await getDocs(collection(firestore, 'stockMovements'));
+        if (!smSnap.empty) {
+          const list: any[] = [];
+          smSnap.forEach((d) => list.push({ id: d.id, ...d.data(), synced: true }));
+          await db.stockMovements.bulkPut(list);
+          restoredCount += list.length;
+        }
+        const cashSnap = await getDocs(collection(firestore, 'cashBankAccounts'));
+        if (!cashSnap.empty) {
+          const list: any[] = [];
+          cashSnap.forEach((d) => list.push({ id: d.id, ...d.data(), synced: true }));
+          await db.cashBankAccounts.bulkPut(list);
+          restoredCount += list.length;
+        }
+        const loanSnap = await getDocs(collection(firestore, 'loans'));
+        if (!loanSnap.empty) {
+          const list: any[] = [];
+          loanSnap.forEach((d) => list.push({ id: d.id, ...d.data(), synced: true }));
+          await db.loans.bulkPut(list);
+          restoredCount += list.length;
+        }
+        const investorSnap = await getDocs(collection(firestore, 'investors'));
+        if (!investorSnap.empty) {
+          const list: any[] = [];
+          investorSnap.forEach((d) => list.push({ id: d.id, ...d.data(), synced: true }));
+          await db.investors.bulkPut(list);
+          restoredCount += list.length;
+        }
+        const assetSnap = await getDocs(collection(firestore, 'fixedAssets'));
+        if (!assetSnap.empty) {
+          const list: any[] = [];
+          assetSnap.forEach((d) => list.push({ id: d.id, ...d.data(), synced: true }));
+          await db.fixedAssets.bulkPut(list);
           restoredCount += list.length;
         }
       } catch (fsErr) {

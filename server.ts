@@ -788,7 +788,9 @@ const ALLOWED_SYNC_COLLECTIONS = [
   'internalFlows',
   'processingRuns',
   'auditLogs',
-  'system'
+  'system',
+  'payments',
+  'stockMovements'
 ];
 
 async function handleSyncWrite(
@@ -871,6 +873,13 @@ async function handleSyncWrite(
         : collectionName === 'sale' ? 'sales'
         : collectionName === 'purchase' ? 'purchases'
         : collectionName === 'animal' ? 'animals'
+        : collectionName === 'payment' ? 'payments'
+        : collectionName === 'inventoryItem' ? 'inventoryItems'
+        : collectionName === 'stockMovement' ? 'stockMovements'
+        : collectionName === 'cashBankAccount' ? 'cashBankAccounts'
+        : collectionName === 'loan' ? 'loans'
+        : collectionName === 'investor' ? 'investors'
+        : collectionName === 'fixedAsset' ? 'fixedAssets'
         : collectionName;
 
       try {
@@ -905,11 +914,38 @@ app.post('/api/sync/purchase', (req, res) => handleSyncWrite('purchases', req, r
 app.post('/api/sync/purchases', (req, res) => handleSyncWrite('purchases', req, res));
 app.post('/api/sync/animal', (req, res) => handleSyncWrite('animals', req, res));
 app.post('/api/sync/animals', (req, res) => handleSyncWrite('animals', req, res));
+app.post('/api/sync/payment', (req, res) => handleSyncWrite('payments', req, res));
+app.post('/api/sync/payments', (req, res) => handleSyncWrite('payments', req, res));
+app.post('/api/sync/inventoryItem', (req, res) => handleSyncWrite('inventoryItems', req, res));
+app.post('/api/sync/inventoryItems', (req, res) => handleSyncWrite('inventoryItems', req, res));
+app.post('/api/sync/stockMovement', (req, res) => handleSyncWrite('stockMovements', req, res));
+app.post('/api/sync/stockMovements', (req, res) => handleSyncWrite('stockMovements', req, res));
+app.post('/api/sync/cashBankAccount', (req, res) => handleSyncWrite('cashBankAccounts', req, res));
+app.post('/api/sync/cashBankAccounts', (req, res) => handleSyncWrite('cashBankAccounts', req, res));
+app.post('/api/sync/loan', (req, res) => handleSyncWrite('loans', req, res));
+app.post('/api/sync/loans', (req, res) => handleSyncWrite('loans', req, res));
+app.post('/api/sync/investor', (req, res) => handleSyncWrite('investors', req, res));
+app.post('/api/sync/investors', (req, res) => handleSyncWrite('investors', req, res));
+app.post('/api/sync/fixedAsset', (req, res) => handleSyncWrite('fixedAssets', req, res));
+app.post('/api/sync/fixedAssets', (req, res) => handleSyncWrite('fixedAssets', req, res));
 
 // Generic sync endpoint: POST /api/sync/:collection
 app.post('/api/sync/:collection', (req, res) => {
   const col = req.params.collection;
-  if (!ALLOWED_SYNC_COLLECTIONS.includes(col) && col !== 'journal-entry' && col !== 'sale' && col !== 'purchase' && col !== 'animal') {
+  if (
+    !ALLOWED_SYNC_COLLECTIONS.includes(col) &&
+    col !== 'journal-entry' &&
+    col !== 'sale' &&
+    col !== 'purchase' &&
+    col !== 'animal' &&
+    col !== 'payment' &&
+    col !== 'inventoryItem' &&
+    col !== 'stockMovement' &&
+    col !== 'cashBankAccount' &&
+    col !== 'loan' &&
+    col !== 'investor' &&
+    col !== 'fixedAsset'
+  ) {
     return res.status(400).json({ error: `অননুমোদিত কালেকশন: ${col}` });
   }
   return handleSyncWrite(col, req, res);
@@ -935,11 +971,13 @@ app.get('/api/sync/restore', async (req, res) => {
       'journalEntries',
       'sales',
       'purchases',
+      'payments',
       'cropCycles',
       'fishBatches',
       'ponds',
       'plots',
       'inventoryItems',
+      'stockMovements',
       'parties',
       'fixedAssets',
       'loans',

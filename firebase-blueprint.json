@@ -131,6 +131,143 @@
           "description": "Temporary 6-digit password reset codes with 15-minute expiration"
         }
       }
+    },
+    "paymentRecord": {
+      "title": "Payment Record",
+      "description": "Invoice payment receipt or disbursement record",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Payment unique identifier" },
+        "parentType": { "type": "string", "enum": ["SALE", "PURCHASE"] },
+        "parentId": { "type": "string", "description": "Parent invoice document ID" },
+        "amount": { "type": "number", "description": "Payment amount" },
+        "date": { "type": "string", "description": "Payment date" },
+        "note": { "type": "string", "description": "Optional payment note" },
+        "paymentMethod": { "type": "string", "enum": ["CASH", "BANK"] },
+        "bankAccountId": { "type": "string", "description": "Bank account ID if paid via bank" },
+        "journalEntryId": { "type": "string", "description": "Associated journal entry voucher ID" },
+        "voucherNumber": { "type": "string", "description": "Voucher number" },
+        "idempotencyKey": { "type": "string", "description": "Unique key to prevent duplicate payments" },
+        "createdAt": { "type": "string", "description": "Creation timestamp" }
+      },
+      "required": ["id", "parentType", "parentId", "amount", "date"]
+    },
+    "inventoryItem": {
+      "title": "Inventory Item",
+      "description": "Feed, seeds, fertilizers, farm products, and inventory stock",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Item ID" },
+        "code": { "type": "string", "description": "Item SKU or code" },
+        "nameBn": { "type": "string", "description": "Bengali name" },
+        "nameEn": { "type": "string", "description": "English name" },
+        "category": { "type": "string", "description": "Item category" },
+        "unit": { "type": "string", "description": "Unit of measurement" },
+        "currentStock": { "type": "number", "description": "Current stock quantity" },
+        "reorderLevel": { "type": "number", "description": "Reorder level" },
+        "avgCostPrice": { "type": "number", "description": "Average unit cost price" },
+        "sellingPrice": { "type": "number", "description": "Default selling price" },
+        "lowStockThreshold": { "type": "number", "description": "Low stock alert threshold" },
+        "journalEntryId": { "type": "string", "description": "Associated opening journal entry ID" },
+        "synced": { "type": "boolean", "description": "Sync status" }
+      },
+      "required": ["id", "code", "nameBn", "category", "unit"]
+    },
+    "stockMovement": {
+      "title": "Stock Movement",
+      "description": "Inventory stock addition, consumption, transfer, or adjustment record",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique movement ID" },
+        "date": { "type": "string", "description": "Movement date (YYYY-MM-DD)" },
+        "itemId": { "type": "string", "description": "Inventory item ID" },
+        "movementType": {
+          "type": "string",
+          "enum": ["OPENING", "PURCHASE", "TRANSFER", "PRODUCTION", "CONSUMPTION", "SALE", "WASTE", "DAMAGE", "ADJUSTMENT"]
+        },
+        "quantity": { "type": "number", "description": "Quantity moved" },
+        "unitCost": { "type": "number", "description": "Unit cost valuation" },
+        "totalValue": { "type": "number", "description": "Total monetary value" },
+        "referenceId": { "type": "string", "description": "Source reference voucher or record ID" },
+        "notes": { "type": "string", "description": "Optional notes or details" },
+        "synced": { "type": "boolean", "description": "Sync status" }
+      },
+      "required": ["id", "date", "itemId", "movementType", "quantity"]
+    },
+    "cashBankAccount": {
+      "title": "Cash and Bank Account",
+      "description": "Cash, bank, or mobile banking account",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Account unique ID" },
+        "accountType": { "type": "string", "enum": ["CASH", "BANK", "MOBILE_BANKING"] },
+        "name": { "type": "string", "description": "Account display name" },
+        "accountName": { "type": "string", "description": "Bank account name" },
+        "accountNumber": { "type": "string", "description": "Bank or mobile account number" },
+        "bankName": { "type": "string", "description": "Name of financial institution" },
+        "branch": { "type": "string", "description": "Branch name" },
+        "currentBalance": { "type": "number", "description": "Current balance" },
+        "balance": { "type": "number", "description": "Balance" },
+        "code": { "type": "string", "description": "Ledger account code" },
+        "openingBalance": { "type": "number", "description": "Initial balance" },
+        "isActive": { "type": "boolean", "description": "Active status" },
+        "synced": { "type": "boolean", "description": "Sync status" }
+      },
+      "required": ["id", "accountType", "name"]
+    },
+    "loan": {
+      "title": "Loan Record",
+      "description": "Borrowing and debt obligation record",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Loan unique ID" },
+        "lenderName": { "type": "string", "description": "Name of lender or institution" },
+        "loanType": { "type": "string", "enum": ["BANK", "NGO", "INDIVIDUAL"] },
+        "principalAmount": { "type": "number", "description": "Principal amount borrowed" },
+        "interestRateAnnual": { "type": "number", "description": "Annual interest rate %" },
+        "remainingBalance": { "type": "number", "description": "Remaining loan balance" },
+        "disbursedDate": { "type": "string", "description": "Disbursement date" },
+        "termMonths": { "type": "number", "description": "Loan term in months" },
+        "monthlyInstallment": { "type": "number", "description": "Monthly EMI" },
+        "status": { "type": "string", "enum": ["ACTIVE", "PAID_OFF"] },
+        "synced": { "type": "boolean", "description": "Sync status" }
+      },
+      "required": ["id", "lenderName", "loanType", "principalAmount", "status"]
+    },
+    "investor": {
+      "title": "Investor Record",
+      "description": "Partner or investor capital and profit sharing profile",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Investor unique ID" },
+        "name": { "type": "string", "description": "Investor name" },
+        "phone": { "type": "string", "description": "Phone number" },
+        "joinedDate": { "type": "string", "description": "Date joined" },
+        "totalContribution": { "type": "number", "description": "Total capital contributed" },
+        "profitSharingRatio": { "type": "number", "description": "Agreed profit share %" },
+        "status": { "type": "string", "description": "Active status" },
+        "synced": { "type": "boolean", "description": "Sync status" }
+      },
+      "required": ["id", "name"]
+    },
+    "fixedAsset": {
+      "title": "Fixed Asset",
+      "description": "Capital equipment, buildings, machinery, land, and ponds",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Asset unique ID" },
+        "name": { "type": "string", "description": "Asset name" },
+        "category": { "type": "string", "description": "Asset category" },
+        "purchaseDate": { "type": "string", "description": "Purchase date" },
+        "originalCost": { "type": "number", "description": "Original cost" },
+        "usefulLifeYears": { "type": "number", "description": "Useful life in years" },
+        "salvageValue": { "type": "number", "description": "Estimated salvage value" },
+        "accumulatedDepreciation": { "type": "number", "description": "Accumulated depreciation" },
+        "currentBookValue": { "type": "number", "description": "Current book value" },
+        "status": { "type": "string", "description": "ACTIVE or DISPOSED" },
+        "synced": { "type": "boolean", "description": "Sync status" }
+      },
+      "required": ["id", "name", "category", "purchaseDate", "originalCost"]
     }
   },
   "firestore": {
@@ -175,12 +312,36 @@
       "description": "Purchase bill and voucher records"
     },
     "/inventoryItems/{itemId}": {
-      "schema": "account",
+      "schema": "inventoryItem",
       "description": "Inventory stock and products"
+    },
+    "/stockMovements/{movementId}": {
+      "schema": "stockMovement",
+      "description": "Inventory stock movement records"
     },
     "/reminders/{reminderId}": {
       "schema": "auditLog",
       "description": "Farm operation task reminders"
+    },
+    "/payments/{paymentId}": {
+      "schema": "paymentRecord",
+      "description": "Invoice payment receipts and disbursements"
+    },
+    "/cashBankAccounts/{accId}": {
+      "schema": "cashBankAccount",
+      "description": "Cash, bank, and mobile financial accounts"
+    },
+    "/loans/{loanId}": {
+      "schema": "loan",
+      "description": "Bank and personal loan obligations"
+    },
+    "/investors/{investorId}": {
+      "schema": "investor",
+      "description": "Farm equity partner and investor profiles"
+    },
+    "/fixedAssets/{assetId}": {
+      "schema": "fixedAsset",
+      "description": "Long-term farm property, plant, and equipment"
     }
   }
 }
