@@ -1298,7 +1298,8 @@ export async function executeInvestorProfitAllocationTransaction(
 
         // 3. Prevent duplicate allocation: the same investor + closed period/reference must not create a second allocation
         const allEntries = await dbInstance.journalEntries.toArray();
-        const isDuplicate = allEntries.some((j: any) => {
+        const activeEntries = allEntries.filter((j: any) => j.status !== 'REVERSED');
+        const isDuplicate = activeEntries.some((j: any) => {
           if (idempotencyKey && (j.reference === idempotencyKey || j.idempotencyKey === idempotencyKey)) return true;
 
           const isSameInvestor =
@@ -1425,7 +1426,7 @@ export async function executeInvestorProfitAllocationTransaction(
 
       // Check sum of all investor allocations for this same closed period, allocation reference, or allocation date cycle
       let priorAllocationsTotal = 0;
-      for (const entry of allEntries) {
+      for (const entry of activeEntries) {
         const isSamePeriod = Boolean(closedPeriodId && (entry as any).relatedClosedPeriodId === closedPeriodId);
         const isSameRef = Boolean(allocationReference && entry.reference === allocationReference);
         const isSameDateCycle = Boolean(!closedPeriodId && !allocationReference && entry.date === dateStr && (entry as any).relatedInvestorId);
@@ -9829,12 +9830,22 @@ export async function executeCropHarvestAndSaleTransaction(
       if (isPartial) {
         if (params.harvestPortionRatio !== undefined && params.harvestPortionRatio > 0) {
           portionRatio = Math.min(1, Math.max(0.0001, params.harvestPortionRatio));
+        } else if (availableCrop !== undefined && availableCrop > 0 && cleanYield > 0) {
+          // If we have remainingCostToTransfer (cost not yet transferred to COGS) and availableCrop (yield not yet harvested),
+          // this partial harvest's share of the remaining accumulated cost is cleanYield / availableCrop
+          portionRatio = Math.min(1, Math.max(0.0001, cleanYield / availableCrop));
         } else if (availableProduction > 0 && cleanYield > 0) {
           const remainingProduction = Math.max(0, availableProduction - previouslyHarvested);
-          portionRatio = Math.min(1, Math.max(0.0001, cleanYield / remainingProduction));
+          portionRatio = Math.min(1, Math.max(0.0001, cleanYield / (remainingProduction > 0 ? remainingProduction : availableProduction)));
         } else if (params.remainingAreaDecimals !== undefined && freshCycle.areaDecimals && freshCycle.areaDecimals > 0) {
-          const harvestedArea = Math.max(0, freshCycle.areaDecimals - params.remainingAreaDecimals);
-          portionRatio = Math.min(1, Math.max(0.0001, harvestedArea / freshCycle.areaDecimals));
+          // If remainingAreaDecimals is given relative to current remaining area
+          const currentArea = freshCycle.areaDecimals;
+          if (params.remainingAreaDecimals < currentArea) {
+            const harvestedArea = currentArea - params.remainingAreaDecimals;
+            portionRatio = Math.min(1, Math.max(0.0001, harvestedArea / currentArea));
+          } else {
+            portionRatio = Math.min(1, Math.max(0.0001, (cleanYield && availableProduction > 0) ? cleanYield / availableProduction : 0.5));
+          }
         }
       }
 

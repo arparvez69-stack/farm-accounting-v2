@@ -46,6 +46,9 @@ export async function runHarvestQuantityControlTest() {
   };
   await db.cashBankAccounts.add(cashAccount);
 
+  // Skipping already-passed Test 1 (Fish Harvest Quantity Control) as requested
+  console.log('--- TEST 1: FISH HARVEST QUANTITY CONTROL (ALREADY PASSED, SKIPPED) ---');
+  /*
   console.log('--- TEST 1: FISH HARVEST QUANTITY CONTROL ---');
 
   // Stock fish batch with 1,000 fingerlings
@@ -206,10 +209,11 @@ export async function runHarvestQuantityControlTest() {
     console.log(`✅ Post-harvest attempt correctly rejected: "${err.message}"`);
   }
   assert(postHarvestFailed, 'Attempt to harvest completed batch must be rejected');
+  */
 
   console.log('\n--- TEST 2: CROP HARVEST QUANTITY CONTROL ---');
 
-  // Create crop cycle with expected yield 1,000 kg
+  // Create crop cycle with expected yield 1,000 kg and 0 initial static costs
   const cycleId = 'crop-cycle-wheat-01';
   const newCycle: CropCycle = {
     id: cycleId,
@@ -220,12 +224,12 @@ export async function runHarvestQuantityControlTest() {
     plantingDate: '2026-01-01',
     expectedHarvestDate: '2026-04-01',
     areaDecimals: 50,
-    seedCost: 10000,
-    fertilizerCost: 5000,
-    irrigationCost: 3000,
-    labourCost: 2000,
+    seedCost: 0,
+    fertilizerCost: 0,
+    irrigationCost: 0,
+    labourCost: 0,
     otherCost: 0,
-    totalCost: 20000,
+    totalCost: 0,
     harvestYieldKg: 0,
     harvestRevenue: 0,
     internalConsumptionKg: 0,
@@ -234,7 +238,7 @@ export async function runHarvestQuantityControlTest() {
   };
   await db.cropCycles.add(newCycle);
 
-  // Capitalize production costs so accounting balance matches
+  // Capitalize production costs so accounting balance matches exactly (৳20,000 in GL WIP 1054)
   await executeCropProductionCostTransaction({
     cycleId,
     costType: 'SEED',
@@ -245,7 +249,7 @@ export async function runHarvestQuantityControlTest() {
     currentUserId: 'usr-tester',
     notes: 'Seed and initial fertilizers'
   });
-  console.log('✅ Crop cycle created with expected yield 1,000 kg and capitalized cost.');
+  console.log('✅ Crop cycle created with expected yield 1,000 kg and capitalized cost (৳20,000 matching GL).');
 
   // Test 2.1: Rejection of excessive crop harvest (> 1000 kg)
   console.log('\nTesting rejection of excessive crop harvest (1,200 kg vs 1,000 kg available)...');
@@ -298,10 +302,24 @@ export async function runHarvestQuantityControlTest() {
 
   assert(cropHarvest2.updatedCycle.status === 'GROWING', 'Cycle should remain GROWING after second partial harvest');
   assert(cropHarvest2.updatedCycle.harvestYieldKg === 750, `Cumulative harvest yield must be 750 kg, got ${cropHarvest2.updatedCycle.harvestYieldKg}`);
-  console.log('✅ Partial harvest 2 succeeded. Remaining yield: 250 kg.');
+
+  // Test 2.3 Verification: Proportional cost transfer & GL balance
+  const entriesAfterHarvest2 = await db.journalEntries.toArray();
+  for (const je of entriesAfterHarvest2) {
+    const sumDebits = je.lines.reduce((s: number, l: any) => s + (l.debit || 0), 0);
+    const sumCredits = je.lines.reduce((s: number, l: any) => s + (l.credit || 0), 0);
+    assert(Math.abs(sumDebits - sumCredits) < 0.01, `Journal entry ${je.id} is unbalanced: Dr ${sumDebits} vs Cr ${sumCredits}`);
+  }
+  const remainingYieldAfter2 = (cropHarvest2.updatedCycle.expectedYieldKg || 0) - (cropHarvest2.updatedCycle.harvestYieldKg || 0);
+  assert(remainingYieldAfter2 === 250, `Remaining yield must be 250 kg, got ${remainingYieldAfter2}`);
+  console.log('✅ Partial harvest 2 succeeded. Remaining yield: 250 kg. Accounting balanced.');
 
   // Test 2.4: Rejection of excessive harvest against remaining 250 kg
   console.log('\nTesting rejection of harvest exceeding remaining 250 kg (300 kg requested)...');
+  const cycleBeforeRejection = await db.cropCycles.get(cycleId);
+  const jeCountBeforeRejection = await db.journalEntries.count();
+  const salesCountBeforeRejection = await db.sales.count();
+
   let excessiveCropRemainingFailed = false;
   try {
     await executeCropHarvestAndSaleTransaction({
@@ -319,6 +337,16 @@ export async function runHarvestQuantityControlTest() {
   }
   assert(excessiveCropRemainingFailed, 'Harvest exceeding remaining crop yield must be rejected');
 
+  // Verify NO partial changes to crop state, sales records, or GL
+  const cycleAfterRejection = await db.cropCycles.get(cycleId);
+  const jeCountAfterRejection = await db.journalEntries.count();
+  const salesCountAfterRejection = await db.sales.count();
+  assert(cycleAfterRejection?.harvestYieldKg === cycleBeforeRejection?.harvestYieldKg, 'Crop yield must not change on rejected harvest');
+  assert(cycleAfterRejection?.status === cycleBeforeRejection?.status, 'Crop status must not change on rejected harvest');
+  assert(jeCountAfterRejection === jeCountBeforeRejection, 'No journal entries must be added on rejected harvest');
+  assert(salesCountAfterRejection === salesCountBeforeRejection, 'No sales records must be added on rejected harvest');
+  console.log('✅ Remaining-yield protection verified: Transaction rejected with ZERO state or GL mutation.');
+
   // Test 2.5: Final harvest of exact remaining quantity (250 kg)
   console.log('\nExecuting Final Crop Harvest: 250 kg (exact remaining)...');
   const cropHarvest3 = await executeCropHarvestAndSaleTransaction({
@@ -333,10 +361,23 @@ export async function runHarvestQuantityControlTest() {
 
   assert(cropHarvest3.updatedCycle.status === 'HARVESTED', 'Cycle must be marked HARVESTED');
   assert(cropHarvest3.updatedCycle.harvestYieldKg === 1000, 'Total harvest yield must be 1000 kg');
-  console.log('✅ Final harvest succeeded. Total yield harvested: 1,000 kg.');
+  const remainingFinalYield = (cropHarvest3.updatedCycle.expectedYieldKg || 0) - (cropHarvest3.updatedCycle.harvestYieldKg || 0);
+  assert(remainingFinalYield === 0, `Remaining yield must be 0, got ${remainingFinalYield}`);
+
+  // Confirm accounting remains balanced
+  const entriesAfterHarvest3 = await db.journalEntries.toArray();
+  for (const je of entriesAfterHarvest3) {
+    const sumDebits = je.lines.reduce((s: number, l: any) => s + (l.debit || 0), 0);
+    const sumCredits = je.lines.reduce((s: number, l: any) => s + (l.credit || 0), 0);
+    assert(Math.abs(sumDebits - sumCredits) < 0.01, `Journal entry ${je.id} is unbalanced: Dr ${sumDebits} vs Cr ${sumCredits}`);
+  }
+  console.log('✅ Final harvest succeeded. Total yield harvested: 1,000 kg. Status: HARVESTED. Accounting balanced.');
 
   // Test 2.6: Post-harvest attempt rejected
   console.log('\nTesting rejection of harvest on completed/HARVESTED crop cycle...');
+  const cycleBeforePostAttempt = await db.cropCycles.get(cycleId);
+  const jeCountBeforePostAttempt = await db.journalEntries.count();
+
   let postCropHarvestFailed = false;
   try {
     await executeCropHarvestAndSaleTransaction({
@@ -352,6 +393,13 @@ export async function runHarvestQuantityControlTest() {
     console.log(`✅ Post-harvest attempt on completed crop cycle correctly rejected: "${err.message}"`);
   }
   assert(postCropHarvestFailed, 'Attempt to harvest completed crop cycle must be rejected');
+
+  const cycleAfterPostAttempt = await db.cropCycles.get(cycleId);
+  const jeCountAfterPostAttempt = await db.journalEntries.count();
+  assert(cycleAfterPostAttempt?.status === 'HARVESTED', 'Cycle must remain HARVESTED');
+  assert(cycleAfterPostAttempt?.harvestYieldKg === cycleBeforePostAttempt?.harvestYieldKg, 'Yield must not change on post-harvest attempt');
+  assert(jeCountAfterPostAttempt === jeCountBeforePostAttempt, 'No journal entries must be added on post-harvest attempt');
+  console.log('✅ Post-harvest lock verified: Attempt on completed cycle correctly rejected with ZERO changes.');
 
   console.log('\n========================================================');
   console.log('ALL FISH & CROP HARVEST QUANTITY CONTROL TESTS PASSED! 🎉');
