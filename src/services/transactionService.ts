@@ -2526,12 +2526,16 @@ export async function executeAnimalEventTransaction(params: {
         }
         const availableQty = Number(feedItem.currentStock || 0);
         const requestedQty = Number(feedQuantityUsed || 0);
+        if (requestedQty <= 0) {
+          throw new Error('খাদ্যের পরিমাণ ০ এর বেশি হতে হবে।');
+        }
         if (requestedQty > availableQty) {
           throw new Error(
             `ইনভেন্টরিতে পর্যাপ্ত খাদ্য মজুদ নেই (মজুদ: ${availableQty} ${feedItem.unit || ''}, অনুরোধকৃত: ${requestedQty} ${feedItem.unit || ''})।`
           );
         }
-        effectiveCost = Math.round(requestedQty * (feedItem.avgCostPrice || 0) * 100) / 100;
+        const itemAvgCost = Number(feedItem.avgCostPrice) || Number((feedItem as any).costPrice) || 0;
+        effectiveCost = Math.round(requestedQty * itemAvgCost * 100) / 100;
       }
 
       const cost = effectiveCost;
@@ -2780,6 +2784,7 @@ export async function executeAnimalEventTransaction(params: {
             synced: false
           });
 
+          const itemAvgCost = Number(itemToDeduct.avgCostPrice) || Number((itemToDeduct as any).costPrice) || 0;
           await safeInsert(
             db.stockMovements,
             {
@@ -2788,8 +2793,8 @@ export async function executeAnimalEventTransaction(params: {
               itemId: itemToDeduct.id,
               movementType: 'CONSUMPTION',
               quantity: feedQuantityUsed,
-              unitCost: itemToDeduct.avgCostPrice,
-              totalValue: Math.round(feedQuantityUsed * itemToDeduct.avgCostPrice * 100) / 100,
+              unitCost: itemAvgCost,
+              totalValue: Math.round(feedQuantityUsed * itemAvgCost * 100) / 100,
               referenceId: eventId,
               notes: `পশু ${animal.tag || animal.id}: খাদ্য ব্যবহার (${feedQuantityUsed} ${itemToDeduct.unit})`,
               synced: false
@@ -4248,8 +4253,9 @@ export async function executeLivestockProductionCostTransaction(
         currentUserId
       } = params;
 
-      const cleanAmount = Math.round(Math.max(0, amount) * 100) / 100;
-      if (cleanAmount <= 0) {
+      const isInventoryFeed = paymentMethod === 'INVENTORY' || (costType === 'FEED' && !!feedItemId && typeof feedQuantityUsed === 'number' && feedQuantityUsed > 0);
+      let cleanAmount = Math.round(Math.max(0, amount) * 100) / 100;
+      if (!isInventoryFeed && cleanAmount <= 0) {
         throw new Error('উৎপাদন ব্যয়ের পরিমাণ ০ এর বেশি হতে হবে।');
       }
 
@@ -4280,7 +4286,7 @@ export async function executeLivestockProductionCostTransaction(
       let journalEntryId: string | undefined;
       let voucherNumber: string | undefined;
 
-      if (paymentMethod === 'INVENTORY') {
+      if (isInventoryFeed) {
         if (!feedItemId) {
           throw new Error('ইনভেন্টরি থেকে খাদ্য ব্যবহারের জন্য খাদ্য আইটেম নির্বাচন আবশ্যক।');
         }
@@ -4290,10 +4296,22 @@ export async function executeLivestockProductionCostTransaction(
         }
         const availableQty = Number(freshItem.currentStock || 0);
         const requestedQty = Number(feedQuantityUsed || 0);
+        if (requestedQty <= 0) {
+          throw new Error('খাদ্যের পরিমাণ ০ এর বেশি হতে হবে।');
+        }
         if (requestedQty > availableQty) {
           throw new Error(`পর্যাপ্ত খাদ্য মজুদ নেই! বর্তমান মজুদ: ${availableQty} ${freshItem.unit || ''}, অনুরোধকৃত: ${requestedQty} ${freshItem.unit || ''}`);
         }
         const qtyUsed = requestedQty;
+
+        // The accounting amount must equal: quantityUsed × inventory avgCostPrice
+        // Do NOT allow the user-entered amount to create a different inventory valuation.
+        const itemAvgCost = Number(freshItem.avgCostPrice) || Number((freshItem as any).costPrice) || 0;
+        const inventoryCost = Math.round(qtyUsed * itemAvgCost * 100) / 100;
+        cleanAmount = inventoryCost;
+        if (cleanAmount <= 0) {
+          throw new Error('উৎপাদন ব্যয়ের পরিমাণ ০ এর বেশি হতে হবে (খাদ্যের মজুদ মূল্য ০ বা তার কম)।');
+        }
 
         const feedExpAcc = accounts.find((a) => a.code === CANONICAL_ACCOUNTS.FEED_EXPENSE) || {
           id: `acc_${CANONICAL_ACCOUNTS.FEED_EXPENSE}`,
@@ -4356,7 +4374,7 @@ export async function executeLivestockProductionCostTransaction(
             itemId: freshItem.id,
             movementType: 'CONSUMPTION',
             quantity: qtyUsed,
-            unitCost: qtyUsed > 0 ? Math.round((cleanAmount / qtyUsed) * 100) / 100 : 0,
+            unitCost: itemAvgCost,
             totalValue: cleanAmount,
             referenceId: freshAnimal.id,
             notes: `${freshAnimal.breed} (${freshAnimal.id}) খাদ্য খরচ বাবদ মজুদ হ্রাস`,

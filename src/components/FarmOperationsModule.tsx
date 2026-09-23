@@ -728,20 +728,24 @@ export const FarmOperationsModule: React.FC<Props> = ({
         let resEventId: string;
         let resJournalEntryId: string | undefined;
 
-        if (animalCost > 0) {
+        const isInventoryFeed = eventType === 'FEED' && !!selectedFeedItemId && typeof animalFeedQty === 'number' && animalFeedQty > 0;
+        const feedItemObj = isInventoryFeed ? feedStockItems.find(f => f.id === selectedFeedItemId) : undefined;
+        const feedAvgCost = feedItemObj ? (Number(feedItemObj.avgCostPrice) || Number((feedItemObj as any).costPrice) || 0) : 0;
+        const effectiveFeedCost = isInventoryFeed ? Math.round((animalFeedQty || 0) * feedAvgCost * 100) / 100 : animalCost;
+
+        if (animalCost > 0 || isInventoryFeed) {
           let costType: 'FEED' | 'MEDICINE' | 'LABOUR' | 'OTHER' = 'OTHER';
           if (eventType === 'FEED') costType = 'FEED';
           else if (eventType === 'VACCINE' || eventType === 'TREATMENT') costType = 'MEDICINE';
           else if ((eventType as string) === 'LABOUR') costType = 'LABOUR';
 
-          const isInventoryFeed = eventType === 'FEED' && selectedFeedItemId && animalFeedQty && animalFeedQty > 0;
           const payMethod = isInventoryFeed ? 'INVENTORY' : eventPaymentMethod;
 
           const costRes = await executeLivestockProductionCostTransaction({
             animalId: animal.id,
             costType,
             eventType,
-            amount: animalCost,
+            amount: effectiveFeedCost,
             date: chosenEventDate,
             paymentMethod: payMethod,
             bankAccountId: eventPaymentMethod === 'BANK' ? selectedBankAccountId : undefined,
@@ -2441,18 +2445,35 @@ export const FarmOperationsModule: React.FC<Props> = ({
 
                   {/* Shared Field: Cost Field */}
                   <div className="space-y-2">
-                    <label className="block text-[13px] font-semibold text-gray-700">
-                      খরচ (Cost ৳)
-                    </label>
+                    <div className="flex items-center justify-between">
+                      <label className="block text-[13px] font-semibold text-gray-700">
+                        খরচ (Cost ৳)
+                      </label>
+                      {eventType === 'FEED' && selectedFeedItemId && feedQuantityUsed && parseFloat(feedQuantityUsed) > 0 && (
+                        <span className="text-[11px] text-emerald-700 font-semibold">
+                          ইনভেন্টরি গড় মূল্যে নির্ধারিত (Locked)
+                        </span>
+                      )}
+                    </div>
                     <input
                       type="number"
                       min="0"
                       step="any"
                       value={eventCost}
+                      readOnly={!!(eventType === 'FEED' && selectedFeedItemId && feedQuantityUsed && parseFloat(feedQuantityUsed) > 0)}
                       onChange={(e) => setEventCost(e.target.value)}
                       placeholder="0"
-                      className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900 font-mono focus:ring-2 focus:ring-[#1E5128]"
+                      className={`w-full border rounded-lg p-2.5 text-[14px] text-gray-900 font-mono focus:ring-2 focus:ring-[#1E5128] ${
+                        eventType === 'FEED' && selectedFeedItemId && feedQuantityUsed && parseFloat(feedQuantityUsed) > 0
+                          ? 'bg-gray-100 border-emerald-300 cursor-not-allowed text-emerald-950 font-bold'
+                          : 'bg-white border-gray-300'
+                      }`}
                     />
+                    {eventType === 'FEED' && selectedFeedItemId && feedQuantityUsed && parseFloat(feedQuantityUsed) > 0 && (
+                      <p className="text-[11px] text-emerald-700">
+                        * ইনভেন্টরি খাদ্য ব্যবহারের হিসাব নির্ভুল রাখতে খরচ স্বয়ংক্রিয়ভাবে নির্ধারিত হয়: ব্যবহারকৃত পরিমাণ × গড় দর।
+                      </p>
+                    )}
 
                     {/* Small Radio Choice for Cost Allocation (Bulk Mode only) */}
                     {isBulkMode && (
