@@ -27,7 +27,7 @@ export function getRawEmailsEnv(): string {
     process.env.OWNER_EMAILS?.trim() ||
     process.env.EMAIL?.trim() ||
     process.env.email?.trim() ||
-    'atikurrahman00021@gmail.com, arparvez69@gmail.com, arparvez4@gmail.com, lubaiyatasnum111@gmail.com, arparvez111@gmail.com'
+    'atikurrahman00021@gmail.com, arparvez69@gmail.com, arparvez4@gmail.com, lubaiyatasnum111@gmail.com, arparvez111@gmail.com, brandingdeshi@gmail.com'
   );
 }
 
@@ -55,6 +55,7 @@ export function getApprovedOwnerEmails(): string[] {
   list.add('arparvez4@gmail.com');
   list.add('lubaiyatasnum111@gmail.com');
   list.add('arparvez111@gmail.com');
+  list.add('brandingdeshi@gmail.com');
 
   if (envEmails) {
     envEmails
@@ -976,55 +977,176 @@ async function handleSyncWrite(
       return res.status(400).json({ error: 'অবৈধ ডেটা পে-লোড (Invalid payload).' });
     }
 
-    const docId = data.id || (collectionName === 'system' ? 'config' : null);
+    const headerIdempotencyKey =
+      (typeof req.headers['idempotency-key'] === 'string' ? req.headers['idempotency-key'].trim() : null) ||
+      (typeof req.headers['x-idempotency-key'] === 'string' ? req.headers['x-idempotency-key'].trim() : null);
+
+    const dataIdempotencyKey =
+      typeof data.idempotencyKey === 'string' && data.idempotencyKey.trim() !== ''
+        ? data.idempotencyKey.trim()
+        : null;
+
+    const dataTransactionId =
+      typeof data.transactionId === 'string' && data.transactionId.trim() !== ''
+        ? data.transactionId.trim()
+        : null;
+
+    const effectiveIdempotencyKey = headerIdempotencyKey || dataIdempotencyKey || dataTransactionId;
+
+    const targetCol =
+      collectionName === 'journal-entry' ||
+      collectionName === 'journal' ||
+      collectionName === 'journals' ||
+      collectionName === 'journal_entries' ||
+      collectionName === 'journalEntries' ||
+      collectionName === 'transaction' ||
+      collectionName === 'transactions'
+        ? 'journalEntries'
+        : collectionName === 'sale' || collectionName === 'sales'
+        ? 'sales'
+        : collectionName === 'purchase' || collectionName === 'purchases'
+        ? 'purchases'
+        : collectionName === 'animal' || collectionName === 'animals'
+        ? 'animals'
+        : collectionName === 'animalEvent' || collectionName === 'animalEvents'
+        ? 'animalEvents'
+        : collectionName === 'payment' || collectionName === 'payments'
+        ? 'payments'
+        : collectionName === 'inventoryItem' || collectionName === 'inventoryItems'
+        ? 'inventoryItems'
+        : collectionName === 'stockMovement' || collectionName === 'stockMovements'
+        ? 'stockMovements'
+        : collectionName === 'cashBankAccount' || collectionName === 'cashBankAccounts'
+        ? 'cashBankAccounts'
+        : collectionName === 'loan' || collectionName === 'loans'
+        ? 'loans'
+        : collectionName === 'investor' || collectionName === 'investors'
+        ? 'investors'
+        : collectionName === 'fixedAsset' || collectionName === 'fixedAssets'
+        ? 'fixedAssets'
+        : collectionName === 'party' || collectionName === 'parties' || collectionName === 'customer' || collectionName === 'customers' || collectionName === 'supplier' || collectionName === 'suppliers'
+        ? 'parties'
+        : collectionName === 'crop-cycle' || collectionName === 'cropCycles'
+        ? 'cropCycles'
+        : collectionName === 'fish-batch' || collectionName === 'fishBatches'
+        ? 'fishBatches'
+        : collectionName === 'pond' || collectionName === 'ponds'
+        ? 'ponds'
+        : collectionName === 'plot' || collectionName === 'plots'
+        ? 'plots'
+        : collectionName === 'closedPeriod' || collectionName === 'closedPeriods'
+        ? 'closedPeriods'
+        : collectionName;
+
+    let docId = data.id || (collectionName === 'system' ? 'config' : null);
+    if (!docId && effectiveIdempotencyKey) {
+      docId = effectiveIdempotencyKey;
+    }
     if (!docId) {
       return res.status(400).json({ error: 'নথি আইডি (Document ID) অনুপস্থিত।' });
     }
 
-    const targetCol =
-      collectionName === 'journal-entry' || collectionName === 'journal' || collectionName === 'journals' || collectionName === 'journal_entries' || collectionName === 'journalEntries' ? 'journalEntries'
-      : collectionName === 'sale' ? 'sales'
-      : collectionName === 'purchase' ? 'purchases'
-      : collectionName === 'animal' ? 'animals'
-      : collectionName === 'payment' ? 'payments'
-      : collectionName === 'inventoryItem' ? 'inventoryItems'
-      : collectionName === 'stockMovement' ? 'stockMovements'
-      : collectionName === 'cashBankAccount' ? 'cashBankAccounts'
-      : collectionName === 'loan' ? 'loans'
-      : collectionName === 'investor' ? 'investors'
-      : collectionName === 'fixedAsset' ? 'fixedAssets'
-      : collectionName === 'party' || collectionName === 'customer' || collectionName === 'supplier' ? 'parties'
-      : collectionName === 'closedPeriod' ? 'closedPeriods'
-      : collectionName;
+    // 2. Duplicate Protection & Idempotency Check for Server Synchronization:
+    // Retrying the same transaction must not create a second accounting record.
+    // Preserves existing transaction IDs and idempotency keys.
+    let existingDoc: any = null;
 
-    // 2. Closed-Period Protection:
+    // A. Check in-memory store by exact document ID
+    if (inMemoryStores.has(targetCol)) {
+      existingDoc = inMemoryStores.get(targetCol)!.get(docId) || null;
+    }
+
+    // B. Check in-memory store by idempotency key / transaction ID / document reference
+    if (!existingDoc && inMemoryStores.has(targetCol)) {
+      const colMap = inMemoryStores.get(targetCol)!;
+      for (const item of colMap.values()) {
+        if (!item) continue;
+        if (effectiveIdempotencyKey) {
+          if (
+            item.idempotencyKey === effectiveIdempotencyKey ||
+            item.transactionId === effectiveIdempotencyKey ||
+            item.reference === effectiveIdempotencyKey ||
+            item.id === effectiveIdempotencyKey
+          ) {
+            existingDoc = item;
+            break;
+          }
+        }
+        if (targetCol === 'journalEntries' && data.voucherNumber && item.voucherNumber === data.voucherNumber) {
+          existingDoc = item;
+          break;
+        }
+        if ((targetCol === 'sales' || targetCol === 'purchases') && data.invoiceNumber && item.invoiceNumber === data.invoiceNumber) {
+          existingDoc = item;
+          break;
+        }
+        if (targetCol === 'payments' && data.paymentNumber && item.paymentNumber === data.paymentNumber) {
+          existingDoc = item;
+          break;
+        }
+      }
+    }
+
+    // C. Check adminDb by exact document ID
+    if (!existingDoc && adminDb) {
+      try {
+        const snap = await adminDb.collection(targetCol).doc(docId).get();
+        if (snap.exists) {
+          existingDoc = snap.data();
+        }
+      } catch {
+        // Ignore read error
+      }
+    }
+
+    // D. Check adminDb by idempotency key / document reference
+    if (!existingDoc && adminDb) {
+      try {
+        if (effectiveIdempotencyKey) {
+          const qSnap = await adminDb.collection(targetCol).where('idempotencyKey', '==', effectiveIdempotencyKey).limit(1).get();
+          if (!qSnap.empty) {
+            existingDoc = { id: qSnap.docs[0].id, ...qSnap.docs[0].data() };
+          }
+        }
+        if (!existingDoc && targetCol === 'journalEntries' && data.voucherNumber) {
+          const qSnap = await adminDb.collection(targetCol).where('voucherNumber', '==', data.voucherNumber).limit(1).get();
+          if (!qSnap.empty) {
+            existingDoc = { id: qSnap.docs[0].id, ...qSnap.docs[0].data() };
+          }
+        }
+        if (!existingDoc && (targetCol === 'sales' || targetCol === 'purchases') && data.invoiceNumber) {
+          const qSnap = await adminDb.collection(targetCol).where('invoiceNumber', '==', data.invoiceNumber).limit(1).get();
+          if (!qSnap.empty) {
+            existingDoc = { id: qSnap.docs[0].id, ...qSnap.docs[0].data() };
+          }
+        }
+        if (!existingDoc && targetCol === 'payments' && data.paymentNumber) {
+          const qSnap = await adminDb.collection(targetCol).where('paymentNumber', '==', data.paymentNumber).limit(1).get();
+          if (!qSnap.empty) {
+            existingDoc = { id: qSnap.docs[0].id, ...qSnap.docs[0].data() };
+          }
+        }
+      } catch {
+        // Ignore query error
+      }
+    }
+
+    // Preserve existing transaction ID if this is a retried sync
+    const finalDocId = existingDoc?.id || docId;
+
+    // 3. Closed-Period Protection:
     // Reject any synced accounting transaction that modifies or posts into a closed accounting period.
     if (targetCol !== 'closedPeriods' && targetCol !== 'auditLogs' && targetCol !== 'system' && targetCol !== 'parties' && targetCol !== 'cashBankAccounts') {
       const closedPeriods = await getClosedPeriodsForValidation();
       if (closedPeriods.length > 0) {
         // Check A: If modifying an existing document, was the existing document in a closed period?
-        let existingDoc: any = null;
-        if (inMemoryStores.has(targetCol)) {
-          existingDoc = inMemoryStores.get(targetCol)!.get(docId) || null;
-        }
-        if (!existingDoc && adminDb) {
-          try {
-            const snap = await adminDb.collection(targetCol).doc(docId).get();
-            if (snap.exists) {
-              existingDoc = snap.data();
-            }
-          } catch {
-            // Ignore read error
-          }
-        }
-
         if (existingDoc) {
           const existingDates = extractAllTransactionDates(existingDoc);
           for (const d of existingDates) {
             const check = checkClosedPeriodViolation(d, closedPeriods, existingDoc);
             if (check.isClosed) {
               return res.status(400).json({
-                error: `হিসাবরক্ষণ সীমাবদ্ধতা: বিদ্যমান লেনদেনটি (#${docId}, তারিখ: ${d}) একটি সমাপ্ত হিসাবকালের (${check.closedPeriod?.endDate}) অন্তর্ভুক্ত। বন্ধ সময়কালের কোনো লেনদেন পরিবর্তন বা সংশোধন করা যাবে না (Cannot modify a transaction in closed period ending ${check.closedPeriod?.endDate}).`
+                error: `হিসাবরক্ষণ সীমাবদ্ধতা: বিদ্যমান লেনদেনটি (#${finalDocId}, তারিখ: ${d}) একটি সমাপ্ত হিসাবকালের (${check.closedPeriod?.endDate}) অন্তর্ভুক্ত। বন্ধ সময়কালের কোনো লেনদেন পরিবর্তন বা সংশোধন করা যাবে না (Cannot modify a transaction in closed period ending ${check.closedPeriod?.endDate}).`
               });
             }
           }
@@ -1140,7 +1262,10 @@ async function handleSyncWrite(
 
     // Mark synced metadata
     const recordToWrite = {
+      ...(existingDoc || {}),
       ...data,
+      id: finalDocId,
+      ...(effectiveIdempotencyKey ? { idempotencyKey: effectiveIdempotencyKey } : {}),
       syncedAt: new Date().toISOString(),
       syncedBy: owner.email
     };
@@ -1148,7 +1273,7 @@ async function handleSyncWrite(
     if (!inMemoryStores.has(targetCol)) {
       inMemoryStores.set(targetCol, new Map<string, any>());
     }
-    inMemoryStores.get(targetCol)!.set(docId, recordToWrite);
+    inMemoryStores.get(targetCol)!.set(finalDocId, recordToWrite);
 
     if (targetCol === 'closedPeriods') {
       cachedClosedPeriods = null;
@@ -1157,7 +1282,7 @@ async function handleSyncWrite(
     // 4. Write via firebase-admin (which bypasses rules safely since it is trusted)
     if (adminDb) {
       try {
-        await adminDb.collection(targetCol).doc(docId).set(recordToWrite, { merge: true });
+        await adminDb.collection(targetCol).doc(finalDocId).set(recordToWrite, { merge: true });
       } catch (adminErr: any) {
         console.warn(`[The Goated Farm] Admin Firestore write notice for ${collectionName}:`, adminErr.message);
         if (hasServiceAccountKey) {
@@ -1170,7 +1295,7 @@ async function handleSyncWrite(
 
     return res.json({
       success: true,
-      id: docId,
+      id: finalDocId,
       collection: collectionName
     });
   } catch (err: any) {
@@ -1184,6 +1309,8 @@ app.post('/api/sync/journal', (req, res) => handleSyncWrite('journalEntries', re
 app.post('/api/sync/journals', (req, res) => handleSyncWrite('journalEntries', req, res));
 app.post('/api/sync/journal-entry', (req, res) => handleSyncWrite('journalEntries', req, res));
 app.post('/api/sync/journalEntries', (req, res) => handleSyncWrite('journalEntries', req, res));
+app.post('/api/sync/transaction', (req, res) => handleSyncWrite('journalEntries', req, res));
+app.post('/api/sync/transactions', (req, res) => handleSyncWrite('journalEntries', req, res));
 app.post('/api/sync/sale', (req, res) => handleSyncWrite('sales', req, res));
 app.post('/api/sync/sales', (req, res) => handleSyncWrite('sales', req, res));
 app.post('/api/sync/purchase', (req, res) => handleSyncWrite('purchases', req, res));
@@ -1253,10 +1380,6 @@ app.get('/api/sync/restore', async (req, res) => {
     return res.status(401).json({ error: 'অননুমোদিত অ্যাক্সেস। অনুগ্রহ করে প্রথমে লগইন করুন।' });
   }
 
-  if (!adminDb) {
-    return res.json({ success: true, count: 0, collections: {} });
-  }
-
   try {
     const collectionsToRestore = [
       'animals',
@@ -1284,18 +1407,27 @@ app.get('/api/sync/restore', async (req, res) => {
     let totalCount = 0;
 
     for (const colName of collectionsToRestore) {
-      try {
-        const snap = await adminDb.collection(colName).get();
-        const docs: any[] = [];
-        snap.forEach((doc) => {
-          docs.push({ id: doc.id, ...doc.data() });
-        });
-        result[colName] = docs;
-        totalCount += docs.length;
-      } catch (err: any) {
-        console.warn(`[The Goated Farm] Restore read note for ${colName}:`, err.message);
-        result[colName] = [];
+      const docsMap = new Map<string, any>();
+      // 1. In-memory store
+      if (inMemoryStores.has(colName)) {
+        for (const [id, doc] of inMemoryStores.get(colName)!.entries()) {
+          docsMap.set(id, { id, ...doc });
+        }
       }
+      // 2. Firestore Admin SDK
+      if (adminDb) {
+        try {
+          const snap = await adminDb.collection(colName).get();
+          snap.forEach((doc) => {
+            docsMap.set(doc.id, { id: doc.id, ...doc.data() });
+          });
+        } catch (err: any) {
+          console.warn(`[The Goated Farm] Restore read note for ${colName}:`, err.message);
+        }
+      }
+      const docs = Array.from(docsMap.values());
+      result[colName] = docs;
+      totalCount += docs.length;
     }
 
     console.log(`[The Goated Farm] Restore served for ${owner.email}: ${totalCount} records retrieved.`);

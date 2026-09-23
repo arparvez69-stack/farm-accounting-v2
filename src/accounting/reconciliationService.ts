@@ -119,6 +119,260 @@ function round2(val: number): number {
 }
 
 /**
+ * Calculates inventory item valuation (quantity, weighted average unit cost, total value)
+ * as of a specific date (historical calculation).
+ * - For asOfDate, includes inventory movements and costs only up to that date.
+ * - Does not use today's average cost when asOfDate is provided.
+ * - Uses only cost information available on or before that date.
+ * - Preserves current weighted-average behavior when asOfDate is not specified.
+ */
+export function calculateHistoricalInventoryValuation(
+  item: InventoryItem,
+  movements: StockMovement[],
+  asOfDate?: string
+): { quantity: number; unitCost: number; totalValue: number } {
+  const currentStock = Math.max(0, Number(item.currentStock) || 0);
+  const currentAvgCost = Math.max(0, Number(item.avgCostPrice) || Number((item as any).costPrice) || 0);
+
+  // When asOfDate is not specified, preserve current weighted-average behavior
+  if (!asOfDate) {
+    const totalVal = round2(currentStock * currentAvgCost);
+    return {
+      quantity: currentStock,
+      unitCost: currentAvgCost,
+      totalValue: totalVal
+    };
+  }
+
+  const cleanAsOf = asOfDate.slice(0, 10);
+  const itemMovements = (movements || []).filter((m) => m.itemId === item.id);
+
+  // If item was created after asOfDate, it did not exist yet
+  const createdAfter = Boolean(
+    (item as any).createdAt && String((item as any).createdAt).slice(0, 10) > cleanAsOf
+  );
+  if (createdAfter) {
+    return { quantity: 0, unitCost: 0, totalValue: 0 };
+  }
+
+  // If there are no movements recorded for this item
+  if (itemMovements.length === 0) {
+    const totalVal = round2(currentStock * currentAvgCost);
+    return {
+      quantity: currentStock,
+      unitCost: currentAvgCost,
+      totalValue: totalVal
+    };
+  }
+
+  // Helper to determine movement delta
+  function getMovementDelta(m: StockMovement): number {
+    const type = String(m.movementType || '').toUpperCase();
+    const mQty = Math.abs(Number(m.quantity) || 0);
+
+    if (
+      type === 'PURCHASE' ||
+      type === 'PRODUCTION' ||
+      type === 'HARVEST' ||
+      type === 'OPENING'
+    ) {
+      return mQty;
+    }
+    if (
+      type === 'CONSUMPTION' ||
+      type === 'SALE' ||
+      type === 'WASTE' ||
+      type === 'DAMAGE'
+    ) {
+      return -mQty;
+    }
+    if (type === 'ADJUSTMENT') {
+      const isDecrease =
+        (m as any).adjustmentType === 'DECREASE' ||
+        Number(m.quantity) < 0 ||
+        (m.notes || '').includes('হ্রাস') ||
+        (m.notes || '').toLowerCase().includes('decrease') ||
+        (m.notes || '').toLowerCase().includes('loss') ||
+        (m.notes || '').toLowerCase().includes('damage');
+      return isDecrease ? -mQty : mQty;
+    }
+    if (type === 'TRANSFER') {
+      return Number(m.quantity) || 0;
+    }
+    return 0;
+  }
+
+  const movementsUpToAsOf = itemMovements.filter(
+    (m) => m.date && String(m.date).slice(0, 10) <= cleanAsOf
+  );
+  const movementsAfterAsOf = itemMovements.filter(
+    (m) => m.date && String(m.date).slice(0, 10) > cleanAsOf
+  );
+
+  const allMovementsNet = itemMovements.reduce((sum, m) => sum + getMovementDelta(m), 0);
+  const untrackedBase = Math.max(0, currentStock - allMovementsNet);
+  const baseStock = untrackedBase;
+
+  // Compute cost before later inflows (to avoid using today's average cost when later purchases occurred)
+  let laterInflowQty = 0;
+  let laterInflowCost = 0;
+  for (const m of movementsAfterAsOf) {
+    const type = String(m.movementType || '').toUpperCase();
+    if (type === 'PURCHASE' || type === 'PRODUCTION' || type === 'HARVEST' || type === 'OPENING') {
+      const mQty = Math.abs(Number(m.quantity) || 0);
+      const mCost = Number(m.totalValue) || (mQty * (Number(m.unitCost) || 0));
+      laterInflowQty += mQty;
+      laterInflowCost += mCost;
+    }
+  }
+  const preLaterTotalCost = Math.max(0, (currentStock * currentAvgCost) - laterInflowCost);
+  const preLaterStock = Math.max(0, currentStock - laterInflowQty);
+  const costBeforeLaterInflows = preLaterStock > 0 ? (preLaterTotalCost / preLaterStock) : currentAvgCost;
+
+  // Sort prior movements chronologically: date asc, then inflows before outflows, then id
+  const sortedPriorMovements = [...movementsUpToAsOf].sort((a, b) => {
+    const dateDiff = String(a.date).slice(0, 10).localeCompare(String(b.date).slice(0, 10));
+    if (dateDiff !== 0) return dateDiff;
+    const priority = (type: string) => {
+      const t = String(type || '').toUpperCase();
+      if (t === 'OPENING') return 1;
+      if (t === 'PURCHASE') return 2;
+      if (t === 'PRODUCTION' || t === 'HARVEST') return 3;
+      return 4;
+    };
+    const pDiff = priority(a.movementType) - priority(b.movementType);
+    if (pDiff !== 0) return pDiff;
+    return String(a.id || '').localeCompare(String(b.id || ''));
+  });
+
+  // Check if any prior movements specify unitCost or totalValue
+  let hasCostInfoOnOrBefore = false;
+  for (const m of sortedPriorMovements) {
+    if ((Number(m.unitCost) || 0) > 0 || (Number(m.totalValue) || 0) > 0) {
+      hasCostInfoOnOrBefore = true;
+      break;
+    }
+  }
+
+  let runningQty = baseStock;
+  let runningAvgCost = 0;
+  if (baseStock > 0) {
+    if (hasCostInfoOnOrBefore) {
+      const firstInflow = sortedPriorMovements.find(
+        (m) => (Number(m.unitCost) || 0) > 0 || (Number(m.totalValue) || 0) > 0
+      );
+      runningAvgCost = firstInflow
+        ? (Number(firstInflow.unitCost) || (Number(firstInflow.totalValue) / Math.abs(Number(firstInflow.quantity) || 1)))
+        : costBeforeLaterInflows;
+    } else {
+      runningAvgCost = costBeforeLaterInflows;
+    }
+  }
+  let runningTotalValue = round2(runningQty * runningAvgCost);
+
+  for (const m of sortedPriorMovements) {
+    const type = String(m.movementType || '').toUpperCase();
+    const mQty = Math.abs(Number(m.quantity) || 0);
+    const mUnitCost = Number(m.unitCost) || 0;
+    const mTotalVal = Number(m.totalValue) || (mQty * mUnitCost);
+
+    const isInflow =
+      type === 'PURCHASE' ||
+      type === 'PRODUCTION' ||
+      type === 'HARVEST' ||
+      type === 'OPENING';
+    const isOutflow =
+      type === 'CONSUMPTION' ||
+      type === 'SALE' ||
+      type === 'WASTE' ||
+      type === 'DAMAGE';
+
+    if (isInflow) {
+      const costAdded = mTotalVal > 0 ? mTotalVal : (mQty * (mUnitCost || runningAvgCost));
+      const newQty = round2(runningQty + mQty);
+      const newTotalValue = round2(runningTotalValue + costAdded);
+      runningAvgCost = newQty > 0 ? round2(newTotalValue / newQty) : (mUnitCost || runningAvgCost);
+      runningQty = newQty;
+      runningTotalValue = newTotalValue;
+    } else if (isOutflow) {
+      const newQty = Math.max(0, round2(runningQty - mQty));
+      runningTotalValue = newQty > 0 ? round2(newQty * runningAvgCost) : 0;
+      runningQty = newQty;
+    } else if (type === 'ADJUSTMENT') {
+      const isDec =
+        (m as any).adjustmentType === 'DECREASE' ||
+        Number(m.quantity) < 0 ||
+        (m.notes || '').includes('হ্রাস') ||
+        (m.notes || '').toLowerCase().includes('decrease') ||
+        (m.notes || '').toLowerCase().includes('loss') ||
+        (m.notes || '').toLowerCase().includes('damage');
+
+      if (isDec) {
+        const newQty = Math.max(0, round2(runningQty - mQty));
+        runningTotalValue = newQty > 0 ? round2(newQty * runningAvgCost) : 0;
+        runningQty = newQty;
+      } else {
+        const adjCost = mTotalVal > 0 ? mTotalVal : (mQty * (mUnitCost || runningAvgCost));
+        const newQty = round2(runningQty + mQty);
+        const newTotalValue = round2(runningTotalValue + adjCost);
+        runningAvgCost = newQty > 0 ? round2(newTotalValue / newQty) : runningAvgCost;
+        runningQty = newQty;
+        runningTotalValue = newTotalValue;
+      }
+    } else if (type === 'TRANSFER') {
+      const delta = Number(m.quantity) || 0;
+      if (delta >= 0) {
+        const addedVal = mTotalVal > 0 ? mTotalVal : (delta * (mUnitCost || runningAvgCost));
+        const newQty = round2(runningQty + delta);
+        const newTotalValue = round2(runningTotalValue + addedVal);
+        runningAvgCost = newQty > 0 ? round2(newTotalValue / newQty) : runningAvgCost;
+        runningQty = newQty;
+        runningTotalValue = newTotalValue;
+      } else {
+        const newQty = Math.max(0, round2(runningQty + delta));
+        runningTotalValue = newQty > 0 ? round2(newQty * runningAvgCost) : 0;
+        runningQty = newQty;
+      }
+    }
+  }
+
+  const finalQty = Math.max(0, round2(runningQty));
+  const finalValue = Math.max(0, round2(runningTotalValue));
+  const finalUnitCost = finalQty > 0 ? round2(finalValue / finalQty) : round2(runningAvgCost);
+
+  return {
+    quantity: finalQty,
+    unitCost: finalUnitCost,
+    totalValue: finalValue
+  };
+}
+
+/**
+ * Calculates inventory item quantity as of a specific date (historical calculation).
+ * - For asOfDate, includes inventory movements only up to that date.
+ * - Does not include later purchases, consumption, harvests or adjustments.
+ * - Does not change current-period inventory behavior when asOfDate is not specified.
+ */
+export function calculateHistoricalInventoryQuantity(
+  item: InventoryItem,
+  movements: StockMovement[],
+  asOfDate?: string
+): number {
+  return calculateHistoricalInventoryValuation(item, movements, asOfDate).quantity;
+}
+
+/**
+ * Calculates inventory item cost as of a specific date (historical calculation).
+ */
+export function calculateHistoricalInventoryCost(
+  item: InventoryItem,
+  movements: StockMovement[],
+  asOfDate?: string
+): number {
+  return calculateHistoricalInventoryValuation(item, movements, asOfDate).unitCost;
+}
+
+/**
  * Check 1: Inventory subledger ↔ inventory GL
  * - Operational: Sum of (stock * avgCostPrice) as of asOfDate
  * - GL: Net debit balance of inventory asset accounts as of asOfDate (1051, 1052, 1053, 1055, 1056, and 1050 if legacy)
@@ -144,38 +398,8 @@ export async function reconcileInventorySubledger(
   };
 
   for (const item of items) {
-    const currentStock = Math.max(0, Number(item.currentStock) || 0);
-    const unitCost = Number(item.avgCostPrice) || Number((item as any).costPrice) || 0;
-    let qty = currentStock;
-
-    if (cleanAsOf && movements.length > 0) {
-      const postMovements = movements.filter(
-        (m) => m.itemId === item.id && m.date && String(m.date).slice(0, 10) > cleanAsOf
-      );
-      if (postMovements.length > 0) {
-        let postInflows = 0;
-        let postOutflows = 0;
-        for (const m of postMovements) {
-          const type = String(m.movementType || '').toUpperCase();
-          const mQty = Math.abs(Number(m.quantity) || 0);
-          if (
-            type === 'PURCHASE' ||
-            type === 'PRODUCTION' ||
-            type === 'OPENING' ||
-            (type === 'ADJUSTMENT' && m.quantity > 0 && !(m.notes || '').includes('হ্রাস'))
-          ) {
-            postInflows += mQty;
-          } else {
-            postOutflows += mQty;
-          }
-        }
-        qty = Math.max(0, currentStock - postInflows + postOutflows);
-      } else if ((item as any).createdAt && String((item as any).createdAt).slice(0, 10) > cleanAsOf && movements.some((m) => m.itemId === item.id)) {
-        qty = 0;
-      }
-    }
-
-    const itemVal = round2(qty * unitCost);
+    const valuation = calculateHistoricalInventoryValuation(item, movements, cleanAsOf);
+    const itemVal = valuation.totalValue;
     totalOperational = round2(totalOperational + itemVal);
 
     const cat = String(item.category || '').toUpperCase();
