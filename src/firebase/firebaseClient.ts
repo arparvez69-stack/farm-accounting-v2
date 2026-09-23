@@ -91,13 +91,6 @@ export async function initializeLocalDatabase(): Promise<void> {
     }
   }
 
-  // Automatically migrate legacy journal entries referencing discontinued accounts (e.g. 1050)
-  try {
-    await migrateLegacyAccounts();
-  } catch (err) {
-    console.warn('Notice: Legacy accounts migration error:', err);
-  }
-
   // Ensure default system config in local IndexedDB
   const sysConfigs = await db.systemConfig.toArray();
   if (sysConfigs.length === 0) {
@@ -113,6 +106,14 @@ export async function initializeLocalDatabase(): Promise<void> {
         ownerEmails: current.ownerEmails || getStoredOwnerEmails()
       });
     }
+  }
+
+  // Automatically migrate legacy journal entries referencing discontinued accounts (e.g. 1050)
+  // Only runs when the required migration has not already been completed.
+  try {
+    await migrateLegacyAccounts();
+  } catch (err) {
+    console.warn('Notice: Legacy accounts migration error:', err);
   }
 }
 

@@ -1,6 +1,7 @@
 import * as XLSX from 'xlsx';
 import { db } from '../db/indexedDb';
 import { generateBalanceSheet, generateProfitLoss, generateTrialBalance } from '../accounting/accountingEngine';
+import { PaymentRecord } from '../types';
 
 export async function exportAllToExcel(companyName = 'Agro-ERP'): Promise<void> {
   const wb = XLSX.utils.book_new();
@@ -195,6 +196,130 @@ export async function exportAllToExcel(companyName = 'Agro-ERP'): Promise<void> 
  * Full JSON Backup creation for disaster recovery
  */
 export async function createFullJsonBackup(): Promise<string> {
+  const [
+    rawPayments,
+    journalEntries,
+    sales,
+    purchases
+  ] = await Promise.all([
+    db.payments.toArray(),
+    db.journalEntries.toArray(),
+    db.sales.toArray(),
+    db.purchases.toArray()
+  ]);
+
+  const jeById = new Map(journalEntries.map((j) => [j.id, j]));
+  const jeByVoucher = new Map(journalEntries.map((j) => [j.voucherNumber, j]));
+  const saleById = new Map(sales.map((s) => [s.id, s]));
+  const purchaseById = new Map(purchases.map((p) => [p.id, p]));
+
+  const paymentMapByParent = new Map<string, number>();
+  const mappedPayments: PaymentRecord[] = rawPayments.map((p) => {
+    let journalEntryId = p.journalEntryId;
+    let voucherNumber = p.voucherNumber;
+
+    if (!voucherNumber && journalEntryId) {
+      voucherNumber = jeById.get(journalEntryId)?.voucherNumber;
+    }
+    if (!journalEntryId && voucherNumber) {
+      journalEntryId = jeByVoucher.get(voucherNumber)?.id;
+    }
+
+    const parentSale = p.parentType === 'SALE' ? saleById.get(p.parentId) : undefined;
+    const parentPurch = p.parentType === 'PURCHASE' ? purchaseById.get(p.parentId) : undefined;
+
+    if (!journalEntryId) {
+      journalEntryId = parentSale?.journalEntryId || parentPurch?.journalEntryId;
+    }
+    if (!voucherNumber) {
+      voucherNumber = parentSale?.invoiceNumber || parentPurch?.invoiceNumber;
+    }
+
+    const paymentMethod =
+      p.paymentMethod ||
+      (p.bankAccountId
+        ? 'BANK'
+        : parentSale?.paymentMethod === 'BANK' || parentPurch?.paymentMethod === 'BANK'
+        ? 'BANK'
+        : 'CASH');
+
+    const amt = Math.round((Number(p.amount) || 0) * 100) / 100;
+    if (p.parentId) {
+      paymentMapByParent.set(p.parentId, (paymentMapByParent.get(p.parentId) || 0) + amt);
+    }
+
+    return {
+      ...p,
+      id: p.id,
+      date: p.date || p.createdAt?.slice(0, 10) || new Date().toISOString().slice(0, 10),
+      amount: amt,
+      parentType: p.parentType,
+      parentId: p.parentId,
+      paymentMethod: paymentMethod as 'CASH' | 'BANK',
+      bankAccountId: p.bankAccountId || undefined,
+      journalEntryId: journalEntryId || undefined,
+      voucherNumber: voucherNumber || undefined,
+      partyId: p.partyId || parentSale?.customerId || parentPurch?.supplierId,
+      customerId: p.customerId || parentSale?.customerId,
+      supplierId: p.supplierId || parentPurch?.supplierId,
+      partyName: p.partyName || parentSale?.customerName || parentPurch?.supplierName
+    };
+  });
+
+  // Ensure upfront payments on sales/purchases without explicit payment log are also captured
+  const upfrontPayments: PaymentRecord[] = [];
+  for (const s of sales) {
+    const recordedPaid = Number(s.paidAmount) || 0;
+    const existingPaid = paymentMapByParent.get(s.id) || 0;
+    const unrecordedPaid = Math.round((recordedPaid - existingPaid) * 100) / 100;
+    if (unrecordedPaid > 0) {
+      upfrontPayments.push({
+        id: `pmt_init_${s.id}`,
+        parentType: 'SALE',
+        parentId: s.id,
+        amount: unrecordedPaid,
+        date: s.date || new Date().toISOString().slice(0, 10),
+        paymentMethod: (s.paymentMethod === 'BANK' ? 'BANK' : 'CASH') as 'CASH' | 'BANK',
+        bankAccountId: s.bankAccountId || undefined,
+        journalEntryId: s.journalEntryId || undefined,
+        voucherNumber: s.invoiceNumber || undefined,
+        note: `বিক্রয় চালানের প্রাথমিক পরিশোধ (${s.invoiceNumber || s.id})`,
+        createdAt: (s as any).createdAt || new Date().toISOString(),
+        synced: true,
+        partyId: s.customerId,
+        customerId: s.customerId,
+        partyName: s.customerName
+      });
+    }
+  }
+
+  for (const p of purchases) {
+    const recordedPaid = Number(p.paidAmount) || 0;
+    const existingPaid = paymentMapByParent.get(p.id) || 0;
+    const unrecordedPaid = Math.round((recordedPaid - existingPaid) * 100) / 100;
+    if (unrecordedPaid > 0) {
+      upfrontPayments.push({
+        id: `pmt_init_${p.id}`,
+        parentType: 'PURCHASE',
+        parentId: p.id,
+        amount: unrecordedPaid,
+        date: p.date || new Date().toISOString().slice(0, 10),
+        paymentMethod: (p.paymentMethod === 'BANK' ? 'BANK' : 'CASH') as 'CASH' | 'BANK',
+        bankAccountId: p.bankAccountId || undefined,
+        journalEntryId: p.journalEntryId || undefined,
+        voucherNumber: p.invoiceNumber || undefined,
+        note: `ক্রয় চালানের প্রাথমিক পরিশোধ (${p.invoiceNumber || p.id})`,
+        createdAt: (p as any).createdAt || new Date().toISOString(),
+        synced: true,
+        partyId: p.supplierId,
+        supplierId: p.supplierId,
+        partyName: p.supplierName
+      });
+    }
+  }
+
+  const paymentsToBackup = [...mappedPayments, ...upfrontPayments];
+
   const backup = {
     version: '1.0.0',
     timestamp: new Date().toISOString(),
@@ -215,6 +340,7 @@ export async function createFullJsonBackup(): Promise<string> {
     parties: await db.parties.toArray(),
     purchases: await db.purchases.toArray(),
     sales: await db.sales.toArray(),
+    payments: paymentsToBackup,
     cashBankAccounts: await db.cashBankAccounts.toArray(),
     bankTransfers: await db.bankTransfers.toArray(),
     loans: await db.loans.toArray(),
@@ -270,6 +396,7 @@ export async function restoreFromJsonBackup(
         db.parties,
         db.purchases,
         db.sales,
+        db.payments,
         db.cashBankAccounts,
         db.bankTransfers,
         db.loans,
@@ -346,6 +473,10 @@ export async function restoreFromJsonBackup(
           await db.sales.clear();
           await db.sales.bulkPut(data.sales);
         }
+        if (data.payments?.length) {
+          await db.payments.clear();
+          await db.payments.bulkPut(data.payments);
+        }
         if (data.cashBankAccounts?.length) {
           await db.cashBankAccounts.clear();
           await db.cashBankAccounts.bulkPut(data.cashBankAccounts);
@@ -390,7 +521,8 @@ export async function restoreFromJsonBackup(
         animals: data.animals?.length || 0,
         fishBatches: data.fishBatches?.length || 0,
         cropCycles: data.cropCycles?.length || 0,
-        sales: data.sales?.length || 0
+        sales: data.sales?.length || 0,
+        payments: data.payments?.length || 0
       }
     };
   } catch (err: any) {

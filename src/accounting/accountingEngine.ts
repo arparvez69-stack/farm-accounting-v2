@@ -868,19 +868,53 @@ export async function generateBalanceSheet(
   };
 }
 
+export const LEGACY_ACCOUNTS_MIGRATION_KEY = 'goted_legacy_accounts_migrated_v1';
+
 /**
  * Automatically migrates deprecated / legacy accounts (e.g. 1050)
  * to their designated canonical replacements (1051, 1052, 1053, 1055).
+ * Migration runs ONLY when the required migration has not already been completed.
  */
-export async function migrateLegacyAccounts(): Promise<number> {
+export async function migrateLegacyAccounts(force = false): Promise<number> {
+  // Check if migration has already been completed via systemConfig or localStorage
+  if (!force) {
+    try {
+      if (typeof window !== 'undefined' && localStorage.getItem(LEGACY_ACCOUNTS_MIGRATION_KEY) === 'true') {
+        return 0;
+      }
+      const sysConfig = await db.systemConfig.toCollection().first();
+      if (sysConfig?.legacyAccountsMigratedAt) {
+        if (typeof window !== 'undefined') {
+          localStorage.setItem(LEGACY_ACCOUNTS_MIGRATION_KEY, 'true');
+        }
+        return 0;
+      }
+    } catch {
+      // Fallback to check if migration is needed
+    }
+  }
+
   let migratedCount = 0;
+  const accounts = await db.accounts.toArray();
   const entries = await db.journalEntries.toArray();
 
   for (const entry of entries) {
+    // 1. Check if record has already been migrated - already-migrated records must not be modified again
+    if ((entry as any).legacyMigrated || (entry as any).isMigrated || (entry as any).migratedFromLegacy) {
+      continue;
+    }
+
     let entryModified = false;
     const newLines = entry.lines.map((line) => {
+      // If line is already migrated, preserve as-is
+      if ((line as any).legacyMigrated || (line as any).isMigrated || (line as any).migratedFromLegacy) {
+        return line;
+      }
+
       const code = line.accountCode?.trim();
-      if (code === '1050' || line.accountId === '1050') {
+      const isLegacy1050 = code === '1050' || line.accountId === '1050' || line.accountId === 'acc_1050';
+
+      if (isLegacy1050) {
         entryModified = true;
         migratedCount++;
         const desc = `${entry.narration || ''} ${line.memo || ''} ${line.accountName || ''}`.toLowerCase();
@@ -910,18 +944,29 @@ export async function migrateLegacyAccounts(): Promise<number> {
           targetName = 'বিক্রয়যোগ্য উৎপাদিত পণ্য (Finished Farm Products)';
         }
 
+        const targetAcc = accounts.find((a) => a.code === targetCode);
+        const resolvedAccountId = targetAcc
+          ? targetAcc.id
+          : line.accountId?.startsWith('acc_')
+            ? `acc_${targetCode}`
+            : targetCode;
+
         return {
           ...line,
-          accountId: targetCode,
+          accountId: resolvedAccountId,
           accountCode: targetCode,
-          accountName: targetName
+          accountName: targetName,
+          legacyMigrated: true
         };
       }
       return line;
     });
 
     if (entryModified) {
-      await db.journalEntries.update(entry.id, { lines: newLines });
+      await db.journalEntries.update(entry.id, {
+        lines: newLines,
+        legacyMigrated: true
+      });
     }
   }
 
@@ -930,6 +975,35 @@ export async function migrateLegacyAccounts(): Promise<number> {
   if (legacy1050) {
     await db.accounts.delete(legacy1050.id);
   }
+
+  // Mark migration as completed in both indexedDb systemConfig and localStorage
+  const nowIso = new Date().toISOString();
+  try {
+    const sysConfig = await db.systemConfig.toCollection().first();
+    if (sysConfig) {
+      if (!sysConfig.legacyAccountsMigratedAt) {
+        await db.systemConfig.update(sysConfig.ownerUid, {
+          legacyAccountsMigratedAt: nowIso
+        });
+      }
+    } else {
+      await db.systemConfig.put({
+        ownerUid: 'system_default',
+        companyName: 'The Goated Farm',
+        currency: '৳',
+        initializedAt: nowIso,
+        legacyAccountsMigratedAt: nowIso
+      });
+    }
+  } catch (err) {
+    console.warn('Notice: Could not persist legacy accounts migration flag in systemConfig:', err);
+  }
+
+  try {
+    if (typeof window !== 'undefined') {
+      localStorage.setItem(LEGACY_ACCOUNTS_MIGRATION_KEY, 'true');
+    }
+  } catch {}
 
   return migratedCount;
 }

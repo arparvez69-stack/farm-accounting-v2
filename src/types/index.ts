@@ -25,6 +25,7 @@ export interface SystemConfig {
   phone?: string;
   currency: string;
   initializedAt: string;
+  legacyAccountsMigratedAt?: string;
 }
 
 export interface AppAccessLog {
@@ -87,6 +88,7 @@ export interface JournalLine {
   debit: number;
   credit: number;
   memo?: string;
+  legacyMigrated?: boolean;
 }
 
 export interface JournalEntry {
@@ -107,6 +109,8 @@ export interface JournalEntry {
   reversalOf?: string;
   correctionOf?: string;
   relatedPerson?: string;
+  legacyMigrated?: boolean;
+  migratedAt?: string;
 }
 
 export interface ClosedPeriod {
@@ -480,6 +484,10 @@ export interface PaymentRecord {
   idempotencyKey?: string;
   createdAt?: string;
   synced?: boolean;
+  partyId?: string;
+  customerId?: string;
+  supplierId?: string;
+  partyName?: string;
 }
 
 export interface CashBankAccount {
