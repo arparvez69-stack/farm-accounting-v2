@@ -10241,3 +10241,10 @@ export {
   type EditFixedAssetParams,
   type EditFixedAssetResult
 } from '../accounting/depreciationService';
+
+// Reversal Operations
+export {
+  reverseJournalEntry,
+  reverseTransaction
+} from '../accounting/accountingEngine';
+

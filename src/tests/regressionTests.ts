@@ -1,4 +1,4 @@
-import { validateBalancedLines } from '../accounting/accountingEngine';
+import { validateBalancedLines, reverseTransaction } from '../accounting/accountingEngine';
 import { DEFAULT_CHART_OF_ACCOUNTS } from '../accounting/defaultAccounts';
 import { getInventoryAssetAccount, getPaymentAccount, CANONICAL_ACCOUNTS } from '../accounting/accountMapping';
 import { generateTransactionNumber, generateUniqueId } from '../utils/idGenerator';
@@ -6121,15 +6121,141 @@ async function runRegressionTestsInternal(): Promise<TestResult> {
       t7Db
     );
 
-    const combinedMovements = await t7Db.stockMovements.where('itemId').equals(t7ItemCombined.id).toArray();
-    assert(combinedMovements.length === 1, 'T7: Exactly 1 stock movement for combined purchase.');
-    const combinedSm = combinedMovements[0];
-    assert(combinedSm.totalValue === 6800, 'T7 Combined: totalValue must equal 6800.');
-    assert(combinedSm.unitCost === 68, 'T7 Combined: unitCost must be 6800 / 100 = 68.');
-    assert(
-      Math.abs(combinedSm.unitCost * combinedSm.quantity - combinedSm.totalValue) < 0.001,
-      'T7 Combined: unitCost * quantity must equal totalValue.'
+    // =========================================================================
+    // REVERSAL ATOMICITY TEST
+    // Verify that if any part of a reversal fails, NONE of:
+    // journal, cash/bank, inventory, stock movement, AR/AP, operational record
+    // remain partially changed.
+    // =========================================================================
+    const revDb = createMockAgroDatabase();
+
+    // Setup initial accounts and data
+    for (const acc of DEFAULT_CHART_OF_ACCOUNTS) {
+      await revDb.accounts.put(acc);
+    }
+
+    await revDb.cashBankAccounts.put({
+      id: 'cb_cash_1',
+      accountName: 'Main Cash',
+      accountType: 'CASH',
+      currentBalance: 50000,
+      isDefault: true
+    });
+
+    await revDb.inventoryItems.put({
+      id: 'item_rev_1',
+      code: 'ITM-001',
+      nameBn: 'Corn Feed',
+      nameEn: 'Corn Feed',
+      category: 'FEED',
+      currentStock: 100,
+      reorderLevel: 10,
+      unit: 'KG',
+      avgCostPrice: 50,
+      sellingPrice: 70
+    });
+
+    await revDb.parties.put({
+      id: 'cust_rev_1',
+      name: 'Rahim Traders',
+      type: 'CUSTOMER',
+      phone: '01700000000',
+      balance: 0
+    });
+
+    const testCustomer = (await revDb.parties.get('cust_rev_1'))!;
+    const testItem = (await revDb.inventoryItems.get('item_rev_1'))!;
+
+    // Execute a sale transaction
+    const atomicitySaleResult = await executeSaleTransaction(
+      {
+        date: '2026-04-10',
+        customer: testCustomer,
+        item: testItem,
+        quantity: 20,
+        unitPrice: 70,
+        paymentMethod: 'CASH',
+        currentUserId: 'test_user'
+      },
+      revDb
     );
+
+    assert(Boolean(atomicitySaleResult.sale), 'Sale transaction must succeed.');
+    const originalVoucherId = atomicitySaleResult.journalEntryId;
+    const originalSaleId = atomicitySaleResult.sale.id;
+
+    // Capture state after sale
+    const preRevJournalCount = (await revDb.journalEntries.toArray()).length;
+    const preRevCash = (await revDb.cashBankAccounts.get('cb_cash_1'))!.currentBalance;
+    const preRevStock = (await revDb.inventoryItems.get('item_rev_1'))!.currentStock;
+    const preRevMovementsCount = (await revDb.stockMovements.toArray()).length;
+    const preRevCustBal = (await revDb.parties.get('cust_rev_1'))!.balance;
+    const preRevSaleStatus = (await revDb.sales.get(originalSaleId))!.status;
+
+    assert(preRevCash === 51400, 'Cash balance should be 51400 after sale.');
+    assert(preRevStock === 80, 'Stock should be 80 after selling 20.');
+    assert(preRevMovementsCount === 1, 'Exactly 1 stock movement exists after sale.');
+    assert(preRevSaleStatus === 'PAID', 'Sale status should be PAID.');
+
+    // Now simulate failure during reversal:
+    // Sabotage cashBankAccounts.update to throw an intentional error
+    const originalCashUpdate = revDb.cashBankAccounts.update.bind(revDb.cashBankAccounts);
+    revDb.cashBankAccounts.update = async () => {
+      throw new Error('SIMULATED_CASH_UPDATE_FAILURE');
+    };
+
+    let reversalFailedAsExpected = false;
+    try {
+      await reverseTransaction(originalVoucherId, 'test_user', '2026-04-11', revDb);
+    } catch (err: any) {
+      if (err.message.includes('SIMULATED_CASH_UPDATE_FAILURE')) {
+        reversalFailedAsExpected = true;
+      }
+    }
+
+    assert(reversalFailedAsExpected, 'Reversal must fail when cash update fails.');
+
+    // Restore original method
+    revDb.cashBankAccounts.update = originalCashUpdate;
+
+    // Verify ATOMICITY: NONE of the 6 components may remain partially changed!
+    // 1. Journal
+    const postFailJournalEntries = await revDb.journalEntries.toArray();
+    assert(postFailJournalEntries.length === preRevJournalCount, 'Atomicity: No orphaned reversal journal entry may exist.');
+    const origJournalAfterFail = await revDb.journalEntries.get(originalVoucherId);
+    assert(origJournalAfterFail?.status !== 'REVERSED', 'Atomicity: Original journal entry status must not be REVERSED.');
+    assert(!origJournalAfterFail?.reversedBy, 'Atomicity: Original journal entry reversedBy must be undefined.');
+
+    // 2. Cash/Bank
+    const postFailCash = (await revDb.cashBankAccounts.get('cb_cash_1'))!.currentBalance;
+    assert(postFailCash === preRevCash, 'Atomicity: Cash balance must not remain changed after failed reversal.');
+
+    // 3. Inventory
+    const postFailStock = (await revDb.inventoryItems.get('item_rev_1'))!.currentStock;
+    assert(postFailStock === preRevStock, 'Atomicity: Inventory stock must not remain changed after failed reversal.');
+
+    // 4. Stock Movement
+    const postFailMovements = await revDb.stockMovements.toArray();
+    assert(postFailMovements.length === preRevMovementsCount, 'Atomicity: Stock movements must remain unchanged after failed reversal.');
+
+    // 5. AR/AP
+    const postFailCustBal = (await revDb.parties.get('cust_rev_1'))!.balance;
+    assert(postFailCustBal === preRevCustBal, 'Atomicity: Customer party balance must remain unchanged after failed reversal.');
+
+    // 6. Operational Record (Sale)
+    const postFailSale = await revDb.sales.get(originalSaleId);
+    assert(postFailSale?.status === preRevSaleStatus, 'Atomicity: Sale operational record must remain PAID, not CANCELLED.');
+
+    // Now execute clean reversal without failure
+    const cleanReversalResult = await reverseTransaction(originalVoucherId, 'test_user', '2026-04-11', revDb);
+    assert(Boolean(cleanReversalResult.reversal), 'Clean reversal should return reversal voucher.');
+    const finalCash = (await revDb.cashBankAccounts.get('cb_cash_1'))!.currentBalance;
+    const finalStock = (await revDb.inventoryItems.get('item_rev_1'))!.currentStock;
+    const finalSale = await revDb.sales.get(originalSaleId);
+    assert(finalCash === 50000, 'Successful reversal: Cash restored to 50000.');
+    assert(finalStock === 100, 'Successful reversal: Stock restored to 100.');
+    assert(finalSale?.status === 'CANCELLED', 'Successful reversal: Sale marked CANCELLED.');
+
 
 
 

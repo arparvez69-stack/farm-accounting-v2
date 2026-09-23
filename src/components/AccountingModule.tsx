@@ -689,13 +689,21 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
       return;
     }
 
-    if (originalEntry.reversedBy) {
-      setMsg({ type: 'error', text: `এই এন্ট্রিটি (#${originalEntry.voucherNumber}) ইতোমধ্যে সংশোধিত হয়েছে।` });
+    if (originalEntry.reversedBy || originalEntry.reversalOf || originalEntry.status === 'REVERSED') {
+      setMsg({ type: 'error', text: `এই এন্ট্রিটি (#${originalEntry.voucherNumber}) ইতোমধ্যে সংশোধিত/রিভার্স করা হয়েছে।` });
+      setReversingEntry(null);
       return;
     }
 
     try {
       setLoading(true);
+      const fresh = await db.journalEntries.get(originalEntry.id);
+      if (!fresh || fresh.reversedBy || fresh.reversalOf || fresh.status === 'REVERSED') {
+        setMsg({ type: 'error', text: `এই এন্ট্রিটি ইতোমধ্যে সংশোধিত/রিভার্স করা হয়েছে। ডুপ্লিকেট রিভার্সাল প্রতিরোধ করা হয়েছে।` });
+        setReversingEntry(null);
+        return;
+      }
+      setReversingEntry(null);
       const result = await reverseJournalEntry(originalEntry.id, currentUserId);
 
       // Reload so lists show the reversal and the "সংশোধিত" badge on original
@@ -1568,7 +1576,7 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
                             </div>
                           </div>
 
-                          {!j.reversedBy && role === 'OWNER' && (
+                          {!j.reversedBy && !j.reversalOf && j.status !== 'REVERSED' && role === 'OWNER' && (
                             <button
                               type="button"
                               onClick={() => setReversingEntry(j)}
@@ -1840,7 +1848,7 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
                               </div>
                             </div>
 
-                            {!row.reversedBy && role === 'OWNER' && (
+                            {!row.reversedBy && !row.reversalOf && role === 'OWNER' && (
                               <button
                                 type="button"
                                 onClick={async () => {

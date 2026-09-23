@@ -1,6 +1,6 @@
 import Dexie from 'dexie';
 import { db } from '../db/indexedDb';
-import { Account, AccountClass, ClosedPeriod, JournalEntry, JournalLine, NormalBalance, VoucherType } from '../types';
+import { Account, AccountClass, ClosedPeriod, JournalEntry, JournalLine, NormalBalance, VoucherType, Sale, Purchase, AnimalEvent, PaymentRecord } from '../types';
 import { generateTransactionNumber, generateUniqueId, safeInsert } from '../utils/idGenerator';
 import { DEFAULT_CHART_OF_ACCOUNTS } from './defaultAccounts';
 
@@ -170,44 +170,57 @@ export function validateJournalEntry(
 /**
  * Retrieve the most recent closed accounting period (if any)
  */
-export async function getLatestClosedPeriod(): Promise<ClosedPeriod | null> {
-  try {
-    if (!db.isOpen()) {
-      await db.open();
-    }
-    const currentTx = Dexie.currentTransaction;
-    if (currentTx && !currentTx.storeNames.includes('closedPeriods')) {
-      return null;
-    }
-    if (!db.tables.some((t) => t.name === 'closedPeriods')) {
-      return null;
-    }
-    const periods = await db.closedPeriods.orderBy('endDate').reverse().toArray();
-    return periods.length > 0 ? periods[0] : null;
-  } catch (err) {
-    console.warn('Notice: Closed periods store not accessible or empty:', err);
-    return null;
-  }
+export async function getLatestClosedPeriod(dbInstance?: any): Promise<ClosedPeriod | null> {
+  const periods = await getClosedPeriods(dbInstance);
+  return periods.length > 0 ? periods[0] : null;
 }
 
 /**
  * Retrieve all closed accounting periods ordered from newest to oldest
  */
-export async function getClosedPeriods(): Promise<ClosedPeriod[]> {
+export async function getClosedPeriods(dbInstance?: any): Promise<ClosedPeriod[]> {
+  const targetDb = dbInstance || db;
   try {
-    if (!db.isOpen()) {
+    if (targetDb && targetDb !== db && targetDb.closedPeriods) {
+      if (typeof targetDb.closedPeriods.toArray === 'function') {
+        const periods = await targetDb.closedPeriods.toArray();
+        return (periods as ClosedPeriod[] || []).sort((a: any, b: any) => (b.endDate || '').localeCompare(a.endDate || ''));
+      }
+      if (typeof targetDb.closedPeriods.values === 'function') {
+        const periods = Array.from(targetDb.closedPeriods.values()) as ClosedPeriod[];
+        return (periods || []).sort((a: any, b: any) => (b.endDate || '').localeCompare(a.endDate || ''));
+      }
+      if (Array.isArray(targetDb.closedPeriods)) {
+        return ([...targetDb.closedPeriods] as ClosedPeriod[]).sort((a: any, b: any) => (b.endDate || '').localeCompare(a.endDate || ''));
+      }
+    }
+    if (typeof db.isOpen === 'function' && !db.isOpen()) {
       await db.open();
     }
     const currentTx = Dexie.currentTransaction;
     if (currentTx && !currentTx.storeNames.includes('closedPeriods')) {
       return [];
     }
-    if (!db.tables.some((t) => t.name === 'closedPeriods')) {
+    if (!db.tables?.some((t) => t.name === 'closedPeriods')) {
       return [];
     }
     return await db.closedPeriods.orderBy('endDate').reverse().toArray();
   } catch (err) {
-    console.warn('Notice: Closed periods store not accessible:', err);
+    if (targetDb?.closedPeriods) {
+      try {
+        if (typeof targetDb.closedPeriods.toArray === 'function') {
+          const periods = await targetDb.closedPeriods.toArray();
+          return (periods as ClosedPeriod[] || []).sort((a: any, b: any) => (b.endDate || '').localeCompare(a.endDate || ''));
+        }
+        if (typeof targetDb.closedPeriods.values === 'function') {
+          const periods = Array.from(targetDb.closedPeriods.values()) as ClosedPeriod[];
+          return (periods || []).sort((a: any, b: any) => (b.endDate || '').localeCompare(a.endDate || ''));
+        }
+        if (Array.isArray(targetDb.closedPeriods)) {
+          return ([...targetDb.closedPeriods] as ClosedPeriod[]).sort((a: any, b: any) => (b.endDate || '').localeCompare(a.endDate || ''));
+        }
+      } catch {}
+    }
     return [];
   }
 }
@@ -228,16 +241,7 @@ export async function postJournalEntry(
   }
 
   // Prevent posting new journal entries on or before the latest closed period's endDate
-  let latestClosed: ClosedPeriod | null = null;
-  if (options?.dbInstance?.closedPeriods) {
-    try {
-      const closedPeriods = await options.dbInstance.closedPeriods.toArray();
-      const sorted = closedPeriods.sort((a: any, b: any) => (b.endDate || '').localeCompare(a.endDate || ''));
-      latestClosed = sorted[0] || null;
-    } catch {}
-  } else {
-    latestClosed = await getLatestClosedPeriod();
-  }
+  const latestClosed = await getLatestClosedPeriod(targetDb);
 
   if (options?.isClosingEntry) {
     if (latestClosed && entry.date <= latestClosed.endDate) {
@@ -289,101 +293,548 @@ export async function postJournalEntry(
 }
 
 /**
+ * In-memory concurrency locks to prevent concurrent duplicate reversal execution
+ */
+const activeReversalLocks = new Set<string>();
+
+/**
  * Reverses a mistaken journal entry traceable and balances it out.
  * 1. Creates a brand-new journal entry dated today (or specified valid date).
  * 2. Swaps every debit and credit line exactly (equal and opposite).
  * 3. Narration: "মূল এন্ট্রি #[id] তারিখ [date]-এর সংশোধনী"
  * 4. Links reversalOf on new entry and reversedBy on original entry.
  * 5. Does NOT delete or remove original entry, keeping it fully traceable and searchable.
+ * 6. Strictly prevents duplicate reversal: an already reversed transaction cannot be reversed again.
  */
 export async function reverseJournalEntry(
   originalEntryId: string,
   currentUserId: string,
-  customReversalDate?: string
-): Promise<{ original: JournalEntry; reversal: JournalEntry }> {
-  const original = await db.journalEntries.get(originalEntryId);
-  if (!original) {
-    throw new Error(`মূল জাবেদা দাখিলা (ID: ${originalEntryId}) খুঁজে পাওয়া যায়নি।`);
+  customReversalDate?: string,
+  dbInstance: any = db
+): Promise<{ original: JournalEntry; reversal: JournalEntry; [key: string]: any }> {
+  if (activeReversalLocks.has(originalEntryId)) {
+    throw new Error(`এই জাবেদা দাখিলাটির (#${originalEntryId}) রিভার্সাল প্রক্রিয়া বর্তমানে চলমান রয়েছে। ডুপ্লিকেট রিভার্সাল প্রতিরোধ করা হয়েছে।`);
   }
+  activeReversalLocks.add(originalEntryId);
 
-  if (original.reversedBy) {
-    throw new Error(`এই জাবেদা দাখিলাটি (#${original.voucherNumber}) ইতোমধ্যে সংশোধিত/রিভার্স করা হয়েছে।`);
-  }
-
-  if (original.reference?.startsWith('YEC-') || original.voucherNumber?.startsWith('YEC')) {
-    throw new Error('সমাপনী দাখিলা (Year-End Closing Entry) সরাসরি রিভার্স করা যাবে না।');
-  }
-
-  const today = customReversalDate || new Date().toISOString().split('T')[0];
-  const latestClosed = await getLatestClosedPeriod();
-  if (latestClosed && today <= latestClosed.endDate) {
-    throw new Error(
-      `হিসাবরক্ষণ সীমাবদ্ধতা: সর্বশেষ সমাপ্ত হিসাবকাল ${latestClosed.endDate} পর্যন্ত বন্ধ। সংশোধনী আজকের তারিখে (${today}) পোস্ট করতে হবে যা বন্ধ সময়কালের পরবর্তী হতে হবে।`
-    );
-  }
-
-  // Swap every debit/credit line exactly (equal and opposite)
-  const reversedLines: JournalLine[] = original.lines.map((line) => ({
-    accountId: line.accountId,
-    accountCode: line.accountCode,
-    accountName: line.accountName,
-    debit: Number(line.credit || 0),
-    credit: Number(line.debit || 0),
-    memo: line.memo ? `সংশোধনী: ${line.memo}` : undefined
-  }));
-
-  const voucherNum = generateTransactionNumber('ADJ');
-  const reversalId = generateUniqueId('j');
-
-  const reversalEntryData: Omit<JournalEntry, 'totalDebit' | 'totalCredit'> = {
-    id: reversalId,
-    voucherNumber: voucherNum,
-    voucherType: 'ADJUSTMENT',
-    date: today,
-    narration: `মূল এন্ট্রি #${original.id} তারিখ ${original.date}-এর সংশোধনী`,
-    lines: reversedLines,
-    reference: original.id,
-    reversalOf: original.id,
-    relatedPerson: original.relatedPerson,
-    createdBy: currentUserId || 'system',
-    createdAt: new Date().toISOString()
-  };
-
-  const reversalEntry = await postJournalEntry(reversalEntryData);
-
-  // Link reversedBy on original entry
-  await db.journalEntries.update(original.id, {
-    reversedBy: reversalEntry.id,
-    synced: false
-  });
-
-  const updatedOriginal: JournalEntry = {
-    ...original,
-    reversedBy: reversalEntry.id
-  };
-
-  // Safe audit log
   try {
-    await safeInsert(db.auditLogs, {
-      id: generateUniqueId('audit'),
-      timestamp: new Date().toISOString(),
-      userId: currentUserId || 'system',
-      role: 'OWNER',
-      action: 'REVERSE_VOUCHER',
-      module: 'ACCOUNTING',
-      recordId: reversalEntry.id,
-      status: 'SUCCESS',
-      details: `মূল এন্ট্রি #${original.voucherNumber} (${original.id}) রিভার্স করা হয়েছে। নতুন সংশোধনী ভাউচার: ${reversalEntry.voucherNumber}`
-    });
-  } catch (auditErr) {
-    console.warn('Audit log write error on reversal:', auditErr);
-  }
+    const targetDb = dbInstance || db;
 
-  return {
-    original: updatedOriginal,
-    reversal: reversalEntry
-  };
+    const transactionTables = [
+      targetDb.journalEntries,
+      targetDb.cashBankAccounts,
+      targetDb.inventoryItems,
+      targetDb.stockMovements,
+      targetDb.parties,
+      targetDb.sales,
+      targetDb.purchases,
+      targetDb.animalEvents,
+      targetDb.animals,
+      targetDb.payments,
+      targetDb.loans,
+      targetDb.fixedAssets,
+      targetDb.reminders,
+      targetDb.accounts,
+      targetDb.auditLogs,
+      targetDb.closedPeriods
+    ].filter(Boolean);
+
+    const performReversal = async (): Promise<{ original: JournalEntry; reversal: JournalEntry; [key: string]: any }> => {
+      // 1. Locate original journal entry, or resolve from linked operational ID
+      let resolvedEntryId = originalEntryId;
+      let original = targetDb.journalEntries?.get ? await targetDb.journalEntries.get(resolvedEntryId) : null;
+
+      if (!original) {
+        // Try looking up via sale, purchase, payment, animalEvent
+        if (targetDb.sales?.get) {
+          const s = await targetDb.sales.get(originalEntryId);
+          if (s?.journalEntryId) {
+            resolvedEntryId = s.journalEntryId;
+            original = await targetDb.journalEntries.get(resolvedEntryId);
+          }
+        }
+        if (!original && targetDb.purchases?.get) {
+          const p = await targetDb.purchases.get(originalEntryId);
+          if (p?.journalEntryId) {
+            resolvedEntryId = p.journalEntryId;
+            original = await targetDb.journalEntries.get(resolvedEntryId);
+          }
+        }
+        if (!original && targetDb.payments?.get) {
+          const pmt = await targetDb.payments.get(originalEntryId);
+          if (pmt?.journalEntryId) {
+            resolvedEntryId = pmt.journalEntryId;
+            original = await targetDb.journalEntries.get(resolvedEntryId);
+          }
+        }
+        if (!original && targetDb.animalEvents?.get) {
+          const evt = await targetDb.animalEvents.get(originalEntryId);
+          if (evt?.journalEntryId) {
+            resolvedEntryId = evt.journalEntryId;
+            original = await targetDb.journalEntries.get(resolvedEntryId);
+          }
+        }
+      }
+
+      if (!original) {
+        throw new Error(`মূল জাবেদা দাখিলা (ID: ${originalEntryId}) খুঁজে পাওয়া যায়নি।`);
+      }
+
+      if (original.reversedBy || original.status === 'REVERSED') {
+        throw new Error(`এই জাবেদা দাখিলাটি (#${original.voucherNumber || original.id}) ইতোমধ্যে সংশোধিত/রিভার্স করা হয়েছে।`);
+      }
+
+      if (original.reversalOf) {
+        throw new Error(`একটি রিভার্সাল জাবেদা দাখিলা (#${original.voucherNumber || original.id}) পুনরায় রিভার্স করা যাবে না।`);
+      }
+
+      // Verify whether any existing reversal entry already points to this original transaction
+      let existingReversal: JournalEntry | undefined;
+      if (targetDb.journalEntries?.where) {
+        existingReversal = await targetDb.journalEntries.where('reversalOf').equals(original.id).first();
+      } else if (targetDb.journalEntries?.toArray) {
+        const all = await targetDb.journalEntries.toArray();
+        existingReversal = all.find((j: any) => j.reversalOf === original.id);
+      }
+      if (existingReversal) {
+        if (!original.reversedBy) {
+          await targetDb.journalEntries.update(original.id, {
+            reversedBy: existingReversal.id,
+            status: 'REVERSED',
+            synced: false
+          });
+        }
+        throw new Error(`এই জাবেদা দাখিলাটি (#${original.voucherNumber || original.id}) ইতোমধ্যে রিভার্সাল #${existingReversal.voucherNumber || existingReversal.id} দ্বারা রিভার্স করা হয়েছে।`);
+      }
+
+      if (original.reference?.startsWith('YEC-') || original.voucherNumber?.startsWith('YEC')) {
+        throw new Error('সমাপনী দাখিলা (Year-End Closing Entry) সরাসরি রিভার্স করা যাবে না।');
+      }
+
+      const today = customReversalDate || new Date().toISOString().split('T')[0];
+      let latestClosed: ClosedPeriod | null = null;
+      if (targetDb.closedPeriods?.toArray) {
+        try {
+          const closedPeriods = await targetDb.closedPeriods.toArray();
+          const sorted = closedPeriods.sort((a: any, b: any) => (b.endDate || '').localeCompare(a.endDate || ''));
+          latestClosed = sorted[0] || null;
+        } catch {}
+      } else {
+        latestClosed = await getLatestClosedPeriod();
+      }
+
+      if (latestClosed && today <= latestClosed.endDate) {
+        throw new Error(
+          `হিসাবরক্ষণ সীমাবদ্ধতা: সর্বশেষ সমাপ্ত হিসাবকাল ${latestClosed.endDate} পর্যন্ত বন্ধ। সংশোধনী আজকের তারিখে (${today}) পোস্ট করতে হবে যা বন্ধ সময়কালের পরবর্তী হতে হবে।`
+        );
+      }
+
+      // Swap every debit/credit line exactly (equal and opposite)
+      const reversedLines: JournalLine[] = original.lines.map((line) => ({
+        accountId: line.accountId,
+        accountCode: line.accountCode,
+        accountName: line.accountName,
+        debit: Number(line.credit || 0),
+        credit: Number(line.debit || 0),
+        memo: line.memo ? `সংশোধনী: ${line.memo}` : undefined
+      }));
+
+      const voucherNum = generateTransactionNumber('ADJ');
+      const reversalId = generateUniqueId('j');
+
+      const reversalEntryData: Omit<JournalEntry, 'totalDebit' | 'totalCredit'> = {
+        id: reversalId,
+        voucherNumber: voucherNum,
+        voucherType: 'ADJUSTMENT',
+        date: today,
+        narration: `মূল এন্ট্রি #${original.voucherNumber || original.id} তারিখ ${original.date}-এর সংশোধনী`,
+        lines: reversedLines,
+        reference: original.id,
+        reversalOf: original.id,
+        relatedPerson: original.relatedPerson,
+        createdBy: currentUserId || 'system',
+        createdAt: new Date().toISOString()
+      };
+
+      // 1. Post reversal journal entry
+      const reversalEntry = await postJournalEntry(reversalEntryData, { dbInstance: targetDb });
+
+      // 2. Link reversedBy and status on original entry (preserving original lines and identity)
+      await targetDb.journalEntries.update(original.id, {
+        reversedBy: reversalEntry.id,
+        status: 'REVERSED',
+        synced: false
+      });
+
+      const updatedOriginal: JournalEntry = {
+        ...original,
+        reversedBy: reversalEntry.id,
+        status: 'REVERSED'
+      };
+
+      // 3. Atomically reverse linked operational records and subledgers (cash/bank, inventory, stock movement, AR/AP, operational record)
+      // Check for linked Sale
+      let linkedSale: Sale | undefined;
+      if (targetDb.sales?.toArray) {
+        const allSales = await targetDb.sales.toArray();
+        linkedSale = allSales.find(
+          (s: any) => s.journalEntryId === original.id || (original.reference && (s.invoiceNumber === original.reference || s.id === original.reference))
+        );
+      }
+
+      if (linkedSale && linkedSale.status !== 'CANCELLED') {
+        // Operational record
+        await targetDb.sales.update(linkedSale.id, { status: 'CANCELLED', synced: false });
+
+        // Inventory restoration
+        if (targetDb.inventoryItems?.get && Array.isArray(linkedSale.items)) {
+          for (const it of linkedSale.items) {
+            const invItem = await targetDb.inventoryItems.get(it.itemId);
+            if (invItem) {
+              await targetDb.inventoryItems.update(invItem.id, {
+                currentStock: Math.round(((invItem.currentStock || 0) + it.quantity) * 100) / 100,
+                synced: false
+              });
+            }
+          }
+        }
+
+        // Stock movement cleanup / reversal
+        if (targetDb.stockMovements?.toArray && targetDb.stockMovements?.delete) {
+          const movements = await targetDb.stockMovements.toArray();
+          const toDelete = movements.filter((m: any) =>
+            m.referenceId === linkedSale!.invoiceNumber ||
+            m.referenceId === linkedSale!.id ||
+            (m.movementType === 'SALE' && linkedSale!.items?.some((it: any) => it.itemId === m.itemId && it.quantity === m.quantity))
+          );
+          for (const sm of toDelete) {
+            await targetDb.stockMovements.delete(sm.id);
+          }
+        }
+
+        // AR revert
+        if (linkedSale.paymentMethod === 'CREDIT' && linkedSale.customerId && targetDb.parties?.get) {
+          const customer = await targetDb.parties.get(linkedSale.customerId);
+          if (customer) {
+            await targetDb.parties.update(customer.id, {
+              balance: Math.round(((customer.balance || 0) - linkedSale.totalAmount) * 100) / 100
+            });
+          }
+        }
+
+        // Cash / Bank revert
+        if (linkedSale.paymentMethod === 'CASH' && targetDb.cashBankAccounts?.where) {
+          const cashAcc = await targetDb.cashBankAccounts.where('accountType').equals('CASH').first();
+          if (cashAcc) {
+            await targetDb.cashBankAccounts.update(cashAcc.id, {
+              currentBalance: Math.round(((cashAcc.currentBalance || 0) - linkedSale.totalAmount) * 100) / 100
+            });
+          }
+        } else if (linkedSale.paymentMethod === 'BANK' && targetDb.cashBankAccounts) {
+          const bankAcc = linkedSale.bankAccountId && targetDb.cashBankAccounts.get
+            ? await targetDb.cashBankAccounts.get(linkedSale.bankAccountId)
+            : await targetDb.cashBankAccounts.where('accountType').equals('BANK').first();
+          if (bankAcc) {
+            await targetDb.cashBankAccounts.update(bankAcc.id, {
+              currentBalance: Math.round(((bankAcc.currentBalance || 0) - linkedSale.totalAmount) * 100) / 100
+            });
+          }
+        }
+      }
+
+      // Check for linked Purchase
+      let linkedPurchase: Purchase | undefined;
+      if (targetDb.purchases?.toArray) {
+        const allPurchases = await targetDb.purchases.toArray();
+        linkedPurchase = allPurchases.find(
+          (p: any) => p.journalEntryId === original.id || (original.reference && (p.invoiceNumber === original.reference || p.id === original.reference))
+        );
+      }
+
+      if (linkedPurchase && linkedPurchase.status !== 'CANCELLED') {
+        // Operational record
+        await targetDb.purchases.update(linkedPurchase.id, { status: 'CANCELLED', synced: false });
+
+        // Inventory deduction
+        if (targetDb.inventoryItems?.get && Array.isArray(linkedPurchase.items)) {
+          for (const it of linkedPurchase.items) {
+            const invItem = await targetDb.inventoryItems.get(it.itemId);
+            if (invItem) {
+              await targetDb.inventoryItems.update(invItem.id, {
+                currentStock: Math.max(0, Math.round(((invItem.currentStock || 0) - it.quantity) * 100) / 100),
+                synced: false
+              });
+            }
+          }
+        }
+
+        // Stock movement cleanup / reversal
+        if (targetDb.stockMovements?.toArray && targetDb.stockMovements?.delete) {
+          const movements = await targetDb.stockMovements.toArray();
+          const toDelete = movements.filter((m: any) =>
+            m.referenceId === linkedPurchase!.invoiceNumber ||
+            m.referenceId === linkedPurchase!.id ||
+            (m.movementType === 'PURCHASE' && linkedPurchase!.items?.some((it: any) => it.itemId === m.itemId && it.quantity === m.quantity))
+          );
+          for (const sm of toDelete) {
+            await targetDb.stockMovements.delete(sm.id);
+          }
+        }
+
+        // AP revert
+        if (linkedPurchase.paymentMethod === 'CREDIT' && linkedPurchase.supplierId && targetDb.parties?.get) {
+          const supplier = await targetDb.parties.get(linkedPurchase.supplierId);
+          if (supplier) {
+            await targetDb.parties.update(supplier.id, {
+              balance: Math.round(((supplier.balance || 0) - linkedPurchase.grandTotal) * 100) / 100
+            });
+          }
+        }
+
+        // Cash / Bank revert
+        if (linkedPurchase.paymentMethod === 'CASH' && targetDb.cashBankAccounts?.where) {
+          const cashAcc = await targetDb.cashBankAccounts.where('accountType').equals('CASH').first();
+          if (cashAcc) {
+            await targetDb.cashBankAccounts.update(cashAcc.id, {
+              currentBalance: Math.round(((cashAcc.currentBalance || 0) + linkedPurchase.grandTotal) * 100) / 100
+            });
+          }
+        } else if (linkedPurchase.paymentMethod === 'BANK' && targetDb.cashBankAccounts) {
+          const bankAcc = linkedPurchase.bankAccountId && targetDb.cashBankAccounts.get
+            ? await targetDb.cashBankAccounts.get(linkedPurchase.bankAccountId)
+            : await targetDb.cashBankAccounts.where('accountType').equals('BANK').first();
+          if (bankAcc) {
+            await targetDb.cashBankAccounts.update(bankAcc.id, {
+              currentBalance: Math.round(((bankAcc.currentBalance || 0) + linkedPurchase.grandTotal) * 100) / 100
+            });
+          }
+        }
+      }
+
+      // Check for linked AnimalEvent
+      let linkedEvent: AnimalEvent | undefined;
+      if (targetDb.animalEvents?.toArray) {
+        const allEvents = await targetDb.animalEvents.toArray();
+        linkedEvent = allEvents.find(
+          (e: any) => e.journalEntryId === original.id || (original.reference && e.id === original.reference)
+        );
+      }
+
+      if (linkedEvent) {
+        // Operational record
+        if (targetDb.animalEvents?.delete) {
+          await targetDb.animalEvents.delete(linkedEvent.id);
+        }
+
+        // Animal cost breakdown revert
+        if (linkedEvent.animalId && targetDb.animals?.get) {
+          const freshAnimal = await targetDb.animals.get(linkedEvent.animalId);
+          if (freshAnimal) {
+            const feedCost = linkedEvent.eventType === 'FEED' ? (linkedEvent.cost || 0) : 0;
+            const medCost = (linkedEvent.eventType === 'VACCINE' || linkedEvent.eventType === 'TREATMENT') ? (linkedEvent.cost || 0) : 0;
+            const isLabour = (linkedEvent.eventType as string) === 'LABOUR';
+            const labourCost = isLabour ? (linkedEvent.cost || 0) : 0;
+            const otherCost = (!isLabour && linkedEvent.eventType !== 'FEED' && linkedEvent.eventType !== 'VACCINE' && linkedEvent.eventType !== 'TREATMENT') ? (linkedEvent.cost || 0) : 0;
+
+            const newFeed = Math.max(0, (freshAnimal.accumulatedFeedCost || 0) - feedCost);
+            const newMed = Math.max(0, (freshAnimal.accumulatedMedCost || 0) - medCost);
+            const newLabour = Math.max(0, (freshAnimal.accumulatedLabourCost || 0) - labourCost);
+            const newOther = Math.max(0, (freshAnimal.otherCosts || 0) - otherCost);
+            const newTotal = Math.max(0, (freshAnimal.purchaseCost || 0) + newFeed + newMed + newLabour + newOther);
+
+            await targetDb.animals.update(freshAnimal.id, {
+              accumulatedFeedCost: Math.round(newFeed * 100) / 100,
+              accumulatedMedCost: Math.round(newMed * 100) / 100,
+              accumulatedLabourCost: Math.round(newLabour * 100) / 100,
+              otherCosts: Math.round(newOther * 100) / 100,
+              totalCost: Math.round(newTotal * 100) / 100,
+              synced: false
+            });
+          }
+        }
+
+        // Feed stock revert
+        if (linkedEvent.feedItemId && linkedEvent.feedQuantityUsed && linkedEvent.feedQuantityUsed > 0 && targetDb.inventoryItems?.get) {
+          const feedItem = await targetDb.inventoryItems.get(linkedEvent.feedItemId);
+          if (feedItem) {
+            await targetDb.inventoryItems.update(feedItem.id, {
+              currentStock: Math.round(((feedItem.currentStock || 0) + linkedEvent.feedQuantityUsed) * 100) / 100,
+              synced: false
+            });
+          }
+        }
+
+        // Feed stock movement cleanup
+        if (targetDb.stockMovements?.toArray && targetDb.stockMovements?.delete) {
+          const movements = await targetDb.stockMovements.toArray();
+          const toDelete = movements.filter((m: any) => m.referenceId === linkedEvent!.id);
+          for (const sm of toDelete) {
+            await targetDb.stockMovements.delete(sm.id);
+          }
+        }
+
+        // Cash/Bank revert if paid
+        if (linkedEvent.cost && linkedEvent.cost > 0) {
+          const cashLine = original.lines.find((l: any) => l.accountCode === '1010' && (l.credit || 0) > 0);
+          const bankLine = original.lines.find((l: any) => l.accountCode === '1030' && (l.credit || 0) > 0);
+          if (cashLine && targetDb.cashBankAccounts?.where) {
+            const cashAcc = await targetDb.cashBankAccounts.where('accountType').equals('CASH').first();
+            if (cashAcc) {
+              await targetDb.cashBankAccounts.update(cashAcc.id, {
+                currentBalance: Math.round(((cashAcc.currentBalance || 0) + (cashLine.credit || 0)) * 100) / 100
+              });
+            }
+          } else if (bankLine && targetDb.cashBankAccounts?.where) {
+            const bankAcc = await targetDb.cashBankAccounts.where('accountType').equals('BANK').first();
+            if (bankAcc) {
+              await targetDb.cashBankAccounts.update(bankAcc.id, {
+                currentBalance: Math.round(((bankAcc.currentBalance || 0) + (bankLine.credit || 0)) * 100) / 100
+              });
+            }
+          }
+        }
+      }
+
+      // Check for linked Payment
+      let linkedPayment: PaymentRecord | undefined;
+      if (targetDb.payments?.toArray) {
+        const allPayments = await targetDb.payments.toArray();
+        linkedPayment = allPayments.find(
+          (p: any) => p.journalEntryId === original.id || (original.reference && (p.id === original.reference || (p as any).receiptNumber === original.reference))
+        );
+      }
+
+      if (linkedPayment && (linkedPayment as any).status !== 'CANCELLED') {
+        await targetDb.payments.update(linkedPayment.id, { status: 'CANCELLED', synced: false });
+
+        if (linkedPayment.parentId) {
+          if (targetDb.sales?.get) {
+            const parentSale = await targetDb.sales.get(linkedPayment.parentId);
+            if (parentSale) {
+              const newPaid = Math.max(0, Math.round(((parentSale.paidAmount || 0) - linkedPayment.amount) * 100) / 100);
+              const newDue = Math.round(((parentSale.totalAmount || parentSale.grandTotal || 0) - newPaid) * 100) / 100;
+              await targetDb.sales.update(parentSale.id, {
+                paidAmount: newPaid,
+                dueAmount: newDue,
+                status: newPaid <= 0 ? 'DUE' : 'PARTIAL'
+              });
+            }
+          }
+          if (targetDb.purchases?.get) {
+            const parentPurchase = await targetDb.purchases.get(linkedPayment.parentId);
+            if (parentPurchase) {
+              const newPaid = Math.max(0, Math.round(((parentPurchase.paidAmount || 0) - linkedPayment.amount) * 100) / 100);
+              const newDue = Math.round(((parentPurchase.grandTotal || 0) - newPaid) * 100) / 100;
+              await targetDb.purchases.update(parentPurchase.id, {
+                paidAmount: newPaid,
+                dueAmount: newDue,
+                status: newPaid <= 0 ? 'DUE' : 'PARTIAL'
+              });
+            }
+          }
+        }
+
+        if (linkedPayment.partyId && targetDb.parties?.get) {
+          const party = await targetDb.parties.get(linkedPayment.partyId);
+          if (party) {
+            const isReceipt = (linkedPayment as any).type === 'RECEIPT' || linkedPayment.parentType === 'SALE';
+            const delta = isReceipt ? linkedPayment.amount : -linkedPayment.amount;
+            await targetDb.parties.update(party.id, {
+              balance: Math.round(((party.balance || 0) + delta) * 100) / 100
+            });
+          }
+        }
+
+        if (linkedPayment.paymentMethod === 'CASH' && targetDb.cashBankAccounts?.where) {
+          const cashAcc = await targetDb.cashBankAccounts.where('accountType').equals('CASH').first();
+          if (cashAcc) {
+            const isReceipt = (linkedPayment as any).type === 'RECEIPT' || linkedPayment.parentType === 'SALE';
+            const delta = isReceipt ? -linkedPayment.amount : linkedPayment.amount;
+            await targetDb.cashBankAccounts.update(cashAcc.id, {
+              currentBalance: Math.round(((cashAcc.currentBalance || 0) + delta) * 100) / 100
+            });
+          }
+        } else if (linkedPayment.paymentMethod === 'BANK' && targetDb.cashBankAccounts) {
+          const bankAcc = linkedPayment.bankAccountId && targetDb.cashBankAccounts.get
+            ? await targetDb.cashBankAccounts.get(linkedPayment.bankAccountId)
+            : await targetDb.cashBankAccounts.where('accountType').equals('BANK').first();
+          if (bankAcc) {
+            const isReceipt = (linkedPayment as any).type === 'RECEIPT' || linkedPayment.parentType === 'SALE';
+            const delta = isReceipt ? -linkedPayment.amount : linkedPayment.amount;
+            await targetDb.cashBankAccounts.update(bankAcc.id, {
+              currentBalance: Math.round(((bankAcc.currentBalance || 0) + delta) * 100) / 100
+            });
+          }
+        }
+      }
+
+      // If standalone journal entry with direct Cash/Bank movements (not covered by above)
+      if (!linkedSale && !linkedPurchase && !linkedEvent && !linkedPayment && targetDb.cashBankAccounts?.where) {
+        for (const line of original.lines) {
+          if (line.accountCode === '1010') {
+            const cashAcc = await targetDb.cashBankAccounts.where('accountType').equals('CASH').first();
+            if (cashAcc) {
+              const netCashDelta = (line.credit || 0) - (line.debit || 0);
+              if (netCashDelta !== 0) {
+                await targetDb.cashBankAccounts.update(cashAcc.id, {
+                  currentBalance: Math.round(((cashAcc.currentBalance || 0) + netCashDelta) * 100) / 100
+                });
+              }
+            }
+          } else if (line.accountCode === '1030') {
+            const bankAcc = await targetDb.cashBankAccounts.where('accountType').equals('BANK').first();
+            if (bankAcc) {
+              const netBankDelta = (line.credit || 0) - (line.debit || 0);
+              if (netBankDelta !== 0) {
+                await targetDb.cashBankAccounts.update(bankAcc.id, {
+                  currentBalance: Math.round(((bankAcc.currentBalance || 0) + netBankDelta) * 100) / 100
+                });
+              }
+            }
+          }
+        }
+      }
+
+      // Safe audit log
+      if (targetDb.auditLogs?.put) {
+        await safeInsert(targetDb.auditLogs, {
+          id: generateUniqueId('audit'),
+          timestamp: new Date().toISOString(),
+          userId: currentUserId || 'system',
+          role: 'OWNER',
+          action: 'REVERSE_VOUCHER',
+          module: 'ACCOUNTING',
+          recordId: reversalEntry.id,
+          status: 'SUCCESS',
+          details: `মূল এন্ট্রি #${original.voucherNumber || original.id} (${original.id}) রিভার্স করা হয়েছে। নতুন সংশোধনী ভাউচার: ${reversalEntry.voucherNumber}`
+        });
+      }
+
+      return {
+        original: updatedOriginal,
+        reversal: reversalEntry,
+        sale: linkedSale,
+        purchase: linkedPurchase,
+        animalEvent: linkedEvent,
+        payment: linkedPayment
+      };
+    };
+
+    // Execute within Dexie / MockTable transaction for strict all-or-nothing reversal atomicity
+    if (typeof targetDb.transaction === 'function') {
+      return await targetDb.transaction('rw', transactionTables, performReversal);
+    } else {
+      return await performReversal();
+    }
+  } finally {
+    activeReversalLocks.delete(originalEntryId);
+  }
 }
+
+/**
+ * Atomic Reversal of any transaction across journal, cash/bank, inventory, stock movement, AR/AP, and operational records.
+ */
+export const reverseTransaction = reverseJournalEntry;
 
 /**
  * Helper to resolve or synthesize account metadata for any account code
@@ -448,7 +899,10 @@ function resolveAccountMetadata(code: string, accountsByCode: Map<string, Accoun
  * Computes Trial Balance from all posted journal entries.
  * Detects genuine imbalance and identifies any invalid/orphan account references.
  */
-export async function generateTrialBalance(dateRange?: DateRangeFilter): Promise<{
+export async function generateTrialBalance(
+  dateRange?: DateRangeFilter,
+  dbInstance?: any
+): Promise<{
   rows: TrialBalanceRow[];
   totalDebit: number;
   totalCredit: number;
@@ -457,8 +911,9 @@ export async function generateTrialBalance(dateRange?: DateRangeFilter): Promise
   orphanAccounts: string[];
   hasInvalidAccounts: boolean;
 }> {
-  const rawAccounts = await db.accounts.toArray();
-  let entries = await db.journalEntries.toArray();
+  const targetDb = dbInstance || db;
+  const rawAccounts = await targetDb.accounts.toArray();
+  let entries = await targetDb.journalEntries.toArray();
 
   if (dateRange?.startDate || dateRange?.endDate) {
     entries = entries.filter((e) => {
@@ -599,7 +1054,7 @@ export async function generateTrialBalance(dateRange?: DateRangeFilter): Promise
  * Computes Profit & Loss Statement (লাভ-ক্ষতি বিবরণী)
  */
 export async function generateProfitLoss(
-  dateRange?: DateRangeFilter,
+  dateRange?: DateRangeFilter | { fromDate?: string; toDate?: string; from?: string; to?: string; start?: string; end?: string; startDate?: string; endDate?: string } | string,
   options?: { includeClosingEntries?: boolean },
   dbInstance: any = db
 ): Promise<ProfitLossReport> {
@@ -611,11 +1066,47 @@ export async function generateProfitLoss(
     entries = entries.filter((e) => !e.reference?.startsWith('YEC-') && !e.voucherNumber?.startsWith('YEC'));
   }
 
-  if (dateRange?.startDate || dateRange?.endDate) {
+  let cleanStartDate: string | undefined = undefined;
+  let cleanEndDate: string | undefined = undefined;
+
+  if (typeof dateRange === 'string') {
+    const trimmed = dateRange.trim();
+    if (/^\d{4}$/.test(trimmed)) {
+      cleanStartDate = `${trimmed}-01-01`;
+      cleanEndDate = `${trimmed}-12-31`;
+    } else if (/^\d{4}-\d{2}$/.test(trimmed)) {
+      cleanStartDate = `${trimmed}-01`;
+      const [yStr, mStr] = trimmed.split('-');
+      const y = parseInt(yStr, 10);
+      const m = parseInt(mStr, 10);
+      const lastDay = new Date(Date.UTC(y, m, 0)).getUTCDate();
+      cleanEndDate = `${trimmed}-${String(lastDay).padStart(2, '0')}`;
+    } else {
+      const s = trimmed.split('T')[0].split(' ')[0].trim();
+      cleanStartDate = s;
+      cleanEndDate = s;
+    }
+  } else if (dateRange && typeof dateRange === 'object') {
+    const rawStart = (dateRange as any).startDate || (dateRange as any).fromDate || (dateRange as any).from || (dateRange as any).start;
+    const rawEnd = (dateRange as any).endDate || (dateRange as any).toDate || (dateRange as any).to || (dateRange as any).end;
+
+    if (rawStart) {
+      cleanStartDate = String(rawStart).trim().split('T')[0].split(' ')[0].trim();
+    }
+    if (rawEnd) {
+      cleanEndDate = String(rawEnd).trim().split('T')[0].split(' ')[0].trim();
+    }
+  }
+
+  // Filter transactions strictly within the selected reporting period:
+  // cleanStartDate <= entryDate <= cleanEndDate
+  if (cleanStartDate || cleanEndDate) {
     entries = entries.filter((e) => {
       if (!e.date) return false;
-      if (dateRange.startDate && e.date < dateRange.startDate) return false;
-      if (dateRange.endDate && e.date > dateRange.endDate) return false;
+      const entryDate = String(e.date).trim().split('T')[0].split(' ')[0].trim();
+      if (!entryDate) return false;
+      if (cleanStartDate && entryDate < cleanStartDate) return false;
+      if (cleanEndDate && entryDate > cleanEndDate) return false;
       return true;
     });
   }
@@ -712,38 +1203,48 @@ export async function generateProfitLoss(
  * and 3040 Owner Drawings reduces Equity).
  */
 export async function generateBalanceSheet(
-  dateRange?: DateRangeFilter,
+  dateRange?: DateRangeFilter | { asOfDate?: string; date?: string; toDate?: string } | string,
   dbInstance: any = db
 ): Promise<BalanceSheetReport> {
   const rawAccounts = await dbInstance.accounts.toArray();
   let entries = await dbInstance.journalEntries.toArray();
 
-  // Balance Sheet is cumulative as of the selected end date (date <= endDate) without any startDate filtering
-  if (dateRange?.endDate) {
+  // Balance Sheet at endDate must use cumulative balances through that date (date <= endDate).
+  // Report start date (dateRange.startDate) must NEVER filter Balance Sheet balances.
+  const rawEndDate = typeof dateRange === 'string'
+    ? dateRange
+    : ((dateRange as any)?.endDate || (dateRange as any)?.asOfDate || (dateRange as any)?.date || (dateRange as any)?.toDate);
+  const cleanEndDate = rawEndDate ? String(rawEndDate).split('T')[0].trim() : undefined;
+
+  if (cleanEndDate) {
     entries = entries.filter((e) => {
       if (!e.date) return false;
-      if (e.date > dateRange.endDate!) return false;
-      return true;
+      const entryDate = String(e.date).split('T')[0];
+      return entryDate <= cleanEndDate;
     });
   }
 
   // Find the latest closed period on or before the balance sheet as-of date (if any)
-  const allClosed = dbInstance.closedPeriods?.toArray ? await dbInstance.closedPeriods.toArray() : await getClosedPeriods();
-  const relevantClosed = allClosed.filter((cp: any) => cp.endDate && (!dateRange?.endDate || cp.endDate <= dateRange.endDate));
+  const allClosed = await getClosedPeriods(dbInstance);
+  const relevantClosed = allClosed.filter(
+    (cp: any) => cp.endDate && (!cleanEndDate || String(cp.endDate).split('T')[0] <= cleanEndDate)
+  );
   const latestRelevantClosed = relevantClosed.length > 0 ? relevantClosed[0] : null;
 
   let unclosedStartDate: string | undefined = undefined;
   if (latestRelevantClosed?.endDate) {
-    const d = new Date(latestRelevantClosed.endDate);
-    d.setDate(d.getDate() + 1);
-    unclosedStartDate = d.toISOString().split('T')[0];
+    const cleanClosedEnd = String(latestRelevantClosed.endDate).split('T')[0];
+    const [y, m, d] = cleanClosedEnd.split('-').map(Number);
+    const nextDay = new Date(Date.UTC(y, m - 1, d + 1));
+    unclosedStartDate = nextDay.toISOString().split('T')[0];
   }
 
   // Only calculate net profit for the unclosed portion of the period so that closed profits transferred
   // into Retained Earnings (3050) are not double-counted on the Balance Sheet.
+  // We explicitly do NOT filter by dateRange.startDate.
   const pl = await generateProfitLoss({
     startDate: unclosedStartDate,
-    endDate: dateRange?.endDate
+    endDate: cleanEndDate
   }, undefined, dbInstance);
 
   // Deduplicate accounts by code
@@ -1077,7 +1578,8 @@ export interface YearEndClosingPreview {
  * Calculates a preview of the year-end closing up to the chosen date.
  * Reuses the existing Profit & Loss logic from the beginning up to the chosen date.
  */
-export async function previewYearEndClosing(closingDate: string): Promise<YearEndClosingPreview> {
+export async function previewYearEndClosing(closingDate: string, dbInstance?: any): Promise<YearEndClosingPreview> {
+  const targetDb = dbInstance || db;
   const emptyPreview = (reason: string, prevDate?: string): YearEndClosingPreview => ({
     closingDate,
     previousClosingDate: prevDate,
@@ -1105,7 +1607,7 @@ export async function previewYearEndClosing(closingDate: string): Promise<YearEn
   }
 
   // Check ClosedPeriod for the exact fiscal year-end date
-  const allClosed = await getClosedPeriods();
+  const allClosed = await getClosedPeriods(targetDb);
   const existingExact = allClosed.find((p) => p.endDate === closingDate);
   if (existingExact) {
     return emptyPreview(
@@ -1131,14 +1633,14 @@ export async function previewYearEndClosing(closingDate: string): Promise<YearEn
   }
 
   // Pre-closing integrity check: Trial Balance must be balanced before closing
-  const tb = await generateTrialBalance({ endDate: closingDate });
+  const tb = await generateTrialBalance({ endDate: closingDate }, targetDb);
   if (!tb.isBalanced) {
     return emptyPreview(
       `রেওয়ামিল ভারসাম্যহীন (Trial Balance is unbalanced: পার্থক্য ৳${tb.difference})। রেওয়ামিল না মেলা পর্যন্ত বছর সমাপ্তি করা সম্ভব নয়।`
     );
   }
 
-  const rawAccounts = await db.accounts.toArray();
+  const rawAccounts = await targetDb.accounts.toArray();
   const accountsByCode = new Map<string, Account>();
   for (const acc of rawAccounts) {
     if (!accountsByCode.has(acc.code)) {
@@ -1147,7 +1649,7 @@ export async function previewYearEndClosing(closingDate: string): Promise<YearEn
   }
 
   // Read all journal entries up to closingDate
-  const allEntries = await db.journalEntries.toArray();
+  const allEntries = await targetDb.journalEntries.toArray();
   const periodEntries = allEntries.filter((e) => e.date && e.date <= closingDate);
 
   const accountBalances: Record<string, number> = {};
@@ -1221,6 +1723,24 @@ export async function previewYearEndClosing(closingDate: string): Promise<YearEn
   };
 }
 
+const activeClosingLocks = new Set<string>();
+
+async function findAccountByCode(targetDb: any, code: string): Promise<Account | undefined> {
+  if (targetDb.accounts?.where) {
+    try {
+      const res = await targetDb.accounts.where('code').equals(code).first();
+      if (res) return res;
+    } catch {}
+  }
+  if (targetDb.accounts?.toArray) {
+    try {
+      const all = await targetDb.accounts.toArray();
+      return all.find((a: any) => a.code === code);
+    } catch {}
+  }
+  return undefined;
+}
+
 /**
  * Executes Year-End Closing:
  * 1. Validates that closingDate is not already closed in ClosedPeriod, and strictly after any previously closed period.
@@ -1230,19 +1750,71 @@ export async function previewYearEndClosing(closingDate: string): Promise<YearEn
  * 5. Balanced closing entry: Assets = Liabilities + Equity maintained.
  * 6. Records the closed period in db.closedPeriods.
  */
-export async function executeYearEndClosing(params: {
-  closingDate: string;
-  currentUserId: string;
-  notes?: string;
-}): Promise<{
+export async function executeYearEndClosing(
+  params:
+    | string
+    | {
+        closingDate?: string;
+        endDate?: string;
+        date?: string;
+        fiscalYear?: string | number;
+        period?: string;
+        startDate?: string;
+        currentUserId?: string;
+        userId?: string;
+        notes?: string;
+        dbInstance?: any;
+        [key: string]: any;
+      },
+  optionalUserIdOrDb?: any,
+  optionalNotes?: string,
+  optionalDb?: any
+): Promise<{
   closedPeriod: ClosedPeriod;
   journalEntry?: JournalEntry;
   netProfitTransferred: number;
 }> {
-  const { closingDate, currentUserId, notes } = params;
+  let closingDate: string = '';
+  let currentUserId: string = 'system';
+  let notes: string | undefined = undefined;
+  let targetDb: any = db;
+  let fiscalYearInput: string | number | undefined = undefined;
+  let startDateInput: string | undefined = undefined;
+  let periodInput: string | undefined = undefined;
 
+  if (typeof params === 'string') {
+    closingDate = params;
+    if (typeof optionalUserIdOrDb === 'string') {
+      currentUserId = optionalUserIdOrDb;
+      notes = optionalNotes;
+      targetDb = optionalDb || db;
+    } else if (optionalUserIdOrDb && typeof optionalUserIdOrDb === 'object') {
+      targetDb = optionalUserIdOrDb.closedPeriods ? optionalUserIdOrDb : (optionalDb || db);
+      notes = optionalNotes;
+    }
+  } else if (params && typeof params === 'object') {
+    closingDate = params.closingDate || params.endDate || params.date || '';
+    fiscalYearInput = params.fiscalYear;
+    startDateInput = params.startDate;
+    periodInput = params.period;
+    if (!closingDate && fiscalYearInput) {
+      closingDate = `${fiscalYearInput}-12-31`;
+    }
+    if (!closingDate && periodInput) {
+      if (/^\d{4}$/.test(periodInput)) {
+        closingDate = `${periodInput}-12-31`;
+      } else {
+        closingDate = periodInput;
+      }
+    }
+    currentUserId = params.currentUserId || params.userId || 'system';
+    notes = params.notes;
+    targetDb = params.dbInstance || (optionalUserIdOrDb?.closedPeriods ? optionalUserIdOrDb : (optionalDb || db));
+  }
+
+  closingDate = (closingDate || '').trim();
   if (!closingDate) {
-    throw new Error('সমাপ্তি তারিখ প্রদান করা বাধ্যতামূলক।');
+    throw new Error('সমাপ্তি তারিখ প্রদান করা বাধ্যতামূলক (Closing date is required)।');
   }
 
   const todayStr = new Date().toISOString().split('T')[0];
@@ -1250,272 +1822,435 @@ export async function executeYearEndClosing(params: {
     throw new Error(`সমাপ্তি তারিখ ভবিষ্যতের হতে পারে না (${todayStr} বা তার পূর্বের তারিখ নির্বাচন করুন)।`);
   }
 
-  // 1. Check ClosedPeriod for the exact fiscal year-end date
-  const allClosed = await getClosedPeriods();
-  const existingExactClosed = allClosed.find((p) => p.endDate === closingDate);
-  if (existingExactClosed) {
+  // Concurrency locking: prevent concurrent close attempts on the same period
+  const lockKey = `${closingDate}_${fiscalYearInput || ''}_${periodInput || ''}`;
+  if (activeClosingLocks.has(lockKey) || activeClosingLocks.has(closingDate)) {
     throw new Error(
-      `হিসাবকাল সমাপ্তি ত্রুটি: এই অর্থবছর সমাপ্তির তারিখ (${closingDate}) ইতোমধ্যে বন্ধ (Closed) করা হয়েছে। একই তারিখে পুনরায় বছর সমাপ্তি করা যাবে না (Fiscal year-end date already closed).`
+      `হিসাবকাল সমাপ্তি ত্রুটি: এই অর্থবছর বা সময়কালের সমাপ্তি প্রক্রিয়া ইতোমধ্যে চলমান রয়েছে। একই সময়কালে ডুপ্লিকেট বছর সমাপ্তি প্রতিরোধ করা হয়েছে (Fiscal period closing already in progress).`
     );
   }
+  activeClosingLocks.add(lockKey);
+  activeClosingLocks.add(closingDate);
 
-  const latestClosed = allClosed.length > 0 ? allClosed[0] : null;
-  if (latestClosed && closingDate <= latestClosed.endDate) {
-    throw new Error(
-      `সমাপ্তি তারিখটি পূর্ববর্তী বন্ধ সময়কালের শেষ তারিখ (${latestClosed.endDate}) এর পরের হতে হবে।`
-    );
-  }
+  try {
+    const txTables = [
+      targetDb.accounts,
+      targetDb.journalEntries,
+      targetDb.closedPeriods,
+      targetDb.auditLogs
+    ].filter(Boolean);
 
-  const conflictingClosed = allClosed.find((p) => p.endDate >= closingDate);
-  if (conflictingClosed) {
-    throw new Error(
-      `সমাপ্তি তারিখটি ইতোমধ্যে সমাপ্ত সময়কালের অন্তর্ভুক্ত (${conflictingClosed.endDate})।`
-    );
-  }
+    // Atomic execution block
+    const runInTx = async (): Promise<{
+      closedPeriod: ClosedPeriod;
+      journalEntry?: JournalEntry;
+      netProfitTransferred: number;
+    }> => {
+      // 1. Check ClosedPeriod for duplicate fiscal period closing
+      const allClosed = await getClosedPeriods(targetDb);
+      const cleanDate = closingDate.split('T')[0];
 
-  // 2. Pre-closing integrity check: Trial Balance must be balanced before closing
-  const preTb = await generateTrialBalance({ endDate: closingDate });
-  if (!preTb.isBalanced) {
-    throw new Error(
-      `হিসাবকাল সমাপ্তি ত্রুটি: রেওয়ামিল ভারসাম্যহীন (Trial balance unbalanced)! মোট ডেবিট: ৳${preTb.totalDebit}, মোট ক্রেডিট: ৳${preTb.totalCredit} (পার্থক্য: ৳${preTb.difference})। রেওয়ামিল ভারসাম্যপূর্ণ না হলে বছর সমাপ্তি করা যাবে না।`
-    );
-  }
-
-  // 3. Ensure accounts 3050 (Retained Earnings) and 3060 (Income Summary) exist
-  let reAcc = await db.accounts.where('code').equals('3050').first();
-  if (!reAcc) {
-    reAcc = {
-      id: 'acc_3050',
-      code: '3050',
-      nameBn: 'পুঞ্জীভূত লাভ/মুনাফা (Retained Earnings)',
-      nameEn: 'Retained Earnings',
-      accountClass: 'EQUITY',
-      normalBalance: 'CREDIT',
-      isSystem: true,
-      isActive: true
-    };
-    await safeInsert(db.accounts, reAcc);
-  }
-
-  let isAcc = await db.accounts.where('code').equals('3060').first();
-  if (!isAcc) {
-    isAcc = {
-      id: 'acc_3060',
-      code: '3060',
-      nameBn: 'আয় সারাংশ হিসাব (Income Summary)',
-      nameEn: 'Income Summary',
-      accountClass: 'EQUITY',
-      normalBalance: 'CREDIT',
-      isSystem: true,
-      isActive: true
-    };
-    await safeInsert(db.accounts, isAcc);
-  }
-
-  const rawAccounts = await db.accounts.toArray();
-  const accountsByCode = new Map<string, Account>();
-  for (const acc of rawAccounts) {
-    if (!accountsByCode.has(acc.code)) {
-      accountsByCode.set(acc.code, acc);
-    }
-  }
-
-  // Read all journal entries up to closingDate
-  const allJournalEntries = await db.journalEntries.toArray();
-  const periodEntries = allJournalEntries.filter((e) => e.date && e.date <= closingDate);
-
-  // Compute cumulative balances for all accounts up to closingDate
-  const accountBalances: Record<string, number> = {};
-  for (const entry of periodEntries) {
-    for (const line of entry.lines) {
-      const code = line.accountCode?.trim();
-      if (!code) continue;
-
-      if (accountBalances[code] === undefined) accountBalances[code] = 0;
-      const acc = resolveAccountMetadata(code, accountsByCode);
-      if (acc.normalBalance === 'CREDIT') {
-        accountBalances[code] += (Number(line.credit || 0) - Number(line.debit || 0));
-      } else {
-        accountBalances[code] += (Number(line.debit || 0) - Number(line.credit || 0));
+      // A. Exact same closing date
+      const existingExactClosed = allClosed.find(
+        (p) =>
+          (p.endDate && p.endDate.trim() === closingDate) ||
+          (p.endDate && p.endDate.split('T')[0] === cleanDate)
+      );
+      if (existingExactClosed) {
+        throw new Error(
+          `হিসাবকাল সমাপ্তি ত্রুটি: এই অর্থবছর সমাপ্তির তারিখ (${closingDate}) ইতোমধ্যে বন্ধ (Closed) করা হয়েছে। একই তারিখে পুনরায় বছর সমাপ্তি করা যাবে না (Fiscal year-end date already closed).`
+        );
       }
-    }
-  }
 
-  // Identify all Revenue, COGS, Expense, Other Income, and Other Expense accounts that have non-zero balances
-  const closingLines: JournalLine[] = [];
-  let totalRevenueCreditsToClose = 0;
-  let totalExpenseDebitsToClose = 0;
+      // B. Same fiscal year (if fiscalYear explicitly passed, e.g. 2025)
+      if (fiscalYearInput) {
+        const yrStr = String(fiscalYearInput);
+        const existingYear = allClosed.find(
+          (p) => (p.endDate && p.endDate.startsWith(yrStr)) || (p.notes && p.notes.includes(yrStr))
+        );
+        if (existingYear) {
+          throw new Error(
+            `হিসাবকাল সমাপ্তি ত্রুটি: অর্থবছর (${yrStr}) ইতোমধ্যে বন্ধ (Closed) করা হয়েছে। একই অর্থবছর পুনরায় সমাপ্তি করা যাবে না (Fiscal year ${yrStr} already closed).`
+          );
+        }
+      }
 
-  const allAccountCodes = new Set([...accountsByCode.keys(), ...Object.keys(accountBalances)]);
-  for (const code of allAccountCodes) {
-    const bal = Math.round((accountBalances[code] || 0) * 100) / 100;
-    if (bal === 0) continue;
+      // C. Range match
+      if (startDateInput) {
+        const existingRange = allClosed.find(
+          (p) => p.startDate === startDateInput && (p.endDate === closingDate || p.endDate.split('T')[0] === cleanDate)
+        );
+        if (existingRange) {
+          throw new Error(
+            `হিসাবকাল সমাপ্তি ত্রুটি: হিসাবকাল (${startDateInput} থেকে ${closingDate}) ইতোমধ্যে বন্ধ (Closed) করা হয়েছে। একই সময়কাল পুনরায় সমাপ্তি করা যাবে না (Fiscal period already closed).`
+          );
+        }
+      }
 
-    const acc = resolveAccountMetadata(code, accountsByCode);
-    const isRevenueClass = acc.accountClass === 'REVENUE' || acc.accountClass === 'OTHER_INCOME';
-    const isExpenseClass = acc.accountClass === 'EXPENSE' || acc.accountClass === 'COGS' || acc.accountClass === 'OTHER_EXPENSE';
+      // D. Period name match
+      if (periodInput) {
+        const existingNamed = allClosed.find(
+          (p) => (p as any).period === periodInput || (p.notes && p.notes.includes(String(periodInput)))
+        );
+        if (existingNamed) {
+          throw new Error(
+            `হিসাবকাল সমাপ্তি ত্রুটি: হিসাবকাল (${periodInput}) ইতোমধ্যে বন্ধ (Closed) করা হয়েছে। একই সময়কাল পুনরায় সমাপ্তি করা যাবে না (Fiscal period already closed).`
+          );
+        }
+      }
 
-    if (isRevenueClass) {
-      if (bal > 0) {
-        // Normal CREDIT balance: debit to zero out
+      // E. Chronological ordering: closingDate must be strictly after the latest closed period
+      const latestClosed = allClosed.length > 0 ? allClosed[0] : null;
+      if (latestClosed && cleanDate <= latestClosed.endDate.split('T')[0]) {
+        throw new Error(
+          `সমাপ্তি তারিখটি পূর্ববর্তী বন্ধ সময়কালের শেষ তারিখ (${latestClosed.endDate}) এর পরের হতে হবে। পূর্ববর্তী বা একই বন্ধ সময়কালে পুনরায় সমাপ্তি করা যাবে না (Fiscal period ending on or before ${latestClosed.endDate} is already closed).`
+        );
+      }
+
+      // F. Any period with endDate >= closingDate
+      const conflictingClosed = allClosed.find((p) => p.endDate && p.endDate.split('T')[0] >= cleanDate);
+      if (conflictingClosed) {
+        throw new Error(
+          `সমাপ্তি তারিখটি ইতোমধ্যে সমাপ্ত সময়কালের অন্তর্ভুক্ত (${conflictingClosed.endDate})। পুনরায় হিসাবকাল সমাপ্তি অনুমোদিত নয় (Fiscal period already closed).`
+        );
+      }
+
+      // G. Overlapping range check
+      const rangeConflicted = allClosed.find(
+        (p) => p.startDate && p.endDate && cleanDate >= p.startDate.split('T')[0] && cleanDate <= p.endDate.split('T')[0]
+      );
+      if (rangeConflicted) {
+        throw new Error(
+          `সমাপ্তি তারিখটি ইতোমধ্যে সমাপ্ত সময়কালের অন্তর্ভুক্ত (${rangeConflicted.startDate} হতে ${rangeConflicted.endDate})। পুনরায় হিসাবকাল সমাপ্তি অনুমোদিত নয় (Fiscal period already closed).`
+        );
+      }
+
+      // 2. Pre-closing integrity check: Trial Balance must be balanced before closing
+      const preTb = await generateTrialBalance({ endDate: closingDate }, targetDb);
+      if (!preTb.isBalanced) {
+        throw new Error(
+          `হিসাবকাল সমাপ্তি ত্রুটি: রেওয়ামিল ভারসাম্যহীন (Trial balance unbalanced)! মোট ডেবিট: ৳${preTb.totalDebit}, মোট ক্রেডিট: ৳${preTb.totalCredit} (পার্থক্য: ৳${preTb.difference})। রেওয়ামিল ভারসাম্যপূর্ণ না হলে বছর সমাপ্তি করা যাবে না।`
+        );
+      }
+
+      // 3. Ensure accounts 3050 (Retained Earnings) and 3060 (Income Summary) exist
+      let reAcc = await findAccountByCode(targetDb, '3050');
+      if (!reAcc) {
+        reAcc = {
+          id: 'acc_3050',
+          code: '3050',
+          nameBn: 'পুঞ্জীভূত লাভ/মুনাফা (Retained Earnings)',
+          nameEn: 'Retained Earnings',
+          accountClass: 'EQUITY',
+          normalBalance: 'CREDIT',
+          isSystem: true,
+          isActive: true
+        };
+        await safeInsert(targetDb.accounts, reAcc);
+      }
+
+      let isAcc = await findAccountByCode(targetDb, '3060');
+      if (!isAcc) {
+        isAcc = {
+          id: 'acc_3060',
+          code: '3060',
+          nameBn: 'আয় সারাংশ হিসাব (Income Summary)',
+          nameEn: 'Income Summary',
+          accountClass: 'EQUITY',
+          normalBalance: 'CREDIT',
+          isSystem: true,
+          isActive: true
+        };
+        await safeInsert(targetDb.accounts, isAcc);
+      }
+
+      const rawAccounts = await targetDb.accounts.toArray();
+      const accountsByCode = new Map<string, Account>();
+      for (const acc of rawAccounts) {
+        if (!accountsByCode.has(acc.code)) {
+          accountsByCode.set(acc.code, acc);
+        }
+      }
+
+      // Read all journal entries up to closingDate
+      const allJournalEntries = await targetDb.journalEntries.toArray();
+      const periodEntries = allJournalEntries.filter((e: any) => e.date && e.date <= closingDate);
+
+      // Compute cumulative balances for all accounts up to closingDate
+      const accountBalances: Record<string, number> = {};
+      for (const entry of periodEntries) {
+        for (const line of entry.lines) {
+          const code = line.accountCode?.trim();
+          if (!code) continue;
+
+          if (accountBalances[code] === undefined) accountBalances[code] = 0;
+          const acc = resolveAccountMetadata(code, accountsByCode);
+          if (acc.normalBalance === 'CREDIT') {
+            accountBalances[code] += (Number(line.credit || 0) - Number(line.debit || 0));
+          } else {
+            accountBalances[code] += (Number(line.debit || 0) - Number(line.credit || 0));
+          }
+        }
+      }
+
+      // Identify all Revenue, COGS, Expense, Other Income, and Other Expense accounts that have non-zero balances
+      const closingLines: JournalLine[] = [];
+      let totalRevenueCreditsToClose = 0;
+      let totalExpenseDebitsToClose = 0;
+
+      const allAccountCodes = new Set([...accountsByCode.keys(), ...Object.keys(accountBalances)]);
+      for (const code of allAccountCodes) {
+        const bal = Math.round((accountBalances[code] || 0) * 100) / 100;
+        if (bal === 0) continue;
+
+        const acc = resolveAccountMetadata(code, accountsByCode);
+        const isRevenueClass = acc.accountClass === 'REVENUE' || acc.accountClass === 'OTHER_INCOME';
+        const isExpenseClass = acc.accountClass === 'EXPENSE' || acc.accountClass === 'COGS' || acc.accountClass === 'OTHER_EXPENSE';
+
+        if (isRevenueClass) {
+          if (bal > 0) {
+            // Normal CREDIT balance: debit to zero out
+            closingLines.push({
+              accountId: acc.id,
+              accountCode: acc.code,
+              accountName: acc.nameBn,
+              debit: bal,
+              credit: 0,
+              memo: `বছর সমাপ্তি: আয় হিসাব বন্ধ (${acc.nameBn})`
+            });
+            totalRevenueCreditsToClose += bal;
+          } else {
+            // Negative balance (DEBIT excess): credit to zero out
+            const absBal = Math.abs(bal);
+            closingLines.push({
+              accountId: acc.id,
+              accountCode: acc.code,
+              accountName: acc.nameBn,
+              debit: 0,
+              credit: absBal,
+              memo: `বছর সমাপ্তি: বিপরীত আয় হিসাব বন্ধ (${acc.nameBn})`
+            });
+            totalRevenueCreditsToClose -= absBal;
+          }
+        } else if (isExpenseClass) {
+          if (bal > 0) {
+            // Normal DEBIT balance: credit to zero out
+            closingLines.push({
+              accountId: acc.id,
+              accountCode: acc.code,
+              accountName: acc.nameBn,
+              debit: 0,
+              credit: bal,
+              memo: `বছর সমাপ্তি: ব্যয় হিসাব বন্ধ (${acc.nameBn})`
+            });
+            totalExpenseDebitsToClose += bal;
+          } else {
+            // Negative balance (CREDIT excess): debit to zero out
+            const absBal = Math.abs(bal);
+            closingLines.push({
+              accountId: acc.id,
+              accountCode: acc.code,
+              accountName: acc.nameBn,
+              debit: absBal,
+              credit: 0,
+              memo: `বছর সমাপ্তি: বিপরীত ব্যয় হিসাব বন্ধ (${acc.nameBn})`
+            });
+            totalExpenseDebitsToClose -= absBal;
+          }
+        }
+      }
+
+      // Net profit is total revenues closed minus total expenses closed
+      const calculatedNetProfit = Math.round((totalRevenueCreditsToClose - totalExpenseDebitsToClose) * 100) / 100;
+
+      // Transfer the net amount directly to Retained Earnings (3050)
+      if (calculatedNetProfit > 0) {
         closingLines.push({
-          accountId: acc.id,
-          accountCode: acc.code,
-          accountName: acc.nameBn,
-          debit: bal,
-          credit: 0,
-          memo: `বছর সমাপ্তি: আয় হিসাব বন্ধ (${acc.nameBn})`
-        });
-        totalRevenueCreditsToClose += bal;
-      } else {
-        // Negative balance (DEBIT excess): credit to zero out
-        const absBal = Math.abs(bal);
-        closingLines.push({
-          accountId: acc.id,
-          accountCode: acc.code,
-          accountName: acc.nameBn,
+          accountId: reAcc.id,
+          accountCode: '3050',
+          accountName: reAcc.nameBn,
           debit: 0,
-          credit: absBal,
-          memo: `বছর সমাপ্তি: বিপরীত আয় হিসাব বন্ধ (${acc.nameBn})`
+          credit: calculatedNetProfit,
+          memo: `বছর সমাপ্তি: পুঞ্জীভূত লাভে নিট লাভ স্থানান্তর (${closingDate})`
         });
-        totalRevenueCreditsToClose -= absBal;
-      }
-    } else if (isExpenseClass) {
-      if (bal > 0) {
-        // Normal DEBIT balance: credit to zero out
+      } else if (calculatedNetProfit < 0) {
+        const absLoss = Math.abs(calculatedNetProfit);
         closingLines.push({
-          accountId: acc.id,
-          accountCode: acc.code,
-          accountName: acc.nameBn,
-          debit: 0,
-          credit: bal,
-          memo: `বছর সমাপ্তি: ব্যয় হিসাব বন্ধ (${acc.nameBn})`
-        });
-        totalExpenseDebitsToClose += bal;
-      } else {
-        // Negative balance (CREDIT excess): debit to zero out
-        const absBal = Math.abs(bal);
-        closingLines.push({
-          accountId: acc.id,
-          accountCode: acc.code,
-          accountName: acc.nameBn,
-          debit: absBal,
+          accountId: reAcc.id,
+          accountCode: '3050',
+          accountName: reAcc.nameBn,
+          debit: absLoss,
           credit: 0,
-          memo: `বছর সমাপ্তি: বিপরীত ব্যয় হিসাব বন্ধ (${acc.nameBn})`
+          memo: `বছর সমাপ্তি: পুঞ্জীভূত লাভে নিট ক্ষতি সমন্বয় (${closingDate})`
         });
-        totalExpenseDebitsToClose -= absBal;
+      }
+
+      // Verify balanced closing lines before posting
+      const sumDebits = Math.round(closingLines.reduce((sum, l) => sum + (Number(l.debit) || 0), 0) * 100) / 100;
+      const sumCredits = Math.round(closingLines.reduce((sum, l) => sum + (Number(l.credit) || 0), 0) * 100) / 100;
+      if (sumDebits !== sumCredits) {
+        throw new Error(
+          `CRITICAL ACCOUNTING ERROR: সমাপনী দাখিলা ভারসাম্যহীন (Unbalanced Closing Entry)! মোট ডেবিট: ৳${sumDebits}, মোট ক্রেডিট: ৳${sumCredits}`
+        );
+      }
+
+      const voucherNum = generateTransactionNumber('YEC');
+      const entryId = generateUniqueId('j');
+      let postedEntry: JournalEntry | undefined;
+
+      // Post the closing journal entry if there are any balances to close
+      if (closingLines.length > 0) {
+        const allAccountsList: Account[] = [];
+        for (const code of allAccountCodes) {
+          allAccountsList.push(resolveAccountMetadata(code, accountsByCode));
+        }
+
+        postedEntry = await postJournalEntry(
+          {
+            id: entryId,
+            voucherNumber: voucherNum,
+            voucherType: 'ADJUSTMENT',
+            date: closingDate,
+            narration: `বছর সমাপ্তি সমাপনী দাখিলা (${closingDate}) - সকল আয় ও ব্যয় হিসাব শূন্যকরণ ও পুঞ্জীভূত লাভে নিট লাভ/ক্ষতি স্থানান্তর (Year-End Closing)`,
+            reference: `YEC-${closingDate}`,
+            lines: closingLines,
+            createdBy: currentUserId,
+            createdAt: new Date().toISOString()
+          },
+          { accounts: allAccountsList, isClosingEntry: true, dbInstance: targetDb }
+        );
+      }
+
+      // Record closing in closedPeriods list
+      const closedPeriod: ClosedPeriod = {
+        id: generateUniqueId('cp'),
+        endDate: closingDate,
+        startDate: latestClosed ? latestClosed.endDate : undefined,
+        netProfitTransferred: calculatedNetProfit,
+        closedAt: new Date().toISOString(),
+        closedBy: currentUserId,
+        journalEntryId: postedEntry ? entryId : undefined,
+        voucherNumber: postedEntry ? voucherNum : undefined,
+        notes: notes?.trim() || undefined,
+        synced: false
+      };
+
+      await safeInsert(targetDb.closedPeriods, closedPeriod);
+
+      // Audit log entry
+      if (targetDb.auditLogs) {
+        try {
+          await safeInsert(targetDb.auditLogs, {
+            id: generateUniqueId('audit'),
+            timestamp: new Date().toISOString(),
+            userId: currentUserId,
+            role: 'OWNER',
+            action: 'YEAR_END_CLOSING',
+            module: 'ACCOUNTING',
+            recordId: closedPeriod.id,
+            status: 'SUCCESS',
+            details: `বছর সমাপ্তি সম্পন্ন (${closingDate}): সকল আয় ও ব্যয় হিসাব শূন্য করা হয়েছে এবং পুঞ্জীভূত লাভে স্থানান্তরিত ৳${calculatedNetProfit}${postedEntry ? ` (ভাউচার: ${voucherNum})` : ''}`
+          });
+        } catch (auditErr) {
+          console.warn('Notice: Could not write audit log for year-end closing:', auditErr);
+        }
+      }
+
+      // Post-closing Trial Balance verification
+      const postTb = await generateTrialBalance({ endDate: closingDate }, targetDb);
+      if (!postTb.isBalanced) {
+        throw new Error(
+          `CRITICAL ACCOUNTING ERROR: সমাপনী পরবর্তী রেওয়ামিল ভারসাম্যহীন (Post-closing Trial Balance unbalanced: পার্থক্য ৳${postTb.difference})!`
+        );
+      }
+
+      return {
+        closedPeriod,
+        journalEntry: postedEntry,
+        netProfitTransferred: calculatedNetProfit
+      };
+    };
+
+    if (typeof targetDb.transaction === 'function') {
+      return await targetDb.transaction('rw', txTables, runInTx);
+    }
+
+    // Fallback transaction support for custom mock tables without built-in transaction
+    const tableSnapshots: Array<{
+      table: any;
+      restore: () => Promise<void> | void;
+    }> = [];
+
+    for (const table of txTables) {
+      if (!table) continue;
+      if (typeof table._snapshot === 'function' && typeof table._restore === 'function') {
+        const snap = table._snapshot();
+        tableSnapshots.push({
+          table,
+          restore: () => table._restore(snap)
+        });
+      } else if (table.data instanceof Map) {
+        const snap = new Map(table.data);
+        tableSnapshots.push({
+          table,
+          restore: () => { table.data = new Map(snap); }
+        });
+      } else if (table._data instanceof Map) {
+        const snap = new Map(table._data);
+        tableSnapshots.push({
+          table,
+          restore: () => { table._data = new Map(snap); }
+        });
+      } else if (Array.isArray(table.data)) {
+        const snap = [...table.data];
+        tableSnapshots.push({
+          table,
+          restore: () => { table.data = [...snap]; }
+        });
+      } else if (Array.isArray(table._data)) {
+        const snap = [...table._data];
+        tableSnapshots.push({
+          table,
+          restore: () => { table._data = [...snap]; }
+        });
+      } else if (typeof table.toArray === 'function' && (typeof table.clear === 'function' || typeof table.bulkPut === 'function' || typeof table.put === 'function')) {
+        try {
+          const snap = await table.toArray();
+          tableSnapshots.push({
+            table,
+            restore: async () => {
+              if (typeof table.clear === 'function') await table.clear();
+              if (typeof table.bulkPut === 'function') {
+                await table.bulkPut(snap);
+              } else if (typeof table.put === 'function') {
+                for (const item of snap) {
+                  await table.put(item);
+                }
+              }
+            }
+          });
+        } catch {}
       }
     }
-  }
 
-  // Net profit is total revenues closed minus total expenses closed
-  const calculatedNetProfit = Math.round((totalRevenueCreditsToClose - totalExpenseDebitsToClose) * 100) / 100;
-
-  // Transfer the net amount directly to Retained Earnings (3050)
-  // If net profit > 0 (Revenues > Expenses): Dr Revenues (done), Cr Expenses (done), Cr Retained Earnings
-  // Total Debits in closingLines = totalRevenueCreditsToClose + [any negative expense debits]
-  // Total Credits in closingLines = totalExpenseDebitsToClose + [any negative revenue credits]
-  // Net difference = totalRevenueCreditsToClose - totalExpenseDebitsToClose = calculatedNetProfit
-  if (calculatedNetProfit > 0) {
-    // Credit Retained Earnings 3050 by calculatedNetProfit to balance
-    closingLines.push({
-      accountId: reAcc.id,
-      accountCode: '3050',
-      accountName: reAcc.nameBn,
-      debit: 0,
-      credit: calculatedNetProfit,
-      memo: `বছর সমাপ্তি: পুঞ্জীভূত লাভে নিট লাভ স্থানান্তর (${closingDate})`
-    });
-  } else if (calculatedNetProfit < 0) {
-    // Debit Retained Earnings 3050 by abs(calculatedNetProfit) to balance
-    const absLoss = Math.abs(calculatedNetProfit);
-    closingLines.push({
-      accountId: reAcc.id,
-      accountCode: '3050',
-      accountName: reAcc.nameBn,
-      debit: absLoss,
-      credit: 0,
-      memo: `বছর সমাপ্তি: পুঞ্জীভূত লাভে নিট ক্ষতি সমন্বয় (${closingDate})`
-    });
-  }
-
-  // Verify balanced closing lines before posting
-  const sumDebits = Math.round(closingLines.reduce((sum, l) => sum + (Number(l.debit) || 0), 0) * 100) / 100;
-  const sumCredits = Math.round(closingLines.reduce((sum, l) => sum + (Number(l.credit) || 0), 0) * 100) / 100;
-  if (sumDebits !== sumCredits) {
-    throw new Error(
-      `CRITICAL ACCOUNTING ERROR: সমাপনী দাখিলা ভারসাম্যহীন (Unbalanced Closing Entry)! মোট ডেবিট: ৳${sumDebits}, মোট ক্রেডিট: ৳${sumCredits}`
-    );
-  }
-
-  const voucherNum = generateTransactionNumber('YEC');
-  const entryId = generateUniqueId('j');
-  let postedEntry: JournalEntry | undefined;
-
-  // Post the closing journal entry if there are any balances to close
-  if (closingLines.length > 0) {
-    const allAccountsList: Account[] = [];
-    for (const code of allAccountCodes) {
-      allAccountsList.push(resolveAccountMetadata(code, accountsByCode));
+    try {
+      return await runInTx();
+    } catch (err) {
+      for (const { restore } of tableSnapshots) {
+        try {
+          await restore();
+        } catch {}
+      }
+      throw err;
     }
-
-    postedEntry = await postJournalEntry(
-      {
-        id: entryId,
-        voucherNumber: voucherNum,
-        voucherType: 'ADJUSTMENT',
-        date: closingDate,
-        narration: `বছর সমাপ্তি সমাপনী দাখিলা (${closingDate}) - সকল আয় ও ব্যয় হিসাব শূন্যকরণ ও পুঞ্জীভূত লাভে নিট লাভ/ক্ষতি স্থানান্তর (Year-End Closing)`,
-        reference: `YEC-${closingDate}`,
-        lines: closingLines,
-        createdBy: currentUserId,
-        createdAt: new Date().toISOString()
-      },
-      { accounts: allAccountsList, isClosingEntry: true }
-    );
+  } finally {
+    activeClosingLocks.delete(lockKey);
+    activeClosingLocks.delete(closingDate);
   }
-
-  // Record closing in closedPeriods list
-  const closedPeriod: ClosedPeriod = {
-    id: generateUniqueId('cp'),
-    endDate: closingDate,
-    startDate: latestClosed ? latestClosed.endDate : undefined,
-    netProfitTransferred: calculatedNetProfit,
-    closedAt: new Date().toISOString(),
-    closedBy: currentUserId,
-    journalEntryId: postedEntry ? entryId : undefined,
-    voucherNumber: postedEntry ? voucherNum : undefined,
-    notes: notes?.trim() || undefined,
-    synced: false
-  };
-
-  await safeInsert(db.closedPeriods, closedPeriod);
-
-  // Audit log entry
-  await safeInsert(db.auditLogs, {
-    id: generateUniqueId('audit'),
-    timestamp: new Date().toISOString(),
-    userId: currentUserId,
-    role: 'OWNER',
-    action: 'YEAR_END_CLOSING',
-    module: 'ACCOUNTING',
-    recordId: closedPeriod.id,
-    status: 'SUCCESS',
-    details: `বছর সমাপ্তি সম্পন্ন (${closingDate}): সকল আয় ও ব্যয় হিসাব শূন্য করা হয়েছে এবং পুঞ্জীভূত লাভে স্থানান্তরিত ৳${calculatedNetProfit}${postedEntry ? ` (ভাউচার: ${voucherNum})` : ''}`
-  });
-
-  // Post-closing Trial Balance verification
-  const postTb = await generateTrialBalance({ endDate: closingDate });
-  if (!postTb.isBalanced) {
-    console.error('Post-closing Trial Balance imbalance detected:', postTb);
-  }
-
-  return {
-    closedPeriod,
-    journalEntry: postedEntry,
-    netProfitTransferred: calculatedNetProfit
-  };
 }
+
+export const closeFiscalPeriod = executeYearEndClosing;
+export const closePeriod = executeYearEndClosing;
 
 /**
  * Cash Flow Statement (নগদ প্রবাহ বিবরণী)
@@ -1604,7 +2339,7 @@ export interface CashFlowStatementReport {
 }
 
 export async function generateCashFlowStatement(
-  dateRange?: DateRangeFilter,
+  dateRange?: DateRangeFilter | { fromDate?: string; toDate?: string; from?: string; to?: string; start?: string; end?: string; startDate?: string; endDate?: string; asOfDate?: string; date?: string } | string,
   customDb?: any
 ): Promise<CashFlowStatementReport> {
   const dbInstance = customDb || db;
@@ -1616,8 +2351,67 @@ export async function generateCashFlowStatement(
     }
   }
 
-  // Identify all Cash and Bank GL account codes
+  // Parse and normalize reporting date range
+  let cleanStartDate: string | undefined = undefined;
+  let cleanEndDate: string | undefined = undefined;
+
+  if (typeof dateRange === 'string') {
+    const trimmed = dateRange.trim();
+    if (/^\d{4}$/.test(trimmed)) {
+      cleanStartDate = `${trimmed}-01-01`;
+      cleanEndDate = `${trimmed}-12-31`;
+    } else if (/^\d{4}-\d{2}$/.test(trimmed)) {
+      cleanStartDate = `${trimmed}-01`;
+      const [yStr, mStr] = trimmed.split('-');
+      const y = parseInt(yStr, 10);
+      const m = parseInt(mStr, 10);
+      const lastDay = new Date(Date.UTC(y, m, 0)).getUTCDate();
+      cleanEndDate = `${trimmed}-${String(lastDay).padStart(2, '0')}`;
+    } else {
+      const s = trimmed.split('T')[0].split(' ')[0].trim();
+      cleanStartDate = s;
+      cleanEndDate = s;
+    }
+  } else if (dateRange && typeof dateRange === 'object') {
+    const rawStart = (dateRange as any).startDate || (dateRange as any).fromDate || (dateRange as any).from || (dateRange as any).start;
+    const rawEnd = (dateRange as any).endDate || (dateRange as any).toDate || (dateRange as any).to || (dateRange as any).end || (dateRange as any).asOfDate || (dateRange as any).date;
+
+    if (rawStart) {
+      cleanStartDate = String(rawStart).trim().split('T')[0].split(' ')[0].trim();
+    }
+    if (rawEnd) {
+      cleanEndDate = String(rawEnd).trim().split('T')[0].split(' ')[0].trim();
+    }
+  }
+
+  // Helper to extract clean YYYY-MM-DD from an entry
+  const getEntryDate = (e: any): string | null => {
+    if (!e || !e.date) return null;
+    return String(e.date).trim().split('T')[0].split(' ')[0].trim();
+  };
+
+  const isPrePeriod = (entryDate: string | null): boolean => {
+    if (!entryDate || !cleanStartDate) return false;
+    return entryDate < cleanStartDate;
+  };
+
+  const isThroughEndDate = (entryDate: string | null): boolean => {
+    if (!entryDate) return false;
+    if (!cleanEndDate) return true;
+    return entryDate <= cleanEndDate;
+  };
+
+  const isInRange = (entryDate: string | null): boolean => {
+    if (!entryDate) return false;
+    if (cleanStartDate && entryDate < cleanStartDate) return false;
+    if (cleanEndDate && entryDate > cleanEndDate) return false;
+    return true;
+  };
+
+  // Identify all Cash and Bank GL account codes and IDs
   const cashAccountCodes = new Set<string>();
+  const cashAccountIds = new Set<string>();
+
   for (const acc of accountsByCode.values()) {
     if (
       acc.code === '1010' ||
@@ -1633,11 +2427,48 @@ export async function generateCashFlowStatement(
           acc.nameBn?.includes('ব্যাংক')))
     ) {
       cashAccountCodes.add(acc.code);
+      if (acc.id) cashAccountIds.add(acc.id);
     }
   }
   cashAccountCodes.add('1010');
   cashAccountCodes.add('1020');
   cashAccountCodes.add('1030');
+
+  // Also include any accounts from dbInstance.cashBankAccounts if present
+  if (dbInstance.cashBankAccounts?.toArray) {
+    try {
+      const cbAccs = await dbInstance.cashBankAccounts.toArray();
+      for (const cb of cbAccs) {
+        if (cb.code) cashAccountCodes.add(String(cb.code).trim());
+        if (cb.accountId) {
+          cashAccountIds.add(String(cb.accountId).trim());
+          const acc = rawAccounts.find((a: any) => a.id === cb.accountId || a.code === cb.accountId);
+          if (acc?.code) cashAccountCodes.add(String(acc.code).trim());
+        }
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  const isCashLine = (l: any): boolean => {
+    if (!l) return false;
+    const code = l.accountCode ? String(l.accountCode).trim() : '';
+    const id = l.accountId ? String(l.accountId).trim() : '';
+    return (code !== '' && cashAccountCodes.has(code)) ||
+           (id !== '' && (cashAccountCodes.has(id) || cashAccountIds.has(id)));
+  };
+
+  const getCashLineCode = (l: any): string => {
+    const code = l.accountCode ? String(l.accountCode).trim() : '';
+    if (code && cashAccountCodes.has(code)) return code;
+    const id = l.accountId ? String(l.accountId).trim() : '';
+    if (id && cashAccountCodes.has(id)) return id;
+    for (const [c, acc] of accountsByCode.entries()) {
+      if (acc.id === id) return c;
+    }
+    return code || '1010';
+  };
 
   let allEntries = await dbInstance.journalEntries.toArray();
   allEntries = allEntries.filter((e: any) => e && Array.isArray(e.lines));
@@ -1649,12 +2480,13 @@ export async function generateCashFlowStatement(
     accountOpeningBalances[code] = 0;
   }
 
-  if (dateRange?.startDate) {
+  if (cleanStartDate) {
     for (const e of allEntries) {
-      if (e.date && e.date < dateRange.startDate) {
+      const d = getEntryDate(e);
+      if (isPrePeriod(d)) {
         for (const l of e.lines) {
-          const c = l.accountCode?.trim();
-          if (c && cashAccountCodes.has(c)) {
+          if (isCashLine(l)) {
+            const c = getCashLineCode(l);
             const dr = Number(l.debit || 0);
             const cr = Number(l.credit || 0);
             accountOpeningBalances[c] = (accountOpeningBalances[c] || 0) + (dr - cr);
@@ -1679,10 +2511,11 @@ export async function generateCashFlowStatement(
   }
 
   for (const e of allEntries) {
-    if (!dateRange?.endDate || (e.date && e.date <= dateRange.endDate)) {
+    const d = getEntryDate(e);
+    if (isThroughEndDate(d)) {
       for (const l of e.lines) {
-        const c = l.accountCode?.trim();
-        if (c && cashAccountCodes.has(c)) {
+        if (isCashLine(l)) {
+          const c = getCashLineCode(l);
           const dr = Number(l.debit || 0);
           const cr = Number(l.credit || 0);
           accountClosingBalances[c] = (accountClosingBalances[c] || 0) + (dr - cr);
@@ -1693,19 +2526,17 @@ export async function generateCashFlowStatement(
   }
   glClosingCash = Math.round(glClosingCash * 100) / 100;
 
-  // 3. Filter entries within the selected date range
+  // 3. Filter entries strictly within the selected date range
   const inRangeEntries = allEntries.filter((e: any) => {
-    if (!e.date) return false;
-    if (dateRange?.startDate && e.date < dateRange.startDate) return false;
-    if (dateRange?.endDate && e.date > dateRange.endDate) return false;
-    return true;
+    const d = getEntryDate(e);
+    return isInRange(d);
   });
 
   // Track in-period cash inflows and outflows per account
   for (const e of inRangeEntries) {
     for (const l of e.lines) {
-      const c = l.accountCode?.trim();
-      if (c && cashAccountCodes.has(c)) {
+      if (isCashLine(l)) {
+        const c = getCashLineCode(l);
         const dr = Number(l.debit || 0);
         const cr = Number(l.credit || 0);
         if (dr > 0) accountPeriodInflows[c] = (accountPeriodInflows[c] || 0) + dr;
@@ -1746,21 +2577,9 @@ export async function generateCashFlowStatement(
 
   // Process each in-range journal entry exactly once
   for (const e of inRangeEntries) {
-    const cashLines = e.lines.filter((l: any) => cashAccountCodes.has(l.accountCode?.trim()));
+    const cashLines = e.lines.filter((l: any) => isCashLine(l));
     if (cashLines.length === 0) {
       continue; // Non-cash transaction
-    }
-
-    const nonCashLines = e.lines.filter((l: any) => !cashAccountCodes.has(l.accountCode?.trim()));
-
-    // Contra check: transfers purely between cash/bank accounts
-    const isContra =
-      e.voucherType === 'CONTRA' ||
-      nonCashLines.length === 0 ||
-      nonCashLines.every((l: any) => Number(l.debit || 0) === 0 && Number(l.credit || 0) === 0);
-
-    if (isContra) {
-      continue; // Internal movement among cash & cash equivalents; net cash impact is 0
     }
 
     const totalCashDr = cashLines.reduce((s: number, l: any) => s + Number(l.debit || 0), 0);
@@ -1768,8 +2587,10 @@ export async function generateCashFlowStatement(
     const netCashEffect = Math.round((totalCashDr - totalCashCr) * 100) / 100;
 
     if (netCashEffect === 0) {
-      continue;
+      continue; // Pure contra transfer between cash & cash equivalents; net cash impact is 0
     }
+
+    const nonCashLines = e.lines.filter((l: any) => !isCashLine(l));
 
     if (netCashEffect > 0) {
       // CASH INFLOW
@@ -1794,7 +2615,7 @@ export async function generateCashFlowStatement(
         investorCapitalCount++;
       } else if (
         nonCashLines.some(
-          (l: any) => (l.accountCode === '2110' || l.accountCode === '2120') && Number(l.credit || 0) > 0
+          (l: any) => (l.accountCode === '2110' || l.accountCode === '2120' || l.accountCode?.startsWith('21')) && Number(l.credit || 0) > 0
         ) ||
         e.voucherNumber?.startsWith('LN-') ||
         e.narration?.includes('গৃহীত ঋণ') ||
@@ -1812,7 +2633,7 @@ export async function generateCashFlowStatement(
           (l: any) =>
             l.accountCode === '7020' ||
             l.accountCode === '1590' ||
-            (l.accountCode.startsWith('15') && Number(l.credit || 0) > 0)
+            (l.accountCode?.startsWith('15') && Number(l.credit || 0) > 0)
         )
       ) {
         assetDisposalProceeds += inflowAmount;
@@ -1823,12 +2644,13 @@ export async function generateCashFlowStatement(
         e.voucherType === 'RECEIPT' ||
         e.voucherNumber?.startsWith('SL-') ||
         e.voucherNumber?.startsWith('INV-') ||
+        e.voucherNumber?.startsWith('RV-') ||
         e.reference?.startsWith('sal_') ||
         nonCashLines.some(
           (l: any) =>
             l.accountCode === '1040' ||
             l.accountCode === '2040' ||
-            l.accountCode.startsWith('4')
+            l.accountCode?.startsWith('4')
         )
       ) {
         customerReceipts += inflowAmount;
@@ -1873,7 +2695,7 @@ export async function generateCashFlowStatement(
         e.narration?.includes('ঋণ পরিশোধ') ||
         e.narration?.includes('Loan repayment') ||
         nonCashLines.some(
-          (l: any) => (l.accountCode === '2110' || l.accountCode === '2120') && Number(l.debit || 0) > 0
+          (l: any) => (l.accountCode === '2110' || l.accountCode === '2120' || l.accountCode?.startsWith('21')) && Number(l.debit || 0) > 0
         )
       ) {
         loanRepayments += outflowAmount;
@@ -1884,7 +2706,7 @@ export async function generateCashFlowStatement(
         e.voucherNumber?.startsWith('AST-') ||
         e.narration?.includes('স্থায়ী সম্পদ ক্রয়') ||
         e.narration?.includes('Fixed asset purchase') ||
-        nonCashLines.some((l: any) => l.accountCode.startsWith('15') && l.accountCode !== '1590' && Number(l.debit || 0) > 0)
+        nonCashLines.some((l: any) => l.accountCode?.startsWith('15') && l.accountCode !== '1590' && Number(l.debit || 0) > 0)
       ) {
         assetPurchases += outflowAmount;
         assetPurchasesCount++;
@@ -1892,8 +2714,9 @@ export async function generateCashFlowStatement(
         // Classify Operating Outflow: Supplier Payments
         e.voucherType === 'PURCHASE' ||
         e.voucherNumber?.startsWith('PUR-') ||
+        e.voucherNumber?.startsWith('PV-') ||
         e.reference?.startsWith('pur_') ||
-        nonCashLines.some((l: any) => l.accountCode === '2010' || l.accountCode.startsWith('105'))
+        nonCashLines.some((l: any) => l.accountCode === '2010' || l.accountCode?.startsWith('105'))
       ) {
         supplierPayments += outflowAmount;
         supplierPaymentsCount++;
@@ -1967,8 +2790,8 @@ export async function generateCashFlowStatement(
     );
 
   return {
-    startDate: dateRange?.startDate,
-    endDate: dateRange?.endDate,
+    startDate: (dateRange as any)?.startDate ?? cleanStartDate,
+    endDate: (dateRange as any)?.endDate ?? cleanEndDate,
     openingCash,
     operating: {
       customerReceipts: Math.round(customerReceipts * 100) / 100,
