@@ -112,6 +112,37 @@ export async function executeSaleTransaction(
       const { revenueCode, cogsCode } = getRevenueAndCogsAccounts(freshItem);
       const inventoryAssetCode = getInventoryAssetAccount(freshItem.category);
 
+      // Validate cash/bank account exists if paying via CASH or BANK
+      let cashAcc: CashBankAccount | undefined;
+      let bankAcc: CashBankAccount | undefined;
+      if (paymentMethod === 'BANK') {
+        const targetBankId = bankAccountId || (params as any).cashBankAccountId;
+        if (targetBankId) {
+          bankAcc = await dbInstance.cashBankAccounts.get(targetBankId);
+          if (!bankAcc) {
+            throw new Error(`নির্বাচিত ব্যাংক হিসাব (${targetBankId}) পাওয়া যায়নি।`);
+          }
+        } else {
+          bankAcc = await dbInstance.cashBankAccounts.where('accountType').equals('BANK').first();
+          if (!bankAcc) {
+            throw new Error('ব্যাংক হিসাব (Bank Account) পাওয়া যায়নি।');
+          }
+        }
+      } else if (paymentMethod === 'CASH') {
+        const targetAccId = (params as any).cashBankAccountId || bankAccountId;
+        if (targetAccId) {
+          cashAcc = await dbInstance.cashBankAccounts.get(targetAccId);
+          if (!cashAcc) {
+            throw new Error(`নির্বাচিত নগদ হিসাব (${targetAccId}) পাওয়া যায়নি।`);
+          }
+        } else {
+          cashAcc = await dbInstance.cashBankAccounts.where('accountType').equals('CASH').first();
+          if (!cashAcc) {
+            throw new Error('নগদ হিসাব (Cash Account) পাওয়া যায়নি।');
+          }
+        }
+      }
+
       const accounts = await dbInstance.accounts.toArray();
       const journalLines: JournalLine[] = [
         {
@@ -243,26 +274,14 @@ export async function executeSaleTransaction(
       }
 
       // 6. Update Operational Cash / Bank balance consistently with GL
-      if (paymentMethod === 'CASH') {
-        const cashAcc = await dbInstance.cashBankAccounts.where('accountType').equals('CASH').first();
-        if (cashAcc) {
-          await dbInstance.cashBankAccounts.update(cashAcc.id, {
-            currentBalance: Math.round((cashAcc.currentBalance + totalAmount) * 100) / 100
-          });
-        }
-      } else if (paymentMethod === 'BANK') {
-        let bankAcc: CashBankAccount | undefined;
-        if (bankAccountId) {
-          bankAcc = await dbInstance.cashBankAccounts.get(bankAccountId);
-        }
-        if (!bankAcc) {
-          bankAcc = await dbInstance.cashBankAccounts.where('accountType').equals('BANK').first();
-        }
-        if (bankAcc) {
-          await dbInstance.cashBankAccounts.update(bankAcc.id, {
-            currentBalance: Math.round((bankAcc.currentBalance + totalAmount) * 100) / 100
-          });
-        }
+      if (paymentMethod === 'CASH' && cashAcc) {
+        await dbInstance.cashBankAccounts.update(cashAcc.id, {
+          currentBalance: Math.round((cashAcc.currentBalance + totalAmount) * 100) / 100
+        });
+      } else if (paymentMethod === 'BANK' && bankAcc) {
+        await dbInstance.cashBankAccounts.update(bankAcc.id, {
+          currentBalance: Math.round((bankAcc.currentBalance + totalAmount) * 100) / 100
+        });
       }
 
       // 7. Record Audit Log
@@ -336,17 +355,39 @@ export async function executePurchaseTransaction(
         throw new Error('Purchase total amount must be strictly greater than 0.');
       }
 
-      // Validate cash/bank balance to prevent silent negative balances
+      // Validate cash/bank account exists & balance to prevent silent negative balances
+      let cashAcc: CashBankAccount | undefined;
+      let bankAcc: CashBankAccount | undefined;
       if (paymentMethod === 'CASH') {
-        const cashAcc = await dbInstance.cashBankAccounts.where('accountType').equals('CASH').first();
-        if (cashAcc && Number(cashAcc.currentBalance || 0) < grandTotal) {
+        const targetAccId = (params as any).cashBankAccountId || bankAccountId;
+        if (targetAccId) {
+          cashAcc = await dbInstance.cashBankAccounts.get(targetAccId);
+          if (!cashAcc) {
+            throw new Error(`নির্বাচিত নগদ হিসাব (${targetAccId}) পাওয়া যায়নি।`);
+          }
+        } else {
+          cashAcc = await dbInstance.cashBankAccounts.where('accountType').equals('CASH').first();
+          if (!cashAcc) {
+            throw new Error('নগদ হিসাব (Cash Account) পাওয়া যায়নি।');
+          }
+        }
+        if (Number(cashAcc.currentBalance || 0) < grandTotal) {
           throw new Error(`নগদ তহবিলে পর্যাপ্ত ব্যালেন্স নেই (Insufficient cash balance: ৳${cashAcc.currentBalance || 0}, ক্রয়ের পরিমাণ: ৳${grandTotal})। ক্যাশ ব্যালেন্স নেগেটিভ হওয়া অনুমোদিত নয়।`);
         }
       } else if (paymentMethod === 'BANK') {
-        let bankAcc: CashBankAccount | undefined;
-        if (bankAccountId) bankAcc = await dbInstance.cashBankAccounts.get(bankAccountId);
-        if (!bankAcc) bankAcc = await dbInstance.cashBankAccounts.where('accountType').equals('BANK').first();
-        if (bankAcc && Number(bankAcc.currentBalance || 0) < grandTotal) {
+        const targetBankId = bankAccountId || (params as any).cashBankAccountId;
+        if (targetBankId) {
+          bankAcc = await dbInstance.cashBankAccounts.get(targetBankId);
+          if (!bankAcc) {
+            throw new Error(`নির্বাচিত ব্যাংক হিসাব (${targetBankId}) পাওয়া যায়নি।`);
+          }
+        } else {
+          bankAcc = await dbInstance.cashBankAccounts.where('accountType').equals('BANK').first();
+          if (!bankAcc) {
+            throw new Error('ব্যাংক হিসাব (Bank Account) পাওয়া যায়নি।');
+          }
+        }
+        if (Number(bankAcc.currentBalance || 0) < grandTotal) {
           throw new Error(`ব্যাংক হিসাবে পর্যাপ্ত ব্যালেন্স নেই (Insufficient bank balance: ৳${bankAcc.currentBalance || 0}, ক্রয়ের পরিমাণ: ৳${grandTotal})। ব্যাংক ব্যালেন্স নেগেটিভ হওয়া অনুমোদিত নয়।`);
         }
       }
@@ -483,26 +524,14 @@ export async function executePurchaseTransaction(
       }
 
       // 6. Update Operational Cash / Bank balance consistently with GL
-      if (paymentMethod === 'CASH') {
-        const cashAcc = await dbInstance.cashBankAccounts.where('accountType').equals('CASH').first();
-        if (cashAcc) {
-          await dbInstance.cashBankAccounts.update(cashAcc.id, {
-            currentBalance: Math.round((cashAcc.currentBalance - grandTotal) * 100) / 100
-          });
-        }
-      } else if (paymentMethod === 'BANK') {
-        let bankAcc: CashBankAccount | undefined;
-        if (bankAccountId) {
-          bankAcc = await dbInstance.cashBankAccounts.get(bankAccountId);
-        }
-        if (!bankAcc) {
-          bankAcc = await dbInstance.cashBankAccounts.where('accountType').equals('BANK').first();
-        }
-        if (bankAcc) {
-          await dbInstance.cashBankAccounts.update(bankAcc.id, {
-            currentBalance: Math.round((bankAcc.currentBalance - grandTotal) * 100) / 100
-          });
-        }
+      if (paymentMethod === 'CASH' && cashAcc) {
+        await dbInstance.cashBankAccounts.update(cashAcc.id, {
+          currentBalance: Math.round((cashAcc.currentBalance - grandTotal) * 100) / 100
+        });
+      } else if (paymentMethod === 'BANK' && bankAcc) {
+        await dbInstance.cashBankAccounts.update(bankAcc.id, {
+          currentBalance: Math.round((bankAcc.currentBalance - grandTotal) * 100) / 100
+        });
       }
 
       // 7. Record Audit Log
@@ -566,13 +595,7 @@ export async function executeLoanTransaction(params: {
         throw new Error('Loan principal must be strictly greater than 0.');
       }
 
-      let targetAcc = await db.cashBankAccounts.get(targetAccountId);
-      if (!targetAcc) {
-        targetAcc = await db.cashBankAccounts.where('accountType').equals(targetAccountId).first();
-      }
-      if (!targetAcc) {
-        targetAcc = await db.cashBankAccounts.toCollection().first();
-      }
+      const targetAcc = await db.cashBankAccounts.get(targetAccountId);
       if (!targetAcc) {
         throw new Error(`Target cash/bank account ${targetAccountId} not found.`);
       }
@@ -782,16 +805,7 @@ export async function executeInvestorTransaction(
         }
       }
 
-      let targetAcc = await dbInstance.cashBankAccounts.get(targetAccountId);
-      if (!targetAcc) {
-        targetAcc = await dbInstance.cashBankAccounts.where('accountType').equals(targetAccountId).first();
-      }
-      if (!targetAcc) {
-        targetAcc = await dbInstance.cashBankAccounts.toCollection?.().first?.();
-      }
-      if (!targetAcc) {
-        targetAcc = (await dbInstance.cashBankAccounts.toArray())[0];
-      }
+      const targetAcc = await dbInstance.cashBankAccounts.get(targetAccountId);
       if (!targetAcc) {
         throw new Error(`Target cash/bank account ${targetAccountId} not found.`);
       }
@@ -1331,13 +1345,7 @@ export async function executeInvestorProfitPaymentTransaction(
       }
 
       // 4. Source Account check
-      let sourceAcc = await dbInstance.cashBankAccounts.get(sourceAccountId);
-      if (!sourceAcc) {
-        sourceAcc = await dbInstance.cashBankAccounts.where('accountType').equals(sourceAccountId).first();
-      }
-      if (!sourceAcc) {
-        sourceAcc = (await dbInstance.cashBankAccounts.toArray())[0];
-      }
+      const sourceAcc = await dbInstance.cashBankAccounts.get(sourceAccountId);
       if (!sourceAcc) {
         throw new Error(`Source cash/bank account ${sourceAccountId} not found.`);
       }
@@ -1582,13 +1590,7 @@ export async function executeInvestorCapitalReturnTransaction(
       }
 
       // 6. Source Cash/Bank Account validation & Insufficient Balance / Overdraft check
-      let sourceAcc = await dbInstance.cashBankAccounts.get(sourceAccountId);
-      if (!sourceAcc) {
-        sourceAcc = await dbInstance.cashBankAccounts.where('accountType').equals(sourceAccountId).first();
-      }
-      if (!sourceAcc) {
-        sourceAcc = (await dbInstance.cashBankAccounts.toArray())[0];
-      }
+      const sourceAcc = await dbInstance.cashBankAccounts.get(sourceAccountId);
       if (!sourceAcc) {
         throw new Error(`Source cash/bank account ${sourceAccountId} not found.`);
       }
@@ -2631,10 +2633,16 @@ export async function executeAnimalEventTransaction(params: {
 
           if (paymentMethod === 'CASH') {
             const targetAccId = (params as any).cashBankAccountId || bankAccountId;
-            if (targetAccId) cashAcc = await db.cashBankAccounts.get(targetAccId);
-            if (!cashAcc) cashAcc = await db.cashBankAccounts.where('accountType').equals('CASH').first();
-            if (!cashAcc) {
-              throw new Error('নগদ হিসাব (Cash Account) পাওয়া যায়নি।');
+            if (targetAccId) {
+              cashAcc = await db.cashBankAccounts.get(targetAccId);
+              if (!cashAcc) {
+                throw new Error(`নির্বাচিত নগদ হিসাব (${targetAccId}) পাওয়া যায়নি।`);
+              }
+            } else {
+              cashAcc = await db.cashBankAccounts.where('accountType').equals('CASH').first();
+              if (!cashAcc) {
+                throw new Error('নগদ হিসাব (Cash Account) পাওয়া যায়নি।');
+              }
             }
             const availableBal = Number(cashAcc.currentBalance || 0);
             if (availableBal < cost) {
@@ -2644,10 +2652,16 @@ export async function executeAnimalEventTransaction(params: {
             }
           } else if (paymentMethod === 'BANK') {
             const targetBankId = bankAccountId || (params as any).cashBankAccountId;
-            if (targetBankId) bankAcc = await db.cashBankAccounts.get(targetBankId);
-            if (!bankAcc) bankAcc = await db.cashBankAccounts.where('accountType').equals('BANK').first();
-            if (!bankAcc) {
-              throw new Error('ব্যাংক হিসাব (Bank Account) পাওয়া যায়নি।');
+            if (targetBankId) {
+              bankAcc = await db.cashBankAccounts.get(targetBankId);
+              if (!bankAcc) {
+                throw new Error(`নির্বাচিত ব্যাংক হিসাব (${targetBankId}) পাওয়া যায়নি।`);
+              }
+            } else {
+              bankAcc = await db.cashBankAccounts.where('accountType').equals('BANK').first();
+              if (!bankAcc) {
+                throw new Error('ব্যাংক হিসাব (Bank Account) পাওয়া যায়নি।');
+              }
             }
             const availableBal = Number(bankAcc.currentBalance || 0);
             if (availableBal < cost) {
@@ -3510,17 +3524,39 @@ export async function executeAnimalPurchaseTransaction(
       let voucherNumber: string | undefined;
 
       if (cleanPurchaseCost > 0) {
-        // Validate cash/bank balance to prevent silent negative balances
+        // Validate cash/bank account exists & balance to prevent silent negative balances
+        let cashAcc: CashBankAccount | undefined;
+        let bankAcc: CashBankAccount | undefined;
         if (paymentMethod === 'CASH') {
-          const cashAcc = await db.cashBankAccounts.where('accountType').equals('CASH').first();
-          if (cashAcc && Number(cashAcc.currentBalance || 0) < cleanPurchaseCost) {
+          const targetAccId = (params as any).cashBankAccountId || bankAccountId;
+          if (targetAccId) {
+            cashAcc = await db.cashBankAccounts.get(targetAccId);
+            if (!cashAcc) {
+              throw new Error(`নির্বাচিত নগদ হিসাব (${targetAccId}) পাওয়া যায়নি।`);
+            }
+          } else {
+            cashAcc = await db.cashBankAccounts.where('accountType').equals('CASH').first();
+            if (!cashAcc) {
+              throw new Error('নগদ হিসাব (Cash Account) পাওয়া যায়নি।');
+            }
+          }
+          if (Number(cashAcc.currentBalance || 0) < cleanPurchaseCost) {
             throw new Error(`নগদ তহবিলে পর্যাপ্ত ব্যালেন্স নেই (Insufficient cash balance: ৳${cashAcc.currentBalance || 0}, পশু ক্রয়ের পরিমাণ: ৳${cleanPurchaseCost})। ক্যাশ ব্যালেন্স নেগেটিভ হওয়া অনুমোদিত নয়।`);
           }
         } else if (paymentMethod === 'BANK') {
-          let bankAcc: CashBankAccount | undefined;
-          if (bankAccountId) bankAcc = await db.cashBankAccounts.get(bankAccountId);
-          if (!bankAcc) bankAcc = await db.cashBankAccounts.where('accountType').equals('BANK').first();
-          if (bankAcc && Number(bankAcc.currentBalance || 0) < cleanPurchaseCost) {
+          const targetBankId = bankAccountId || (params as any).cashBankAccountId;
+          if (targetBankId) {
+            bankAcc = await db.cashBankAccounts.get(targetBankId);
+            if (!bankAcc) {
+              throw new Error(`নির্বাচিত ব্যাংক হিসাব (${targetBankId}) পাওয়া যায়নি।`);
+            }
+          } else {
+            bankAcc = await db.cashBankAccounts.where('accountType').equals('BANK').first();
+            if (!bankAcc) {
+              throw new Error('ব্যাংক হিসাব (Bank Account) পাওয়া যায়নি।');
+            }
+          }
+          if (Number(bankAcc.currentBalance || 0) < cleanPurchaseCost) {
             throw new Error(`ব্যাংক হিসাবে পর্যাপ্ত ব্যালেন্স নেই (Insufficient bank balance: ৳${bankAcc.currentBalance || 0}, পশু ক্রয়ের পরিমাণ: ৳${cleanPurchaseCost})। ব্যাংক ব্যালেন্স নেগেটিভ হওয়া অনুমোদিত নয়।`);
           }
         }
@@ -3606,24 +3642,16 @@ export async function executeAnimalPurchaseTransaction(
         journalEntryId = journalEntry.id;
 
         // Update operational cash/bank account balance or supplier balance
-        if (paymentMethod === 'CASH') {
-          const cashAcc = await db.cashBankAccounts.where('accountType').equals('CASH').first();
-          if (cashAcc) {
-            await db.cashBankAccounts.update(cashAcc.id, {
-              currentBalance: Math.round((cashAcc.currentBalance - cleanPurchaseCost) * 100) / 100,
-              synced: false
-            });
-          }
-        } else if (paymentMethod === 'BANK') {
-          let bankAcc: CashBankAccount | undefined;
-          if (bankAccountId) bankAcc = await db.cashBankAccounts.get(bankAccountId);
-          if (!bankAcc) bankAcc = await db.cashBankAccounts.where('accountType').equals('BANK').first();
-          if (bankAcc) {
-            await db.cashBankAccounts.update(bankAcc.id, {
-              currentBalance: Math.round((bankAcc.currentBalance - cleanPurchaseCost) * 100) / 100,
-              synced: false
-            });
-          }
+        if (paymentMethod === 'CASH' && cashAcc) {
+          await db.cashBankAccounts.update(cashAcc.id, {
+            currentBalance: Math.round((cashAcc.currentBalance - cleanPurchaseCost) * 100) / 100,
+            synced: false
+          });
+        } else if (paymentMethod === 'BANK' && bankAcc) {
+          await db.cashBankAccounts.update(bankAcc.id, {
+            currentBalance: Math.round((bankAcc.currentBalance - cleanPurchaseCost) * 100) / 100,
+            synced: false
+          });
         } else if (paymentMethod === 'CREDIT' && supplierId) {
           const sParty = await db.parties.get(supplierId);
           if (sParty) {
@@ -3769,14 +3797,26 @@ export async function executeAnimalPurchaseCostAdjustmentTransaction(
           if (diff > 0) {
             if (method === 'CASH') {
               const cashAcc = await db.cashBankAccounts.where('accountType').equals('CASH').first();
-              if (cashAcc && Number(cashAcc.currentBalance || 0) < absDiff) {
+              if (!cashAcc) {
+                throw new Error('নগদ হিসাব (Cash Account) পাওয়া যায়নি।');
+              }
+              if (Number(cashAcc.currentBalance || 0) < absDiff) {
                 throw new Error(`নগদ তহবিলে পর্যাপ্ত ব্যালেন্স নেই (Available: ৳${cashAcc.currentBalance || 0}, সমন্বয় বৃদ্ধি: ৳${absDiff})।`);
               }
             } else if (method === 'BANK') {
               let bankAcc: CashBankAccount | undefined;
-              if (animal.bankAccountId) bankAcc = await db.cashBankAccounts.get(animal.bankAccountId);
-              if (!bankAcc) bankAcc = await db.cashBankAccounts.where('accountType').equals('BANK').first();
-              if (bankAcc && Number(bankAcc.currentBalance || 0) < absDiff) {
+              if (animal.bankAccountId) {
+                bankAcc = await db.cashBankAccounts.get(animal.bankAccountId);
+                if (!bankAcc) {
+                  throw new Error(`নির্বাচিত ব্যাংক হিসাব (${animal.bankAccountId}) পাওয়া যায়নি।`);
+                }
+              } else {
+                bankAcc = await db.cashBankAccounts.where('accountType').equals('BANK').first();
+                if (!bankAcc) {
+                  throw new Error('ব্যাংক হিসাব (Bank Account) পাওয়া যায়নি।');
+                }
+              }
+              if (Number(bankAcc.currentBalance || 0) < absDiff) {
                 throw new Error(`ব্যাংক হিসাবে পর্যাপ্ত ব্যালেন্স নেই (Available: ৳${bankAcc.currentBalance || 0}, সমন্বয় বৃদ্ধি: ৳${absDiff})।`);
               }
             }
@@ -3867,10 +3907,30 @@ export async function executeAnimalPurchaseCostAdjustmentTransaction(
             }
           }
         } else if (cleanNewCost > 0) {
+          let newCostCashAcc: CashBankAccount | undefined;
+          let newCostBankAcc: CashBankAccount | undefined;
           if (method === 'CASH') {
-            const cashAcc = await db.cashBankAccounts.where('accountType').equals('CASH').first();
-            if (cashAcc && Number(cashAcc.currentBalance || 0) < cleanNewCost) {
-              throw new Error(`নগদ তহবিলে পর্যাপ্ত ব্যালেন্স নেই (Available: ৳${cashAcc.currentBalance || 0}, নতুন ক্রয়মূল্য: ৳${cleanNewCost})।`);
+            newCostCashAcc = await db.cashBankAccounts.where('accountType').equals('CASH').first();
+            if (!newCostCashAcc) {
+              throw new Error('নগদ হিসাব (Cash Account) পাওয়া যায়নি।');
+            }
+            if (Number(newCostCashAcc.currentBalance || 0) < cleanNewCost) {
+              throw new Error(`নগদ তহবিলে পর্যাপ্ত ব্যালেন্স নেই (Available: ৳${newCostCashAcc.currentBalance || 0}, নতুন ক্রয়মূল্য: ৳${cleanNewCost})।`);
+            }
+          } else if (method === 'BANK') {
+            if (animal.bankAccountId) {
+              newCostBankAcc = await db.cashBankAccounts.get(animal.bankAccountId);
+              if (!newCostBankAcc) {
+                throw new Error(`নির্বাচিত ব্যাংক হিসাব (${animal.bankAccountId}) পাওয়া যায়নি।`);
+              }
+            } else {
+              newCostBankAcc = await db.cashBankAccounts.where('accountType').equals('BANK').first();
+              if (!newCostBankAcc) {
+                throw new Error('ব্যাংক হিসাব (Bank Account) পাওয়া যায়নি।');
+              }
+            }
+            if (Number(newCostBankAcc.currentBalance || 0) < cleanNewCost) {
+              throw new Error(`ব্যাংক হিসাবে পর্যাপ্ত ব্যালেন্স নেই (Available: ৳${newCostBankAcc.currentBalance || 0}, নতুন ক্রয়মূল্য: ৳${cleanNewCost})।`);
             }
           }
 
@@ -3915,14 +3975,16 @@ export async function executeAnimalPurchaseCostAdjustmentTransaction(
           await safeInsert(db.journalEntries, jEntry, { idPrefix: 'j' });
           newJournalEntryId = jEntry.id;
 
-          if (method === 'CASH') {
-            const cashAcc = await db.cashBankAccounts.where('accountType').equals('CASH').first();
-            if (cashAcc) {
-              await db.cashBankAccounts.update(cashAcc.id, {
-                currentBalance: Math.round((cashAcc.currentBalance - cleanNewCost) * 100) / 100,
-                synced: false
-              });
-            }
+          if (method === 'CASH' && newCostCashAcc) {
+            await db.cashBankAccounts.update(newCostCashAcc.id, {
+              currentBalance: Math.round((newCostCashAcc.currentBalance - cleanNewCost) * 100) / 100,
+              synced: false
+            });
+          } else if (method === 'BANK' && newCostBankAcc) {
+            await db.cashBankAccounts.update(newCostBankAcc.id, {
+              currentBalance: Math.round((newCostBankAcc.currentBalance - cleanNewCost) * 100) / 100,
+              synced: false
+            });
           }
         }
       }
@@ -4388,10 +4450,16 @@ export async function executeLivestockProductionCostTransaction(
 
         if (paymentMethod === 'CASH') {
           const targetAccId = (params as any).cashBankAccountId || bankAccountId;
-          if (targetAccId) cashAcc = await db.cashBankAccounts.get(targetAccId);
-          if (!cashAcc) cashAcc = await db.cashBankAccounts.where('accountType').equals('CASH').first();
-          if (!cashAcc) {
-            throw new Error('নগদ হিসাব (Cash Account) পাওয়া যায়নি।');
+          if (targetAccId) {
+            cashAcc = await db.cashBankAccounts.get(targetAccId);
+            if (!cashAcc) {
+              throw new Error(`নির্বাচিত নগদ হিসাব (${targetAccId}) পাওয়া যায়নি।`);
+            }
+          } else {
+            cashAcc = await db.cashBankAccounts.where('accountType').equals('CASH').first();
+            if (!cashAcc) {
+              throw new Error('নগদ হিসাব (Cash Account) পাওয়া যায়নি।');
+            }
           }
           const availableBal = Number(cashAcc.currentBalance || 0);
           if (availableBal < cleanAmount) {
@@ -4401,10 +4469,16 @@ export async function executeLivestockProductionCostTransaction(
           }
         } else if (paymentMethod === 'BANK') {
           const targetBankId = bankAccountId || (params as any).cashBankAccountId;
-          if (targetBankId) bankAcc = await db.cashBankAccounts.get(targetBankId);
-          if (!bankAcc) bankAcc = await db.cashBankAccounts.where('accountType').equals('BANK').first();
-          if (!bankAcc) {
-            throw new Error('ব্যাংক হিসাব (Bank Account) পাওয়া যায়নি।');
+          if (targetBankId) {
+            bankAcc = await db.cashBankAccounts.get(targetBankId);
+            if (!bankAcc) {
+              throw new Error(`নির্বাচিত ব্যাংক হিসাব (${targetBankId}) পাওয়া যায়নি।`);
+            }
+          } else {
+            bankAcc = await db.cashBankAccounts.where('accountType').equals('BANK').first();
+            if (!bankAcc) {
+              throw new Error('ব্যাংক হিসাব (Bank Account) পাওয়া যায়নি।');
+            }
           }
           const availableBal = Number(bankAcc.currentBalance || 0);
           if (availableBal < cleanAmount) {
@@ -4747,6 +4821,38 @@ export async function executeAnimalSaleOrRemovalTransaction(params: {
       //    CREDIT: Dr Accounts Receivable (1040), Cr Livestock Sales Revenue (4020)
       // 2. Cost leg: Debit Livestock COGS (5020), Credit Livestock Assets / Expense accounts for total accumulated cost
       if (newStatus === 'SOLD' && (cleanPrice > 0 || costToDerecognize > 0)) {
+        let cashAcc: CashBankAccount | undefined;
+        let bankAcc: CashBankAccount | undefined;
+        if (cleanPrice > 0) {
+          if (paymentMethod === 'BANK') {
+            const targetBankId = bankAccountId || (params as any).cashBankAccountId;
+            if (targetBankId) {
+              bankAcc = await db.cashBankAccounts.get(targetBankId);
+              if (!bankAcc) {
+                throw new Error(`নির্বাচিত ব্যাংক হিসাব (${targetBankId}) পাওয়া যায়নি।`);
+              }
+            } else {
+              bankAcc = await db.cashBankAccounts.where('accountType').equals('BANK').first();
+              if (!bankAcc) {
+                throw new Error('ব্যাংক হিসাব (Bank Account) পাওয়া যায়নি।');
+              }
+            }
+          } else if (paymentMethod === 'CASH') {
+            const targetAccId = (params as any).cashBankAccountId || bankAccountId;
+            if (targetAccId) {
+              cashAcc = await db.cashBankAccounts.get(targetAccId);
+              if (!cashAcc) {
+                throw new Error(`নির্বাচিত নগদ হিসাব (${targetAccId}) পাওয়া যায়নি।`);
+              }
+            } else {
+              cashAcc = await db.cashBankAccounts.where('accountType').equals('CASH').first();
+              if (!cashAcc) {
+                throw new Error('নগদ হিসাব (Cash Account) পাওয়া যায়নি।');
+              }
+            }
+          }
+        }
+
         let paymentCode: string = CANONICAL_ACCOUNTS.CASH;
         let paymentNameBn = 'নগদ টাকা (Cash on Hand)';
         let paymentNameEn = 'Cash on Hand';
@@ -4972,22 +5078,14 @@ export async function executeAnimalSaleOrRemovalTransaction(params: {
 
           // Update Cash/Bank account balance ONLY for CASH and BANK
           // For CREDIT: Do NOT increase Cash/Bank! Create/update customer AR balance.
-          if (paymentMethod === 'CASH') {
-            const cashAcc = await db.cashBankAccounts.where('accountType').equals('CASH').first();
-            if (cashAcc) {
-              await db.cashBankAccounts.update(cashAcc.id, {
-                currentBalance: Math.round((cashAcc.currentBalance + cleanPrice) * 100) / 100
-              });
-            }
-          } else if (paymentMethod === 'BANK') {
-            let bankAcc: CashBankAccount | undefined;
-            if (bankAccountId) bankAcc = await db.cashBankAccounts.get(bankAccountId);
-            if (!bankAcc) bankAcc = await db.cashBankAccounts.where('accountType').equals('BANK').first();
-            if (bankAcc) {
-              await db.cashBankAccounts.update(bankAcc.id, {
-                currentBalance: Math.round((bankAcc.currentBalance + cleanPrice) * 100) / 100
-              });
-            }
+          if (paymentMethod === 'CASH' && cashAcc) {
+            await db.cashBankAccounts.update(cashAcc.id, {
+              currentBalance: Math.round((cashAcc.currentBalance + cleanPrice) * 100) / 100
+            });
+          } else if (paymentMethod === 'BANK' && bankAcc) {
+            await db.cashBankAccounts.update(bankAcc.id, {
+              currentBalance: Math.round((bankAcc.currentBalance + cleanPrice) * 100) / 100
+            });
           } else if (paymentMethod === 'CREDIT' && targetCustomer) {
             // Update customer AR balance
             await db.parties.update(targetCustomer.id, {
@@ -5210,13 +5308,7 @@ export async function executeOwnerCapitalTransaction(params: {
       }
 
       const cleanAmount = Math.round(amount * 100) / 100;
-      let targetAcc = await db.cashBankAccounts.get(targetAccountId);
-      if (!targetAcc) {
-        targetAcc = await db.cashBankAccounts.where('accountType').equals(targetAccountId).first();
-      }
-      if (!targetAcc) {
-        targetAcc = await db.cashBankAccounts.toCollection().first();
-      }
+      const targetAcc = await db.cashBankAccounts.get(targetAccountId);
       if (!targetAcc) {
         throw new Error(`তহবিল/ব্যাংক অ্যাকাউন্ট (${targetAccountId}) পাওয়া যায়নি।`);
       }
@@ -5332,16 +5424,11 @@ export async function executeOwnerDrawingTransaction(params: {
       }
 
       const cleanAmount = Math.round(amount * 100) / 100;
-      let sourceAcc = await db.cashBankAccounts.get(sourceAccountId);
-      if (!sourceAcc) {
-        sourceAcc = await db.cashBankAccounts.where('accountType').equals(sourceAccountId).first();
-      }
-      if (!sourceAcc) {
-        sourceAcc = await db.cashBankAccounts.toCollection().first();
-      }
-      if (!sourceAcc) {
+      const targetAcc = await db.cashBankAccounts.get(sourceAccountId);
+      if (!targetAcc) {
         throw new Error(`তহবিল/ব্যাংক অ্যাকাউন্ট (${sourceAccountId}) পাওয়া যায়নি।`);
       }
+      const sourceAcc = targetAcc;
 
       if (sourceAcc.currentBalance < cleanAmount) {
         throw new Error(
@@ -5631,13 +5718,40 @@ export async function executeFishStockingTransaction(
 
       // Validate bank account if paymentMethod is BANK
       let bankAcc: CashBankAccount | undefined;
-      if (paymentMethod === 'BANK' && cleanCost > 0) {
-        if (!bankAccountId) {
-          throw new Error('ব্যাংক মাধ্যমে পোনা ক্রয়ের জন্য ব্যাংক হিসাব নির্বাচন করা আবশ্যক।');
-        }
-        bankAcc = await db.cashBankAccounts.get(bankAccountId);
-        if (!bankAcc) {
-          throw new Error('নির্বাচিত ব্যাংক হিসাবটি ডাটাবেজে পাওয়া যায়নি।');
+      let cashAcc: CashBankAccount | undefined;
+      if (cleanCost > 0) {
+        if (paymentMethod === 'BANK') {
+          const targetBankId = bankAccountId || (params as any).cashBankAccountId;
+          if (targetBankId) {
+            bankAcc = await db.cashBankAccounts.get(targetBankId);
+            if (!bankAcc) {
+              throw new Error(`নির্বাচিত ব্যাংক হিসাব (${targetBankId}) পাওয়া যায়নি।`);
+            }
+          } else {
+            bankAcc = await db.cashBankAccounts.where('accountType').equals('BANK').first();
+            if (!bankAcc) {
+              throw new Error('ব্যাংক হিসাব (Bank Account) পাওয়া যায়নি।');
+            }
+          }
+          if (Number(bankAcc.currentBalance || 0) < cleanCost) {
+            throw new Error(`ব্যাংক হিসাবে পর্যাপ্ত ব্যালেন্স নেই (Insufficient bank balance: ৳${bankAcc.currentBalance || 0}, পোনা ক্রয়ের পরিমাণ: ৳${cleanCost})।`);
+          }
+        } else if (paymentMethod === 'CASH') {
+          const targetAccId = (params as any).cashBankAccountId || bankAccountId;
+          if (targetAccId) {
+            cashAcc = await db.cashBankAccounts.get(targetAccId);
+            if (!cashAcc) {
+              throw new Error(`নির্বাচিত নগদ হিসাব (${targetAccId}) পাওয়া যায়নি।`);
+            }
+          } else {
+            cashAcc = await db.cashBankAccounts.where('accountType').equals('CASH').first();
+            if (!cashAcc) {
+              throw new Error('নগদ হিসাব (Cash Account) পাওয়া যায়নি।');
+            }
+          }
+          if (Number(cashAcc.currentBalance || 0) < cleanCost) {
+            throw new Error(`নগদ তহবিলে পর্যাপ্ত ব্যালেন্স নেই (Insufficient cash balance: ৳${cashAcc.currentBalance || 0}, পোনা ক্রয়ের পরিমাণ: ৳${cleanCost})।`);
+          }
         }
       }
 
@@ -5715,14 +5829,11 @@ export async function executeFishStockingTransaction(
             currentBalance: Math.round((bankAcc.currentBalance - cleanCost) * 100) / 100,
             synced: false
           });
-        } else if (paymentMethod === 'CASH') {
-          const cashAcc = await db.cashBankAccounts.where('accountType').equals('CASH').first();
-          if (cashAcc) {
-            await db.cashBankAccounts.update(cashAcc.id, {
-              currentBalance: Math.round((cashAcc.currentBalance - cleanCost) * 100) / 100,
-              synced: false
-            });
-          }
+        } else if (paymentMethod === 'CASH' && cashAcc) {
+          await db.cashBankAccounts.update(cashAcc.id, {
+            currentBalance: Math.round((cashAcc.currentBalance - cleanCost) * 100) / 100,
+            synced: false
+          });
         }
       }
 
@@ -5931,12 +6042,14 @@ export async function executeFishProductionCostTransaction(
         const targetBankId = bankAccountId || (params as any).cashBankAccountId;
         if (targetBankId) {
           bankAcc = await db.cashBankAccounts.get(targetBankId);
-        }
-        if (!bankAcc) {
+          if (!bankAcc) {
+            throw new Error(`নির্বাচিত ব্যাংক হিসাব (${targetBankId}) পাওয়া যায়নি।`);
+          }
+        } else {
           bankAcc = await db.cashBankAccounts.where('accountType').equals('BANK').first();
-        }
-        if (!bankAcc) {
-          throw new Error('ব্যাংক মাধ্যমে পরিশোধের জন্য ব্যাংক হিসাব নির্বাচন করা আবশ্যক।');
+          if (!bankAcc) {
+            throw new Error('ব্যাংক মাধ্যমে পরিশোধের জন্য ব্যাংক হিসাব নির্বাচন করা আবশ্যক।');
+          }
         }
         const availableBalance = Number(bankAcc.currentBalance || 0);
         if (availableBalance < cleanAmount) {
@@ -5952,10 +6065,16 @@ export async function executeFishProductionCostTransaction(
       } else {
         // CASH
         const targetAccId = (params as any).cashBankAccountId || bankAccountId;
-        if (targetAccId) cashAcc = await db.cashBankAccounts.get(targetAccId);
-        if (!cashAcc) cashAcc = await db.cashBankAccounts.where('accountType').equals('CASH').first();
-        if (!cashAcc) {
-          throw new Error('নগদ হিসাব (Cash Account) পাওয়া যায়নি।');
+        if (targetAccId) {
+          cashAcc = await db.cashBankAccounts.get(targetAccId);
+          if (!cashAcc) {
+            throw new Error(`নির্বাচিত নগদ হিসাব (${targetAccId}) পাওয়া যায়নি।`);
+          }
+        } else {
+          cashAcc = await db.cashBankAccounts.where('accountType').equals('CASH').first();
+          if (!cashAcc) {
+            throw new Error('নগদ হিসাব (Cash Account) পাওয়া যায়নি।');
+          }
         }
         const availableBalance = Number(cashAcc.currentBalance || 0);
         if (availableBalance < cleanAmount) {
