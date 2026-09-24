@@ -363,3 +363,11 @@ async function dupJsonOrEmpty(res: Response): Promise<any> {
     return {};
   }
 }
+
+if (typeof process !== 'undefined' && process.argv[1]?.includes('testTaskF4ChartOfAccountsCloudPersistence')) {
+  runTaskF4ChartOfAccountsCloudPersistenceTests().then((res) => {
+    if (res.failed > 0) {
+      process.exit(1);
+    }
+  });
+}

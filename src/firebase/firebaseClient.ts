@@ -234,7 +234,7 @@ export async function resolveUserRole(user: User | null): Promise<UserProfile> {
  * Post records to authenticated server-side sync endpoints
  * Validates double-entry balance and accounts server-side, writes safely via Admin SDK
  */
-async function syncRecordToServer(collection: string, data: any): Promise<void> {
+async function syncRecordToServer(collection: string, data: any): Promise<any> {
   let token: string | null = null;
   if (auth.currentUser) {
     try {
@@ -268,6 +268,24 @@ async function syncRecordToServer(collection: string, data: any): Promise<void> 
     const errorData = await res.json().catch(() => ({}));
     throw new Error(errorData.error || `Server returned ${res.status}`);
   }
+
+  return await res.json().catch(() => ({ success: true }));
+}
+
+/**
+ * Handles sync result: if cloud was newer (staleIgnored), safely updates local IndexedDB
+ * record to authoritative cloud state and marks synchronized (F6 conflict protection).
+ */
+async function handleSyncedResult(table: any, recordId: string, syncRes: any): Promise<void> {
+  if (syncRes?.staleIgnored && syncRes?.data) {
+    await table.put({
+      ...syncRes.data,
+      id: syncRes.data.id || recordId,
+      synced: true
+    });
+  } else {
+    await table.update(recordId, { synced: true });
+  }
 }
 
 let activeSyncPromise: Promise<{ syncedCount: number; errors: string[] }> | null = null;
@@ -294,8 +312,8 @@ export async function synchronizePendingData(): Promise<{ syncedCount: number; e
       const pendingChartAccounts = await db.accounts.filter((acc) => acc.synced === false).toArray();
       for (const acc of pendingChartAccounts) {
         try {
-          await syncRecordToServer('accounts', acc);
-          await db.accounts.update(acc.id, { synced: true });
+          const syncRes = await syncRecordToServer('accounts', acc);
+          await handleSyncedResult(db.accounts, acc.id, syncRes);
           count++;
         } catch (err: any) {
           errors.push(`Account ${acc.code} (${acc.nameBn}): ${err.message}`);
@@ -306,8 +324,8 @@ export async function synchronizePendingData(): Promise<{ syncedCount: number; e
       const pendingAnimals = await db.animals.filter((a) => a.synced === false).toArray();
       for (const animal of pendingAnimals) {
         try {
-          await syncRecordToServer('animals', animal);
-          await db.animals.update(animal.id, { synced: true });
+          const syncRes = await syncRecordToServer('animals', animal);
+          await handleSyncedResult(db.animals, animal.id, syncRes);
           count++;
         } catch (err: any) {
           errors.push(`Animal ${animal.id}: ${err.message}`);
@@ -318,8 +336,8 @@ export async function synchronizePendingData(): Promise<{ syncedCount: number; e
     const pendingFish = await db.fishBatches.filter((b) => b.synced === false).toArray();
     for (const batch of pendingFish) {
       try {
-        await syncRecordToServer('fishBatches', batch);
-        await db.fishBatches.update(batch.id, { synced: true });
+        const syncRes = await syncRecordToServer('fishBatches', batch);
+        await handleSyncedResult(db.fishBatches, batch.id, syncRes);
         count++;
       } catch (err: any) {
         errors.push(`Fish batch ${batch.id}: ${err.message}`);
@@ -330,8 +348,8 @@ export async function synchronizePendingData(): Promise<{ syncedCount: number; e
     const pendingCrops = await db.cropCycles.filter((c) => c.synced === false).toArray();
     for (const crop of pendingCrops) {
       try {
-        await syncRecordToServer('cropCycles', crop);
-        await db.cropCycles.update(crop.id, { synced: true });
+        const syncRes = await syncRecordToServer('cropCycles', crop);
+        await handleSyncedResult(db.cropCycles, crop.id, syncRes);
         count++;
       } catch (err: any) {
         errors.push(`Crop cycle ${crop.id}: ${err.message}`);
@@ -342,8 +360,8 @@ export async function synchronizePendingData(): Promise<{ syncedCount: number; e
     const pendingJournals = await db.journalEntries.filter((j) => j.synced === false).toArray();
     for (const j of pendingJournals) {
       try {
-        await syncRecordToServer('journalEntries', j);
-        await db.journalEntries.update(j.id, { synced: true });
+        const syncRes = await syncRecordToServer('journalEntries', j);
+        await handleSyncedResult(db.journalEntries, j.id, syncRes);
         count++;
       } catch (err: any) {
         errors.push(`Journal ${j.voucherNumber}: ${err.message}`);
@@ -354,8 +372,8 @@ export async function synchronizePendingData(): Promise<{ syncedCount: number; e
     const pendingPurchases = await db.purchases.filter((p) => p.synced === false).toArray();
     for (const p of pendingPurchases) {
       try {
-        await syncRecordToServer('purchases', p);
-        await db.purchases.update(p.id, { synced: true });
+        const syncRes = await syncRecordToServer('purchases', p);
+        await handleSyncedResult(db.purchases, p.id, syncRes);
         count++;
       } catch (err: any) {
         errors.push(`Purchase ${p.invoiceNumber}: ${err.message}`);
@@ -366,8 +384,8 @@ export async function synchronizePendingData(): Promise<{ syncedCount: number; e
     const pendingSales = await db.sales.filter((s) => s.synced === false).toArray();
     for (const s of pendingSales) {
       try {
-        await syncRecordToServer('sales', s);
-        await db.sales.update(s.id, { synced: true });
+        const syncRes = await syncRecordToServer('sales', s);
+        await handleSyncedResult(db.sales, s.id, syncRes);
         count++;
       } catch (err: any) {
         errors.push(`Sale ${s.invoiceNumber}: ${err.message}`);
@@ -378,8 +396,8 @@ export async function synchronizePendingData(): Promise<{ syncedCount: number; e
     const pendingAudit = await db.auditLogs.filter((a) => a.synced === false).toArray();
     for (const a of pendingAudit) {
       try {
-        await syncRecordToServer('auditLogs', a);
-        await db.auditLogs.update(a.id, { synced: true });
+        const syncRes = await syncRecordToServer('auditLogs', a);
+        await handleSyncedResult(db.auditLogs, a.id, syncRes);
         count++;
       } catch (err: any) {
         errors.push(`Audit ${a.id}: ${err.message}`);
@@ -390,8 +408,8 @@ export async function synchronizePendingData(): Promise<{ syncedCount: number; e
     const pendingPayments = await db.payments.filter((p) => !p.synced).toArray();
     for (const p of pendingPayments) {
       try {
-        await syncRecordToServer('payments', p);
-        await db.payments.update(p.id, { synced: true });
+        const syncRes = await syncRecordToServer('payments', p);
+        await handleSyncedResult(db.payments, p.id, syncRes);
         count++;
       } catch (err: any) {
         errors.push(`Payment ${p.id}: ${err.message}`);
@@ -402,8 +420,8 @@ export async function synchronizePendingData(): Promise<{ syncedCount: number; e
     const pendingInventory = await db.inventoryItems.filter((item) => !item.synced).toArray();
     for (const item of pendingInventory) {
       try {
-        await syncRecordToServer('inventoryItems', item);
-        await db.inventoryItems.update(item.id, { synced: true });
+        const syncRes = await syncRecordToServer('inventoryItems', item);
+        await handleSyncedResult(db.inventoryItems, item.id, syncRes);
         count++;
       } catch (err: any) {
         errors.push(`Inventory item ${item.id}: ${err.message}`);
@@ -414,8 +432,8 @@ export async function synchronizePendingData(): Promise<{ syncedCount: number; e
     const pendingStock = await db.stockMovements.filter((m) => !m.synced).toArray();
     for (const sm of pendingStock) {
       try {
-        await syncRecordToServer('stockMovements', sm);
-        await db.stockMovements.update(sm.id, { synced: true });
+        const syncRes = await syncRecordToServer('stockMovements', sm);
+        await handleSyncedResult(db.stockMovements, sm.id, syncRes);
         count++;
       } catch (err: any) {
         errors.push(`Stock movement ${sm.id}: ${err.message}`);
@@ -426,8 +444,8 @@ export async function synchronizePendingData(): Promise<{ syncedCount: number; e
     const pendingAccounts = await db.cashBankAccounts.filter((acc) => !acc.synced).toArray();
     for (const acc of pendingAccounts) {
       try {
-        await syncRecordToServer('cashBankAccounts', acc);
-        await db.cashBankAccounts.update(acc.id, { synced: true });
+        const syncRes = await syncRecordToServer('cashBankAccounts', acc);
+        await handleSyncedResult(db.cashBankAccounts, acc.id, syncRes);
         count++;
       } catch (err: any) {
         errors.push(`Cash/Bank Account ${acc.id}: ${err.message}`);
@@ -438,8 +456,8 @@ export async function synchronizePendingData(): Promise<{ syncedCount: number; e
     const pendingLoans = await db.loans.filter((loan) => !loan.synced).toArray();
     for (const loan of pendingLoans) {
       try {
-        await syncRecordToServer('loans', loan);
-        await db.loans.update(loan.id, { synced: true });
+        const syncRes = await syncRecordToServer('loans', loan);
+        await handleSyncedResult(db.loans, loan.id, syncRes);
         count++;
       } catch (err: any) {
         errors.push(`Loan ${loan.id}: ${err.message}`);
@@ -450,8 +468,8 @@ export async function synchronizePendingData(): Promise<{ syncedCount: number; e
     const pendingInvestors = await db.investors.filter((inv) => !inv.synced).toArray();
     for (const inv of pendingInvestors) {
       try {
-        await syncRecordToServer('investors', inv);
-        await db.investors.update(inv.id, { synced: true });
+        const syncRes = await syncRecordToServer('investors', inv);
+        await handleSyncedResult(db.investors, inv.id, syncRes);
         count++;
       } catch (err: any) {
         errors.push(`Investor ${inv.id}: ${err.message}`);
@@ -462,8 +480,8 @@ export async function synchronizePendingData(): Promise<{ syncedCount: number; e
     const pendingAssets = await db.fixedAssets.filter((asset) => !asset.synced).toArray();
     for (const asset of pendingAssets) {
       try {
-        await syncRecordToServer('fixedAssets', asset);
-        await db.fixedAssets.update(asset.id, { synced: true });
+        const syncRes = await syncRecordToServer('fixedAssets', asset);
+        await handleSyncedResult(db.fixedAssets, asset.id, syncRes);
         count++;
       } catch (err: any) {
         errors.push(`Fixed Asset ${asset.id}: ${err.message}`);
@@ -474,8 +492,8 @@ export async function synchronizePendingData(): Promise<{ syncedCount: number; e
     const pendingParties = await db.parties.filter((party) => !party.synced).toArray();
     for (const party of pendingParties) {
       try {
-        await syncRecordToServer('parties', party);
-        await db.parties.update(party.id, { synced: true });
+        const syncRes = await syncRecordToServer('parties', party);
+        await handleSyncedResult(db.parties, party.id, syncRes);
         count++;
       } catch (err: any) {
         errors.push(`Party ${party.id}: ${err.message}`);
@@ -486,8 +504,8 @@ export async function synchronizePendingData(): Promise<{ syncedCount: number; e
     const pendingClosedPeriods = await db.closedPeriods.filter((period) => !period.synced).toArray();
     for (const period of pendingClosedPeriods) {
       try {
-        await syncRecordToServer('closedPeriods', period);
-        await db.closedPeriods.update(period.id, { synced: true });
+        const syncRes = await syncRecordToServer('closedPeriods', period);
+        await handleSyncedResult(db.closedPeriods, period.id, syncRes);
         count++;
       } catch (err: any) {
         errors.push(`Closed Period ${period.id}: ${err.message}`);
@@ -498,8 +516,8 @@ export async function synchronizePendingData(): Promise<{ syncedCount: number; e
     const pendingTransfers = await db.bankTransfers.filter((t) => !t.synced).toArray();
     for (const bt of pendingTransfers) {
       try {
-        await syncRecordToServer('bankTransfers', bt);
-        await db.bankTransfers.update(bt.id, { synced: true });
+        const syncRes = await syncRecordToServer('bankTransfers', bt);
+        await handleSyncedResult(db.bankTransfers, bt.id, syncRes);
         count++;
       } catch (err: any) {
         errors.push(`Bank Transfer ${bt.id}: ${err.message}`);
@@ -510,8 +528,8 @@ export async function synchronizePendingData(): Promise<{ syncedCount: number; e
     const pendingAnimalEvents = await db.animalEvents.filter((e) => !e.synced).toArray();
     for (const ev of pendingAnimalEvents) {
       try {
-        await syncRecordToServer('animalEvents', ev);
-        await db.animalEvents.update(ev.id, { synced: true });
+        const syncRes = await syncRecordToServer('animalEvents', ev);
+        await handleSyncedResult(db.animalEvents, ev.id, syncRes);
         count++;
       } catch (err: any) {
         errors.push(`Animal Event ${ev.id}: ${err.message}`);
@@ -522,8 +540,8 @@ export async function synchronizePendingData(): Promise<{ syncedCount: number; e
     const pendingReminders = await db.reminders.filter((r) => !r.synced).toArray();
     for (const rem of pendingReminders) {
       try {
-        await syncRecordToServer('reminders', rem);
-        await db.reminders.update(rem.id, { synced: true });
+        const syncRes = await syncRecordToServer('reminders', rem);
+        await handleSyncedResult(db.reminders, rem.id, syncRes);
         count++;
       } catch (err: any) {
         errors.push(`Reminder ${rem.id}: ${err.message}`);
@@ -534,8 +552,8 @@ export async function synchronizePendingData(): Promise<{ syncedCount: number; e
     const pendingFlows = await db.internalFlows.filter((f) => !f.synced).toArray();
     for (const fl of pendingFlows) {
       try {
-        await syncRecordToServer('internalFlows', fl);
-        await db.internalFlows.update(fl.id, { synced: true });
+        const syncRes = await syncRecordToServer('internalFlows', fl);
+        await handleSyncedResult(db.internalFlows, fl.id, syncRes);
         count++;
       } catch (err: any) {
         errors.push(`Internal Flow ${fl.id}: ${err.message}`);
@@ -546,8 +564,8 @@ export async function synchronizePendingData(): Promise<{ syncedCount: number; e
     const pendingProcessing = await db.processingRuns.filter((pr) => !pr.synced).toArray();
     for (const pr of pendingProcessing) {
       try {
-        await syncRecordToServer('processingRuns', pr);
-        await db.processingRuns.update(pr.id, { synced: true });
+        const syncRes = await syncRecordToServer('processingRuns', pr);
+        await handleSyncedResult(db.processingRuns, pr.id, syncRes);
         count++;
       } catch (err: any) {
         errors.push(`Processing Run ${pr.id}: ${err.message}`);
@@ -558,8 +576,8 @@ export async function synchronizePendingData(): Promise<{ syncedCount: number; e
     const pendingPonds = await db.ponds.filter((p) => !p.synced).toArray();
     for (const p of pendingPonds) {
       try {
-        await syncRecordToServer('ponds', p);
-        await db.ponds.update(p.id, { synced: true });
+        const syncRes = await syncRecordToServer('ponds', p);
+        await handleSyncedResult(db.ponds, p.id, syncRes);
         count++;
       } catch (err: any) {
         errors.push(`Pond ${p.id}: ${err.message}`);
@@ -570,8 +588,8 @@ export async function synchronizePendingData(): Promise<{ syncedCount: number; e
     const pendingPlots = await db.plots.filter((p) => !p.synced).toArray();
     for (const p of pendingPlots) {
       try {
-        await syncRecordToServer('plots', p);
-        await db.plots.update(p.id, { synced: true });
+        const syncRes = await syncRecordToServer('plots', p);
+        await handleSyncedResult(db.plots, p.id, syncRes);
         count++;
       } catch (err: any) {
         errors.push(`Plot ${p.id}: ${err.message}`);
@@ -582,8 +600,8 @@ export async function synchronizePendingData(): Promise<{ syncedCount: number; e
     const pendingAccessLogs = await db.accessLogs.filter((al) => !al.synced).toArray();
     for (const al of pendingAccessLogs) {
       try {
-        await syncRecordToServer('accessLogs', al);
-        await db.accessLogs.update(al.id, { synced: true });
+        const syncRes = await syncRecordToServer('accessLogs', al);
+        await handleSyncedResult(db.accessLogs, al.id, syncRes);
         count++;
       } catch (err: any) {
         errors.push(`Access Log ${al.id}: ${err.message}`);
@@ -594,8 +612,8 @@ export async function synchronizePendingData(): Promise<{ syncedCount: number; e
     const pendingRecurring = await db.recurringExpenseTemplates.filter((rt) => !rt.synced).toArray();
     for (const rt of pendingRecurring) {
       try {
-        await syncRecordToServer('recurringExpenseTemplates', rt);
-        await db.recurringExpenseTemplates.update(rt.id, { synced: true });
+        const syncRes = await syncRecordToServer('recurringExpenseTemplates', rt);
+        await handleSyncedResult(db.recurringExpenseTemplates, rt.id, syncRes);
         count++;
       } catch (err: any) {
         errors.push(`Recurring Template ${rt.id}: ${err.message}`);
@@ -606,8 +624,8 @@ export async function synchronizePendingData(): Promise<{ syncedCount: number; e
     const pendingSalesReturns = await db.salesReturns.filter((sr) => !sr.synced).toArray();
     for (const sr of pendingSalesReturns) {
       try {
-        await syncRecordToServer('salesReturns', sr);
-        await db.salesReturns.update(sr.id, { synced: true });
+        const syncRes = await syncRecordToServer('salesReturns', sr);
+        await handleSyncedResult(db.salesReturns, sr.id, syncRes);
         count++;
       } catch (err: any) {
         errors.push(`Sales Return ${sr.id}: ${err.message}`);
@@ -618,8 +636,8 @@ export async function synchronizePendingData(): Promise<{ syncedCount: number; e
     const pendingPurchaseReturns = await db.purchaseReturns.filter((pr) => !pr.synced).toArray();
     for (const pr of pendingPurchaseReturns) {
       try {
-        await syncRecordToServer('purchaseReturns', pr);
-        await db.purchaseReturns.update(pr.id, { synced: true });
+        const syncRes = await syncRecordToServer('purchaseReturns', pr);
+        await handleSyncedResult(db.purchaseReturns, pr.id, syncRes);
         count++;
       } catch (err: any) {
         errors.push(`Purchase Return ${pr.id}: ${err.message}`);
@@ -630,8 +648,8 @@ export async function synchronizePendingData(): Promise<{ syncedCount: number; e
     const pendingAdvancePayments = await db.advancePayments.filter((ap) => !ap.synced).toArray();
     for (const ap of pendingAdvancePayments) {
       try {
-        await syncRecordToServer('advancePayments', ap);
-        await db.advancePayments.update(ap.id, { synced: true });
+        const syncRes = await syncRecordToServer('advancePayments', ap);
+        await handleSyncedResult(db.advancePayments, ap.id, syncRes);
         count++;
       } catch (err: any) {
         errors.push(`Advance Payment ${ap.id}: ${err.message}`);

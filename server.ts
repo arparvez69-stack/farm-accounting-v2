@@ -1704,17 +1704,173 @@ async function handleSyncWrite(
           protectedFields.accountClass = existingDoc.accountClass;
           protectedFields.normalBalance = existingDoc.normalBalance;
         }
+      }
 
-        // Prevent stale local data from blindly overwriting newer cloud account data
-        const existingTime = existingDoc.updatedAt || existingDoc.syncedAt;
-        const incomingTime = data.updatedAt || data.syncedAt;
-        if (existingTime && incomingTime && new Date(existingTime).getTime() > new Date(incomingTime).getTime()) {
+      // 5. Financial Transaction Mutation Protection (F6 Integrity)
+      const isFinancialRecord = [
+        'journalEntries',
+        'sales',
+        'purchases',
+        'payments',
+        'bankTransfers',
+        'salesReturns',
+        'purchaseReturns',
+        'advancePayments'
+      ].includes(targetCol);
+
+      if (isFinancialRecord) {
+        // A. Journal Entries: lines and total debit/credit immutability
+        if (targetCol === 'journalEntries') {
+          const isReversalStatusUpdate =
+            (data.isReversed && !existingDoc.isReversed) ||
+            (data.reversalReason && !existingDoc.reversalReason) ||
+            (data.reversalVoucherNumber && !existingDoc.reversalVoucherNumber);
+
+          if (!isReversalStatusUpdate) {
+            if (
+              existingDoc.totalDebit !== undefined &&
+              data.totalDebit !== undefined &&
+              Math.abs(Number(existingDoc.totalDebit) - Number(data.totalDebit)) > 0.01
+            ) {
+              return res.status(400).json({
+                error: `হিসাবরক্ষণ সীমাবদ্ধতা: পোস্ট করা জাবেদা ভাউচারের মোট পরিমাণ পরিবর্তন করা যাবে না (Cannot mutate amount of posted journal entry #${finalDocId}).`
+              });
+            }
+            if (Array.isArray(existingDoc.lines) && Array.isArray(data.lines)) {
+              if (existingDoc.lines.length !== data.lines.length) {
+                return res.status(400).json({
+                  error: `হিসাবরক্ষণ সীমাবদ্ধতা: পোস্ট করা জাবেদা ভাউচারের লাইন পরিবর্তন করা যাবে না (Cannot mutate lines of posted journal entry #${finalDocId}).`
+                });
+              }
+              for (let i = 0; i < existingDoc.lines.length; i++) {
+                const el = existingDoc.lines[i];
+                const dl = data.lines[i];
+                if (
+                  el.accountCode !== dl.accountCode ||
+                  Math.abs((Number(el.debit) || 0) - (Number(dl.debit) || 0)) > 0.01 ||
+                  Math.abs((Number(el.credit) || 0) - (Number(dl.credit) || 0)) > 0.01
+                ) {
+                  return res.status(400).json({
+                    error: `হিসাবরক্ষণ সীমাবদ্ধতা: পোস্ট করা জাবেদা ভাউচারের আর্থিক লাইন পরিবর্তন করা যাবে না (Cannot mutate financial lines of posted journal entry #${finalDocId}).`
+                  });
+                }
+              }
+            }
+          }
+        }
+
+        // B. Sales / Purchases: Total amount and items immutability
+        else if (targetCol === 'sales' || targetCol === 'purchases') {
+          const isReversalOrStatusUpdate =
+            Boolean(data.isReversed && !existingDoc.isReversed) ||
+            data.status === 'CANCELLED' ||
+            data.status === 'REVERSED' ||
+            (data.paymentStatus && data.paymentStatus !== existingDoc.paymentStatus);
+
+          if (!isReversalOrStatusUpdate) {
+            const existingTotal = existingDoc.totalAmount ?? existingDoc.grandTotal ?? existingDoc.netAmount;
+            const incomingTotal = data.totalAmount ?? data.grandTotal ?? data.netAmount;
+            if (
+              existingTotal !== undefined &&
+              incomingTotal !== undefined &&
+              Math.abs(Number(existingTotal) - Number(incomingTotal)) > 0.01
+            ) {
+              return res.status(400).json({
+                error: `হিসাবরক্ষণ সীমাবদ্ধতা: পোস্ট করা ক্রয়/বিক্রয় চালানের মূল পরিমাণ পরিবর্তন করা যাবে না (Cannot mutate total amount of posted transaction #${finalDocId}).`
+              });
+            }
+          }
+        }
+
+        // C. Payments / Bank Transfers / Advance Payments: Amount immutability
+        else if (targetCol === 'payments' || targetCol === 'bankTransfers' || targetCol === 'advancePayments') {
+          if (
+            existingDoc.amount !== undefined &&
+            data.amount !== undefined &&
+            Math.abs(Number(existingDoc.amount) - Number(data.amount)) > 0.01
+          ) {
+            return res.status(400).json({
+              error: `হিসাবরক্ষণ সীমাবদ্ধতা: পরিশোধ বা লেনদেনের মূল পরিমাণ পরিবর্তন করা যাবে না (Cannot mutate payment amount of posted transaction #${finalDocId}).`
+            });
+          }
+        }
+
+        // D. Sales Returns / Purchase Returns: Refund amount immutability
+        else if (targetCol === 'salesReturns' || targetCol === 'purchaseReturns') {
+          const existingRefund = existingDoc.totalRefundAmount ?? existingDoc.amount;
+          const incomingRefund = data.totalRefundAmount ?? data.amount;
+          if (
+            existingRefund !== undefined &&
+            incomingRefund !== undefined &&
+            Math.abs(Number(existingRefund) - Number(incomingRefund)) > 0.01
+          ) {
+            return res.status(400).json({
+              error: `হিসাবরক্ষণ সীমাবদ্ধতা: ফেরত রসিদের মূল পরিমাণ পরিবর্তন করা যাবে না (Cannot mutate refund amount of posted transaction #${finalDocId}).`
+            });
+          }
+        }
+      }
+
+      // Check Identical Retry (Idempotency)
+      const isIdenticalRecord = () => {
+        const keysToCheck = Object.keys(data).filter(
+          (k) => !['synced', 'syncedAt', 'syncedBy'].includes(k)
+        );
+        for (const k of keysToCheck) {
+          if (typeof data[k] === 'object' && data[k] !== null) {
+            if (JSON.stringify(data[k]) !== JSON.stringify(existingDoc[k])) return false;
+          } else if (data[k] !== existingDoc[k]) {
+            return false;
+          }
+        }
+        return true;
+      };
+
+      if (isIdenticalRecord()) {
+        return res.json({
+          success: true,
+          id: finalDocId,
+          collection: collectionName,
+          idempotent: true,
+          message: 'Record already synced with identical data.',
+          data: existingDoc
+        });
+      }
+
+      // 6. Universal Version and Timestamp Conflict Protection (F6)
+      // A. Explicit Version Comparison
+      if (existingDoc.version !== undefined && data.version !== undefined) {
+        const existingVer = Number(existingDoc.version);
+        const incomingVer = Number(data.version);
+        if (!isNaN(existingVer) && !isNaN(incomingVer)) {
+          if (existingVer > incomingVer) {
+            return res.json({
+              success: true,
+              id: finalDocId,
+              collection: collectionName,
+              staleIgnored: true,
+              conflict: true,
+              message: `Cloud record is newer (version ${existingVer} > ${incomingVer}); stale local overwrite ignored.`,
+              data: existingDoc
+            });
+          }
+        }
+      }
+
+      // B. Timestamp Comparison (when versions are missing or equal)
+      const existingTime = existingDoc.updatedAt || existingDoc.syncedAt;
+      const incomingTime = data.updatedAt || data.syncedAt;
+      if (existingTime && incomingTime) {
+        const existingMs = new Date(existingTime).getTime();
+        const incomingMs = new Date(incomingTime).getTime();
+        if (!isNaN(existingMs) && !isNaN(incomingMs) && existingMs > incomingMs) {
           return res.json({
             success: true,
             id: finalDocId,
             collection: collectionName,
             staleIgnored: true,
-            message: 'Cloud account data is newer; stale local overwrite ignored.',
+            conflict: true,
+            message: 'Cloud record data is newer; stale local overwrite ignored.',
             data: existingDoc
           });
         }
@@ -1743,6 +1899,12 @@ async function handleSyncWrite(
       ...data,
       ...protectedFields,
       id: finalDocId,
+      ...(data.version !== undefined
+        ? { version: data.version }
+        : existingDoc?.version !== undefined
+        ? { version: existingDoc.version }
+        : {}),
+      ...(data.updatedAt || existingDoc?.updatedAt ? { updatedAt: data.updatedAt || existingDoc?.updatedAt } : {}),
       ...(effectiveIdempotencyKey ? { idempotencyKey: effectiveIdempotencyKey } : {}),
       syncedAt: new Date().toISOString(),
       syncedBy: owner.email
