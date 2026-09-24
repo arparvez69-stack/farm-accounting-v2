@@ -1008,6 +1008,69 @@ export function checkClosedPeriodViolation(
   return { isClosed: false };
 }
 
+// ==========================================
+// Session Revocation Tracking
+// ==========================================
+const revokedSessionTokens = new Set<string>();
+const revokedSessionJtis = new Set<string>();
+const revokedOwnerBeforeTimestamp = new Map<string, number>();
+
+export function revokeSessionToken(tokenOrJti: string): void {
+  if (!tokenOrJti || typeof tokenOrJti !== 'string') return;
+  const trimmed = tokenOrJti.trim();
+  if (!trimmed) return;
+
+  revokedSessionTokens.add(trimmed);
+
+  try {
+    const parts = trimmed.split('.');
+    if (parts.length === 2 && parts[0]) {
+      const payload = JSON.parse(Buffer.from(parts[0], 'base64url').toString('utf8'));
+      if (payload && typeof payload.jti === 'string' && payload.jti.trim()) {
+        revokedSessionJtis.add(payload.jti.trim());
+      }
+    }
+  } catch {}
+
+  revokedSessionJtis.add(trimmed);
+}
+
+export function revokeAllSessionsForOwner(email: string): void {
+  if (!email || typeof email !== 'string') return;
+  const normalized = email.toLowerCase().trim();
+  revokedOwnerBeforeTimestamp.set(normalized, Date.now());
+}
+
+export function isSessionRevoked(tokenOrJti: string): boolean {
+  if (!tokenOrJti || typeof tokenOrJti !== 'string') return false;
+  const trimmed = tokenOrJti.trim();
+  if (revokedSessionTokens.has(trimmed) || revokedSessionJtis.has(trimmed)) {
+    return true;
+  }
+  try {
+    const parts = trimmed.split('.');
+    if (parts.length === 2 && parts[0]) {
+      const payload = JSON.parse(Buffer.from(parts[0], 'base64url').toString('utf8'));
+      if (payload && typeof payload.jti === 'string' && payload.jti.trim()) {
+        if (revokedSessionJtis.has(payload.jti.trim())) return true;
+      }
+      if (payload && typeof payload.email === 'string' && payload.iat) {
+        const cutoff = revokedOwnerBeforeTimestamp.get(payload.email.toLowerCase().trim());
+        if (cutoff && typeof payload.iat === 'number' && payload.iat <= cutoff) {
+          return true;
+        }
+      }
+    }
+  } catch {}
+  return false;
+}
+
+export function clearRevokedSessionsForTest(): void {
+  revokedSessionTokens.clear();
+  revokedSessionJtis.clear();
+  revokedOwnerBeforeTimestamp.clear();
+}
+
 export function verifySessionToken(token: string): { email: string } | null {
   try {
     const secret = resolveSessionSecret();
@@ -1016,7 +1079,15 @@ export function verifySessionToken(token: string): { email: string } | null {
     }
     if (!token || typeof token !== 'string') return null;
 
-    const parts = token.split('.');
+    const trimmedToken = token.trim();
+    if (!trimmedToken) return null;
+
+    // Check explicit revocation early
+    if (isSessionRevoked(trimmedToken)) {
+      return null;
+    }
+
+    const parts = trimmedToken.split('.');
     if (parts.length !== 2) return null;
     const [payloadB64, signature] = parts;
     if (!payloadB64 || !signature) return null;
@@ -1030,27 +1101,50 @@ export function verifySessionToken(token: string): { email: string } | null {
     }
 
     const payload = JSON.parse(Buffer.from(payloadB64, 'base64url').toString('utf8'));
-    if (!payload || typeof payload !== 'object') return null;
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return null;
 
-    // 1. Expiration check (Requirement 4)
-    if (!payload.exp || typeof payload.exp !== 'number' || Date.now() > payload.exp) {
+    // 1. Expiration check (strictly reject expired sessions including boundary and non-finite numbers)
+    if (
+      !payload.exp ||
+      typeof payload.exp !== 'number' ||
+      !Number.isFinite(payload.exp) ||
+      payload.exp <= 0 ||
+      Date.now() >= payload.exp
+    ) {
       return null;
     }
 
-    // 2. Issuance timestamp validation (clock skew tolerance <= 60s)
-    if (payload.iat && typeof payload.iat === 'number' && payload.iat > Date.now() + 60000) {
+    // 2. Issuance timestamp validation (clock skew tolerance <= 60s, must be valid finite positive number)
+    if (
+      !payload.iat ||
+      typeof payload.iat !== 'number' ||
+      !Number.isFinite(payload.iat) ||
+      payload.iat <= 0 ||
+      payload.iat > Date.now() + 60000
+    ) {
       return null;
     }
 
     // 3. Unpredictable token nonce check (Requirement 3)
-    if (!payload.jti || typeof payload.jti !== 'string' || payload.jti.length < 16) {
+    if (!payload.jti || typeof payload.jti !== 'string' || payload.jti.trim().length < 16) {
       return null;
     }
 
-    // 4. Owner email validation and allow-list checking (Requirement 5 & F9)
+    // 4. JTI-level revocation check
+    if (isSessionRevoked(payload.jti.trim())) {
+      return null;
+    }
+
+    // 5. Owner email validation and allow-list checking (Requirement 5 & F9: every request rechecks 5-owner list)
     if (!payload.email || typeof payload.email !== 'string') return null;
     const normalizedEmail = payload.email.toLowerCase().trim();
-    if (!isOwnerEmail(normalizedEmail)) {
+    if (!normalizedEmail.includes('@') || !isOwnerEmail(normalizedEmail)) {
+      return null;
+    }
+
+    // 6. Owner-level revocation cutoff check
+    const cutoff = revokedOwnerBeforeTimestamp.get(normalizedEmail);
+    if (cutoff && typeof payload.iat === 'number' && payload.iat <= cutoff) {
       return null;
     }
 
@@ -1071,10 +1165,15 @@ async function authenticateOwnerRequest(req: express.Request): Promise<{ email: 
   const token = authHeader.split('Bearer ')[1]?.trim();
   if (!token) return null;
 
-  // 1. Verify standard Firebase ID Token using Firebase Admin SDK
+  // Check explicit token revocation
+  if (isSessionRevoked(token)) {
+    return null;
+  }
+
+  // 1. Verify standard Firebase ID Token using Firebase Admin SDK (with checkRevoked = true)
   if (adminInitialized) {
     try {
-      const decoded = await getAuth().verifyIdToken(token);
+      const decoded = await getAuth().verifyIdToken(token, true);
       if (decoded && decoded.email && isOwnerEmail(decoded.email)) {
         return { email: decoded.email.toLowerCase(), uid: decoded.uid };
       }
@@ -3169,6 +3268,60 @@ app.post('/api/test/durable-storage/save', (req, res) => {
   } catch (err: any) {
     return res.status(500).json({ success: false, error: err.message });
   }
+});
+
+// Test endpoint to dynamically synchronize owner allow-list for testing
+app.post('/api/test/owner-allow-list', (req, res) => {
+  const { emails, reset } = req.body || {};
+  if (reset === true || emails === undefined || emails === 'reset' || emails === null) {
+    setApprovedOwnerEmailsForTest(undefined);
+  } else if (Array.isArray(emails)) {
+    setApprovedOwnerEmailsForTest(emails);
+  } else {
+    setApprovedOwnerEmailsForTest(undefined);
+  }
+  return res.json({
+    approvedOwners: getApprovedOwnerEmails()
+  });
+});
+
+// Test endpoint to clear revoked sessions for test suite runs
+app.post('/api/test/clear-revocations', (req, res) => {
+  clearRevokedSessionsForTest();
+  return res.json({ success: true, cleared: true });
+});
+
+// API Route: POST /api/revoke-session
+// Revokes an active session token or current bearer session
+app.post('/api/revoke-session', (req, res) => {
+  const authHeader = req.headers.authorization;
+  const bearerToken = authHeader?.startsWith('Bearer ') ? authHeader.split('Bearer ')[1]?.trim() : null;
+  const bodyToken = req.body?.token?.trim();
+  const bodyJti = req.body?.jti?.trim();
+  const targetToken = bodyToken || bearerToken;
+
+  if (targetToken) {
+    revokeSessionToken(targetToken);
+  }
+  if (bodyJti) {
+    revokeSessionToken(bodyJti);
+  }
+
+  return res.json({ success: true, revoked: true });
+});
+
+// API Route: POST /api/logout
+app.post('/api/logout', (req, res) => {
+  const authHeader = req.headers.authorization;
+  const bearerToken = authHeader?.startsWith('Bearer ') ? authHeader.split('Bearer ')[1]?.trim() : null;
+  const bodyToken = req.body?.token?.trim();
+  const targetToken = bodyToken || bearerToken;
+
+  if (targetToken) {
+    revokeSessionToken(targetToken);
+  }
+
+  return res.json({ success: true, message: 'সফলভাবে লগআউট হয়েছে।' });
 });
 
 // API Route: GET /api/sync/restore

@@ -221,9 +221,28 @@ export async function verifyOwnerSecretPin(
  * Log out owner completely and clear session
  */
 export async function logoutOwner(): Promise<void> {
-  localStorage.removeItem('goted_owner_session');
-  localStorage.removeItem('local_auth_user');
-  localStorage.removeItem('local_owner_credentials');
+  try {
+    const raw = typeof window !== 'undefined' ? localStorage.getItem('goted_owner_session') : null;
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed.sessionToken) {
+        await fetch('/api/revoke-session', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${parsed.sessionToken}`
+          },
+          body: JSON.stringify({ token: parsed.sessionToken })
+        }).catch(() => {});
+      }
+    }
+  } catch {}
+
+  if (typeof window !== 'undefined') {
+    localStorage.removeItem('goted_owner_session');
+    localStorage.removeItem('local_auth_user');
+    localStorage.removeItem('local_owner_credentials');
+  }
   try {
     await signOut(auth);
   } catch (e) {
