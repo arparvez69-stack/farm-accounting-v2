@@ -37,11 +37,19 @@ import {
   StockMovement,
   PaymentRecord,
   AmortizationScheduleItem,
-  BankTransfer
+  BankTransfer,
+  SalesReturn,
+  PurchaseReturn,
+  SalesReturnItem,
+  PurchaseReturnItem,
+  ReturnRefundMethod
 } from '../types';
 import { generateAmortizationSchedule } from '../accounting/amortizationService';
 
 const activeSaleLocks = new Set<string>();
+const activeSalesReturnLocks = new Set<string>();
+const activePurchaseLocks = new Set<string>();
+const activePurchaseReturnLocks = new Set<string>();
 
 /**
  * Atomic Execution of Sales Invoice Transaction
@@ -418,8 +426,6 @@ export async function executeSaleTransaction(
   }
 }
 
-const activePurchaseLocks = new Set<string>();
-
 /**
  * Atomic Execution of Purchase Invoice Transaction
  */
@@ -781,6 +787,917 @@ export async function executePurchaseTransaction(
     );
   } finally {
     activePurchaseLocks.delete(lockKey);
+  }
+}
+
+export interface ExecuteSalesReturnItemParam {
+  itemId: string;
+  returnedQuantity: number;
+  unitPrice?: number;
+  reason?: string;
+}
+
+export interface ExecuteSalesReturnParams {
+  id?: string;
+  returnId?: string;
+  returnNumber?: string;
+  idempotencyKey?: string;
+  saleId: string;
+  items?: ExecuteSalesReturnItemParam[];
+  // Shorthand for single-item return:
+  itemId?: string;
+  returnedQuantity?: number;
+  unitPrice?: number;
+  reason?: string;
+  notes?: string;
+  refundMethod: ReturnRefundMethod;
+  bankAccountId?: string;
+  cashBankAccountId?: string;
+  currentUserId: string;
+  date?: string;
+}
+
+/**
+ * Atomic Execution of Sales Return Transaction (Credit Note)
+ * Reverses the exact revenue and COGS accounts from the original sale,
+ * restores inventory under weighted-average costing, and adjusts AR or cash/bank.
+ */
+export async function executeSalesReturnTransaction(
+  params: ExecuteSalesReturnParams,
+  dbInstance: any = db
+): Promise<{
+  salesReturn: SalesReturn;
+  journalEntry: JournalEntry;
+  stockMovement: StockMovement;
+  stockMovements: StockMovement[];
+}> {
+  const itemsToProcess: ExecuteSalesReturnItemParam[] =
+    params.items && params.items.length > 0
+      ? params.items
+      : params.itemId && params.returnedQuantity !== undefined
+      ? [{ itemId: params.itemId, returnedQuantity: params.returnedQuantity, unitPrice: params.unitPrice, reason: params.reason }]
+      : [];
+
+  if (itemsToProcess.length === 0) {
+    throw new Error('ফেরত দেওয়ার জন্য কোনো পণ্য বা পরিমাণ নির্বাচন করা হয়নি (No return items specified)।');
+  }
+
+  const targetReturnId = params.returnId || params.id;
+  const lockKey = params.idempotencyKey
+    ? `sret_key_${params.idempotencyKey}`
+    : targetReturnId
+    ? `sret_id_${targetReturnId}`
+    : params.returnNumber
+    ? `sret_num_${params.returnNumber}`
+    : `sret_${params.saleId}_${itemsToProcess.map((it) => `${it.itemId}_${it.returnedQuantity}`).join('_')}_${params.refundMethod}_${params.date || ''}`;
+
+  if (activeSalesReturnLocks.has(lockKey)) {
+    throw new Error('এই বিক্রয় ফেরত লেনদেনটি বর্তমানে প্রক্রিয়াধীন রয়েছে। ডুপ্লিকেট পোস্টিং প্রতিরোধ করা হয়েছে (Duplicate sales return prevented)।');
+  }
+  activeSalesReturnLocks.add(lockKey);
+
+  try {
+    return await dbInstance.transaction(
+      'rw',
+      [
+        dbInstance.journalEntries,
+        dbInstance.sales,
+        dbInstance.salesReturns,
+        dbInstance.inventoryItems,
+        dbInstance.stockMovements,
+        dbInstance.parties,
+        dbInstance.cashBankAccounts,
+        dbInstance.accounts,
+        dbInstance.auditLogs,
+        dbInstance.closedPeriods
+      ],
+      async () => {
+        const todayStr = new Date().toISOString().split('T')[0];
+        const dateStr = params.date || todayStr;
+        if (dateStr > todayStr) {
+          throw new Error(`বিক্রয় ফেরতের তারিখ ভবিষ্যতের হতে পারে না (${todayStr} বা তার পূর্বের তারিখ নির্বাচন করুন)।`);
+        }
+
+        if (dbInstance.closedPeriods) {
+          const closedPeriod = await dbInstance.closedPeriods
+            .filter((cp: any) => cp.endDate >= dateStr)
+            .first();
+          if (closedPeriod) {
+            throw new Error(`হিসাবকাল বন্ধ রয়েছে (${closedPeriod.notes || closedPeriod.endDate})। এই তারিখে বিক্রয় ফেরত পোস্টিং অনুমোদিত নয়।`);
+          }
+        }
+
+        // 1. Prevent duplicate posting via idempotency key
+        if (params.idempotencyKey) {
+          const existingReturnByKey = await dbInstance.salesReturns
+            .filter((r: any) => r.idempotencyKey === params.idempotencyKey || r.id === params.idempotencyKey)
+            .first();
+          let existingJournalByKey = false;
+          if (dbInstance.journalEntries) {
+            const j = await dbInstance.journalEntries
+              .filter((j: any) => (j as any).idempotencyKey === params.idempotencyKey || j.reference === params.idempotencyKey)
+              .first();
+            if (j) existingJournalByKey = true;
+          }
+          if (existingReturnByKey || existingJournalByKey) {
+            throw new Error('এই বিক্রয় ফেরত চালানটি ইতোমধ্যে সম্পন্ন হয়েছে (ডুপ্লিকেট ফেরত প্রতিরোধ / Duplicate sales return prevented)।');
+          }
+        }
+
+        // 2. Prevent duplicate posting via explicit target return ID
+        if (targetReturnId) {
+          const existingById = await dbInstance.salesReturns.get(targetReturnId);
+          if (existingById) {
+            throw new Error(`এই বিক্রয় ফেরত চালানটি (ID: ${targetReturnId}) ইতিমধ্যে বিদ্যমান রয়েছে (ডুপ্লিকেট ফেরত প্রতিরোধ / Duplicate sales return prevented)।`);
+          }
+        }
+
+        // 3. Prevent duplicate posting via explicit return number
+        if (params.returnNumber) {
+          const existingByNum = await dbInstance.salesReturns
+            .filter((r: any) => r.returnNumber === params.returnNumber)
+            .first();
+          if (existingByNum) {
+            throw new Error(`এই বিক্রয় ফেরত নম্বর (${params.returnNumber}) ইতিমধ্যে ব্যবহৃত হয়েছে (ডুপ্লিকেট ফেরত প্রতিরোধ / Duplicate sales return prevented)।`);
+          }
+        }
+
+        // 4. Fetch and validate original sale
+        const originalSale = await dbInstance.sales.get(params.saleId);
+        if (!originalSale) {
+          throw new Error(`মূল বিক্রয় চালান (ID: ${params.saleId}) খুঁজে পাওয়া যায়নি।`);
+        }
+        if (!originalSale.items || originalSale.items.length === 0) {
+          throw new Error(`মূল বিক্রয় চালানে কোনো পণ্য পাওয়া যায়নি।`);
+        }
+
+        // 5. Fetch prior returns for this sale to validate cumulative return limits per line
+        const priorReturns: SalesReturn[] = await dbInstance.salesReturns
+          .filter((r: any) => r.saleId === originalSale.id)
+          .toArray();
+
+        // 6. Validate items and cumulative return quantity limits
+        const processedItems: SalesReturnItem[] = [];
+        let totalRefundAmount = 0;
+        let totalCogsReversed = 0;
+
+        for (const itemParam of itemsToProcess) {
+          const origLine = originalSale.items.find((it: any) => it.itemId === itemParam.itemId);
+          if (!origLine) {
+            throw new Error(`পণ্য "${itemParam.itemId}" মূল বিক্রয় চালানে অন্তর্ভুক্ত ছিল না।`);
+          }
+          if (itemParam.returnedQuantity <= 0) {
+            throw new Error(`ফেরতের পরিমাণ অবশ্যই শূন্যের চেয়ে বেশি হতে হবে (Quantity must be > 0)।`);
+          }
+
+          let previouslyReturned = 0;
+          for (const pr of priorReturns) {
+            for (const prItem of pr.items || []) {
+              if (prItem.itemId === itemParam.itemId) {
+                previouslyReturned += Number(prItem.returnedQuantity) || 0;
+              }
+            }
+          }
+
+          const maxReturnable = Math.max(0, Math.round((origLine.quantity - previouslyReturned) * 1000) / 1000);
+          if (itemParam.returnedQuantity > maxReturnable) {
+            throw new Error(
+              `ফেরতের পরিমাণ বিক্রিত পরিমাণের চেয়ে বেশি হতে পারে না (Cannot return more than originally sold)। পণ্য: ${origLine.itemName || origLine.itemId}, মূল বিক্রিত: ${origLine.quantity}, ইতিপূর্বে ফেরত: ${previouslyReturned}, অবশিষ্ট ফেরতযোগ্য: ${maxReturnable}, চাওয়া হয়েছে: ${itemParam.returnedQuantity}।`
+            );
+          }
+
+          const freshInvItem = await dbInstance.inventoryItems.get(itemParam.itemId);
+
+          let unitSellingPrice: number;
+          if (itemParam.unitPrice !== undefined) {
+            unitSellingPrice = itemParam.unitPrice;
+          } else if (origLine.lineTotal && origLine.quantity > 0) {
+            const effectiveDiscountRatio =
+              originalSale.subtotal && originalSale.subtotal > 0 && originalSale.discount
+                ? 1 - originalSale.discount / originalSale.subtotal
+                : 1;
+            unitSellingPrice = Math.round((origLine.lineTotal / origLine.quantity) * effectiveDiscountRatio * 100) / 100;
+          } else {
+            unitSellingPrice = origLine.unitPrice || 0;
+          }
+
+          const lineRefundTotal = Math.round(itemParam.returnedQuantity * unitSellingPrice * 100) / 100;
+
+          let unitCogs = 0;
+          if (origLine.cogsAmount && origLine.quantity > 0) {
+            unitCogs = origLine.cogsAmount / origLine.quantity;
+          } else if (freshInvItem) {
+            unitCogs = freshInvItem.avgCostPrice || 0;
+          }
+          const lineCogsReversed = Math.round(unitCogs * itemParam.returnedQuantity * 100) / 100;
+
+          totalRefundAmount = Math.round((totalRefundAmount + lineRefundTotal) * 100) / 100;
+          totalCogsReversed = Math.round((totalCogsReversed + lineCogsReversed) * 100) / 100;
+
+          processedItems.push({
+            itemId: origLine.itemId,
+            itemName: origLine.itemName || freshInvItem?.nameBn || '',
+            returnedQuantity: itemParam.returnedQuantity,
+            unitPrice: unitSellingPrice,
+            lineTotal: lineRefundTotal,
+            cogsAmount: lineCogsReversed,
+            reason: itemParam.reason || params.reason
+          });
+        }
+
+        if (totalRefundAmount <= 0) {
+          throw new Error('মোট ফেরতের পরিমাণ শূন্যের চেয়ে বেশি হতে হবে (Refund amount must be > 0)।');
+        }
+
+        // 7. Validate cash/bank account if refunding via CASH or BANK
+        let cashAcc: CashBankAccount | undefined;
+        let bankAcc: CashBankAccount | undefined;
+        if (params.refundMethod === 'CASH') {
+          const targetAccId = params.cashBankAccountId || params.bankAccountId;
+          if (targetAccId) {
+            cashAcc = await dbInstance.cashBankAccounts.get(targetAccId);
+            if (!cashAcc) throw new Error(`নির্বাচিত নগদ হিসাব (${targetAccId}) পাওয়া যায়নি।`);
+          } else {
+            cashAcc = await dbInstance.cashBankAccounts.where('accountType').equals('CASH').first();
+            if (!cashAcc) throw new Error('নগদ হিসাব (Cash Account) পাওয়া যায়নি।');
+          }
+          if (Number(cashAcc.currentBalance || 0) < totalRefundAmount) {
+            throw new Error(
+              `নগদ তহবিলে পর্যাপ্ত ব্যালেন্স নেই (Insufficient cash balance: ৳${cashAcc.currentBalance || 0}, ফেরতের পরিমাণ: ৳${totalRefundAmount})।`
+            );
+          }
+        } else if (params.refundMethod === 'BANK') {
+          const targetBankId = params.bankAccountId || params.cashBankAccountId;
+          if (targetBankId) {
+            bankAcc = await dbInstance.cashBankAccounts.get(targetBankId);
+            if (!bankAcc) throw new Error(`নির্বাচিত ব্যাংক হিসাব (${targetBankId}) পাওয়া যায়নি।`);
+          } else {
+            bankAcc = await dbInstance.cashBankAccounts.where('accountType').equals('BANK').first();
+            if (!bankAcc) throw new Error('ব্যাংক হিসাব (Bank Account) পাওয়া যায়নি।');
+          }
+          if (Number(bankAcc.currentBalance || 0) < totalRefundAmount) {
+            throw new Error(
+              `ব্যাংক হিসাবে পর্যাপ্ত ব্যালেন্স নেই (Insufficient bank balance: ৳${bankAcc.currentBalance || 0}, ফেরতের পরিমাণ: ৳${totalRefundAmount})।`
+            );
+          }
+        }
+
+        // 8. Reversing Journal Entry:
+        // Reverse exact Revenue and COGS accounts used by original sale
+        const accounts: Account[] = await dbInstance.accounts.toArray();
+        const origJournal = originalSale.journalEntryId
+          ? await dbInstance.journalEntries.get(originalSale.journalEntryId)
+          : null;
+
+        const returnId = targetReturnId || generateUniqueId('sret');
+        const returnNumber = params.returnNumber || generateTransactionNumber('CN');
+        const displayNumber = await generateDisplayNumber('CN', dateStr, dbInstance);
+
+        const refundAccountCode =
+          params.refundMethod === 'CASH'
+            ? CANONICAL_ACCOUNTS.CASH
+            : params.refundMethod === 'BANK'
+            ? CANONICAL_ACCOUNTS.BANK
+            : CANONICAL_ACCOUNTS.ACCOUNTS_RECEIVABLE;
+
+        const refundAccountName =
+          params.refundMethod === 'CASH'
+            ? 'নগদ টাকা (Cash on Hand)'
+            : params.refundMethod === 'BANK'
+            ? 'ব্যাংক হিসাব (Bank Accounts)'
+            : 'গ্রাহকের নিকট পাওনা (Accounts Receivable)';
+
+        const journalLines: JournalLine[] = [];
+
+        // Debit: Sales Revenue (reversing original sale revenue)
+        for (const pItem of processedItems) {
+          const freshInvItem = await dbInstance.inventoryItems.get(pItem.itemId);
+          let revenueCode = origJournal?.lines?.find(
+            (l: any) => l.credit > 0 && String(l.accountCode).startsWith('4')
+          )?.accountCode;
+          if (!revenueCode) {
+            revenueCode = getRevenueAndCogsAccounts(freshInvItem || { nameBn: pItem.itemName }).revenueCode;
+          }
+          const revAcc = accounts.find((a) => a.code === revenueCode);
+          journalLines.push({
+            accountId: revenueCode,
+            accountCode: revenueCode,
+            accountName: revAcc ? revAcc.nameBn : 'পণ্য বিক্রয় রাজস্ব (Sales Revenue)',
+            debit: pItem.lineTotal,
+            credit: 0,
+            memo: `বিক্রয় ফেরত ক্রেডিট নোট ${returnNumber} (${pItem.itemName} ফেরত)`
+          });
+        }
+
+        // Credit: Cash / Bank / Accounts Receivable
+        journalLines.push({
+          accountId: refundAccountCode,
+          accountCode: refundAccountCode,
+          accountName: refundAccountName,
+          debit: 0,
+          credit: totalRefundAmount,
+          memo: `বিক্রয় ফেরত বাবদ রিফান্ড / সমন্বয় (ক্রেডিট নোট: ${returnNumber})`
+        });
+
+        // Reverse COGS and restore Inventory Asset in GL
+        for (const pItem of processedItems) {
+          if (pItem.cogsAmount && pItem.cogsAmount > 0) {
+            const freshInvItem = await dbInstance.inventoryItems.get(pItem.itemId);
+            let cogsCode = origJournal?.lines?.find(
+              (l: any) => l.debit > 0 && String(l.accountCode).startsWith('5')
+            )?.accountCode;
+            if (!cogsCode) {
+              cogsCode = getRevenueAndCogsAccounts(freshInvItem || { nameBn: pItem.itemName }).cogsCode;
+            }
+            let inventoryAssetCode = origJournal?.lines?.find(
+              (l: any) => l.credit > 0 && String(l.accountCode).startsWith('105')
+            )?.accountCode;
+            if (!inventoryAssetCode) {
+              inventoryAssetCode = getInventoryAssetAccount(freshInvItem?.category);
+            }
+
+            const invAcc = accounts.find((a) => a.code === inventoryAssetCode);
+            const cogsAcc = accounts.find((a) => a.code === cogsCode);
+
+            // Debit Inventory Asset (goods back in inventory)
+            journalLines.push({
+              accountId: inventoryAssetCode,
+              accountCode: inventoryAssetCode,
+              accountName: invAcc ? invAcc.nameBn : getInventoryAccountDetails(freshInvItem?.category).nameBn,
+              debit: pItem.cogsAmount,
+              credit: 0,
+              memo: `বিক্রয় ফেরতজনিত মজুদ পুনঃপ্রবেশ (${pItem.itemName})`
+            });
+
+            // Credit COGS (reducing cost of goods sold)
+            journalLines.push({
+              accountId: cogsCode,
+              accountCode: cogsCode,
+              accountName: cogsAcc ? cogsAcc.nameBn : 'বিক্রিত পণ্যের উৎপাদন ব্যয় (COGS)',
+              debit: 0,
+              credit: pItem.cogsAmount,
+              memo: `বিক্রয় ফেরতজনিত COGS হ্রাস (${pItem.itemName})`
+            });
+          }
+        }
+
+        const voucherNumber = generateTransactionNumber('CN');
+        const journalEntry = await postJournalEntry(
+          {
+            id: generateUniqueId('j_sret'),
+            voucherNumber,
+            voucherType: 'SALES_RETURN',
+            date: dateStr,
+            narration: `বিক্রয় ফেরত (ক্রেডিট নোট): মূল চালান ${originalSale.invoiceNumber}, গ্রাহক ${originalSale.customerName}, ফেরত মূল্য ৳${totalRefundAmount}${params.reason ? ` (কারণ: ${params.reason})` : ''}`,
+            reference: originalSale.invoiceNumber,
+            lines: journalLines,
+            createdBy: params.currentUserId,
+            createdAt: new Date().toISOString()
+          },
+          { accounts, skipDbPut: true }
+        );
+
+        if (params.idempotencyKey) {
+          (journalEntry as any).idempotencyKey = params.idempotencyKey;
+        }
+
+        // 9. Safe insert journal entry
+        await safeInsert(dbInstance.journalEntries, journalEntry, { idPrefix: 'j' });
+
+        // 10. Insert SalesReturn record (DO NOT alter or delete original Sale)
+        const salesReturnRecord: SalesReturn = {
+          id: returnId,
+          returnNumber,
+          displayNumber,
+          saleId: originalSale.id,
+          originalInvoiceNumber: originalSale.invoiceNumber,
+          customerId: originalSale.customerId,
+          customerName: originalSale.customerName,
+          date: dateStr,
+          items: processedItems,
+          totalRefundAmount,
+          totalCogsReversed,
+          refundMethod: params.refundMethod,
+          bankAccountId: params.refundMethod === 'BANK' ? bankAcc?.id : undefined,
+          reason: params.reason || params.notes,
+          notes: params.notes,
+          journalEntryId: journalEntry.id,
+          createdAt: new Date().toISOString(),
+          ...(params.idempotencyKey ? { idempotencyKey: params.idempotencyKey } : {}),
+          synced: false
+        };
+
+        if (targetReturnId) {
+          await dbInstance.salesReturns.add(salesReturnRecord);
+        } else {
+          await safeInsert(dbInstance.salesReturns, salesReturnRecord, { idPrefix: 'sret' });
+        }
+
+        // 11. Update Physical Inventory & Weighted-Average Costing
+        const stockMovements: StockMovement[] = [];
+        for (const item of processedItems) {
+          const freshItem = await dbInstance.inventoryItems.get(item.itemId);
+          if (freshItem) {
+            const prevStock = Math.max(0, freshItem.currentStock || 0);
+            const prevCost = freshItem.avgCostPrice || 0;
+            const newStock = Math.round((prevStock + item.returnedQuantity) * 100) / 100;
+            const cogsVal = item.cogsAmount || 0;
+            const totalCostVal = Math.round((prevStock * prevCost + cogsVal) * 100) / 100;
+            const newAvgCost = newStock > 0 ? Math.round((totalCostVal / newStock) * 100) / 100 : prevCost;
+
+            await dbInstance.inventoryItems.update(freshItem.id, {
+              currentStock: newStock,
+              avgCostPrice: newAvgCost,
+              synced: false
+            });
+
+            const stockMovement: StockMovement = {
+              id: generateUniqueId('sm_srn'),
+              date: dateStr,
+              itemId: freshItem.id,
+              movementType: 'SALES_RETURN',
+              direction: 'IN',
+              quantity: item.returnedQuantity,
+              unitCost: item.returnedQuantity > 0 ? Math.round((cogsVal / item.returnedQuantity) * 100) / 100 : newAvgCost,
+              totalValue: cogsVal,
+              referenceId: returnNumber,
+              notes: `বিক্রয় ফেরত ক্রেডিট নোট ${returnNumber}: চালান ${originalSale.invoiceNumber} হতে ${item.returnedQuantity} ${freshItem.unit} ${freshItem.nameBn} ফেরত`,
+              synced: false
+            };
+            if (params.idempotencyKey) {
+              (stockMovement as any).idempotencyKey = params.idempotencyKey;
+            }
+            await safeInsert(dbInstance.stockMovements, stockMovement, { idPrefix: 'sm' });
+            stockMovements.push(stockMovement);
+          }
+        }
+
+        // 12. Adjust Customer AR or Cash/Bank account balances
+        if (params.refundMethod === 'ADJUST_DUE') {
+          const freshCustomer = await dbInstance.parties.get(originalSale.customerId);
+          if (freshCustomer) {
+            await dbInstance.parties.update(freshCustomer.id, {
+              balance: Math.round(((freshCustomer.balance || 0) - totalRefundAmount) * 100) / 100
+            });
+          }
+        } else if (params.refundMethod === 'CASH' && cashAcc) {
+          await dbInstance.cashBankAccounts.update(cashAcc.id, {
+            currentBalance: Math.round((cashAcc.currentBalance - totalRefundAmount) * 100) / 100
+          });
+        } else if (params.refundMethod === 'BANK' && bankAcc) {
+          await dbInstance.cashBankAccounts.update(bankAcc.id, {
+            currentBalance: Math.round((bankAcc.currentBalance - totalRefundAmount) * 100) / 100
+          });
+        }
+
+        // 13. Record Audit Log
+        await safeInsert(dbInstance.auditLogs, {
+          id: generateUniqueId('audit'),
+          timestamp: new Date().toISOString(),
+          userId: params.currentUserId,
+          role: 'OWNER',
+          action: 'SALES_RETURN',
+          module: 'COMMERCE',
+          recordId: returnNumber,
+          status: 'SUCCESS',
+          details: `বিক্রয় ফেরত ক্রেডিট নোট ${returnNumber} সম্পন্ন (মূল চালান: ${originalSale.invoiceNumber}, ৳${totalRefundAmount})`
+        });
+
+        return {
+          salesReturn: salesReturnRecord,
+          journalEntry,
+          stockMovement: stockMovements[0],
+          stockMovements
+        };
+      }
+    );
+  } finally {
+    activeSalesReturnLocks.delete(lockKey);
+  }
+}
+
+export interface ExecutePurchaseReturnItemParam {
+  itemId: string;
+  returnedQuantity: number;
+  unitPrice?: number;
+  reason?: string;
+}
+
+export interface ExecutePurchaseReturnParams {
+  id?: string;
+  returnId?: string;
+  returnNumber?: string;
+  idempotencyKey?: string;
+  purchaseId: string;
+  items?: ExecutePurchaseReturnItemParam[];
+  // Shorthand for single-item return:
+  itemId?: string;
+  returnedQuantity?: number;
+  unitPrice?: number;
+  reason?: string;
+  notes?: string;
+  refundMethod: ReturnRefundMethod;
+  bankAccountId?: string;
+  cashBankAccountId?: string;
+  currentUserId: string;
+  date?: string;
+}
+
+/**
+ * Atomic Execution of Purchase Return Transaction (Debit Note)
+ * Reverses the exact inventory/expense and payable/cash accounts from the original purchase,
+ * deducts inventory under weighted-average costing, and adjusts AP or cash/bank.
+ */
+export async function executePurchaseReturnTransaction(
+  params: ExecutePurchaseReturnParams,
+  dbInstance: any = db
+): Promise<{
+  purchaseReturn: PurchaseReturn;
+  journalEntry: JournalEntry;
+  stockMovement: StockMovement;
+  stockMovements: StockMovement[];
+}> {
+  const itemsToProcess: ExecutePurchaseReturnItemParam[] =
+    params.items && params.items.length > 0
+      ? params.items
+      : params.itemId && params.returnedQuantity !== undefined
+      ? [{ itemId: params.itemId, returnedQuantity: params.returnedQuantity, unitPrice: params.unitPrice, reason: params.reason }]
+      : [];
+
+  if (itemsToProcess.length === 0) {
+    throw new Error('ফেরত দেওয়ার জন্য কোনো পণ্য বা পরিমাণ নির্বাচন করা হয়নি (No return items specified)।');
+  }
+
+  const targetReturnId = params.returnId || params.id;
+  const lockKey = params.idempotencyKey
+    ? `pret_key_${params.idempotencyKey}`
+    : targetReturnId
+    ? `pret_id_${targetReturnId}`
+    : params.returnNumber
+    ? `pret_num_${params.returnNumber}`
+    : `pret_${params.purchaseId}_${itemsToProcess.map((it) => `${it.itemId}_${it.returnedQuantity}`).join('_')}_${params.refundMethod}_${params.date || ''}`;
+
+  if (activePurchaseReturnLocks.has(lockKey)) {
+    throw new Error('এই ক্রয় ফেরত লেনদেনটি বর্তমানে প্রক্রিয়াধীন রয়েছে। ডুপ্লিকেট পোস্টিং প্রতিরোধ করা হয়েছে (Duplicate purchase return prevented)।');
+  }
+  activePurchaseReturnLocks.add(lockKey);
+
+  try {
+    return await dbInstance.transaction(
+      'rw',
+      [
+        dbInstance.journalEntries,
+        dbInstance.purchases,
+        dbInstance.purchaseReturns,
+        dbInstance.inventoryItems,
+        dbInstance.stockMovements,
+        dbInstance.parties,
+        dbInstance.cashBankAccounts,
+        dbInstance.accounts,
+        dbInstance.auditLogs,
+        dbInstance.closedPeriods
+      ],
+      async () => {
+        const todayStr = new Date().toISOString().split('T')[0];
+        const dateStr = params.date || todayStr;
+        if (dateStr > todayStr) {
+          throw new Error(`ক্রয় ফেরতের তারিখ ভবিষ্যতের হতে পারে না (${todayStr} বা তার পূর্বের তারিখ নির্বাচন করুন)।`);
+        }
+
+        if (dbInstance.closedPeriods) {
+          const closedPeriod = await dbInstance.closedPeriods
+            .filter((cp: any) => cp.endDate >= dateStr)
+            .first();
+          if (closedPeriod) {
+            throw new Error(`হিসাবকাল বন্ধ রয়েছে (${closedPeriod.notes || closedPeriod.endDate})। এই তারিখে ক্রয় ফেরত পোস্টিং অনুমোদিত নয়।`);
+          }
+        }
+
+        // 1. Prevent duplicate posting via idempotency key
+        if (params.idempotencyKey) {
+          const existingReturnByKey = await dbInstance.purchaseReturns
+            .filter((r: any) => r.idempotencyKey === params.idempotencyKey || r.id === params.idempotencyKey)
+            .first();
+          let existingJournalByKey = false;
+          if (dbInstance.journalEntries) {
+            const j = await dbInstance.journalEntries
+              .filter((j: any) => (j as any).idempotencyKey === params.idempotencyKey || j.reference === params.idempotencyKey)
+              .first();
+            if (j) existingJournalByKey = true;
+          }
+          if (existingReturnByKey || existingJournalByKey) {
+            throw new Error('এই ক্রয় ফেরত চালানটি ইতোমধ্যে সম্পন্ন হয়েছে (ডুপ্লিকেট ফেরত প্রতিরোধ / Duplicate purchase return prevented)।');
+          }
+        }
+
+        // 2. Prevent duplicate posting via explicit target return ID
+        if (targetReturnId) {
+          const existingById = await dbInstance.purchaseReturns.get(targetReturnId);
+          if (existingById) {
+            throw new Error(`এই ক্রয় ফেরত চালানটি (ID: ${targetReturnId}) ইতিমধ্যে বিদ্যমান রয়েছে (ডুপ্লিকেট ফেরত প্রতিরোধ / Duplicate purchase return prevented)।`);
+          }
+        }
+
+        // 3. Prevent duplicate posting via explicit return number
+        if (params.returnNumber) {
+          const existingByNum = await dbInstance.purchaseReturns
+            .filter((r: any) => r.returnNumber === params.returnNumber)
+            .first();
+          if (existingByNum) {
+            throw new Error(`এই ক্রয় ফেরত নম্বর (${params.returnNumber}) ইতিমধ্যে ব্যবহৃত হয়েছে (ডুপ্লিকেট ফেরত প্রতিরোধ / Duplicate purchase return prevented)।`);
+          }
+        }
+
+        // 4. Fetch and validate original purchase
+        const originalPurchase = await dbInstance.purchases.get(params.purchaseId);
+        if (!originalPurchase) {
+          throw new Error(`মূল ক্রয় চালান (ID: ${params.purchaseId}) খুঁজে পাওয়া যায়নি।`);
+        }
+        if (!originalPurchase.items || originalPurchase.items.length === 0) {
+          throw new Error(`মূল ক্রয় চালানে কোনো পণ্য পাওয়া যায়নি।`);
+        }
+
+        // 5. Fetch prior returns for this purchase to validate cumulative return limits per line
+        const priorReturns: PurchaseReturn[] = await dbInstance.purchaseReturns
+          .filter((r: any) => r.purchaseId === originalPurchase.id)
+          .toArray();
+
+        // 6. Validate items, return limits, and available physical stock
+        const processedItems: PurchaseReturnItem[] = [];
+        let totalRefundAmount = 0;
+
+        for (const itemParam of itemsToProcess) {
+          const origLine = originalPurchase.items.find((it: any) => it.itemId === itemParam.itemId);
+          if (!origLine) {
+            throw new Error(`পণ্য "${itemParam.itemId}" মূল ক্রয় চালানে অন্তর্ভুক্ত ছিল না।`);
+          }
+          if (itemParam.returnedQuantity <= 0) {
+            throw new Error(`ফেরতের পরিমাণ অবশ্যই শূন্যের চেয়ে বেশি হতে হবে (Quantity must be > 0)।`);
+          }
+
+          let previouslyReturned = 0;
+          for (const pr of priorReturns) {
+            for (const prItem of pr.items || []) {
+              if (prItem.itemId === itemParam.itemId) {
+                previouslyReturned += Number(prItem.returnedQuantity) || 0;
+              }
+            }
+          }
+
+          const maxReturnable = Math.max(0, Math.round((origLine.quantity - previouslyReturned) * 1000) / 1000);
+          if (itemParam.returnedQuantity > maxReturnable) {
+            throw new Error(
+              `ফেরতের পরিমাণ ক্রয় পরিমাণের চেয়ে বেশি হতে পারে না (Cannot return more than originally purchased)। পণ্য: ${origLine.itemName || origLine.itemId}, মূল ক্রয়কৃত: ${origLine.quantity}, ইতিপূর্বে ফেরত: ${previouslyReturned}, অবশিষ্ট ফেরতযোগ্য: ${maxReturnable}, চাওয়া হয়েছে: ${itemParam.returnedQuantity}।`
+            );
+          }
+
+          const freshInvItem = await dbInstance.inventoryItems.get(itemParam.itemId);
+          if (!freshInvItem) {
+            throw new Error(`পণ্য (${itemParam.itemId}) ইনভেন্টরিতে খুঁজে পাওয়া যায়নি।`);
+          }
+
+          // Check physical stock availability: cannot return stock we don't have
+          if (freshInvItem.currentStock < itemParam.returnedQuantity) {
+            throw new Error(
+              `মজুদ ঘাটতি (Insufficient stock): গুদামে অবশিষ্ট মজুদ ${freshInvItem.currentStock} ${freshInvItem.unit}, কিন্তু সরবরাহকারীকে ফেরত চাওয়া হয়েছে ${itemParam.returnedQuantity} ${freshInvItem.unit}।`
+            );
+          }
+
+          let unitPurchasePrice: number;
+          if (itemParam.unitPrice !== undefined) {
+            unitPurchasePrice = itemParam.unitPrice;
+          } else if (origLine.lineTotal && origLine.quantity > 0) {
+            unitPurchasePrice = Math.round((origLine.lineTotal / origLine.quantity) * 100) / 100;
+          } else {
+            unitPurchasePrice = origLine.unitPrice || 0;
+          }
+
+          const lineRefundTotal = Math.round(itemParam.returnedQuantity * unitPurchasePrice * 100) / 100;
+          totalRefundAmount = Math.round((totalRefundAmount + lineRefundTotal) * 100) / 100;
+
+          processedItems.push({
+            itemId: origLine.itemId,
+            itemName: origLine.itemName || freshInvItem.nameBn,
+            returnedQuantity: itemParam.returnedQuantity,
+            unitPrice: unitPurchasePrice,
+            lineTotal: lineRefundTotal,
+            reason: itemParam.reason || params.reason
+          });
+        }
+
+        if (totalRefundAmount <= 0) {
+          throw new Error('মোট ফেরতের পরিমাণ শূন্যের চেয়ে বেশি হতে হবে (Refund amount must be > 0)।');
+        }
+
+        // 7. Resolve cash/bank account if refunding via CASH or BANK
+        let cashAcc: CashBankAccount | undefined;
+        let bankAcc: CashBankAccount | undefined;
+        if (params.refundMethod === 'CASH') {
+          const targetAccId = params.cashBankAccountId || params.bankAccountId;
+          if (targetAccId) {
+            cashAcc = await dbInstance.cashBankAccounts.get(targetAccId);
+            if (!cashAcc) throw new Error(`নির্বাচিত নগদ হিসাব (${targetAccId}) পাওয়া যায়নি।`);
+          } else {
+            cashAcc = await dbInstance.cashBankAccounts.where('accountType').equals('CASH').first();
+            if (!cashAcc) throw new Error('নগদ হিসাব (Cash Account) পাওয়া যায়নি।');
+          }
+        } else if (params.refundMethod === 'BANK') {
+          const targetBankId = params.bankAccountId || params.cashBankAccountId;
+          if (targetBankId) {
+            bankAcc = await dbInstance.cashBankAccounts.get(targetBankId);
+            if (!bankAcc) throw new Error(`নির্বাচিত ব্যাংক হিসাব (${targetBankId}) পাওয়া যায়নি।`);
+          } else {
+            bankAcc = await dbInstance.cashBankAccounts.where('accountType').equals('BANK').first();
+            if (!bankAcc) throw new Error('ব্যাংক হিসাব (Bank Account) পাওয়া যায়নি।');
+          }
+        }
+
+        // 8. Reversing Journal Entry:
+        // Reverse exact Inventory/Expense and Payable/Cash/Bank accounts used by original purchase
+        const accounts: Account[] = await dbInstance.accounts.toArray();
+        const origJournal = originalPurchase.journalEntryId
+          ? await dbInstance.journalEntries.get(originalPurchase.journalEntryId)
+          : null;
+
+        const returnId = targetReturnId || generateUniqueId('pret');
+        const returnNumber = params.returnNumber || generateTransactionNumber('DN');
+        const displayNumber = await generateDisplayNumber('DN', dateStr, dbInstance);
+
+        const refundAccountCode =
+          params.refundMethod === 'CASH'
+            ? CANONICAL_ACCOUNTS.CASH
+            : params.refundMethod === 'BANK'
+            ? CANONICAL_ACCOUNTS.BANK
+            : CANONICAL_ACCOUNTS.ACCOUNTS_PAYABLE;
+
+        const refundAccountName =
+          params.refundMethod === 'CASH'
+            ? 'নগদ টাকা (Cash on Hand)'
+            : params.refundMethod === 'BANK'
+            ? 'ব্যাংক হিসাব (Bank Accounts)'
+            : 'সরবরাহকারীর নিকট দেনা (Accounts Payable)';
+
+        const journalLines: JournalLine[] = [];
+
+        // Debit: Cash / Bank (receiving refund) or Accounts Payable (reducing liability to supplier)
+        journalLines.push({
+          accountId: refundAccountCode,
+          accountCode: refundAccountCode,
+          accountName: refundAccountName,
+          debit: totalRefundAmount,
+          credit: 0,
+          memo: `ক্রয় ফেরত বাবদ ডেবিট নোট ${returnNumber} (${params.refundMethod === 'ADJUST_DUE' ? 'দেনা সমন্বয়' : 'অর্থ ফেরত'})`
+        });
+
+        // Credit: Exact inventory asset / expense accounts debited in original purchase
+        for (const pItem of processedItems) {
+          const freshInvItem = await dbInstance.inventoryItems.get(pItem.itemId);
+          let invOrExpenseCode = origJournal?.lines?.find(
+            (l: any) => l.debit > 0 && (String(l.accountCode).startsWith('105') || String(l.accountCode).startsWith('6'))
+          )?.accountCode;
+          if (!invOrExpenseCode) {
+            invOrExpenseCode = getInventoryAssetAccount(freshInvItem?.category);
+          }
+          const invAcc = accounts.find((a) => a.code === invOrExpenseCode);
+          journalLines.push({
+            accountId: invOrExpenseCode,
+            accountCode: invOrExpenseCode,
+            accountName: invAcc ? invAcc.nameBn : getInventoryAccountDetails(freshInvItem?.category).nameBn,
+            debit: 0,
+            credit: pItem.lineTotal,
+            memo: `ক্রয় ফেরতজনিত মজুদ হ্রাস (${pItem.itemName})`
+          });
+        }
+
+        const voucherNumber = generateTransactionNumber('DN');
+        const journalEntry = await postJournalEntry(
+          {
+            id: generateUniqueId('j_pret'),
+            voucherNumber,
+            voucherType: 'PURCHASE_RETURN',
+            date: dateStr,
+            narration: `ক্রয় ফেরত (ডেবিট নোট): মূল চালান ${originalPurchase.invoiceNumber}, সরবরাহকারী ${originalPurchase.supplierName}, ফেরত মূল্য ৳${totalRefundAmount}${params.reason ? ` (কারণ: ${params.reason})` : ''}`,
+            reference: originalPurchase.invoiceNumber,
+            lines: journalLines,
+            createdBy: params.currentUserId,
+            createdAt: new Date().toISOString()
+          },
+          { accounts, skipDbPut: true }
+        );
+
+        if (params.idempotencyKey) {
+          (journalEntry as any).idempotencyKey = params.idempotencyKey;
+        }
+
+        // 9. Safe insert journal entry
+        await safeInsert(dbInstance.journalEntries, journalEntry, { idPrefix: 'j' });
+
+        // 10. Insert PurchaseReturn record (DO NOT alter or delete original Purchase)
+        const purchaseReturnRecord: PurchaseReturn = {
+          id: returnId,
+          returnNumber,
+          displayNumber,
+          purchaseId: originalPurchase.id,
+          originalInvoiceNumber: originalPurchase.invoiceNumber,
+          supplierId: originalPurchase.supplierId,
+          supplierName: originalPurchase.supplierName,
+          date: dateStr,
+          items: processedItems,
+          totalRefundAmount,
+          refundMethod: params.refundMethod,
+          bankAccountId: params.refundMethod === 'BANK' ? bankAcc?.id : undefined,
+          reason: params.reason || params.notes,
+          notes: params.notes,
+          journalEntryId: journalEntry.id,
+          createdAt: new Date().toISOString(),
+          ...(params.idempotencyKey ? { idempotencyKey: params.idempotencyKey } : {}),
+          synced: false
+        };
+
+        if (targetReturnId) {
+          await dbInstance.purchaseReturns.add(purchaseReturnRecord);
+        } else {
+          await safeInsert(dbInstance.purchaseReturns, purchaseReturnRecord, { idPrefix: 'pret' });
+        }
+
+        // 11. Update Physical Inventory & Weighted-Average Costing
+        const stockMovements: StockMovement[] = [];
+        for (const item of processedItems) {
+          const freshItem = await dbInstance.inventoryItems.get(item.itemId);
+          if (freshItem) {
+            const newStock = Math.round((freshItem.currentStock - item.returnedQuantity) * 100) / 100;
+            const prevTotalVal = freshItem.currentStock * (freshItem.avgCostPrice || 0);
+            const newRemainingVal = Math.max(0, Math.round((prevTotalVal - item.lineTotal) * 100) / 100);
+            const newAvgCost = newStock > 0 ? Math.round((newRemainingVal / newStock) * 100) / 100 : (freshItem.avgCostPrice || 0);
+
+            await dbInstance.inventoryItems.update(freshItem.id, {
+              currentStock: newStock,
+              avgCostPrice: newAvgCost,
+              synced: false
+            });
+
+            const stockMovement: StockMovement = {
+              id: generateUniqueId('sm_prn'),
+              date: dateStr,
+              itemId: freshItem.id,
+              movementType: 'PURCHASE_RETURN',
+              direction: 'OUT',
+              quantity: item.returnedQuantity,
+              unitCost: item.returnedQuantity > 0 ? Math.round((item.lineTotal / item.returnedQuantity) * 100) / 100 : freshItem.avgCostPrice,
+              totalValue: item.lineTotal,
+              referenceId: returnNumber,
+              notes: `ক্রয় ফেরত ডেবিট নোট ${returnNumber}: চালান ${originalPurchase.invoiceNumber} হতে ${item.returnedQuantity} ${freshItem.unit} ${freshItem.nameBn} ফেরত`,
+              synced: false
+            };
+            if (params.idempotencyKey) {
+              (stockMovement as any).idempotencyKey = params.idempotencyKey;
+            }
+            await safeInsert(dbInstance.stockMovements, stockMovement, { idPrefix: 'sm' });
+            stockMovements.push(stockMovement);
+          }
+        }
+
+        // 12. Adjust Supplier AP or Cash/Bank account balances
+        if (params.refundMethod === 'ADJUST_DUE') {
+          const freshSupplier = await dbInstance.parties.get(originalPurchase.supplierId);
+          if (freshSupplier) {
+            await dbInstance.parties.update(freshSupplier.id, {
+              balance: Math.round(((freshSupplier.balance || 0) - totalRefundAmount) * 100) / 100
+            });
+          }
+        } else if (params.refundMethod === 'CASH' && cashAcc) {
+          await dbInstance.cashBankAccounts.update(cashAcc.id, {
+            currentBalance: Math.round((cashAcc.currentBalance + totalRefundAmount) * 100) / 100
+          });
+        } else if (params.refundMethod === 'BANK' && bankAcc) {
+          await dbInstance.cashBankAccounts.update(bankAcc.id, {
+            currentBalance: Math.round((bankAcc.currentBalance + totalRefundAmount) * 100) / 100
+          });
+        }
+
+        // 13. Record Audit Log
+        await safeInsert(dbInstance.auditLogs, {
+          id: generateUniqueId('audit'),
+          timestamp: new Date().toISOString(),
+          userId: params.currentUserId,
+          role: 'OWNER',
+          action: 'PURCHASE_RETURN',
+          module: 'COMMERCE',
+          recordId: returnNumber,
+          status: 'SUCCESS',
+          details: `ক্রয় ফেরত ডেবিট নোট ${returnNumber} সম্পন্ন (মূল চালান: ${originalPurchase.invoiceNumber}, ৳${totalRefundAmount})`
+        });
+
+        return {
+          purchaseReturn: purchaseReturnRecord,
+          journalEntry,
+          stockMovement: stockMovements[0],
+          stockMovements
+        };
+      }
+    );
+  } finally {
+    activePurchaseReturnLocks.delete(lockKey);
   }
 }
 

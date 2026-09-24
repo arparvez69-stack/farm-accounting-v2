@@ -376,7 +376,9 @@ export interface StockMovement {
     | 'WASTE'
     | 'DAMAGE'
     | 'ADJUSTMENT'
-    | 'REVERSAL';
+    | 'REVERSAL'
+    | 'SALES_RETURN'
+    | 'PURCHASE_RETURN';
   quantity: number;
   unitCost: number;
   totalValue: number;
@@ -475,6 +477,70 @@ export interface Sale {
   totalCogs?: number;
   journalEntryId?: string;
   status?: 'PAID' | 'DUE' | 'PARTIAL' | string;
+  createdAt?: string;
+  idempotencyKey?: string;
+  synced?: boolean;
+}
+
+export type ReturnRefundMethod = 'CASH' | 'BANK' | 'ADJUST_DUE';
+
+export interface SalesReturnItem {
+  itemId: string;
+  itemName?: string;
+  returnedQuantity: number;
+  unitPrice?: number;
+  lineTotal: number;
+  cogsAmount?: number;
+  reason?: string;
+}
+
+export interface SalesReturn {
+  id: string;
+  returnNumber: string;
+  displayNumber?: string;
+  saleId: string;
+  originalInvoiceNumber?: string;
+  customerId: string;
+  customerName?: string;
+  date: string;
+  items: SalesReturnItem[];
+  totalRefundAmount: number;
+  totalCogsReversed?: number;
+  refundMethod: ReturnRefundMethod;
+  bankAccountId?: string;
+  reason?: string;
+  notes?: string;
+  journalEntryId?: string;
+  createdAt?: string;
+  idempotencyKey?: string;
+  synced?: boolean;
+}
+
+export interface PurchaseReturnItem {
+  itemId: string;
+  itemName?: string;
+  returnedQuantity: number;
+  unitPrice?: number;
+  lineTotal: number;
+  reason?: string;
+}
+
+export interface PurchaseReturn {
+  id: string;
+  returnNumber: string;
+  displayNumber?: string;
+  purchaseId: string;
+  originalInvoiceNumber?: string;
+  supplierId: string;
+  supplierName?: string;
+  date: string;
+  items: PurchaseReturnItem[];
+  totalRefundAmount: number;
+  refundMethod: ReturnRefundMethod;
+  bankAccountId?: string;
+  reason?: string;
+  notes?: string;
+  journalEntryId?: string;
   createdAt?: string;
   idempotencyKey?: string;
   synced?: boolean;

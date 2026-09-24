@@ -68,55 +68,43 @@ export function generateTransactionNumber(prefix: string): string {
  * Resets to 0001 at the start of each new calendar year.
  */
 export async function generateDisplayNumber(
-  docType: 'SAL' | 'PUR',
-  dateStr?: string
+  docType: 'SAL' | 'PUR' | 'CN' | 'DN',
+  dateStr?: string,
+  dbInstance: any = db
 ): Promise<string> {
   const targetYear = dateStr ? dateStr.slice(0, 4) : String(new Date().getFullYear());
   const prefix = docType;
 
   let maxSeq = 0;
   try {
-    if (docType === 'SAL') {
-      const allSales = await db.sales.toArray();
-      let legacyCountInYear = 0;
-      for (const s of allSales) {
-        if (s.displayNumber) {
-          const match = s.displayNumber.match(new RegExp(`^${prefix}-${targetYear}-(\\d+)$`));
-          if (match) {
-            const num = parseInt(match[1], 10);
-            if (!isNaN(num) && num > maxSeq) {
-              maxSeq = num;
-            }
-          }
-        } else {
-          const sYear = s.date ? s.date.slice(0, 4) : '';
-          if (sYear === targetYear) {
-            legacyCountInYear++;
-          }
-        }
-      }
-      maxSeq = Math.max(maxSeq, legacyCountInYear);
-    } else {
-      const allPurchases = await db.purchases.toArray();
-      let legacyCountInYear = 0;
-      for (const p of allPurchases) {
-        if (p.displayNumber) {
-          const match = p.displayNumber.match(new RegExp(`^${prefix}-${targetYear}-(\\d+)$`));
-          if (match) {
-            const num = parseInt(match[1], 10);
-            if (!isNaN(num) && num > maxSeq) {
-              maxSeq = num;
-            }
-          }
-        } else {
-          const pYear = p.date ? p.date.slice(0, 4) : '';
-          if (pYear === targetYear) {
-            legacyCountInYear++;
-          }
-        }
-      }
-      maxSeq = Math.max(maxSeq, legacyCountInYear);
+    let records: any[] = [];
+    if (docType === 'SAL' && dbInstance.sales) {
+      records = await dbInstance.sales.toArray();
+    } else if (docType === 'PUR' && dbInstance.purchases) {
+      records = await dbInstance.purchases.toArray();
+    } else if (docType === 'CN' && dbInstance.salesReturns) {
+      records = await dbInstance.salesReturns.toArray();
+    } else if (docType === 'DN' && dbInstance.purchaseReturns) {
+      records = await dbInstance.purchaseReturns.toArray();
     }
+    let legacyCountInYear = 0;
+    for (const r of records) {
+      if (r.displayNumber) {
+        const match = r.displayNumber.match(new RegExp(`^${prefix}-${targetYear}-(\\d+)$`));
+        if (match) {
+          const num = parseInt(match[1], 10);
+          if (!isNaN(num) && num > maxSeq) {
+            maxSeq = num;
+          }
+        }
+      } else {
+        const rYear = r.date ? r.date.slice(0, 4) : '';
+        if (rYear === targetYear) {
+          legacyCountInYear++;
+        }
+      }
+    }
+    maxSeq = Math.max(maxSeq, legacyCountInYear);
   } catch (err) {
     console.warn('Error querying existing records in generateDisplayNumber:', err);
   }

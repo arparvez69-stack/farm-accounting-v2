@@ -26,7 +26,9 @@ import {
   Reminder,
   PaymentRecord,
   ClosedPeriod,
-  RecurringExpenseTemplate
+  RecurringExpenseTemplate,
+  SalesReturn,
+  PurchaseReturn
 } from '../types';
 
 export class AgroDatabase extends Dexie {
@@ -49,6 +51,8 @@ export class AgroDatabase extends Dexie {
   parties!: Table<Party, string>;
   purchases!: Table<Purchase, string>;
   sales!: Table<Sale, string>;
+  salesReturns!: Table<SalesReturn, string>;
+  purchaseReturns!: Table<PurchaseReturn, string>;
   payments!: Table<PaymentRecord, string>;
   cashBankAccounts!: Table<CashBankAccount, string>;
   bankTransfers!: Table<BankTransfer, string>;
@@ -85,6 +89,8 @@ export class AgroDatabase extends Dexie {
       parties: 'id, type, name, phone, synced',
       purchases: 'id, invoiceNumber, supplierId, date, synced',
       sales: 'id, invoiceNumber, customerId, date, synced',
+      salesReturns: 'id, returnNumber, saleId, customerId, date, synced',
+      purchaseReturns: 'id, returnNumber, purchaseId, supplierId, date, synced',
       cashBankAccounts: 'id, accountType, name, synced',
       bankTransfers: 'id, date, type, synced',
       loans: 'id, lenderName, status, synced',
@@ -128,6 +134,11 @@ export class AgroDatabase extends Dexie {
 
     this.version(9).stores({
       recurringExpenseTemplates: 'id, accountCode, dayOfMonth, active'
+    });
+
+    this.version(10).stores({
+      salesReturns: 'id, returnNumber, saleId, customerId, date, synced',
+      purchaseReturns: 'id, returnNumber, purchaseId, supplierId, date, synced'
     });
   }
 }
@@ -198,6 +209,8 @@ export async function checkHasAnyFarmData(): Promise<boolean> {
       db.parties.count(),
       db.purchases.count(),
       db.sales.count(),
+      db.salesReturns.count(),
+      db.purchaseReturns.count(),
       db.payments.count(),
       db.cashBankAccounts.count(),
       db.bankTransfers.count(),
