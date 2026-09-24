@@ -223,6 +223,62 @@ export async function safeTableToArray(activeDb: any, tableName: string): Promis
 // Internal alias for backwards compatibility
 const readPersistentTableForBackup = safeTableToArray;
 
+// Canonical list of all 30 persistent tables defined by AgroDatabase in src/db/indexedDb.ts
+export const CANONICAL_PERSISTENT_TABLES: string[] = [
+  'systemConfig',
+  'accounts',
+  'journalEntries',
+  'closedPeriods',
+  'recurringExpenseTemplates',
+  'animals',
+  'animalEvents',
+  'reminders',
+  'ponds',
+  'fishBatches',
+  'plots',
+  'cropCycles',
+  'internalFlows',
+  'processingRuns',
+  'inventoryItems',
+  'stockMovements',
+  'parties',
+  'purchases',
+  'sales',
+  'salesReturns',
+  'purchaseReturns',
+  'advancePayments',
+  'payments',
+  'cashBankAccounts',
+  'bankTransfers',
+  'loans',
+  'investors',
+  'fixedAssets',
+  'auditLogs',
+  'accessLogs'
+];
+
+export const BACKUP_TABLE_ALIAS_MAP: Record<string, string[]> = {
+  systemConfig: ['systemConfig', 'system'],
+  inventoryItems: ['inventoryItems', 'inventory'],
+  purchases: ['purchases', 'purchaseInvoices'],
+  sales: ['sales', 'salesInvoices'],
+  recurringExpenseTemplates: ['recurringExpenseTemplates', 'recurringExpenses'],
+  cashBankAccounts: ['cashBankAccounts', 'bankAccounts'],
+  bankTransfers: ['bankTransfers', 'transfers'],
+  fixedAssets: ['fixedAssets', 'assets']
+};
+
+export function getTableDataFromBackup(data: Record<string, any>, tableName: string): any {
+  if (data[tableName] !== undefined) return data[tableName];
+  const aliases = BACKUP_TABLE_ALIAS_MAP[tableName];
+  if (aliases) {
+    for (const alias of aliases) {
+      if (data[alias] !== undefined) return data[alias];
+    }
+  }
+  return undefined;
+}
+
 /**
  * Full JSON Backup creation for disaster recovery
  * Genuinely complete coverage of every persistent Dexie table currently defined by AgroDatabase.
@@ -232,38 +288,7 @@ export async function createFullJsonBackup(targetDb: any = db): Promise<string> 
   const activeDb = targetDb || db;
 
   // Canonical list of all 30 persistent tables defined by AgroDatabase in src/db/indexedDb.ts
-  const canonicalTables: string[] = [
-    'systemConfig',
-    'accounts',
-    'journalEntries',
-    'closedPeriods',
-    'recurringExpenseTemplates',
-    'animals',
-    'animalEvents',
-    'reminders',
-    'ponds',
-    'fishBatches',
-    'plots',
-    'cropCycles',
-    'internalFlows',
-    'processingRuns',
-    'inventoryItems',
-    'stockMovements',
-    'parties',
-    'purchases',
-    'sales',
-    'salesReturns',
-    'purchaseReturns',
-    'advancePayments',
-    'payments',
-    'cashBankAccounts',
-    'bankTransfers',
-    'loans',
-    'investors',
-    'fixedAssets',
-    'auditLogs',
-    'accessLogs'
-  ];
+  const canonicalTables: string[] = CANONICAL_PERSISTENT_TABLES;
 
   // Discover all persistent tables defined on activeDb to guarantee 100% complete coverage
   const tableNamesToExport = new Set<string>(canonicalTables);
@@ -333,6 +358,10 @@ export async function createFullJsonBackup(targetDb: any = db): Promise<string> 
 
 /**
  * Validated Database Restore
+ * Verifies that malformed, incomplete, or incompatible backups are rejected BEFORE
+ * existing data is cleared or changed.
+ * Preserves original IDs, relationships, and all 30 persistent tables.
+ * Uses atomic IndexedDB transactions where supported.
  */
 export async function restoreFromJsonBackup(
   jsonString: string,
@@ -340,12 +369,69 @@ export async function restoreFromJsonBackup(
   targetDb: any = db
 ): Promise<{ success: boolean; message: string; recordCounts?: Record<string, number> }> {
   try {
-    const data = JSON.parse(jsonString);
-    if (!data.version || !data.timestamp || !Array.isArray(data.journalEntries) || !Array.isArray(data.accounts)) {
-      return { success: false, message: 'অবৈধ ব্যাকআপ ফাইল (Invalid backup structure or missing core financial tables).' };
+    // -------------------------------------------------------------
+    // PHASE 1: PRE-VALIDATION BEFORE ANY DATA IS CLEARED OR CHANGED
+    // -------------------------------------------------------------
+
+    // 1. Validate JSON syntax and root structure
+    if (!jsonString || typeof jsonString !== 'string') {
+      return { success: false, message: 'অবৈধ ব্যাকআপ ফাইল (Backup content is empty or invalid string).' };
     }
 
-    const activeDb = targetDb || db;
+    let data: any;
+    try {
+      data = JSON.parse(jsonString);
+    } catch (parseErr: any) {
+      return { success: false, message: `অবৈধ ব্যাকআপ ফাইল (Malformed JSON syntax): ${parseErr?.message || parseErr}` };
+    }
+
+    if (!data || typeof data !== 'object' || Array.isArray(data)) {
+      return { success: false, message: 'অবৈধ ব্যাকআপ ফাইল (Backup root must be a valid JSON object).' };
+    }
+
+    // 2. Validate version compatibility (supports 1.x.x schema)
+    if (!data.version || typeof data.version !== 'string' || !/^1(\.|$)/.test(data.version.trim())) {
+      return {
+        success: false,
+        message: `অসামঞ্জস্যপূর্ণ ব্যাকআপ সংস্করণ (Incompatible backup version: "${data?.version ?? 'undefined'}". Expected version 1.x.x).`
+      };
+    }
+
+    // 3. Validate timestamp
+    if (!data.timestamp || typeof data.timestamp !== 'string' || isNaN(Date.parse(data.timestamp))) {
+      return { success: false, message: 'অবৈধ ব্যাকআপ ফাইল (Missing or invalid backup timestamp).' };
+    }
+
+    // 4. Validate completeness: EVERY canonical persistent table must be present
+    for (const tableName of CANONICAL_PERSISTENT_TABLES) {
+      const rawTableData = getTableDataFromBackup(data, tableName);
+      if (rawTableData === undefined) {
+        return {
+          success: false,
+          message: `অসম্পূর্ণ ব্যাকআপ ফাইল (Incomplete backup: missing required persistent table "${tableName}").`
+        };
+      }
+    }
+
+    // 5. Validate table data types: systemConfig must be object/array; all others must be arrays
+    for (const tableName of CANONICAL_PERSISTENT_TABLES) {
+      const rawTableData = getTableDataFromBackup(data, tableName);
+      if (tableName === 'systemConfig') {
+        if (!rawTableData || typeof rawTableData !== 'object') {
+          return {
+            success: false,
+            message: `বিকৃত ব্যাকআপ ফাইল (Malformed table data in "${tableName}": expected object or array).`
+          };
+        }
+      } else {
+        if (!Array.isArray(rawTableData)) {
+          return {
+            success: false,
+            message: `বিকৃত ব্যাকআপ ফাইল (Malformed table data in "${tableName}": expected array of records).`
+          };
+        }
+      }
+    }
 
     // Helper to normalize data items (array or single object)
     const normalizeItems = (val: any): any[] | undefined => {
@@ -355,6 +441,52 @@ export async function restoreFromJsonBackup(
       }
       return undefined;
     };
+
+    // 6. Validate record-level integrity across all tables
+    for (const tableName of CANONICAL_PERSISTENT_TABLES) {
+      const rawTableData = getTableDataFromBackup(data, tableName);
+      const items = normalizeItems(rawTableData);
+      if (!items) continue;
+
+      for (let i = 0; i < items.length; i++) {
+        const item = items[i];
+        if (!item || typeof item !== 'object' || Array.isArray(item)) {
+          return {
+            success: false,
+            message: `বিকৃত ব্যাকআপ রেকর্ড (Malformed record at index ${i} in table "${tableName}": expected object).`
+          };
+        }
+        if (tableName === 'systemConfig') {
+          if (!item.ownerUid && !item.id) {
+            return {
+              success: false,
+              message: `বিকৃত ব্যাকআপ রেকর্ড (Malformed record at index ${i} in "systemConfig": missing primary key ownerUid/id).`
+            };
+          }
+        } else {
+          if (!item.id || typeof item.id !== 'string') {
+            return {
+              success: false,
+              message: `বিকৃত ব্যাকআপ রেকর্ড (Malformed record at index ${i} in table "${tableName}": missing string primary key id).`
+            };
+          }
+        }
+        if (tableName === 'journalEntries') {
+          if (!Array.isArray(item.lines)) {
+            return {
+              success: false,
+              message: `বিকৃত ব্যাকআপ রেকর্ড (Malformed journal entry "${item.id}": missing lines array).`
+            };
+          }
+        }
+      }
+    }
+
+    // -------------------------------------------------------------
+    // PHASE 2: ATOMIC RESTORATION WITH ID & RELATIONSHIP PRESERVATION
+    // -------------------------------------------------------------
+
+    const activeDb = targetDb || db;
 
     // Helper to safely clear and restore table
     const restoreTable = async (table: any, items: any[] | undefined) => {
@@ -453,126 +585,126 @@ export async function restoreFromJsonBackup(
 
     const performRestores = async () => {
       // 1. Core financial & operational tables
-      const systemData = normalizeItems(data.systemConfig !== undefined ? data.systemConfig : data.system);
+      const systemData = normalizeItems(getTableDataFromBackup(data, 'systemConfig'));
       await restoreTable(activeDb.systemConfig, systemData);
       if (systemData !== undefined) recordCounts.systemConfig = systemData.length;
 
-      const accountsData = normalizeItems(data.accounts);
+      const accountsData = normalizeItems(getTableDataFromBackup(data, 'accounts'));
       await restoreTable(activeDb.accounts, accountsData);
       if (accountsData !== undefined) recordCounts.accounts = accountsData.length;
 
-      const jeData = normalizeItems(data.journalEntries);
+      const jeData = normalizeItems(getTableDataFromBackup(data, 'journalEntries'));
       await restoreTable(activeDb.journalEntries, jeData);
       if (jeData !== undefined) recordCounts.journalEntries = jeData.length;
 
-      const cpData = normalizeItems(data.closedPeriods);
+      const cpData = normalizeItems(getTableDataFromBackup(data, 'closedPeriods'));
       await restoreTable(activeDb.closedPeriods, cpData);
       if (cpData !== undefined) recordCounts.closedPeriods = cpData.length;
 
-      const recData = normalizeItems(data.recurringExpenseTemplates !== undefined ? data.recurringExpenseTemplates : data.recurringExpenses);
+      const recData = normalizeItems(getTableDataFromBackup(data, 'recurringExpenseTemplates'));
       await restoreTable(activeDb.recurringExpenseTemplates, recData);
       if (recData !== undefined) recordCounts.recurringExpenseTemplates = recData.length;
 
-      const animData = normalizeItems(data.animals);
+      const animData = normalizeItems(getTableDataFromBackup(data, 'animals'));
       await restoreTable(activeDb.animals, animData);
       if (animData !== undefined) recordCounts.animals = animData.length;
 
-      const aeData = normalizeItems(data.animalEvents);
+      const aeData = normalizeItems(getTableDataFromBackup(data, 'animalEvents'));
       await restoreTable(activeDb.animalEvents, aeData);
       if (aeData !== undefined) recordCounts.animalEvents = aeData.length;
 
-      const remData = normalizeItems(data.reminders);
+      const remData = normalizeItems(getTableDataFromBackup(data, 'reminders'));
       await restoreTable(activeDb.reminders, remData);
       if (remData !== undefined) recordCounts.reminders = remData.length;
 
-      const pndData = normalizeItems(data.ponds);
+      const pndData = normalizeItems(getTableDataFromBackup(data, 'ponds'));
       await restoreTable(activeDb.ponds, pndData);
       if (pndData !== undefined) recordCounts.ponds = pndData.length;
 
-      const fbData = normalizeItems(data.fishBatches);
+      const fbData = normalizeItems(getTableDataFromBackup(data, 'fishBatches'));
       await restoreTable(activeDb.fishBatches, fbData);
       if (fbData !== undefined) recordCounts.fishBatches = fbData.length;
 
-      const pltData = normalizeItems(data.plots);
+      const pltData = normalizeItems(getTableDataFromBackup(data, 'plots'));
       await restoreTable(activeDb.plots, pltData);
       if (pltData !== undefined) recordCounts.plots = pltData.length;
 
-      const ccData = normalizeItems(data.cropCycles);
+      const ccData = normalizeItems(getTableDataFromBackup(data, 'cropCycles'));
       await restoreTable(activeDb.cropCycles, ccData);
       if (ccData !== undefined) recordCounts.cropCycles = ccData.length;
 
-      const ifData = normalizeItems(data.internalFlows);
+      const ifData = normalizeItems(getTableDataFromBackup(data, 'internalFlows'));
       await restoreTable(activeDb.internalFlows, ifData);
       if (ifData !== undefined) recordCounts.internalFlows = ifData.length;
 
-      const prData = normalizeItems(data.processingRuns);
+      const prData = normalizeItems(getTableDataFromBackup(data, 'processingRuns'));
       await restoreTable(activeDb.processingRuns, prData);
       if (prData !== undefined) recordCounts.processingRuns = prData.length;
 
-      const invData = normalizeItems(data.inventoryItems !== undefined ? data.inventoryItems : data.inventory);
+      const invData = normalizeItems(getTableDataFromBackup(data, 'inventoryItems'));
       await restoreTable(activeDb.inventoryItems, invData);
       if (invData !== undefined) {
         recordCounts.inventoryItems = invData.length;
         recordCounts.inventory = invData.length;
       }
 
-      const smData = normalizeItems(data.stockMovements);
+      const smData = normalizeItems(getTableDataFromBackup(data, 'stockMovements'));
       await restoreTable(activeDb.stockMovements, smData);
       if (smData !== undefined) recordCounts.stockMovements = smData.length;
 
-      const ptyData = normalizeItems(data.parties);
+      const ptyData = normalizeItems(getTableDataFromBackup(data, 'parties'));
       await restoreTable(activeDb.parties, ptyData);
       if (ptyData !== undefined) recordCounts.parties = ptyData.length;
 
-      const purData = normalizeItems(data.purchases !== undefined ? data.purchases : data.purchaseInvoices);
+      const purData = normalizeItems(getTableDataFromBackup(data, 'purchases'));
       await restoreTable(activeDb.purchases, purData);
       if (purData !== undefined) recordCounts.purchases = purData.length;
 
-      const salData = normalizeItems(data.sales !== undefined ? data.sales : data.salesInvoices);
+      const salData = normalizeItems(getTableDataFromBackup(data, 'sales'));
       await restoreTable(activeDb.sales, salData);
       if (salData !== undefined) recordCounts.sales = salData.length;
 
-      const srData = normalizeItems(data.salesReturns);
+      const srData = normalizeItems(getTableDataFromBackup(data, 'salesReturns'));
       await restoreTable(activeDb.salesReturns, srData);
       if (srData !== undefined) recordCounts.salesReturns = srData.length;
 
-      const purchRetData = normalizeItems(data.purchaseReturns);
+      const purchRetData = normalizeItems(getTableDataFromBackup(data, 'purchaseReturns'));
       await restoreTable(activeDb.purchaseReturns, purchRetData);
       if (purchRetData !== undefined) recordCounts.purchaseReturns = purchRetData.length;
 
-      const apData = normalizeItems(data.advancePayments);
+      const apData = normalizeItems(getTableDataFromBackup(data, 'advancePayments'));
       await restoreTable(activeDb.advancePayments, apData);
       if (apData !== undefined) recordCounts.advancePayments = apData.length;
 
-      const pmtData = normalizeItems(data.payments);
+      const pmtData = normalizeItems(getTableDataFromBackup(data, 'payments'));
       await restoreTable(activeDb.payments, pmtData);
       if (pmtData !== undefined) recordCounts.payments = pmtData.length;
 
-      const cbData = normalizeItems(data.cashBankAccounts !== undefined ? data.cashBankAccounts : data.bankAccounts);
+      const cbData = normalizeItems(getTableDataFromBackup(data, 'cashBankAccounts'));
       await restoreTable(activeDb.cashBankAccounts, cbData);
       if (cbData !== undefined) recordCounts.cashBankAccounts = cbData.length;
 
-      const btData = normalizeItems(data.bankTransfers !== undefined ? data.bankTransfers : data.transfers);
+      const btData = normalizeItems(getTableDataFromBackup(data, 'bankTransfers'));
       await restoreTable(activeDb.bankTransfers, btData);
       if (btData !== undefined) recordCounts.bankTransfers = btData.length;
 
-      const lnData = normalizeItems(data.loans);
+      const lnData = normalizeItems(getTableDataFromBackup(data, 'loans'));
       await restoreTable(activeDb.loans, lnData);
       if (lnData !== undefined) recordCounts.loans = lnData.length;
 
-      const invUserData = normalizeItems(data.investors);
+      const invUserData = normalizeItems(getTableDataFromBackup(data, 'investors'));
       await restoreTable(activeDb.investors, invUserData);
       if (invUserData !== undefined) recordCounts.investors = invUserData.length;
 
-      const faData = normalizeItems(data.fixedAssets !== undefined ? data.fixedAssets : data.assets);
+      const faData = normalizeItems(getTableDataFromBackup(data, 'fixedAssets'));
       await restoreTable(activeDb.fixedAssets, faData);
       if (faData !== undefined) recordCounts.fixedAssets = faData.length;
 
-      const aclData = normalizeItems(data.accessLogs);
+      const aclData = normalizeItems(getTableDataFromBackup(data, 'accessLogs'));
       await restoreTable(activeDb.accessLogs, aclData);
       if (aclData !== undefined) recordCounts.accessLogs = aclData.length;
 
-      const audData = normalizeItems(data.auditLogs);
+      const audData = normalizeItems(getTableDataFromBackup(data, 'auditLogs'));
       await restoreTable(activeDb.auditLogs, audData);
       if (audData !== undefined) recordCounts.auditLogs = audData.length;
 
@@ -656,7 +788,36 @@ export async function restoreFromJsonBackup(
     if (typeof activeDb.transaction === 'function' && tablesToLock.length > 0) {
       await activeDb.transaction('rw', tablesToLock, performRestores);
     } else {
-      await performRestores();
+      // In non-transactional environments, snapshot in-memory to prevent destructive partial state on failure
+      const preRestoreSnapshots: Map<any, any[]> = new Map();
+      for (const t of tablesToLock) {
+        if (typeof t.toArray === 'function') {
+          try {
+            preRestoreSnapshots.set(t, await t.toArray());
+          } catch {
+            // Ignore snapshot read error
+          }
+        }
+      }
+      try {
+        await performRestores();
+      } catch (restoreErr: any) {
+        // Rollback snapshot on failure to ensure no partial overwrite/destructive loss
+        for (const [table, records] of preRestoreSnapshots.entries()) {
+          try {
+            if (typeof table.clear === 'function') await table.clear();
+            if (records.length > 0) {
+              if (typeof table.bulkPut === 'function') await table.bulkPut(records);
+              else if (typeof table.put === 'function') {
+                for (const r of records) await table.put(r);
+              }
+            }
+          } catch {
+            // Ignore rollback individual error
+          }
+        }
+        throw restoreErr;
+      }
     }
 
     return {
