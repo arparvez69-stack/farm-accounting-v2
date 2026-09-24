@@ -42,6 +42,7 @@ import { generateTransactionNumber, generateUniqueId, safeInsert } from '../util
 import { HIGH_AMOUNT_CONFIRMATION_THRESHOLD } from '../constants/validation';
 import { notifyUndoableAction } from '../services/undoService';
 import { StatusBadge, Card, SearchableSelect, SearchableOption } from './ui';
+import { synchronizePendingData } from '../firebase/firebaseClient';
 
 interface Props {
   role: UserRole;
@@ -793,6 +794,7 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
         return;
       }
 
+      const nowIso = new Date().toISOString();
       const acc: Account = {
         id: `acc_${codeToUse}`,
         code: codeToUse,
@@ -801,7 +803,10 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
         accountClass: newAccClass,
         normalBalance: inferNormalBalance(newAccClass),
         isSystem: false,
-        isActive: true
+        isActive: true,
+        synced: false,
+        createdAt: nowIso,
+        updatedAt: nowIso
       };
 
       await safeInsert(db.accounts, acc);
@@ -810,6 +815,7 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
       setNewAccNameBn('');
       setNewAccNameEn('');
       loadBaseData();
+      synchronizePendingData().catch(() => {});
     } catch (e: any) {
       alert(e.message);
     }

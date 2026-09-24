@@ -146,6 +146,12 @@ export async function runChartOfAccountsExtensionTests() {
     }
   }
 
+  // Cleanup test transactions so subsequent tests aren't polluted
+  await db.journalEntries.delete('test_custom_acc_jnl_1');
+  await db.journalEntries.delete('test_custom_acc_jnl_2');
+  await db.accounts.delete(`acc_${customExpenseCode}`);
+  await db.accounts.delete(`acc_${customAssetCode}`);
+
   console.log('✅ All Chart of Accounts extension tests passed perfectly!');
   return { success: true };
 }

@@ -188,6 +188,14 @@ export async function getValidAccountsForValidation(): Promise<Account[]> {
       // Fallback to default accounts
     }
   }
+  if (inMemoryStores.has('accounts')) {
+    const memAccounts = inMemoryStores.get('accounts')!;
+    for (const acc of memAccounts.values()) {
+      if (acc && acc.code) {
+        accountsMap.set(acc.code, acc);
+      }
+    }
+  }
   cachedValidAccounts = Array.from(accountsMap.values());
   lastAccountsFetch = now;
   return cachedValidAccounts;
@@ -1159,6 +1167,10 @@ async function handleSyncWrite(
           existingDoc = item;
           break;
         }
+        if (targetCol === 'accounts' && data.code && item.code === data.code) {
+          existingDoc = item;
+          break;
+        }
       }
     }
 
@@ -1227,6 +1239,12 @@ async function handleSyncWrite(
             existingDoc = { id: qSnap.docs[0].id, ...qSnap.docs[0].data() };
           }
         }
+        if (!existingDoc && targetCol === 'accounts' && data.code) {
+          const qSnap = await adminDb.collection(targetCol).where('code', '==', data.code).limit(1).get();
+          if (!qSnap.empty) {
+            existingDoc = { id: qSnap.docs[0].id, ...qSnap.docs[0].data() };
+          }
+        }
       } catch {
         // Ignore query error
       }
@@ -1241,6 +1259,8 @@ async function handleSyncWrite(
       targetCol !== 'closedPeriods' &&
       targetCol !== 'auditLogs' &&
       targetCol !== 'system' &&
+      targetCol !== 'systemConfig' &&
+      targetCol !== 'accounts' &&
       targetCol !== 'parties' &&
       targetCol !== 'cashBankAccounts' &&
       targetCol !== 'reminders' &&
@@ -1667,6 +1687,53 @@ async function handleSyncWrite(
         if (data.remainingBalance === undefined && existingDoc.remainingBalance !== undefined) {
           protectedFields.remainingBalance = existingDoc.remainingBalance;
         }
+      } else if (targetCol === 'accounts') {
+        const isSystem = existingDoc.isSystem || DEFAULT_CHART_OF_ACCOUNTS.some((a) => a.code === existingDoc.code);
+        if (isSystem) {
+          if (data.accountClass && data.accountClass !== existingDoc.accountClass) {
+            return res.status(400).json({
+              error: `সিস্টেম হিসাবের শ্রেণী পরিবর্তন করা যাবে না (Cannot change account class of system account ${existingDoc.code}).`
+            });
+          }
+          if (data.normalBalance && data.normalBalance !== existingDoc.normalBalance) {
+            return res.status(400).json({
+              error: `সিস্টেম হিসাবের স্বাভাবিক ব্যালেন্স পরিবর্তন করা যাবে না (Cannot change normal balance of system account ${existingDoc.code}).`
+            });
+          }
+          protectedFields.isSystem = true;
+          protectedFields.accountClass = existingDoc.accountClass;
+          protectedFields.normalBalance = existingDoc.normalBalance;
+        }
+
+        // Prevent stale local data from blindly overwriting newer cloud account data
+        const existingTime = existingDoc.updatedAt || existingDoc.syncedAt;
+        const incomingTime = data.updatedAt || data.syncedAt;
+        if (existingTime && incomingTime && new Date(existingTime).getTime() > new Date(incomingTime).getTime()) {
+          return res.json({
+            success: true,
+            id: finalDocId,
+            collection: collectionName,
+            staleIgnored: true,
+            message: 'Cloud account data is newer; stale local overwrite ignored.',
+            data: existingDoc
+          });
+        }
+      }
+    }
+
+    if (!existingDoc && targetCol === 'accounts') {
+      const defaultAcc = DEFAULT_CHART_OF_ACCOUNTS.find((a) => a.code === data.code);
+      if (defaultAcc) {
+        if (data.accountClass && data.accountClass !== defaultAcc.accountClass) {
+          return res.status(400).json({
+            error: `সিস্টেম হিসাবের শ্রেণী পরিবর্তন করা যাবে না (Cannot change account class of system account ${defaultAcc.code}).`
+          });
+        }
+        if (data.normalBalance && data.normalBalance !== defaultAcc.normalBalance) {
+          return res.status(400).json({
+            error: `সিস্টেম হিসাবের স্বাভাবিক ব্যালেন্স পরিবর্তন করা যাবে না (Cannot change normal balance of system account ${defaultAcc.code}).`
+          });
+        }
       }
     }
 
@@ -1688,6 +1755,9 @@ async function handleSyncWrite(
 
     if (targetCol === 'closedPeriods') {
       cachedClosedPeriods = null;
+    }
+    if (targetCol === 'accounts') {
+      cachedValidAccounts = null;
     }
 
     // 4. Write via firebase-admin (which bypasses rules safely since it is trusted)

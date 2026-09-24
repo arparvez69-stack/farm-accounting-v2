@@ -147,6 +147,10 @@ export class AgroDatabase extends Dexie {
     this.version(11).stores({
       advancePayments: 'id, partyId, direction, date, synced'
     });
+
+    this.version(12).stores({
+      accounts: 'id, code, accountClass, isSystem, synced'
+    });
   }
 }
 

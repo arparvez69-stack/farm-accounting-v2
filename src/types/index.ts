@@ -65,6 +65,11 @@ export interface Account {
   isActive?: boolean;
   currentBalance?: number;
   description?: string;
+  synced?: boolean;
+  createdAt?: string;
+  updatedAt?: string;
+  syncedAt?: string;
+  ownerUid?: string;
 }
 
 export type VoucherType =

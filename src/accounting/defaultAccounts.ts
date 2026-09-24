@@ -642,13 +642,13 @@ export const DEFAULT_CHART_OF_ACCOUNTS: Account[] = [
 export async function initDefaultAccounts(): Promise<void> {
   const count = await db.accounts.count();
   if (count === 0) {
-    await db.accounts.bulkPut(DEFAULT_CHART_OF_ACCOUNTS);
+    await db.accounts.bulkPut(DEFAULT_CHART_OF_ACCOUNTS.map((a) => ({ ...a, synced: true })));
   } else {
     // Ensure all default accounts exist without overwriting user custom accounts
     for (const defAcc of DEFAULT_CHART_OF_ACCOUNTS) {
       const existing = await db.accounts.where('code').equals(defAcc.code).first();
       if (!existing) {
-        await db.accounts.put(defAcc);
+        await db.accounts.put({ ...defAcc, synced: true });
       }
     }
   }

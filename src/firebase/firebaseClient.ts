@@ -290,17 +290,29 @@ export async function synchronizePendingData(): Promise<{ syncedCount: number; e
     const errors: string[] = [];
 
     try {
-      // 1. Sync Animals
-    const pendingAnimals = await db.animals.filter((a) => a.synced === false).toArray();
-    for (const animal of pendingAnimals) {
-      try {
-        await syncRecordToServer('animals', animal);
-        await db.animals.update(animal.id, { synced: true });
-        count++;
-      } catch (err: any) {
-        errors.push(`Animal ${animal.id}: ${err.message}`);
+      // 1. Sync Chart of Accounts (Custom and user-created ledgers must sync before journals)
+      const pendingChartAccounts = await db.accounts.filter((acc) => acc.synced === false).toArray();
+      for (const acc of pendingChartAccounts) {
+        try {
+          await syncRecordToServer('accounts', acc);
+          await db.accounts.update(acc.id, { synced: true });
+          count++;
+        } catch (err: any) {
+          errors.push(`Account ${acc.code} (${acc.nameBn}): ${err.message}`);
+        }
       }
-    }
+
+      // 2. Sync Animals
+      const pendingAnimals = await db.animals.filter((a) => a.synced === false).toArray();
+      for (const animal of pendingAnimals) {
+        try {
+          await syncRecordToServer('animals', animal);
+          await db.animals.update(animal.id, { synced: true });
+          count++;
+        } catch (err: any) {
+          errors.push(`Animal ${animal.id}: ${err.message}`);
+        }
+      }
 
     // 2. Sync Fish Batches
     const pendingFish = await db.fishBatches.filter((b) => b.synced === false).toArray();
@@ -700,6 +712,7 @@ export function listenToOnlineSync(
       const pSalesReturns = await db.salesReturns.filter((sr) => !sr.synced).count();
       const pPurchaseReturns = await db.purchaseReturns.filter((pr) => !pr.synced).count();
       const pAdvancePayments = await db.advancePayments.filter((ap) => !ap.synced).count();
+      const pChartAccounts = await db.accounts.filter((acc) => acc.synced === false).count();
       const total =
         pAnimals +
         pFish +
@@ -727,7 +740,8 @@ export function listenToOnlineSync(
         pRecurring +
         pSalesReturns +
         pPurchaseReturns +
-        pAdvancePayments;
+        pAdvancePayments +
+        pChartAccounts;
       onPendingChange(total);
       if (!navigator.onLine) {
         onStateChange('OFFLINE');
@@ -907,15 +921,56 @@ export async function restoreRemoteDataIfLocalEmpty(userEmail?: string, force?: 
           const c = payload.collections;
 
           const restoreTableItems = async (table: any, items: any[] | undefined, tableName?: string) => {
-            if (Array.isArray(items) && items.length > 0 && table && typeof table.bulkPut === 'function') {
-              const prepared = items.map((item: any) => ({
-                ...item,
-                ownerUid: item.ownerUid || (table === db.systemConfig || tableName === 'systemConfig' ? (item.id || item.ownerUid || 'config') : item.ownerUid),
-                id: item.id || (table === db.systemConfig || tableName === 'systemConfig' ? (item.ownerUid || item.id || 'config') : item.id),
-                synced: true
-              }));
-              await table.bulkPut(prepared);
-              restoredCount += prepared.length;
+            if (Array.isArray(items) && items.length > 0 && table) {
+              if (table === db.accounts || tableName === 'accounts') {
+                for (const item of items) {
+                  if (!item) continue;
+                  const itemCode = (item.code || '').trim();
+                  let existing = null;
+                  if (itemCode) {
+                    existing = await db.accounts.where('code').equals(itemCode).first();
+                  }
+                  if (!existing && item.id) {
+                    existing = await db.accounts.get(item.id);
+                  }
+
+                  if (existing) {
+                    // Stale local vs remote check:
+                    // If local account has a newer modification timestamp than remote, don't overwrite with stale cloud data
+                    const localTime = existing.updatedAt || existing.syncedAt;
+                    const remoteTime = item.updatedAt || item.syncedAt;
+                    if (localTime && remoteTime && new Date(localTime).getTime() > new Date(remoteTime).getTime()) {
+                      continue;
+                    }
+                    const isSys = existing.isSystem || DEFAULT_CHART_OF_ACCOUNTS.some((a) => a.code === existing.code);
+                    await db.accounts.put({
+                      ...existing,
+                      ...item,
+                      id: existing.id || item.id || (itemCode ? `acc_${itemCode}` : `acc_${Date.now()}`),
+                      code: existing.code || item.code,
+                      isSystem: isSys,
+                      ...(isSys ? { accountClass: existing.accountClass, normalBalance: existing.normalBalance } : {}),
+                      synced: true
+                    });
+                  } else {
+                    await db.accounts.put({
+                      ...item,
+                      id: item.id || (itemCode ? `acc_${itemCode}` : `acc_${Date.now()}`),
+                      synced: true
+                    });
+                  }
+                  restoredCount++;
+                }
+              } else if (typeof table.bulkPut === 'function') {
+                const prepared = items.map((item: any) => ({
+                  ...item,
+                  ownerUid: item.ownerUid || (table === db.systemConfig || tableName === 'systemConfig' ? (item.id || item.ownerUid || 'config') : item.ownerUid),
+                  id: item.id || (table === db.systemConfig || tableName === 'systemConfig' ? (item.ownerUid || item.id || 'config') : item.id),
+                  synced: true
+                }));
+                await table.bulkPut(prepared);
+                restoredCount += prepared.length;
+              }
             }
           };
 
@@ -1023,7 +1078,43 @@ export async function restoreRemoteDataIfLocalEmpty(userEmail?: string, force?: 
                   synced: true
                 });
               });
-              if (table && typeof table.bulkPut === 'function') {
+              if (table === db.accounts) {
+                for (const item of list) {
+                  if (!item) continue;
+                  const itemCode = (item.code || '').trim();
+                  let existing = null;
+                  if (itemCode) {
+                    existing = await db.accounts.where('code').equals(itemCode).first();
+                  }
+                  if (!existing && item.id) {
+                    existing = await db.accounts.get(item.id);
+                  }
+                  if (existing) {
+                    const localTime = existing.updatedAt || existing.syncedAt;
+                    const remoteTime = item.updatedAt || item.syncedAt;
+                    if (localTime && remoteTime && new Date(localTime).getTime() > new Date(remoteTime).getTime()) {
+                      continue;
+                    }
+                    const isSys = existing.isSystem || DEFAULT_CHART_OF_ACCOUNTS.some((a) => a.code === existing.code);
+                    await db.accounts.put({
+                      ...existing,
+                      ...item,
+                      id: existing.id || item.id || (itemCode ? `acc_${itemCode}` : `acc_${Date.now()}`),
+                      code: existing.code || item.code,
+                      isSystem: isSys,
+                      ...(isSys ? { accountClass: existing.accountClass, normalBalance: existing.normalBalance } : {}),
+                      synced: true
+                    });
+                  } else {
+                    await db.accounts.put({
+                      ...item,
+                      id: item.id || (itemCode ? `acc_${itemCode}` : `acc_${Date.now()}`),
+                      synced: true
+                    });
+                  }
+                  restoredCount++;
+                }
+              } else if (table && typeof table.bulkPut === 'function') {
                 await table.bulkPut(list);
                 restoredCount += list.length;
               }

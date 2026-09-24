@@ -147,7 +147,7 @@ export async function runCompleteCloudRestoreCoverageTests(): Promise<AssertionR
       },
       accounts: {
         id: `acc_custom_${runTag}`,
-        code: '5999',
+        code: `59${runTag.slice(-2)}`,
         nameEn: 'Special Organic Certification Expense',
         nameBn: 'বিশেষ অর্গানিক সার্টিফিকেশন খরচ',
         accountClass: 'EXPENSE',
