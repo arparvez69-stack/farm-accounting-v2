@@ -342,6 +342,7 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
   const [reportLedgerEntries, setReportLedgerEntries] = useState<LedgerEntry[]>([]);
   const [reportLedgerAccount, setReportLedgerAccount] = useState<Account | undefined>();
   const [reportLedgerNetBalance, setReportLedgerNetBalance] = useState<number>(0);
+  const [reportLedgerOpeningBalance, setReportLedgerOpeningBalance] = useState<number | undefined>(undefined);
   const [reportLedgerSearchQuery, setReportLedgerSearchQuery] = useState<string>('');
   const [reportLedgerVisibleCount, setReportLedgerVisibleCount] = useState<number>(25);
 
@@ -1043,20 +1044,12 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
       setReportAccounts(accs);
     }
 
-    const res = await getGeneralLedger(code);
+    const dateFilter: DateRangeFilter | undefined = (startDate || endDate) ? { startDate, endDate } : undefined;
+    const res = await getGeneralLedger(code, dateFilter);
     setReportLedgerAccount(res.account);
-
-    let entries = res.entries;
-    if (startDate || endDate) {
-      entries = entries.filter((e) => {
-        if (startDate && e.date < startDate) return false;
-        if (endDate && e.date > endDate) return false;
-        return true;
-      });
-    }
-
-    setReportLedgerEntries(entries);
+    setReportLedgerEntries(res.entries);
     setReportLedgerNetBalance(res.netBalance);
+    setReportLedgerOpeningBalance(res.openingBalance);
   };
 
   const loadReports = async () => {
@@ -1083,7 +1076,7 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
         const res = await generateBalanceSheet(dateFilter);
         setBs(res);
       } else if (activeReport === 'trialBalance') {
-        const res = await generateTrialBalance(dateFilter);
+        const res = await generateTrialBalance(endDate ? { endDate } : undefined);
         setTb(res);
       } else if (activeReport === 'ledger') {
         await loadLedgerReport();
@@ -2557,7 +2550,7 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
             <div>
               <h3 className="text-base font-bold text-gray-900">রেওয়ামিল নিরীক্ষা ও বিশ্লেষণ (Trial Balance Audit)</h3>
               <p className="text-[13px] text-gray-500 mt-0.5">
-                লিপিবদ্ধ সকল খতিয়ান স্থিতির সমতা নিশ্চিতকরণ • সময়সীমা: {startDate || 'শুরু'} হতে {endDate || 'বর্তমান'}
+                লিপিবদ্ধ সকল খতিয়ান স্থিতির সমতা নিশ্চিতকরণ • {endDate ? `হিসাবকাল: শুরু হতে ${endDate} পর্যন্ত (As of ${endDate})` : 'হিসাবকাল: শুরু হতে বর্তমান পর্যন্ত (All time to date)'}
               </p>
             </div>
             <span className={`px-3 py-1 rounded-full text-xs font-semibold ${
@@ -2703,7 +2696,9 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
 
           {/* Account Summary Banner */}
           {reportLedgerAccount && (
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 bg-[#F8FAFC] p-4 rounded-xl border border-gray-200">
+            <div className={`grid gap-3 bg-[#F8FAFC] p-4 rounded-xl border border-gray-200 ${
+              startDate ? 'grid-cols-2 sm:grid-cols-5' : 'grid-cols-2 sm:grid-cols-4'
+            }`}>
               <div>
                 <span className="text-[11px] text-gray-500 font-medium block">হিসাবের নাম ও কোড</span>
                 <span className="text-[15px] font-bold text-gray-900 flex items-baseline gap-1.5">
@@ -2721,8 +2716,22 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
                   {reportLedgerAccount.normalBalance === 'DEBIT' ? 'ডেবিট (Debit)' : 'ক্রেডিট (Credit)'}
                 </span>
               </div>
+              {startDate && (
+                <div>
+                  <span className="text-[11px] text-gray-500 font-medium block">প্রারম্ভিক জের (Opening)</span>
+                  <span
+                    className={`text-[15px] font-bold font-mono ${
+                      (reportLedgerOpeningBalance ?? 0) >= 0 ? 'text-[#15803D]' : 'text-rose-600'
+                    }`}
+                  >
+                    {fmt(reportLedgerOpeningBalance ?? 0)}
+                  </span>
+                </div>
+              )}
               <div>
-                <span className="text-[11px] text-gray-500 font-medium block">বর্তমান নিট জের (Net Balance)</span>
+                <span className="text-[11px] text-gray-500 font-medium block">
+                  {startDate || endDate ? 'হিসাবকালের সমাপনী জের (Closing)' : 'বর্তমান নিট জের (Net Balance)'}
+                </span>
                 <span
                   className={`text-[15px] font-bold font-mono ${
                     reportLedgerNetBalance >= 0 ? 'text-[#15803D]' : 'text-rose-600'
@@ -2825,10 +2834,19 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
                     </thead>
                     <tbody className="divide-y divide-gray-100 font-mono">
                       {visibleRows.map((entry, idx) => (
-                        <tr key={idx} className="hover:bg-gray-50/80 transition-colors">
+                        <tr
+                          key={entry.journalEntryId || idx}
+                          className={`transition-colors ${
+                            entry.isOpeningBalance
+                              ? 'bg-amber-50/70 hover:bg-amber-100/70 font-semibold text-gray-900 border-l-4 border-amber-500'
+                              : 'hover:bg-gray-50/80'
+                          }`}
+                        >
                           <td className="p-3 font-sans whitespace-nowrap text-gray-700">{entry.date}</td>
                           <td className="p-3 font-semibold text-teal-700 whitespace-nowrap">
-                            {entry.voucherNumber || entry.journalId.slice(0, 8)}
+                            {entry.isOpeningBalance
+                              ? 'OPENING'
+                              : (entry.voucherNumber || (entry.journalId && entry.journalId.slice(0, 8)) || '')}
                           </td>
                           <td className="p-3 font-sans max-w-xs text-gray-800 break-words">{entry.narration}</td>
                           <td className="p-3 text-right text-[#15803D] font-bold whitespace-nowrap">

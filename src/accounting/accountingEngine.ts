@@ -35,11 +35,49 @@ export interface LedgerEntry {
   debit: number;
   credit: number;
   runningBalance: number;
+  isOpeningBalance?: boolean;
   reversedBy?: string;
   reversalOf?: string;
   correctionOf?: string;
   relatedPerson?: string;
   createdBy?: string;
+}
+
+export interface GeneralLedgerReport {
+  account?: Account;
+  entries: LedgerEntry[];
+  netBalance: number;
+  openingBalance: number;
+  closingBalance: number;
+  periodDebit: number;
+  periodCredit: number;
+}
+
+export type GeneralLedgerResult = GeneralLedgerReport;
+
+export function normalizeToDateString(val: any): string | null {
+  if (!val) return null;
+  if (typeof val === 'string') {
+    const trimmed = val.trim();
+    if (!trimmed) return null;
+    const match = trimmed.match(/^(\d{4}-\d{2}-\d{2})/);
+    if (match) return match[1];
+    const parsed = new Date(trimmed);
+    if (!isNaN(parsed.getTime())) {
+      return parsed.toISOString().slice(0, 10);
+    }
+    return null;
+  }
+  if (val instanceof Date && !isNaN(val.getTime())) {
+    return val.toISOString().slice(0, 10);
+  }
+  if (typeof val === 'number') {
+    const parsed = new Date(val);
+    if (!isNaN(parsed.getTime())) {
+      return parsed.toISOString().slice(0, 10);
+    }
+  }
+  return null;
 }
 
 export interface ProfitLossReport {
@@ -1713,42 +1751,16 @@ export async function generateTrialBalance(
   const rawAccounts = await targetDb.accounts.toArray();
   let entries = await targetDb.journalEntries.toArray();
 
-  const normalizeToDateString = (val: any): string | null => {
-    if (!val) return null;
-    if (typeof val === 'string') {
-      const trimmed = val.trim();
-      if (!trimmed) return null;
-      const match = trimmed.match(/^(\d{4}-\d{2}-\d{2})/);
-      if (match) return match[1];
-      const parsed = new Date(trimmed);
-      if (!isNaN(parsed.getTime())) {
-        return parsed.toISOString().slice(0, 10);
-      }
-      return null;
-    }
-    if (val instanceof Date && !isNaN(val.getTime())) {
-      return val.toISOString().slice(0, 10);
-    }
-    if (typeof val === 'number') {
-      const parsed = new Date(val);
-      if (!isNaN(parsed.getTime())) {
-        return parsed.toISOString().slice(0, 10);
-      }
-    }
-    return null;
-  };
-
-  const rawStart = dateRange?.startDate || (dateRange as any)?.fromDate || (dateRange as any)?.from || (dateRange as any)?.start;
-  const rawEnd = dateRange?.endDate || (dateRange as any)?.toDate || (dateRange as any)?.to || (dateRange as any)?.end;
-  const cleanStartDate = normalizeToDateString(rawStart);
+  // Trial Balance is an AS-OF statement from the beginning of time through endDate.
+  // startDate must be ignored: never exclude entries because they are before startDate.
+  const rawEnd = dateRange?.endDate || (dateRange as any)?.toDate || (dateRange as any)?.to || (dateRange as any)?.end || (dateRange as any)?.asOfDate || (dateRange as any)?.date;
   const cleanEndDate = normalizeToDateString(rawEnd);
 
-  if (cleanStartDate || cleanEndDate) {
+  if (cleanEndDate) {
     entries = entries.filter((e) => {
       const entryDate = normalizeToDateString(e.date);
       if (!entryDate) return false;
-      if (cleanStartDate && entryDate < cleanStartDate) return false;
-      if (cleanEndDate && entryDate > cleanEndDate) return false;
+      if (entryDate > cleanEndDate) return false;
       return true;
     });
   }
@@ -2339,33 +2351,130 @@ export async function migrateLegacyAccounts(force = false): Promise<number> {
 }
 
 /**
- * Computes General Ledger entries for a specific account code
+ * Computes General Ledger entries for a specific account code with optional date range filtering.
+ * Calculates opening balance from entries prior to startDate, shows opening balance explicitly,
+ * maintains consistent running balance, and calculates closing balance consistent with the reporting period.
  */
-export async function getGeneralLedger(accountCode: string): Promise<{ account?: Account; entries: LedgerEntry[]; netBalance: number }> {
-  const account = await db.accounts.where('code').equals(accountCode).first();
-  const entries = await db.journalEntries.orderBy('date').toArray();
+export async function getGeneralLedger(
+  accountCode: string,
+  dateRange?: DateRangeFilter | { fromDate?: string; toDate?: string; from?: string; to?: string; start?: string; end?: string; startDate?: string; endDate?: string } | string,
+  dbInstance?: any
+): Promise<GeneralLedgerReport> {
+  const targetDb = dbInstance || db;
+  const account = await targetDb.accounts.where('code').equals(accountCode).first();
+  const rawEntries = await targetDb.journalEntries.toArray();
+
+  // Normalize date boundaries
+  let cleanStartDate: string | undefined = undefined;
+  let cleanEndDate: string | undefined = undefined;
+
+  if (typeof dateRange === 'string') {
+    const trimmed = dateRange.trim();
+    if (trimmed.includes(':') || trimmed.includes(';') || trimmed.includes('..')) {
+      const parts = trimmed.split(/[:;]|\.\./);
+      cleanStartDate = normalizeToDateString(parts[0]) || undefined;
+      cleanEndDate = normalizeToDateString(parts[1]) || undefined;
+    } else {
+      // Single date treated as asOf / endDate
+      cleanEndDate = normalizeToDateString(trimmed) || undefined;
+    }
+  } else if (dateRange && typeof dateRange === 'object') {
+    const rawStart = (dateRange as any).startDate || (dateRange as any).fromDate || (dateRange as any).from || (dateRange as any).start;
+    const rawEnd = (dateRange as any).endDate || (dateRange as any).toDate || (dateRange as any).to || (dateRange as any).end || (dateRange as any).asOfDate || (dateRange as any).date;
+    cleanStartDate = normalizeToDateString(rawStart) || undefined;
+    cleanEndDate = normalizeToDateString(rawEnd) || undefined;
+  }
+
+  // Stable chronological sort
+  rawEntries.sort((a: any, b: any) => {
+    const da = normalizeToDateString(a.date) || a.date || '';
+    const db = normalizeToDateString(b.date) || b.date || '';
+    if (da !== db) return da.localeCompare(db);
+    const ca = a.createdAt || a.id || '';
+    const cb = b.createdAt || b.id || '';
+    return ca.localeCompare(cb);
+  });
+
+  const isCreditNormal = account?.normalBalance === 'CREDIT';
+  let openingBalance = 0;
+  let periodDebit = 0;
+  let periodCredit = 0;
+
+  // First pass: compute opening balance from entries strictly before cleanStartDate
+  if (cleanStartDate) {
+    for (const entry of rawEntries) {
+      if (!entry.lines || !Array.isArray(entry.lines)) continue;
+      const entryDate = normalizeToDateString(entry.date);
+      if (!entryDate) continue;
+
+      if (entryDate < cleanStartDate) {
+        for (const line of entry.lines) {
+          if (line.accountCode === accountCode) {
+            const debit = Number(line.debit || 0);
+            const credit = Number(line.credit || 0);
+            openingBalance += isCreditNormal ? (credit - debit) : (debit - credit);
+          }
+        }
+      }
+    }
+  }
+  openingBalance = Math.round(openingBalance * 100) / 100;
 
   const ledgerEntries: LedgerEntry[] = [];
-  let running = 0;
+  let running = openingBalance;
 
-  for (const entry of entries) {
+  // Explicit Opening Balance row when cleanStartDate is supplied
+  if (cleanStartDate) {
+    const isDebit = !isCreditNormal ? openingBalance >= 0 : openingBalance < 0;
+    const absBal = Math.abs(openingBalance);
+    ledgerEntries.push({
+      journalEntryId: `opening_${accountCode}_${cleanStartDate}`,
+      journalId: `opening_${accountCode}_${cleanStartDate}`,
+      date: cleanStartDate,
+      voucherNumber: 'OPENING',
+      voucherType: 'JOURNAL' as VoucherType,
+      narration: `প্রারম্ভিক জের (Opening Balance as of ${cleanStartDate})`,
+      debit: isDebit ? absBal : 0,
+      credit: !isDebit ? absBal : 0,
+      runningBalance: openingBalance,
+      isOpeningBalance: true
+    });
+  }
+
+  // Second pass: process period entries where cleanStartDate <= entryDate <= cleanEndDate
+  for (const entry of rawEntries) {
+    if (!entry.lines || !Array.isArray(entry.lines)) continue;
+    const entryDate = normalizeToDateString(entry.date);
+    if (!entryDate) continue;
+
+    if (cleanStartDate && entryDate < cleanStartDate) {
+      continue;
+    }
+    if (cleanEndDate && entryDate > cleanEndDate) {
+      continue;
+    }
+
     for (const line of entry.lines) {
       if (line.accountCode === accountCode) {
         const debit = Number(line.debit || 0);
         const credit = Number(line.credit || 0);
 
-        if (account?.normalBalance === 'CREDIT') {
+        if (isCreditNormal) {
           running += (credit - debit);
         } else {
           running += (debit - credit);
         }
 
+        periodDebit += debit;
+        periodCredit += credit;
+
         ledgerEntries.push({
           journalEntryId: entry.id,
-          date: entry.date,
-          voucherNumber: entry.voucherNumber,
-          voucherType: entry.voucherType,
-          narration: entry.narration,
+          journalId: entry.id,
+          date: entryDate,
+          voucherNumber: entry.voucherNumber || entry.id,
+          voucherType: entry.voucherType || 'JOURNAL',
+          narration: entry.narration || '',
           debit,
           credit,
           runningBalance: Math.round(running * 100) / 100,
@@ -2379,10 +2488,16 @@ export async function getGeneralLedger(accountCode: string): Promise<{ account?:
     }
   }
 
+  const closingBalance = Math.round(running * 100) / 100;
+
   return {
     account,
     entries: ledgerEntries,
-    netBalance: Math.round(running * 100) / 100
+    netBalance: closingBalance,
+    openingBalance,
+    closingBalance,
+    periodDebit: Math.round(periodDebit * 100) / 100,
+    periodCredit: Math.round(periodCredit * 100) / 100
   };
 }
 

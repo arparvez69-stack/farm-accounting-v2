@@ -17,8 +17,8 @@ export async function runTrialBalanceDateFilteringTests(): Promise<{
   failures: string[];
 }> {
   console.log('\n========================================================');
-  console.log('TRIAL BALANCE DATE FILTERING & NORMALIZATION TESTS');
-  console.log('Verifying start date, end date, ISO timestamps & outside range');
+  console.log('TRIAL BALANCE AS-OF DATE LOGIC REGRESSION TESTS');
+  console.log('Verifying AS-OF semantics, startDate ignored, endDate cutoff, and balance');
   console.log('========================================================');
 
   const results: TestResult[] = [];
@@ -37,145 +37,153 @@ export async function runTrialBalanceDateFilteringTests(): Promise<{
   await db.journalEntries.clear();
   await initDefaultAccounts();
 
-  // Test entries
+  // Test dataset with transactions before startDate, within month, on endDate (with ISO timestamps), and after endDate
   const testEntries: JournalEntry[] = [
-    // 1. Entry on start date (plain YYYY-MM-DD)
+    // --- 1. Old historical transactions well before startDate (2025 and Feb 2026) ---
     {
-      id: 'tb_test_start_plain',
-      voucherNumber: 'JV-TB-001',
+      id: 'tb_test_hist_2025',
+      voucherNumber: 'JV-TB-HIST-01',
       voucherType: 'JOURNAL',
-      date: '2026-03-01',
-      narration: 'Entry on start date (plain YYYY-MM-DD)',
+      date: '2025-12-15',
+      narration: 'Prior year opening transaction',
       lines: [
-        { accountCode: '1010', accountName: 'নগদ টাকা', debit: 1000, credit: 0 },
-        { accountCode: '4010', accountName: 'পণ্য বিক্রয় আয়', debit: 0, credit: 1000 }
+        { accountCode: '1010', accountName: 'নগদ টাকা', debit: 5000, credit: 0 },
+        { accountCode: '3010', accountName: 'মালিকের মূলধন', debit: 0, credit: 5000 }
       ],
-      createdAt: '2026-03-01T00:00:00.000Z'
+      createdAt: '2025-12-15T10:00:00.000Z'
     },
-    // 2. Entry on start date (ISO timestamp)
-    {
-      id: 'tb_test_start_iso',
-      voucherNumber: 'JV-TB-002',
-      voucherType: 'JOURNAL',
-      date: '2026-03-01T09:15:30.000Z',
-      narration: 'Entry on start date with ISO timestamp',
-      lines: [
-        { accountCode: '1010', accountName: 'নগদ টাকা', debit: 500, credit: 0 },
-        { accountCode: '4010', accountName: 'পণ্য বিক্রয় আয়', debit: 0, credit: 500 }
-      ],
-      createdAt: '2026-03-01T09:15:30.000Z'
-    },
-    // 3. Entry inside range (mid-month)
-    {
-      id: 'tb_test_mid',
-      voucherNumber: 'JV-TB-003',
-      voucherType: 'JOURNAL',
-      date: '2026-03-15',
-      narration: 'Entry inside range',
-      lines: [
-        { accountCode: '1010', accountName: 'নগদ টাকা', debit: 2000, credit: 0 },
-        { accountCode: '4010', accountName: 'পণ্য বিক্রয় আয়', debit: 0, credit: 2000 }
-      ],
-      createdAt: '2026-03-15T12:00:00.000Z'
-    },
-    // 4. Entry on end date (plain YYYY-MM-DD)
-    {
-      id: 'tb_test_end_plain',
-      voucherNumber: 'JV-TB-004',
-      voucherType: 'JOURNAL',
-      date: '2026-03-31',
-      narration: 'Entry on end date (plain YYYY-MM-DD)',
-      lines: [
-        { accountCode: '1010', accountName: 'নগদ টাকা', debit: 3000, credit: 0 },
-        { accountCode: '4010', accountName: 'পণ্য বিক্রয় আয়', debit: 0, credit: 3000 }
-      ],
-      createdAt: '2026-03-31T00:00:00.000Z'
-    },
-    // 5. Entry on end date (ISO timestamp end of day UTC)
-    {
-      id: 'tb_test_end_iso_eod',
-      voucherNumber: 'JV-TB-005',
-      voucherType: 'JOURNAL',
-      date: '2026-03-31T23:59:59.999Z',
-      narration: 'Entry on end date with 23:59:59 timestamp',
-      lines: [
-        { accountCode: '1010', accountName: 'নগদ টাকা', debit: 4000, credit: 0 },
-        { accountCode: '4010', accountName: 'পণ্য বিক্রয় আয়', debit: 0, credit: 4000 }
-      ],
-      createdAt: '2026-03-31T23:59:59.999Z'
-    },
-    // 6. Entry on end date (ISO timestamp afternoon)
-    {
-      id: 'tb_test_end_iso_pm',
-      voucherNumber: 'JV-TB-006',
-      voucherType: 'JOURNAL',
-      date: '2026-03-31T14:30:00.000Z',
-      narration: 'Entry on end date with afternoon ISO timestamp',
-      lines: [
-        { accountCode: '1010', accountName: 'নগদ টাকা', debit: 1500, credit: 0 },
-        { accountCode: '4010', accountName: 'পণ্য বিক্রয় আয়', debit: 0, credit: 1500 }
-      ],
-      createdAt: '2026-03-31T14:30:00.000Z'
-    },
-    // 7. Entry on end date (with space-separated time)
-    {
-      id: 'tb_test_end_space_time',
-      voucherNumber: 'JV-TB-007',
-      voucherType: 'JOURNAL',
-      date: '2026-03-31 18:20:00',
-      narration: 'Entry on end date with space-separated time',
-      lines: [
-        { accountCode: '1010', accountName: 'নগদ টাকা', debit: 700, credit: 0 },
-        { accountCode: '4010', accountName: 'পণ্য বিক্রয় আয়', debit: 0, credit: 700 }
-      ],
-      createdAt: '2026-03-31T18:20:00.000Z'
-    },
-    // 8. Entry outside range: before start date (plain YYYY-MM-DD)
     {
       id: 'tb_test_before_plain',
-      voucherNumber: 'JV-TB-008',
+      voucherNumber: 'JV-TB-FEB-01',
       voucherType: 'JOURNAL',
       date: '2026-02-28',
-      narration: 'Entry before start date (2026-02-28)',
+      narration: 'February transaction before startDate',
       lines: [
         { accountCode: '1010', accountName: 'নগদ টাকা', debit: 8000, credit: 0 },
         { accountCode: '4010', accountName: 'পণ্য বিক্রয় আয়', debit: 0, credit: 8000 }
       ],
       createdAt: '2026-02-28T10:00:00.000Z'
     },
-    // 9. Entry outside range: before start date (ISO timestamp on day before)
     {
       id: 'tb_test_before_iso',
-      voucherNumber: 'JV-TB-009',
+      voucherNumber: 'JV-TB-FEB-02',
       voucherType: 'JOURNAL',
       date: '2026-02-28T23:59:59.999Z',
-      narration: 'Entry before start date with end of day timestamp',
+      narration: 'February transaction with end-of-day timestamp',
       lines: [
-        { accountCode: '1010', accountName: 'নগদ টাকা', debit: 9000, credit: 0 },
+        { accountCode: '1030', accountName: 'ব্যাংক হিসাব', debit: 9000, credit: 0 },
         { accountCode: '4010', accountName: 'পণ্য বিক্রয় আয়', debit: 0, credit: 9000 }
       ],
       createdAt: '2026-02-28T23:59:59.999Z'
     },
-    // 10. Entry outside range: after end date (plain YYYY-MM-DD)
+
+    // --- 2. Transactions during the requested period (March 2026) ---
+    {
+      id: 'tb_test_start_plain',
+      voucherNumber: 'JV-TB-MAR-01',
+      voucherType: 'JOURNAL',
+      date: '2026-03-01',
+      narration: 'Transaction on startDate (plain date)',
+      lines: [
+        { accountCode: '1010', accountName: 'নগদ টাকা', debit: 1000, credit: 0 },
+        { accountCode: '4010', accountName: 'পণ্য বিক্রয় আয়', debit: 0, credit: 1000 }
+      ],
+      createdAt: '2026-03-01T00:00:00.000Z'
+    },
+    {
+      id: 'tb_test_start_iso',
+      voucherNumber: 'JV-TB-MAR-02',
+      voucherType: 'JOURNAL',
+      date: '2026-03-01T09:15:30.000Z',
+      narration: 'Transaction on startDate with ISO timestamp',
+      lines: [
+        { accountCode: '1010', accountName: 'নগদ টাকা', debit: 500, credit: 0 },
+        { accountCode: '4010', accountName: 'পণ্য বিক্রয় আয়', debit: 0, credit: 500 }
+      ],
+      createdAt: '2026-03-01T09:15:30.000Z'
+    },
+    {
+      id: 'tb_test_mid',
+      voucherNumber: 'JV-TB-MAR-03',
+      voucherType: 'JOURNAL',
+      date: '2026-03-15',
+      narration: 'Mid-month transaction',
+      lines: [
+        { accountCode: '1010', accountName: 'নগদ টাকা', debit: 2000, credit: 0 },
+        { accountCode: '4010', accountName: 'পণ্য বিক্রয় আয়', debit: 0, credit: 2000 }
+      ],
+      createdAt: '2026-03-15T12:00:00.000Z'
+    },
+
+    // --- 3. Transactions on endDate (2026-03-31) including various timestamps ---
+    {
+      id: 'tb_test_end_plain',
+      voucherNumber: 'JV-TB-MAR-04',
+      voucherType: 'JOURNAL',
+      date: '2026-03-31',
+      narration: 'Transaction on endDate (plain date)',
+      lines: [
+        { accountCode: '1010', accountName: 'নগদ টাকা', debit: 3000, credit: 0 },
+        { accountCode: '4010', accountName: 'পণ্য বিক্রয় আয়', debit: 0, credit: 3000 }
+      ],
+      createdAt: '2026-03-31T00:00:00.000Z'
+    },
+    {
+      id: 'tb_test_end_iso_eod',
+      voucherNumber: 'JV-TB-MAR-05',
+      voucherType: 'JOURNAL',
+      date: '2026-03-31T23:59:59.999Z',
+      narration: 'Transaction on endDate with 23:59:59.999Z timestamp',
+      lines: [
+        { accountCode: '1010', accountName: 'নগদ টাকা', debit: 4000, credit: 0 },
+        { accountCode: '4010', accountName: 'পণ্য বিক্রয় আয়', debit: 0, credit: 4000 }
+      ],
+      createdAt: '2026-03-31T23:59:59.999Z'
+    },
+    {
+      id: 'tb_test_end_iso_pm',
+      voucherNumber: 'JV-TB-MAR-06',
+      voucherType: 'JOURNAL',
+      date: '2026-03-31T14:30:00.000Z',
+      narration: 'Transaction on endDate with afternoon ISO timestamp',
+      lines: [
+        { accountCode: '1010', accountName: 'নগদ টাকা', debit: 1500, credit: 0 },
+        { accountCode: '4010', accountName: 'পণ্য বিক্রয় আয়', debit: 0, credit: 1500 }
+      ],
+      createdAt: '2026-03-31T14:30:00.000Z'
+    },
+    {
+      id: 'tb_test_end_space_time',
+      voucherNumber: 'JV-TB-MAR-07',
+      voucherType: 'JOURNAL',
+      date: '2026-03-31 18:20:00',
+      narration: 'Transaction on endDate with space-separated time',
+      lines: [
+        { accountCode: '1010', accountName: 'নগদ টাকা', debit: 700, credit: 0 },
+        { accountCode: '4010', accountName: 'পণ্য বিক্রয় আয়', debit: 0, credit: 700 }
+      ],
+      createdAt: '2026-03-31T18:20:00.000Z'
+    },
+
+    // --- 4. Future transactions after endDate (April 2026) ---
     {
       id: 'tb_test_after_plain',
-      voucherNumber: 'JV-TB-010',
+      voucherNumber: 'JV-TB-APR-01',
       voucherType: 'JOURNAL',
       date: '2026-04-01',
-      narration: 'Entry after end date (2026-04-01)',
+      narration: 'Transaction after endDate (plain date)',
       lines: [
         { accountCode: '1010', accountName: 'নগদ টাকা', debit: 10000, credit: 0 },
         { accountCode: '4010', accountName: 'পণ্য বিক্রয় আয়', debit: 0, credit: 10000 }
       ],
       createdAt: '2026-04-01T08:00:00.000Z'
     },
-    // 11. Entry outside range: after end date (ISO timestamp early morning)
     {
       id: 'tb_test_after_iso',
-      voucherNumber: 'JV-TB-011',
+      voucherNumber: 'JV-TB-APR-02',
       voucherType: 'JOURNAL',
       date: '2026-04-01T00:00:01.000Z',
-      narration: 'Entry after end date with 00:00:01 timestamp',
+      narration: 'Transaction after endDate with ISO timestamp',
       lines: [
         { accountCode: '1010', accountName: 'নগদ টাকা', debit: 11000, credit: 0 },
         { accountCode: '4010', accountName: 'পণ্য বিক্রয় আয়', debit: 0, credit: 11000 }
@@ -186,148 +194,115 @@ export async function runTrialBalanceDateFilteringTests(): Promise<{
 
   await db.journalEntries.bulkAdd(testEntries);
 
-  // --- SECTION 1: Full Range Filtering (2026-03-01 to 2026-03-31) ---
-  console.log('\n--- Section 1: Full Monthly Range [2026-03-01, 2026-03-31] ---');
-  const tbMonth = await generateTrialBalance({
+  // Historical prior to startDate (2026-03-01):
+  // 5000 (2025) + 8000 (Feb 28) + 9000 (Feb 28 ISO) = 22,000
+  const expectedPreMarchTotal = 5000 + 8000 + 9000; // 22,000
+
+  // March entries (through 2026-03-31):
+  // 1000 + 500 + 2000 + 3000 + 4000 + 1500 + 700 = 12,700
+  const expectedMarchTotal = 1000 + 500 + 2000 + 3000 + 4000 + 1500 + 700; // 12,700
+
+  // Cumulative through 2026-03-31 (AS-OF):
+  const expectedAsOfMarch31Total = expectedPreMarchTotal + expectedMarchTotal; // 34,700
+
+  // After endDate (April):
+  // 10000 + 11000 = 21,000
+  const expectedPostAprilTotal = 10000 + 11000; // 21,000
+
+  // --- PROOF 1: Old transactions before startDate are INCLUDED ---
+  console.log('\n--- PROOF 1: Old transactions before startDate are INCLUDED ---');
+  // Pass BOTH startDate and endDate. startDate MUST BE IGNORED.
+  const tbWithBothDates = await generateTrialBalance({
     startDate: '2026-03-01',
     endDate: '2026-03-31'
   });
 
-  const expectedMonthTotal = 1000 + 500 + 2000 + 3000 + 4000 + 1500 + 700; // 12,700
   assert(
-    tbMonth.totalDebit === expectedMonthTotal,
-    'Trial balance total debit includes start date, end date, and timestamps on end date',
-    `Expected ${expectedMonthTotal}, got ${tbMonth.totalDebit}`
-  );
-  assert(
-    tbMonth.totalCredit === expectedMonthTotal,
-    'Trial balance total credit matches debit (balanced)',
-    `Expected ${expectedMonthTotal}, got ${tbMonth.totalCredit}`
-  );
-  assert(tbMonth.isBalanced === true, 'Trial balance isBalanced flag is true');
-  assert(tbMonth.difference === 0, 'Trial balance difference is 0');
-
-  const cashRow = tbMonth.rows.find((r) => r.code === '1010');
-  assert(
-    cashRow !== undefined && cashRow.debit === expectedMonthTotal,
-    'Account 1010 debit reflects all entries within [2026-03-01, 2026-03-31]',
-    `Expected ${expectedMonthTotal}, got ${cashRow?.debit}`
+    tbWithBothDates.totalDebit === expectedAsOfMarch31Total,
+    'Trial Balance includes all old transactions prior to startDate (2025 and Feb 2026) when both startDate and endDate are provided',
+    `Expected ${expectedAsOfMarch31Total}, got ${tbWithBothDates.totalDebit}`
   );
 
-  const salesRow = tbMonth.rows.find((r) => r.code === '4010');
+  const capitalRow = tbWithBothDates.rows.find((r) => r.code === '3010');
   assert(
-    salesRow !== undefined && salesRow.credit === expectedMonthTotal,
-    'Account 4010 credit reflects all entries within [2026-03-01, 2026-03-31]',
-    `Expected ${expectedMonthTotal}, got ${salesRow?.credit}`
+    capitalRow !== undefined && capitalRow.credit === 5000,
+    'Historical capital transaction from 2025 is preserved in Trial Balance despite startDate: 2026-03-01',
+    `Expected 5000 credit, got ${capitalRow?.credit}`
   );
 
-  // --- SECTION 2: Focused Start Date Inclusivity ---
-  console.log('\n--- Section 2: Focused Start Date Inclusivity [2026-03-01, 2026-03-01] ---');
-  const tbStartOnly = await generateTrialBalance({
-    startDate: '2026-03-01',
-    endDate: '2026-03-01'
-  });
-  const expectedStartTotal = 1000 + 500; // 1,500
+  const bankRow = tbWithBothDates.rows.find((r) => r.code === '1030');
   assert(
-    tbStartOnly.totalDebit === expectedStartTotal,
-    'Start date filtering includes both plain date and ISO timestamp on start date',
-    `Expected ${expectedStartTotal}, got ${tbStartOnly.totalDebit}`
-  );
-  assert(
-    tbStartOnly.totalCredit === expectedStartTotal,
-    'Start date filtering credit matches debit',
-    `Expected ${expectedStartTotal}, got ${tbStartOnly.totalCredit}`
+    bankRow !== undefined && bankRow.debit === 9000,
+    'February bank transaction is preserved in Trial Balance despite startDate: 2026-03-01',
+    `Expected 9000 debit, got ${bankRow?.debit}`
   );
 
-  // --- SECTION 3: Focused End Date & Timestamp Inclusivity ---
-  console.log('\n--- Section 3: Focused End Date & Timestamp Inclusivity [2026-03-31, 2026-03-31] ---');
-  const tbEndOnly = await generateTrialBalance({
-    startDate: '2026-03-31',
+  // Verify startDate is completely ignored: passing { endDate: '2026-03-31' } produces identical result
+  const tbEndDateOnly = await generateTrialBalance({
     endDate: '2026-03-31'
   });
-  // Entries 4, 5, 6, 7: 3000 (plain) + 4000 (23:59:59.999Z) + 1500 (14:30:00Z) + 700 (18:20:00 space) = 9,200
-  const expectedEndTotal = 3000 + 4000 + 1500 + 700; // 9,200
   assert(
-    tbEndOnly.totalDebit === expectedEndTotal,
-    'End date filtering includes plain date, afternoon ISO timestamp, 23:59:59 timestamp, and space-separated time',
-    `Expected ${expectedEndTotal}, got ${tbEndOnly.totalDebit}`
-  );
-  assert(
-    tbEndOnly.totalCredit === expectedEndTotal,
-    'End date filtering credit is strictly balanced',
-    `Expected ${expectedEndTotal}, got ${tbEndOnly.totalCredit}`
+    tbWithBothDates.totalDebit === tbEndDateOnly.totalDebit &&
+    tbWithBothDates.totalCredit === tbEndDateOnly.totalCredit &&
+    tbWithBothDates.rows.length === tbEndDateOnly.rows.length,
+    'startDate parameter is completely ignored: result with { startDate, endDate } is identical to { endDate }',
+    `Both: ${tbWithBothDates.totalDebit}, EndOnly: ${tbEndDateOnly.totalDebit}`
   );
 
-  // --- SECTION 4: Entries Outside the Range are Excluded ---
-  console.log('\n--- Section 4: Entries Outside Range Excluded [2026-03-02, 2026-03-30] ---');
-  const tbMidOnly = await generateTrialBalance({
-    startDate: '2026-03-02',
-    endDate: '2026-03-30'
-  });
-  // Only entry 3 (2026-03-15) = 2,000 should be present
-  const expectedMidTotal = 2000;
+  // --- PROOF 2: Transactions after endDate are EXCLUDED ---
+  console.log('\n--- PROOF 2: Transactions after endDate are EXCLUDED ---');
   assert(
-    tbMidOnly.totalDebit === expectedMidTotal,
-    'Entries on start date boundary (March 1), end date boundary (March 31), and outside (Feb/Apr) are excluded',
-    `Expected ${expectedMidTotal}, got ${tbMidOnly.totalDebit}`
-  );
-  assert(
-    tbMidOnly.totalCredit === expectedMidTotal,
-    'Mid-range credit matches debit',
-    `Expected ${expectedMidTotal}, got ${tbMidOnly.totalCredit}`
+    tbWithBothDates.totalDebit < expectedAsOfMarch31Total + expectedPostAprilTotal,
+    'Future April transactions (after endDate 2026-03-31) are strictly excluded from Trial Balance',
+    `Total: ${tbWithBothDates.totalDebit}, should not include April (${expectedPostAprilTotal})`
   );
 
-  // --- SECTION 5: Open-Ended Filtering (endDate only, as used by Period Closing) ---
-  console.log('\n--- Section 5: Open-Ended Closing Filter (endDate only: 2026-03-31) ---');
-  const tbClosing = await generateTrialBalance({
-    endDate: '2026-03-31'
-  });
-  // Entries 1 through 7 (March) + Entries 8 & 9 (February: 8000 + 9000 = 17000)
-  // Total: 12,700 + 17,000 = 29,700. Excludes April (10 & 11: 10000 + 11000 = 21000)
-  const expectedClosingTotal = 12700 + 17000; // 29,700
+  // Verify all timestamps on the end date itself are included
+  // Entries on 2026-03-31: 3000 + 4000 + 1500 + 700 = 9200
+  // If April 1 is excluded and all March 31 timestamps are included, total must be exact
   assert(
-    tbClosing.totalDebit === expectedClosingTotal,
-    'Closing filter (endDate only) preserves historical entries and includes all end date timestamps, excluding future entries',
-    `Expected ${expectedClosingTotal}, got ${tbClosing.totalDebit}`
-  );
-  assert(
-    tbClosing.totalCredit === expectedClosingTotal,
-    'Closing filter credit matches debit',
-    `Expected ${expectedClosingTotal}, got ${tbClosing.totalCredit}`
+    tbWithBothDates.totalDebit === 34700,
+    'All end date transactions (including ISO 23:59:59.999Z, afternoon ISO, space-delimited time) are included up to cutoff',
+    `Expected 34700, got ${tbWithBothDates.totalDebit}`
   );
 
-  // --- SECTION 6: Open-Ended Filtering (startDate only) ---
-  console.log('\n--- Section 6: Open-Ended Starting Filter (startDate only: 2026-03-31) ---');
-  const tbFromEnd = await generateTrialBalance({
-    startDate: '2026-03-31'
-  });
-  // Entries 4, 5, 6, 7 (March 31 = 9200) + Entries 10 & 11 (April = 21000) = 30,200
-  const expectedFromEndTotal = 9200 + 21000; // 30,200
+  // --- PROOF 3: Trial Balance remains balanced ---
+  console.log('\n--- PROOF 3: Trial Balance remains balanced ---');
   assert(
-    tbFromEnd.totalDebit === expectedFromEndTotal,
-    'startDate-only filter includes entries on start date (with all timestamps) and all subsequent entries',
-    `Expected ${expectedFromEndTotal}, got ${tbFromEnd.totalDebit}`
+    tbWithBothDates.isBalanced === true,
+    'Trial Balance isBalanced is true',
+    `isBalanced: ${tbWithBothDates.isBalanced}`
+  );
+  assert(
+    tbWithBothDates.difference === 0,
+    'Trial Balance discrepancy difference is 0',
+    `difference: ${tbWithBothDates.difference}`
+  );
+  assert(
+    tbWithBothDates.totalDebit === tbWithBothDates.totalCredit,
+    'totalDebit equals totalCredit exactly',
+    `Debit: ${tbWithBothDates.totalDebit}, Credit: ${tbWithBothDates.totalCredit}`
   );
 
-  // --- SECTION 7: ISO Timestamps passed in DateRangeFilter itself ---
-  console.log('\n--- Section 7: ISO Timestamps in Filter Range Object ---');
-  const tbIsoFilter = await generateTrialBalance({
+  // --- ADDITIONAL EDGE CASES: ISO timestamps in endDate, and Unfiltered All-Time ---
+  console.log('\n--- ADDITIONAL VERIFICATIONS ---');
+  // 1. ISO timestamp passed as endDate
+  const tbIsoEndDate = await generateTrialBalance({
     startDate: '2026-03-01T00:00:00.000Z',
     endDate: '2026-03-31T23:59:59.999Z'
   });
   assert(
-    tbIsoFilter.totalDebit === expectedMonthTotal,
-    'ISO timestamps in dateRange.startDate and dateRange.endDate are normalized and behave identically',
-    `Expected ${expectedMonthTotal}, got ${tbIsoFilter.totalDebit}`
+    tbIsoEndDate.totalDebit === expectedAsOfMarch31Total,
+    'ISO timestamp in endDate is normalized to YYYY-MM-DD cutoff correctly',
+    `Expected ${expectedAsOfMarch31Total}, got ${tbIsoEndDate.totalDebit}`
   );
 
-  // --- SECTION 8: Unfiltered Trial Balance ---
-  console.log('\n--- Section 8: Unfiltered Trial Balance ---');
+  // 2. Unfiltered call includes everything from inception through present
   const tbAll = await generateTrialBalance();
-  const expectedAllTotal = 12700 + 17000 + 21000; // 50,700
+  const expectedAllTotal = expectedAsOfMarch31Total + expectedPostAprilTotal; // 55,700
   assert(
-    tbAll.totalDebit === expectedAllTotal,
-    'Unfiltered trial balance includes all journal entries in targetDb',
+    tbAll.totalDebit === expectedAllTotal && tbAll.isBalanced,
+    'Unfiltered generateTrialBalance includes all transactions and remains balanced',
     `Expected ${expectedAllTotal}, got ${tbAll.totalDebit}`
   );
 
