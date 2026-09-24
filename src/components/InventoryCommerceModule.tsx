@@ -22,14 +22,22 @@ import {
   Printer,
   Check,
   MessageCircle,
-  Copy
+  Copy,
+  RotateCcw
 } from 'lucide-react';
 import { jsPDF } from 'jspdf';
 import QRCode from 'qrcode';
 import { db } from '../db/indexedDb';
-import { executePurchaseTransaction, executeSaleTransaction, executePaymentTransaction, executeInventoryItemCreationTransaction } from '../services/transactionService';
+import {
+  executePurchaseTransaction,
+  executeSaleTransaction,
+  executePaymentTransaction,
+  executeInventoryItemCreationTransaction,
+  executeSalesReturnTransaction,
+  executePurchaseReturnTransaction
+} from '../services/transactionService';
 import { generateTransactionNumber, generateUniqueId, safeInsert } from '../utils/idGenerator';
-import { InventoryItem, Party, PaymentRecord, Purchase, Sale, UserRole, CashBankAccount } from '../types';
+import { InventoryItem, Party, PaymentRecord, Purchase, Sale, UserRole, CashBankAccount, SalesReturn, PurchaseReturn, ReturnRefundMethod } from '../types';
 import { HIGH_AMOUNT_CONFIRMATION_THRESHOLD } from '../constants/validation';
 import { notifyUndoableAction } from '../services/undoService';
 import { triggerSuccessAnimation } from './ui/SuccessAnimation';
@@ -545,6 +553,8 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
   const [sales, setSales] = useState<Sale[]>([]);
   const [purchases, setPurchases] = useState<Purchase[]>([]);
   const [payments, setPayments] = useState<PaymentRecord[]>([]);
+  const [salesReturns, setSalesReturns] = useState<SalesReturn[]>([]);
+  const [purchaseReturns, setPurchaseReturns] = useState<PurchaseReturn[]>([]);
   const [selectedParty, setSelectedParty] = useState<Party | null>(null);
 
   const activeParty = selectedParty ? (parties.find((p) => p.id === selectedParty.id) || selectedParty) : null;
@@ -564,6 +574,7 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
         const paid = Number(s.paidAmount || 0);
         const due = Number(s.dueAmount !== undefined ? s.dueAmount : Math.max(0, total - paid));
         const invPayments = payments.filter((pmt) => pmt.parentId === s.id);
+        const invReturns = salesReturns.filter((ret) => ret.saleId === s.id);
         return {
           id: s.id,
           type: 'SALE' as const,
@@ -577,7 +588,8 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
           status: due <= 0 || s.status === 'PAID' ? 'PAID' : paid > 0 ? 'PARTIAL' : 'DUE',
           paymentMethod: s.paymentMethod,
           items: s.items || [],
-          payments: invPayments
+          payments: invPayments,
+          returns: invReturns
         };
       });
 
@@ -592,6 +604,7 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
         const paid = Number(p.paidAmount || 0);
         const due = Number(p.dueAmount !== undefined ? p.dueAmount : Math.max(0, total - paid));
         const invPayments = payments.filter((pmt) => pmt.parentId === p.id);
+        const invReturns = purchaseReturns.filter((ret) => ret.purchaseId === p.id);
         return {
           id: p.id,
           type: 'PURCHASE' as const,
@@ -605,14 +618,15 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
           status: due <= 0 || p.status === 'PAID' ? 'PAID' : paid > 0 ? 'PARTIAL' : 'DUE',
           paymentMethod: p.paymentMethod,
           items: p.items || [],
-          payments: invPayments
+          payments: invPayments,
+          returns: invReturns
         };
       });
 
     const combined = [...matchedSales, ...matchedPurchases];
     // Chronological order by date (ascending)
     return combined.sort((a, b) => (a.date > b.date ? 1 : a.date < b.date ? -1 : 0));
-  }, [activeParty, sales, purchases, payments]);
+  }, [activeParty, sales, purchases, payments, salesReturns, purchaseReturns]);
 
   const partySummary = React.useMemo(() => {
     if (!activeParty) return { totalInvoiced: 0, totalPaid: 0, totalDue: 0, runningBalance: 0 };
@@ -733,6 +747,34 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
   const [partyPhone, setPartyPhone] = useState('');
   const [partyAddress, setPartyAddress] = useState('');
 
+  // Return Feature States
+  const [returnModal, setReturnModal] = useState<{
+    type: 'SALE' | 'PURCHASE';
+    invoiceId: string;
+    invoiceNumber: string;
+    partyName: string;
+    partyId: string;
+    items: Array<{
+      itemId: string;
+      itemName: string;
+      unit: string;
+      soldOrPurchasedQty: number;
+      previouslyReturnedQty: number;
+      remainingReturnableQty: number;
+      unitPrice: number;
+      currentWarehouseStock: number;
+    }>;
+    selectedItemId: string;
+  } | null>(null);
+  const [returnSelectedItemId, setReturnSelectedItemId] = useState<string>('');
+  const [returnQuantity, setReturnQuantity] = useState<string>('');
+  const [returnReason, setReturnReason] = useState<string>('');
+  const [returnRefundMethod, setReturnRefundMethod] = useState<ReturnRefundMethod>('ADJUST_DUE');
+  const [returnBankAccountId, setReturnBankAccountId] = useState<string>('');
+  const [returnCashBankAccountId, setReturnCashBankAccountId] = useState<string>('');
+  const [returnDate, setReturnDate] = useState<string>(() => new Date().toISOString().split('T')[0]);
+  const [isSubmittingReturn, setIsSubmittingReturn] = useState<boolean>(false);
+
   useEffect(() => {
     loadCommerceData();
   }, [tab]);
@@ -761,6 +803,12 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
 
       const bankList = await db.cashBankAccounts.toArray();
       setCashBankAccounts(bankList);
+
+      const sReturns = db.salesReturns ? await db.salesReturns.orderBy('date').reverse().toArray() : [];
+      setSalesReturns(sReturns);
+
+      const pReturns = db.purchaseReturns ? await db.purchaseReturns.orderBy('date').reverse().toArray() : [];
+      setPurchaseReturns(pReturns);
 
       if (tab === 'sales' || tab === 'parties') {
         const sList = await db.sales.orderBy('date').reverse().toArray();
@@ -1164,6 +1212,240 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
   };
 
   const fmt = (n: number) => `৳${Number(n || 0).toLocaleString('en-IN', { minimumFractionDigits: 0 })}`;
+
+  // Return Tracking Helpers
+  const getItemReturnedQtyForSale = (saleId: string, itemId: string): number => {
+    let returned = 0;
+    for (const sr of salesReturns) {
+      if (sr.saleId === saleId) {
+        for (const it of sr.items || []) {
+          if (it.itemId === itemId) {
+            returned += Number(it.returnedQuantity) || 0;
+          }
+        }
+      }
+    }
+    return Math.round(returned * 1000) / 1000;
+  };
+
+  const getItemReturnedQtyForPurchase = (purchaseId: string, itemId: string): number => {
+    let returned = 0;
+    for (const pr of purchaseReturns) {
+      if (pr.purchaseId === purchaseId) {
+        for (const it of pr.items || []) {
+          if (it.itemId === itemId) {
+            returned += Number(it.returnedQuantity) || 0;
+          }
+        }
+      }
+    }
+    return Math.round(returned * 1000) / 1000;
+  };
+
+  const openReturnModal = (type: 'SALE' | 'PURCHASE', record: Sale | Purchase, defaultItemId?: string) => {
+    const isSale = type === 'SALE';
+    const saleRecord = isSale ? (record as Sale) : null;
+
+    const mappedItems = (record.items || []).map((item) => {
+      const invItem = items.find((it) => it.id === item.itemId);
+      const unit = invItem?.unit || 'কেজি';
+      const soldOrPurchasedQty = Number(item.quantity) || 0;
+      const previouslyReturnedQty = isSale
+        ? getItemReturnedQtyForSale(record.id, item.itemId)
+        : getItemReturnedQtyForPurchase(record.id, item.itemId);
+      const remainingReturnableQty = Math.max(0, Math.round((soldOrPurchasedQty - previouslyReturnedQty) * 1000) / 1000);
+
+      let unitPrice = 0;
+      if (isSale) {
+        if (item.lineTotal && item.quantity > 0) {
+          const effectiveDiscountRatio =
+            saleRecord?.subtotal && saleRecord.subtotal > 0 && saleRecord.discount
+              ? 1 - saleRecord.discount / saleRecord.subtotal
+              : 1;
+          unitPrice = Math.round((item.lineTotal / item.quantity) * effectiveDiscountRatio * 100) / 100;
+        } else {
+          unitPrice = item.unitPrice || 0;
+        }
+      } else {
+        if (item.lineTotal && item.quantity > 0) {
+          unitPrice = Math.round((item.lineTotal / item.quantity) * 100) / 100;
+        } else {
+          unitPrice = item.unitPrice || 0;
+        }
+      }
+
+      return {
+        itemId: item.itemId,
+        itemName: item.itemName || invItem?.nameBn || 'পণ্য',
+        unit,
+        soldOrPurchasedQty,
+        previouslyReturnedQty,
+        remainingReturnableQty,
+        unitPrice,
+        currentWarehouseStock: invItem ? Number(invItem.currentStock || 0) : 0
+      };
+    });
+
+    let selected = mappedItems.find((it) => it.itemId === defaultItemId && it.remainingReturnableQty > 0);
+    if (!selected) {
+      selected = mappedItems.find((it) => it.remainingReturnableQty > 0) || mappedItems[0];
+    }
+
+    const selectedId = selected?.itemId || (mappedItems[0]?.itemId ?? '');
+    const initialQty = selected && selected.remainingReturnableQty > 0 ? selected.remainingReturnableQty.toString() : '0';
+
+    const due = Number(
+      record.dueAmount !== undefined
+        ? record.dueAmount
+        : Math.max(0, (record.grandTotal || record.totalAmount || 0) - (record.paidAmount || 0))
+    );
+    const defaultRefundMethod: ReturnRefundMethod = due > 0 ? 'ADJUST_DUE' : 'CASH';
+
+    const defaultBankAcc =
+      cashBankAccounts.find((b) => b.accountType === 'BANK' || b.accountType === 'MOBILE_BANKING')?.id || '';
+    const defaultCashAcc = cashBankAccounts.find((b) => b.accountType === 'CASH')?.id || '';
+
+    setReturnModal({
+      type,
+      invoiceId: record.id,
+      invoiceNumber: record.displayNumber || record.invoiceNumber,
+      partyName: 'customerName' in record ? record.customerName : record.supplierName,
+      partyId: 'customerId' in record ? record.customerId : record.supplierId,
+      items: mappedItems,
+      selectedItemId: selectedId
+    });
+
+    setReturnSelectedItemId(selectedId);
+    setReturnQuantity(initialQty);
+    setReturnReason('');
+    setReturnRefundMethod(defaultRefundMethod);
+    setReturnBankAccountId(defaultBankAcc);
+    setReturnCashBankAccountId(defaultCashAcc);
+    setReturnDate(new Date().toISOString().split('T')[0]);
+  };
+
+  const handleSwitchReturnItem = (itemId: string) => {
+    if (!returnModal) return;
+    const targetItem = returnModal.items.find((it) => it.itemId === itemId);
+    setReturnSelectedItemId(itemId);
+    if (targetItem) {
+      setReturnQuantity(targetItem.remainingReturnableQty > 0 ? targetItem.remainingReturnableQty.toString() : '0');
+    }
+  };
+
+  const handleExecuteReturn = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!returnModal || isSubmittingReturn) return;
+
+    const targetItem = returnModal.items.find((it) => it.itemId === returnSelectedItemId);
+    if (!targetItem) {
+      setMsg({ type: 'error', text: 'ফেরতের পণ্য নির্বাচন সঠিক নয়।' });
+      return;
+    }
+
+    const returnQty = parseFloat(returnQuantity);
+    if (isNaN(returnQty) || returnQty <= 0) {
+      setMsg({ type: 'error', text: 'সঠিক ফেরতের পরিমাণ প্রদান করুন (০ এর বেশি হতে হবে)।' });
+      return;
+    }
+
+    if (returnQty > targetItem.remainingReturnableQty) {
+      setMsg({
+        type: 'error',
+        text: `ফেরতের পরিমাণ অবশিষ্ট ফেরতযোগ্য পরিমাণের (${targetItem.remainingReturnableQty} ${targetItem.unit}) চেয়ে বেশি হতে পারে না।`
+      });
+      return;
+    }
+
+    if (returnModal.type === 'PURCHASE') {
+      const invItem = items.find((it) => it.id === targetItem.itemId);
+      if (invItem && invItem.currentStock < returnQty) {
+        setMsg({
+          type: 'error',
+          text: `গুদামে পর্যাপ্ত মজুদ নেই (অবশিষ্ট মজুদ: ${invItem.currentStock} ${invItem.unit}, ফেরত চাওয়া হয়েছে: ${returnQty} ${targetItem.unit})।`
+        });
+        return;
+      }
+    }
+
+    const todayStr = new Date().toISOString().split('T')[0];
+    const dateStr = returnDate || todayStr;
+    if (dateStr > todayStr) {
+      setMsg({
+        type: 'error',
+        text: `ফেরতের তারিখ ভবিষ্যতের হতে পারে না (${todayStr} বা তার পূর্বের তারিখ নির্বাচন করুন)।`
+      });
+      return;
+    }
+
+    if (returnRefundMethod === 'BANK' && !returnBankAccountId) {
+      const hasBank = cashBankAccounts.some((b) => b.accountType === 'BANK' || b.accountType === 'MOBILE_BANKING');
+      if (hasBank) {
+        setMsg({ type: 'error', text: 'ব্যাংক রিফান্ডের জন্য একটি ব্যাংক হিসাব নির্বাচন করুন।' });
+        return;
+      }
+    }
+
+    setIsSubmittingReturn(true);
+    try {
+      if (returnModal.type === 'SALE') {
+        const res = await executeSalesReturnTransaction({
+          saleId: returnModal.invoiceId,
+          itemId: targetItem.itemId,
+          returnedQuantity: returnQty,
+          unitPrice: targetItem.unitPrice,
+          reason: returnReason.trim() || undefined,
+          refundMethod: returnRefundMethod,
+          bankAccountId: returnRefundMethod === 'BANK' ? returnBankAccountId : undefined,
+          cashBankAccountId: returnRefundMethod === 'CASH' ? returnCashBankAccountId : undefined,
+          currentUserId: currentUserId || 'system',
+          date: dateStr
+        });
+
+        setReturnModal(null);
+        setMsg({
+          type: 'success',
+          text: `বিক্রয় ফেরত ক্রেডিট নোট ${res.salesReturn.displayNumber || res.salesReturn.returnNumber} (${fmt(res.salesReturn.totalRefundAmount)}) সফলভাবে সম্পন্ন ও জাবেদায় পোস্ট হয়েছে!`
+        });
+        triggerSuccessAnimation(
+          'বিক্রয় ফেরত ক্রেডিট নোট সম্পন্ন হয়েছে!',
+          `${res.salesReturn.displayNumber || res.salesReturn.returnNumber} (${fmt(res.salesReturn.totalRefundAmount)})`
+        );
+      } else {
+        const res = await executePurchaseReturnTransaction({
+          purchaseId: returnModal.invoiceId,
+          itemId: targetItem.itemId,
+          returnedQuantity: returnQty,
+          unitPrice: targetItem.unitPrice,
+          reason: returnReason.trim() || undefined,
+          refundMethod: returnRefundMethod,
+          bankAccountId: returnRefundMethod === 'BANK' ? returnBankAccountId : undefined,
+          cashBankAccountId: returnRefundMethod === 'CASH' ? returnCashBankAccountId : undefined,
+          currentUserId: currentUserId || 'system',
+          date: dateStr
+        });
+
+        setReturnModal(null);
+        setMsg({
+          type: 'success',
+          text: `ক্রয় ফেরত ডেবিট নোট ${res.purchaseReturn.displayNumber || res.purchaseReturn.returnNumber} (${fmt(res.purchaseReturn.totalRefundAmount)}) সফলভাবে সম্পন্ন ও মজুদ হ্রাস করা হয়েছে!`
+        });
+        triggerSuccessAnimation(
+          'ক্রয় ফেরত ডেবিট নোট সম্পন্ন হয়েছে!',
+          `${res.purchaseReturn.displayNumber || res.purchaseReturn.returnNumber} (${fmt(res.purchaseReturn.totalRefundAmount)})`
+        );
+      }
+
+      window.dispatchEvent(new CustomEvent('goted_data_changed'));
+      window.dispatchEvent(new CustomEvent('accounting_entry_posted'));
+      await loadCommerceData();
+    } catch (err: any) {
+      console.error(err);
+      setMsg({ type: 'error', text: err.message || 'পণ্য ফেরত সম্পন্ন করতে ত্রুটি হয়েছে।' });
+    } finally {
+      setIsSubmittingReturn(false);
+    }
+  };
 
   const handleDownloadReceiptPdf = async (data: ReceiptData) => {
     setIsExportingPdf(true);
@@ -1971,10 +2253,15 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                 ) : (
                   sales.map((s) => {
                     const sPayments = payments.filter((pmt) => pmt.parentId === s.id);
+                    const sReturns = salesReturns.filter((ret) => ret.saleId === s.id);
                     const total = Number(s.grandTotal || s.totalAmount || 0);
                     const paid = Number(s.paidAmount || 0);
                     const due = Number(s.dueAmount !== undefined ? s.dueAmount : Math.max(0, total - paid));
                     const hasDue = due > 0;
+                    const hasReturnableItems = (s.items || []).some((i) => {
+                      const retQty = getItemReturnedQtyForSale(s.id, i.itemId);
+                      return (Number(i.quantity) || 0) - retQty > 0.0001;
+                    });
 
                     return (
                       <React.Fragment key={s.id}>
@@ -1983,11 +2270,39 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                           <td className="p-3 text-gray-600">{s.date}</td>
                           <td className="p-3 font-semibold text-gray-900">{s.customerName}</td>
                           <td className="p-3">
-                            {s.items.map((i, idx) => (
-                              <div key={idx} className="text-gray-700 text-[13px]">
-                                {i.itemName} ({i.quantity} × {fmt(i.unitPrice || 0)})
-                              </div>
-                            ))}
+                            {s.items.map((i, idx) => {
+                              const returnedQty = getItemReturnedQtyForSale(s.id, i.itemId);
+                              const remainingReturnable = Math.max(0, Math.round(((Number(i.quantity) || 0) - returnedQty) * 1000) / 1000);
+                              return (
+                                <div key={idx} className="flex items-center justify-between gap-2 py-0.5 text-gray-700 text-[13px]">
+                                  <div>
+                                    <span>{i.itemName} ({i.quantity} × {fmt(i.unitPrice || 0)})</span>
+                                    {returnedQty > 0 && (
+                                      <span className="ml-1.5 text-[11px] font-semibold text-amber-800 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200">
+                                        ফেরত: {returnedQty} | অবশিষ্ট: {remainingReturnable}
+                                      </span>
+                                    )}
+                                  </div>
+                                  {role === 'OWNER' && (
+                                    remainingReturnable > 0 ? (
+                                      <button
+                                        type="button"
+                                        onClick={() => openReturnModal('SALE', s, i.itemId)}
+                                        className="px-2 py-0.5 rounded-md bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-300 text-[11px] font-bold transition-all cursor-pointer inline-flex items-center gap-1 shrink-0 shadow-2xs"
+                                        title={`${i.itemName} ফেরত দিন (ক্রেডিট নোট)`}
+                                      >
+                                        <RotateCcw className="w-3 h-3 text-amber-700" />
+                                        <span>ফেরত</span>
+                                      </button>
+                                    ) : (
+                                      <span className="text-[10px] font-semibold text-gray-400 bg-gray-100 px-1.5 py-0.5 rounded shrink-0">
+                                        সম্পূর্ণ ফেরত
+                                      </span>
+                                    )
+                                  )}
+                                </div>
+                              );
+                            })}
                           </td>
                           <td className="p-3 font-mono">
                             <div className="text-amber-800 font-bold">{fmt(total)}</div>
@@ -2024,6 +2339,18 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                                 <Receipt className="w-3.5 h-3.5 text-emerald-700" />
                                 <span>রশিদ দেখুন/শেয়ার করুন</span>
                               </button>
+                              {role === 'OWNER' && hasReturnableItems && (
+                                <button
+                                  type="button"
+                                  id={`btn-return-sale-${s.id}`}
+                                  onClick={() => openReturnModal('SALE', s)}
+                                  className="px-2.5 py-1.5 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 text-xs font-bold shadow-2xs transition-all cursor-pointer inline-flex items-center gap-1 whitespace-nowrap min-h-[36px]"
+                                  title="পণ্য ফেরত ও ক্রেডিট নোট তৈরি করুন"
+                                >
+                                  <RotateCcw className="w-3.5 h-3.5 text-amber-700" />
+                                  <span>ফেরত (Return)</span>
+                                </button>
+                              )}
                               {hasDue && (
                                 <button
                                   type="button"
@@ -2038,6 +2365,53 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                             </div>
                           </td>
                         </tr>
+                        {sReturns.length > 0 && (
+                          <tr className="bg-amber-50/60 border-b border-amber-200">
+                            <td colSpan={8} className="px-4 py-2.5">
+                              <div className="space-y-1.5">
+                                <div className="flex items-center justify-between gap-2 flex-wrap text-xs">
+                                  <div className="flex items-center gap-1.5 font-bold text-amber-900">
+                                    <RotateCcw className="w-3.5 h-3.5 text-amber-700 shrink-0" />
+                                    <span>ফেরতের ইতিহাস (Return History - {sReturns.length}টি ফেরত):</span>
+                                  </div>
+                                  <span className="text-[11px] text-amber-800 font-semibold font-mono">
+                                    মোট সমন্বয়: {fmt(sReturns.reduce((sum, r) => sum + (r.totalRefundAmount || 0), 0))}
+                                  </span>
+                                </div>
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  {sReturns.map((ret) => (
+                                    <div
+                                      key={ret.id}
+                                      className="inline-flex items-center gap-2 bg-white px-3 py-1.5 rounded-lg border border-amber-200 text-xs shadow-2xs text-gray-800 font-mono flex-wrap"
+                                    >
+                                      <span className="font-bold text-amber-900">{ret.displayNumber || ret.returnNumber}</span>
+                                      <span className="text-gray-400">|</span>
+                                      <span className="text-gray-600 font-sans">{ret.date}</span>
+                                      <span className="text-gray-400">|</span>
+                                      <span className="font-bold text-rose-700">{fmt(ret.totalRefundAmount)}</span>
+                                      <span className="px-1.5 py-0.5 rounded text-[10px] font-sans font-semibold bg-amber-100 text-amber-800">
+                                        {ret.refundMethod === 'CASH'
+                                          ? 'নগদ রিফান্ড'
+                                          : ret.refundMethod === 'BANK'
+                                          ? 'ব্যাংক রিফান্ড'
+                                          : 'বাকি সমন্বয়'}
+                                      </span>
+                                      <span className="text-gray-400">|</span>
+                                      <span className="text-gray-700 font-sans text-[11px]">
+                                        {ret.items?.map((it) => `${it.itemName}: ${it.returnedQuantity}`).join(', ')}
+                                      </span>
+                                      {ret.reason && (
+                                        <span className="text-gray-500 font-sans text-[11px] italic">
+                                          ({ret.reason})
+                                        </span>
+                                      )}
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            </td>
+                          </tr>
+                        )}
                         {sPayments.length > 0 && (
                           <tr className="bg-amber-50/40 border-b border-gray-100">
                             <td colSpan={8} className="px-4 py-2">
@@ -2277,10 +2651,15 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                 ) : (
                   purchases.map((p) => {
                     const pPayments = payments.filter((pmt) => pmt.parentId === p.id);
+                    const pReturns = purchaseReturns.filter((ret) => ret.purchaseId === p.id);
                     const total = Number(p.grandTotal || p.totalAmount || 0);
                     const paid = Number(p.paidAmount || 0);
                     const due = Number(p.dueAmount !== undefined ? p.dueAmount : Math.max(0, total - paid));
                     const hasDue = due > 0;
+                    const hasReturnableItems = (p.items || []).some((i) => {
+                      const retQty = getItemReturnedQtyForPurchase(p.id, i.itemId);
+                      return (Number(i.quantity) || 0) - retQty > 0.0001;
+                    });
 
                     return (
                       <React.Fragment key={p.id}>
@@ -2289,11 +2668,39 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                           <td className="p-3 text-gray-600">{p.date}</td>
                           <td className="p-3 font-semibold text-gray-900">{p.supplierName}</td>
                           <td className="p-3">
-                            {p.items.map((i, idx) => (
-                              <div key={idx} className="text-gray-700 text-[13px]">
-                                {i.itemName} ({i.quantity} × {fmt(i.unitPrice || 0)})
-                              </div>
-                            ))}
+                            {p.items.map((i, idx) => {
+                              const returnedQty = getItemReturnedQtyForPurchase(p.id, i.itemId);
+                              const remainingReturnable = Math.max(0, Math.round(((Number(i.quantity) || 0) - returnedQty) * 1000) / 1000);
+                              return (
+                                <div key={idx} className="flex items-center justify-between gap-2 py-0.5 text-gray-700 text-[13px]">
+                                  <div>
+                                    <span>{i.itemName} ({i.quantity} × {fmt(i.unitPrice || 0)})</span>
+                                    {returnedQty > 0 && (
+                                      <span className="ml-1.5 text-[11px] font-semibold text-sky-800 bg-sky-50 px-1.5 py-0.5 rounded border border-sky-200">
+                                        ফেরত: {returnedQty} | অবশিষ্ট: {remainingReturnable}
+                                      </span>
+                                    )}
+                                  </div>
+                                  {role === 'OWNER' && (
+                                    remainingReturnable > 0 ? (
+                                      <button
+                                        type="button"
+                                        onClick={() => openReturnModal('PURCHASE', p, i.itemId)}
+                                        className="px-2 py-0.5 rounded-md bg-sky-50 hover:bg-sky-100 text-sky-800 border border-sky-300 text-[11px] font-bold transition-all cursor-pointer inline-flex items-center gap-1 shrink-0 shadow-2xs"
+                                        title={`${i.itemName} সরবরাহকারীকে ফেরত দিন (ডেবিট নোট)`}
+                                      >
+                                        <RotateCcw className="w-3 h-3 text-sky-700" />
+                                        <span>ফেরত</span>
+                                      </button>
+                                    ) : (
+                                      <span className="text-[10px] font-semibold text-gray-400 bg-gray-100 px-1.5 py-0.5 rounded shrink-0">
+                                        সম্পূর্ণ ফেরত
+                                      </span>
+                                    )
+                                  )}
+                                </div>
+                              );
+                            })}
                           </td>
                           <td className="p-3 text-amber-700 font-medium">{fmt(p.transportCost || 0)}</td>
                           <td className="p-3 font-mono">
@@ -2331,6 +2738,18 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                                 <Receipt className="w-3.5 h-3.5 text-sky-700" />
                                 <span>রশিদ দেখুন/শেয়ার করুন</span>
                               </button>
+                              {role === 'OWNER' && hasReturnableItems && (
+                                <button
+                                  type="button"
+                                  id={`btn-return-purchase-${p.id}`}
+                                  onClick={() => openReturnModal('PURCHASE', p)}
+                                  className="px-2.5 py-1.5 rounded-lg bg-sky-50 hover:bg-sky-100 text-sky-900 border border-sky-300 text-xs font-bold shadow-2xs transition-all cursor-pointer inline-flex items-center gap-1 whitespace-nowrap min-h-[36px]"
+                                  title="সরবরাহকারীকে পণ্য ফেরত ও ডেবিট নোট তৈরি করুন"
+                                >
+                                  <RotateCcw className="w-3.5 h-3.5 text-sky-700" />
+                                  <span>ফেরত (Return)</span>
+                                </button>
+                              )}
                               {hasDue && (
                                 <button
                                   type="button"
@@ -2345,6 +2764,53 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                             </div>
                           </td>
                         </tr>
+                        {pReturns.length > 0 && (
+                          <tr className="bg-sky-50/60 border-b border-sky-200">
+                            <td colSpan={9} className="px-4 py-2.5">
+                              <div className="space-y-1.5">
+                                <div className="flex items-center justify-between gap-2 flex-wrap text-xs">
+                                  <div className="flex items-center gap-1.5 font-bold text-sky-900">
+                                    <RotateCcw className="w-3.5 h-3.5 text-sky-700 shrink-0" />
+                                    <span>ফেরতের ইতিহাস (Return History - {pReturns.length}টি ডেবিট নোট):</span>
+                                  </div>
+                                  <span className="text-[11px] text-sky-800 font-semibold font-mono">
+                                    মোট সমন্বয়: {fmt(pReturns.reduce((sum, r) => sum + (r.totalRefundAmount || 0), 0))}
+                                  </span>
+                                </div>
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  {pReturns.map((ret) => (
+                                    <div
+                                      key={ret.id}
+                                      className="inline-flex items-center gap-2 bg-white px-3 py-1.5 rounded-lg border border-sky-200 text-xs shadow-2xs text-gray-800 font-mono flex-wrap"
+                                    >
+                                      <span className="font-bold text-sky-900">{ret.displayNumber || ret.returnNumber}</span>
+                                      <span className="text-gray-400">|</span>
+                                      <span className="text-gray-600 font-sans">{ret.date}</span>
+                                      <span className="text-gray-400">|</span>
+                                      <span className="font-bold text-emerald-700">{fmt(ret.totalRefundAmount)}</span>
+                                      <span className="px-1.5 py-0.5 rounded text-[10px] font-sans font-semibold bg-sky-100 text-sky-800">
+                                        {ret.refundMethod === 'CASH'
+                                          ? 'নগদ ফেরত'
+                                          : ret.refundMethod === 'BANK'
+                                          ? 'ব্যাংক জমা'
+                                          : 'বাকি সমন্বয়'}
+                                      </span>
+                                      <span className="text-gray-400">|</span>
+                                      <span className="text-gray-700 font-sans text-[11px]">
+                                        {ret.items?.map((it) => `${it.itemName}: ${it.returnedQuantity}`).join(', ')}
+                                      </span>
+                                      {ret.reason && (
+                                        <span className="text-gray-500 font-sans text-[11px] italic">
+                                          ({ret.reason})
+                                        </span>
+                                      )}
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            </td>
+                          </tr>
+                        )}
                         {pPayments.length > 0 && (
                           <tr className="bg-sky-50/40 border-b border-gray-100">
                             <td colSpan={9} className="px-4 py-2">
@@ -2356,7 +2822,7 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                                     className="inline-flex items-center gap-1 bg-white px-2.5 py-1 rounded-md border border-gray-200 text-gray-800 font-mono shadow-2xs"
                                   >
                                     <span className="text-gray-500">{pmt.date}:</span>
-                                    <span className="font-bold text-[#15803D]">৳{fmt(pmt.amount)}</span>
+                                    <span className="font-bold text-[#15803D]">{fmt(pmt.amount)}</span>
                                     {pmt.note && <span className="text-gray-400 font-sans text-[11px]">({pmt.note})</span>}
                                   </span>
                                 ))}
@@ -2540,14 +3006,14 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                                 )}
                               </td>
                               <td className="p-3 text-right font-mono font-bold text-gray-900 whitespace-nowrap">
-                                ৳{fmt(inv.totalAmount)}
+                                {fmt(inv.totalAmount)}
                               </td>
                               <td className="p-3 text-right font-mono font-bold text-emerald-700 whitespace-nowrap">
-                                ৳{fmt(inv.paidAmount)}
+                                {fmt(inv.paidAmount)}
                               </td>
                               <td className="p-3 text-right font-mono font-bold whitespace-nowrap">
                                 <span className={inv.dueAmount > 0 ? 'text-red-700 font-extrabold' : 'text-gray-500'}>
-                                  ৳{fmt(inv.dueAmount)}
+                                  {fmt(inv.dueAmount)}
                                 </span>
                               </td>
                               <td className="p-3 text-center whitespace-nowrap">
@@ -2575,6 +3041,17 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                                     <Receipt className="w-3.5 h-3.5 text-emerald-700" />
                                     <span>রশিদ দেখুন/শেয়ার করুন</span>
                                   </button>
+                                  {role === 'OWNER' && (
+                                    <button
+                                      type="button"
+                                      onClick={() => openReturnModal(inv.type, inv.rawRecord)}
+                                      className="px-2.5 py-1 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 text-xs font-bold shadow-2xs transition-all cursor-pointer inline-flex items-center gap-1 min-h-[30px]"
+                                      title="পণ্য ফেরত ও নোট তৈরি করুন"
+                                    >
+                                      <RotateCcw className="w-3.5 h-3.5 text-amber-700" />
+                                      <span>ফেরত</span>
+                                    </button>
+                                  )}
                                   {inv.dueAmount > 0 ? (
                                     <button
                                       type="button"
@@ -2590,6 +3067,43 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                                 </div>
                               </td>
                             </tr>
+
+                            {/* Return History Sub-Row */}
+                            {inv.returns && inv.returns.length > 0 && (
+                              <tr className="bg-amber-50/50 border-b border-amber-200">
+                                <td colSpan={9} className="px-4 py-2">
+                                  <div className="space-y-1">
+                                    <div className="text-xs font-bold text-amber-900 flex items-center gap-1.5">
+                                      <RotateCcw className="w-3.5 h-3.5 text-amber-700" />
+                                      <span>ফেরতের ইতিহাস ({inv.returns.length}টি ফেরত সম্পন্ন):</span>
+                                    </div>
+                                    <div className="flex flex-wrap gap-2">
+                                      {inv.returns.map((ret: any) => (
+                                        <div
+                                          key={ret.id}
+                                          className="inline-flex items-center gap-1.5 bg-white px-2.5 py-1 rounded-lg border border-amber-200 text-gray-800 font-mono text-xs shadow-2xs"
+                                        >
+                                          <span className="font-bold text-amber-900">{ret.displayNumber || ret.returnNumber}</span>
+                                          <span className="text-gray-400">|</span>
+                                          <span className="text-gray-600 font-sans">{ret.date}</span>
+                                          <span className="text-gray-400">|</span>
+                                          <span className="font-bold text-rose-700">{fmt(ret.totalRefundAmount)}</span>
+                                          <span className="text-gray-400">|</span>
+                                          <span className="text-gray-700 font-sans text-[11px]">
+                                            {ret.items?.map((it: any) => `${it.itemName}: ${it.returnedQuantity}`).join(', ')}
+                                          </span>
+                                          {ret.reason && (
+                                            <span className="text-gray-500 font-sans text-[11px] italic">
+                                              ({ret.reason})
+                                            </span>
+                                          )}
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </div>
+                                </td>
+                              </tr>
+                            )}
 
                             {/* Full Installment / Partial-Payment History Sub-Row */}
                             {inv.payments && inv.payments.length > 0 ? (
@@ -2890,6 +3404,298 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                   className="px-4 py-2 rounded-lg bg-amber-700 hover:bg-amber-800 disabled:bg-gray-400 disabled:cursor-not-allowed text-white text-xs font-bold cursor-pointer min-h-[40px] shadow-xs"
                 >
                   {isSubmittingPayment ? 'সংরক্ষণ হচ্ছে...' : 'কিস্তি সংরক্ষণ করুন'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Sales / Purchase Return Modal */}
+      {returnModal && (
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
+          <div className="bg-white rounded-2xl max-w-lg w-full p-5 sm:p-6 shadow-2xl border border-gray-200 my-auto animate-in fade-in zoom-in duration-150">
+            <div className="flex items-start justify-between border-b border-gray-100 pb-3">
+              <div className="flex items-center gap-2.5">
+                <div
+                  className={`w-9 h-9 rounded-xl flex items-center justify-center ${
+                    returnModal.type === 'SALE' ? 'bg-amber-100 text-amber-800' : 'bg-sky-100 text-sky-800'
+                  }`}
+                >
+                  <RotateCcw className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base sm:text-lg font-bold text-gray-900">
+                    {returnModal.type === 'SALE' ? 'বিক্রয় ফেরত (ফেরত ক্রেডিট নোট)' : 'ক্রয় ফেরত (ফেরত ডেবিট নোট)'}
+                  </h3>
+                  <p className="text-xs text-gray-500 font-mono">
+                    চালান নং: <strong className="text-gray-800">{returnModal.invoiceNumber}</strong>
+                    {' • '}
+                    {returnModal.type === 'SALE' ? 'ক্রেতা: ' : 'সরবরাহকারী: '}
+                    <strong className="text-gray-800 font-sans">{returnModal.partyName}</strong>
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setReturnModal(null)}
+                className="text-gray-400 hover:text-gray-600 p-1 rounded-lg hover:bg-gray-100 cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleExecuteReturn} className="mt-4 space-y-4">
+              {/* If multi-item invoice or selection */}
+              <div>
+                <label className="block text-xs font-semibold text-gray-700 mb-1">
+                  ফেরতযোগ্য পণ্য নির্বাচন করুন <span className="text-red-500">*</span>
+                </label>
+                {returnModal.items.length > 1 ? (
+                  <select
+                    value={returnSelectedItemId}
+                    onChange={(e) => handleSwitchReturnItem(e.target.value)}
+                    className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-sm text-gray-900 focus:outline-hidden focus:ring-1 focus:ring-amber-500"
+                  >
+                    {returnModal.items.map((it) => (
+                      <option
+                        key={it.itemId}
+                        value={it.itemId}
+                        disabled={it.remainingReturnableQty <= 0}
+                      >
+                        {it.itemName} (চালানে: {it.soldOrPurchasedQty} {it.unit} | অবশিষ্ট ফেরতযোগ্য: {it.remainingReturnableQty} {it.unit})
+                        {it.remainingReturnableQty <= 0 ? ' - সম্পন্ন' : ''}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <div className="bg-gray-50 border border-gray-200 rounded-lg p-2.5 text-sm font-semibold text-gray-800">
+                    {returnModal.items[0]?.itemName} ({returnModal.items[0]?.soldOrPurchasedQty} {returnModal.items[0]?.unit})
+                  </div>
+                )}
+              </div>
+
+              {/* Selected Item Stats Card */}
+              {(() => {
+                const target = returnModal.items.find((it) => it.itemId === returnSelectedItemId) || returnModal.items[0];
+                if (!target) return null;
+
+                const qty = parseFloat(returnQuantity) || 0;
+                const estimatedRefund = Math.round(qty * target.unitPrice * 100) / 100;
+
+                return (
+                  <div className="space-y-4">
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center text-xs">
+                      <div className="bg-gray-50 border border-gray-200 rounded-lg p-2">
+                        <span className="text-gray-500 block text-[11px]">মূল চালান</span>
+                        <span className="font-bold text-gray-900 font-mono text-sm">
+                          {target.soldOrPurchasedQty} {target.unit}
+                        </span>
+                      </div>
+                      <div className="bg-amber-50/70 border border-amber-200 rounded-lg p-2">
+                        <span className="text-amber-800 block text-[11px]">পূর্বের ফেরত</span>
+                        <span className="font-bold text-amber-900 font-mono text-sm">
+                          {target.previouslyReturnedQty} {target.unit}
+                        </span>
+                      </div>
+                      <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-2 col-span-2 sm:col-span-2">
+                        <span className="text-emerald-800 block text-[11px] font-semibold">অবশিষ্ট ফেরতযোগ্য পরিমাণ</span>
+                        <span className="font-bold text-emerald-900 font-mono text-sm">
+                          {target.remainingReturnableQty} {target.unit}
+                        </span>
+                        {returnModal.type === 'PURCHASE' && (
+                          <span className="block text-[10px] text-gray-500 mt-0.5 font-sans">
+                            গুদাম মজুদ: {target.currentWarehouseStock} {target.unit}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Return Quantity Input */}
+                    <div>
+                      <div className="flex items-center justify-between mb-1">
+                        <label className="block text-xs font-semibold text-gray-700">
+                          ফেরতের পরিমাণ ({target.unit}) <span className="text-red-500">*</span>
+                        </label>
+                        {target.remainingReturnableQty > 0 && (
+                          <button
+                            type="button"
+                            onClick={() => setReturnQuantity(target.remainingReturnableQty.toString())}
+                            className="text-[11px] text-amber-800 hover:text-amber-950 font-semibold cursor-pointer underline"
+                          >
+                            সম্পূর্ণ অবশিষ্ট ({target.remainingReturnableQty} {target.unit})
+                          </button>
+                        )}
+                      </div>
+                      <input
+                        type="number"
+                        step="any"
+                        min="0.001"
+                        max={target.remainingReturnableQty}
+                        required
+                        id="input-return-quantity"
+                        placeholder={`যেমন: ${target.remainingReturnableQty}`}
+                        value={returnQuantity}
+                        onChange={(e) => setReturnQuantity(e.target.value)}
+                        className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-base text-gray-900 focus:outline-hidden focus:ring-1 focus:ring-amber-500 font-mono"
+                      />
+                    </div>
+
+                    {/* Refund Method */}
+                    <div>
+                      <label className="block text-xs font-semibold text-gray-700 mb-1">
+                        রিফান্ড / সমন্বয় মাধ্যম <span className="text-red-500">*</span>
+                      </label>
+                      <select
+                        id="select-return-refund-method"
+                        value={returnRefundMethod}
+                        onChange={(e) => setReturnRefundMethod(e.target.value as ReturnRefundMethod)}
+                        className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-sm text-gray-900 focus:outline-hidden focus:ring-1 focus:ring-amber-500"
+                      >
+                        <option value="ADJUST_DUE">বাকি সমন্বয় (চালানের বাকি কমবে / সমন্বয় হবে)</option>
+                        <option value="CASH">
+                          {returnModal.type === 'SALE' ? 'নগদ ফেরত (ক্যাশ থেকে ফেরত প্রদান)' : 'নগদ গ্রহণ (সরবরাহকারী নগদ ফেরত দিয়েছে)'}
+                        </option>
+                        <option value="BANK">
+                          {returnModal.type === 'SALE' ? 'ব্যাংক / মোবাইল ব্যাংকিং ফেরত' : 'ব্যাংক হিসাব জমা'}
+                        </option>
+                      </select>
+                    </div>
+
+                    {/* Bank Account Selection if BANK */}
+                    {returnRefundMethod === 'BANK' && (
+                      <div>
+                        <label className="block text-xs font-semibold text-gray-700 mb-1">
+                          ব্যাংক হিসাব নির্বাচন করুন <span className="text-red-500">*</span>
+                        </label>
+                        <select
+                          id="select-return-bank-account"
+                          value={returnBankAccountId}
+                          onChange={(e) => setReturnBankAccountId(e.target.value)}
+                          className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-sm text-gray-900 focus:outline-hidden focus:ring-1 focus:ring-amber-500"
+                        >
+                          <option value="">-- ব্যাংক হিসাব নির্বাচন করুন --</option>
+                          {cashBankAccounts
+                            .filter((b) => b.accountType === 'BANK' || b.accountType === 'MOBILE_BANKING')
+                            .map((b) => (
+                              <option key={b.id} value={b.id}>
+                                {b.bankName || b.accountName} ({b.accountNumber || b.accountType})
+                              </option>
+                            ))}
+                        </select>
+                      </div>
+                    )}
+
+                    {/* Cash Account Selection if CASH */}
+                    {returnRefundMethod === 'CASH' && cashBankAccounts.filter((b) => b.accountType === 'CASH').length > 1 && (
+                      <div>
+                        <label className="block text-xs font-semibold text-gray-700 mb-1">
+                          ক্যাশ হিসাব নির্বাচন করুন
+                        </label>
+                        <select
+                          id="select-return-cash-account"
+                          value={returnCashBankAccountId}
+                          onChange={(e) => setReturnCashBankAccountId(e.target.value)}
+                          className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-sm text-gray-900 focus:outline-hidden focus:ring-1 focus:ring-amber-500"
+                        >
+                          {cashBankAccounts
+                            .filter((b) => b.accountType === 'CASH')
+                            .map((b) => (
+                              <option key={b.id} value={b.id}>
+                                {b.accountName} (ব্যালেন্স: {fmt(b.currentBalance)})
+                              </option>
+                            ))}
+                        </select>
+                      </div>
+                    )}
+
+                    {/* Reason */}
+                    <div>
+                      <label className="block text-xs font-semibold text-gray-700 mb-1">
+                        ফেরতের কারণ (Reason for Return)
+                      </label>
+                      <input
+                        type="text"
+                        id="input-return-reason"
+                        placeholder="যেমন: পণ্যের মান খারাপ / নষ্ট / ভুল সরবরাহ"
+                        value={returnReason}
+                        onChange={(e) => setReturnReason(e.target.value)}
+                        className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-sm text-gray-900 focus:outline-hidden focus:ring-1 focus:ring-amber-500"
+                      />
+                      <div className="flex flex-wrap gap-1.5 mt-1.5">
+                        {['নষ্ট / গুণগত ত্রুটি', 'মেয়াদ উত্তীর্ণ', 'ভুল পণ্য সরবরাহ', 'অতিরিক্ত অর্ডার'].map((preset) => (
+                          <button
+                            key={preset}
+                            type="button"
+                            onClick={() => setReturnReason(preset)}
+                            className="text-[11px] bg-gray-100 hover:bg-gray-200 text-gray-700 px-2 py-0.5 rounded cursor-pointer transition-colors"
+                          >
+                            + {preset}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Return Date */}
+                    <div>
+                      <label className="block text-xs font-semibold text-gray-700 mb-1">
+                        ফেরতের তারিখ <span className="text-red-500">*</span>
+                      </label>
+                      <input
+                        type="date"
+                        required
+                        id="input-return-date"
+                        value={returnDate}
+                        max={new Date().toISOString().split('T')[0]}
+                        onChange={(e) => setReturnDate(e.target.value)}
+                        className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-sm text-gray-900 focus:outline-hidden focus:ring-1 focus:ring-amber-500"
+                      />
+                    </div>
+
+                    {/* Calculation Summary Box */}
+                    <div className="bg-amber-50/80 border border-amber-200 rounded-xl p-3 flex items-center justify-between">
+                      <div className="text-xs text-amber-900">
+                        <span className="font-semibold block">আনুমানিক সমন্বয়/রিফান্ড মোট:</span>
+                        <span className="text-[11px] text-gray-600 font-mono">
+                          {qty || 0} {target.unit} × {fmt(target.unitPrice)}
+                        </span>
+                      </div>
+                      <div className="text-base sm:text-lg font-bold text-amber-900 font-mono">
+                        {fmt(estimatedRefund)}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              <div className="flex justify-end gap-2.5 pt-2 border-t border-gray-100">
+                <button
+                  type="button"
+                  id="btn-cancel-return"
+                  onClick={() => setReturnModal(null)}
+                  className="px-4 py-2 rounded-lg bg-gray-200 hover:bg-gray-300 text-gray-800 text-xs font-bold cursor-pointer min-h-[40px]"
+                >
+                  বাতিল
+                </button>
+                <button
+                  type="submit"
+                  id="btn-confirm-return"
+                  disabled={
+                    isSubmittingReturn ||
+                    !returnQuantity ||
+                    parseFloat(returnQuantity) <= 0 ||
+                    (returnModal.items.find((it) => it.itemId === returnSelectedItemId)?.remainingReturnableQty || 0) <= 0
+                  }
+                  className="px-4 py-2 rounded-lg bg-amber-700 hover:bg-amber-800 disabled:bg-gray-400 disabled:cursor-not-allowed text-white text-xs font-bold cursor-pointer min-h-[40px] shadow-xs flex items-center gap-1.5"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  <span>
+                    {isSubmittingReturn
+                      ? 'প্রক্রিয়াকরণ হচ্ছে...'
+                      : returnModal.type === 'SALE'
+                      ? 'বিক্রয় ফেরত নিশ্চিত করুন'
+                      : 'ক্রয় ফেরত নিশ্চিত করুন'}
+                  </span>
                 </button>
               </div>
             </form>

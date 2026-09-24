@@ -1989,6 +1989,8 @@ async function startServer() {
   });
 }
 
-if (process.argv[1]?.includes('server')) {
-  startServer();
+if (process.argv[1]?.includes('server') || process.env.NODE_ENV !== 'test') {
+  startServer().catch((err) => {
+    console.error('[The Goated Farm] Failed to start server:', err);
+  });
 }
