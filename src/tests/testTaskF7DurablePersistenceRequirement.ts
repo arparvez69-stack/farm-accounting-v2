@@ -1,7 +1,14 @@
 import 'fake-indexeddb/auto';
 import { db } from '../db/indexedDb';
 import { synchronizePendingData } from '../firebase/firebaseClient';
-import { createSessionToken, setSimulateFirestoreUnavailable } from '../../server';
+import {
+  createSessionToken,
+  setSimulateFirestoreUnavailable,
+  setAdminDbForTest,
+  resetAdminDbForTest,
+  createFailingAdminDb,
+  createSuccessfulAdminDb
+} from '../../server';
 import { CANONICAL_ACCOUNTS } from '../accounting/accountMapping';
 
 export interface AssertionResult {
@@ -247,9 +254,10 @@ export async function runTaskF7DurablePersistenceRequirementTests(): Promise<Ass
   assert(offlineOpsError === null, 'Existing offline operation functions 100% normally');
 
   // -------------------------------------------------------------
-  // TEST SCENARIO 7: When Cloud Persistence is Restored, Sync Succeeds Durably
+  // TEST SCENARIO 7: Focused Test: Missing Admin DB
   // -------------------------------------------------------------
-  console.log('\n--- Scenario 7: When Cloud Persistence is Restored, Sync Succeeds Durably ---');
+  console.log('\n--- Scenario 7: Focused Test: Missing Admin DB (adminDb === null) ---');
+  // First clear any simulation flags
   setSimulateFirestoreUnavailable(false);
   await fetch(`${serverBaseUrl}/api/test/simulate-firestore-unavailable`, {
     method: 'POST',
@@ -257,6 +265,130 @@ export async function runTaskF7DurablePersistenceRequirementTests(): Promise<Ass
     body: JSON.stringify({ unavailable: false })
   });
 
+  // Set Admin DB mode to missing (null)
+  setAdminDbForTest(null);
+  const missingDbConfigRes = await fetch(`${serverBaseUrl}/api/test/admin-db-mode`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ mode: 'missing' })
+  });
+  const missingDbConfig = await missingDbConfigRes.json();
+  assert(missingDbConfig.hasAdminDb === false, 'Server acknowledges Admin DB is missing (hasAdminDb === false)');
+  assert(missingDbConfig.available === false, 'Server reports persistence is unavailable when Admin DB is missing');
+
+  // Verify direct API returns HTTP 503 Service Unavailable when Admin DB is missing
+  const missingDbDirectRes = await fetch(`${serverBaseUrl}/api/sync/animals`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${validSessionToken}`
+    },
+    body: JSON.stringify({
+      id: 'f7-missing-db-animal',
+      tag: 'F7-MISSING-DB',
+      species: 'CATTLE'
+    })
+  });
+  const missingDbDirectJson = await missingDbDirectRes.json().catch(() => ({}));
+  assert(missingDbDirectRes.status === 503, `Direct write returns HTTP 503 when Admin DB is missing (received ${missingDbDirectRes.status})`);
+  assert(missingDbDirectJson.success !== true, 'Server did NOT return success: true when Admin DB is missing');
+  assert(missingDbDirectJson.persisted === false, 'Server explicitly returned persisted: false when Admin DB is missing');
+  assert(
+    missingDbDirectJson.error?.includes('অনুপলব্ধ') || missingDbDirectJson.error?.includes('unavailable') || missingDbDirectJson.error?.includes('Admin DB'),
+    'Error message clearly indicates Admin DB / cloud persistence is unavailable'
+  );
+
+  // Trigger client sync while Admin DB is missing
+  const missingDbSyncRes = await synchronizePendingData();
+  assert(missingDbSyncRes.syncedCount === 0, 'No pending records marked as synced when Admin DB is missing');
+  const localAnimalAfterMissingDb = await db.animals.get(testAnimalId);
+  assert(localAnimalAfterMissingDb?.synced === false, 'Local animal remains synced: false when Admin DB is missing');
+  assert(localAnimalAfterMissingDb?.tag === 'F7-COW-01', 'Local animal data remains intact and uncorrupted');
+
+  // -------------------------------------------------------------
+  // TEST SCENARIO 8: Focused Test: Firestore Write Failure
+  // -------------------------------------------------------------
+  console.log('\n--- Scenario 8: Focused Test: Firestore Write Failure (rejection on write) ---');
+  // Configure failing Admin DB that throws error on write
+  const simulatedWriteError = '7 PERMISSION_DENIED: Missing or insufficient permissions.';
+  setAdminDbForTest(createFailingAdminDb(simulatedWriteError));
+  const writeFailConfigRes = await fetch(`${serverBaseUrl}/api/test/admin-db-mode`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ mode: 'write_failure', errorMessage: simulatedWriteError })
+  });
+  const writeFailConfig = await writeFailConfigRes.json();
+  assert(writeFailConfig.hasAdminDb === true, 'Server acknowledges Admin DB instance is present for write failure test');
+
+  // Verify direct API returns HTTP 503 when write fails
+  const writeFailDirectRes = await fetch(`${serverBaseUrl}/api/sync/animals`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${validSessionToken}`
+    },
+    body: JSON.stringify({
+      id: 'f7-write-failure-animal',
+      tag: 'F7-WRITE-FAIL',
+      species: 'GOAT'
+    })
+  });
+  const writeFailDirectJson = await writeFailDirectRes.json().catch(() => ({}));
+  assert(writeFailDirectRes.status === 503, `Direct write returns HTTP 503 on Firestore write failure (received ${writeFailDirectRes.status})`);
+  assert(writeFailDirectJson.success !== true, 'Server did NOT return success: true on write failure');
+  assert(writeFailDirectJson.persisted === false, 'Server explicitly returned persisted: false on write failure');
+  assert(
+    writeFailDirectJson.error?.includes('ব্যর্থ') || writeFailDirectJson.error?.includes('failed') || writeFailDirectJson.error?.includes('PERMISSION_DENIED'),
+    'Error message clearly identifies Firestore write failure'
+  );
+
+  // CRITICAL REQUIREMENT: Local disk or in-memory persistence must NEVER be reported as cloud success
+  assert(
+    writeFailDirectJson.persisted !== true && writeFailDirectJson.success !== true,
+    'CRITICAL: Local disk or in-memory persistence is NEVER reported as cloud success on write failure'
+  );
+
+  // Trigger client sync while Firestore write fails
+  const writeFailSyncRes = await synchronizePendingData();
+  assert(writeFailSyncRes.syncedCount === 0, 'No pending records marked as synced on Firestore write failure');
+  const localJournalAfterWriteFail = await db.journalEntries.get(testJournalId);
+  assert(localJournalAfterWriteFail?.synced === false, 'Local journal remains synced: false on Firestore write failure');
+  assert(localJournalAfterWriteFail?.totalDebit === 30000, 'Local journal entry remains completely intact');
+
+  // -------------------------------------------------------------
+  // TEST SCENARIO 9: Focused Test: Confirmed Successful Write
+  // -------------------------------------------------------------
+  console.log('\n--- Scenario 9: Focused Test: Confirmed Successful Write ---');
+  // Configure confirmed Admin DB that durably confirms writes
+  setAdminDbForTest(createSuccessfulAdminDb());
+  const confirmedDbConfigRes = await fetch(`${serverBaseUrl}/api/test/admin-db-mode`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ mode: 'success' })
+  });
+  const confirmedDbConfig = await confirmedDbConfigRes.json();
+  assert(confirmedDbConfig.available === true, 'Server acknowledges persistence is available for confirmed write');
+  assert(confirmedDbConfig.hasAdminDb === true, 'Server acknowledges Admin DB is active');
+
+  // Verify direct write succeeds ONLY with confirmed write
+  const confirmedDirectRes = await fetch(`${serverBaseUrl}/api/sync/animals`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${validSessionToken}`
+    },
+    body: JSON.stringify({
+      id: 'f7-confirmed-animal-direct',
+      tag: 'F7-CONFIRMED-OK',
+      species: 'SHEEP'
+    })
+  });
+  const confirmedDirectJson = await confirmedDirectRes.json().catch(() => ({}));
+  assert(confirmedDirectRes.status === 200, `Confirmed write returns HTTP 200 OK (received ${confirmedDirectRes.status})`);
+  assert(confirmedDirectJson.success === true, 'Server returned success: true for confirmed Firestore write');
+  assert(confirmedDirectJson.persisted === true, 'Server returned persisted: true for confirmed Firestore write');
+
+  // Now synchronize pending offline records — must succeed ONLY AFTER confirmed durable persistence
   const restoredSyncResult = await synchronizePendingData();
   assert(restoredSyncResult.syncedCount >= 4, `Restored sync succeeded with ${restoredSyncResult.syncedCount} records synced`);
 
@@ -266,12 +398,39 @@ export async function runTaskF7DurablePersistenceRequirementTests(): Promise<Ass
   const localJournalAfterRestore = await db.journalEntries.get(testJournalId);
   assert(localJournalAfterRestore?.synced === true, 'Local journal marked synced: true ONLY AFTER confirmed durable persistence');
 
-  // Cleanup
+  const localPurchaseAfterRestore = await db.purchases.get(testPurchaseId);
+  assert(localPurchaseAfterRestore?.synced === true, 'Local purchase marked synced: true ONLY AFTER confirmed durable persistence');
+
+  const localAdvanceAfterRestore = await db.advancePayments.get(testAdvanceId);
+  assert(localAdvanceAfterRestore?.synced === true, 'Local advance payment marked synced: true ONLY AFTER confirmed durable persistence');
+
+  // -------------------------------------------------------------
+  // TEST SCENARIO 10: Cleanup & Teardown
+  // -------------------------------------------------------------
+  console.log('\n--- Scenario 10: Cleanup & Reset Test State ---');
+  // Cleanup test records
   await db.animals.delete(testAnimalId);
   await db.animals.delete(offlineAnimalId);
+  await db.animals.delete('f7-missing-db-animal');
+  await db.animals.delete('f7-write-failure-animal');
+  await db.animals.delete('f7-confirmed-animal-direct');
   await db.journalEntries.delete(testJournalId);
   await db.purchases.delete(testPurchaseId);
   await db.advancePayments.delete(testAdvanceId);
+
+  // Reset Admin DB and simulation test state
+  resetAdminDbForTest();
+  await fetch(`${serverBaseUrl}/api/test/admin-db-mode`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ mode: 'reset' })
+  });
+  await fetch(`${serverBaseUrl}/api/test/simulate-firestore-unavailable`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ unavailable: false })
+  });
+  assert(true, 'Test state cleaned up and reset successfully');
 
   console.log('\n========================================================');
   console.log(`F7 TEST RESULT: ${result.passed}/${result.total} Assertions Passed`);

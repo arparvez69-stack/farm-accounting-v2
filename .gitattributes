@@ -1,0 +1,6 @@
+# Prevent runtime financial/farm data and secrets from inclusion in source archives / ZIPs
+data/durable_cloud_storage.json export-ignore
+durable_cloud_storage.json export-ignore
+data/.session_secret export-ignore
+*.session_secret export-ignore
+data/backups/ export-ignore

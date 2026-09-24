@@ -438,6 +438,205 @@ export function setSimulateFirestoreUnavailable(val: boolean) {
   simulateFirestoreUnavailable = val;
 }
 
+// F7: Test controls for Admin DB state and Firestore write verification
+let customAdminDbForTest: any = undefined;
+let simulateFirestoreWriteFailure = false;
+let simulateFirestoreWriteErrorMessage = 'Firestore write failed: 7 PERMISSION_DENIED: Missing or insufficient permissions.';
+
+export function setAdminDbForTest(db: any): void {
+  customAdminDbForTest = db;
+}
+
+export function setFirestoreWriteFailureForTest(failure: boolean, message?: string): void {
+  simulateFirestoreWriteFailure = failure;
+  if (message) simulateFirestoreWriteErrorMessage = message;
+}
+
+export function resetAdminDbForTest(): void {
+  customAdminDbForTest = undefined;
+  simulateFirestoreWriteFailure = false;
+  simulateFirestoreWriteErrorMessage = 'Firestore write failed: 7 PERMISSION_DENIED: Missing or insufficient permissions.';
+}
+
+export function createFailingAdminDb(errorMessage?: string): any {
+  const msg = errorMessage || simulateFirestoreWriteErrorMessage;
+  const fail = async () => {
+    throw new Error(msg);
+  };
+  const failingDocRef = (colName: string, id: string) => ({
+    id,
+    get: fail,
+    set: fail,
+    update: fail,
+    delete: fail,
+    ref: { id }
+  });
+
+  return {
+    collection: (colName: string) => ({
+      doc: (id: string) => failingDocRef(colName, id),
+      where: () => ({
+        limit: () => ({
+          get: fail
+        }),
+        get: fail
+      }),
+      get: fail
+    }),
+    doc: (path: string) => {
+      const parts = path.split('/');
+      return failingDocRef(parts[0], parts.slice(1).join('/'));
+    },
+    batch: () => ({
+      set: () => {},
+      update: () => {},
+      delete: () => {},
+      commit: fail
+    })
+  };
+}
+
+export function createSuccessfulAdminDb(): any {
+  const store = new Map<string, Map<string, any>>();
+  const getCol = (name: string) => {
+    if (!store.has(name)) store.set(name, new Map());
+    return store.get(name)!;
+  };
+
+  const makeDocRef = (colName: string, id: string): any => ({
+    id,
+    get: async () => {
+      const col = getCol(colName);
+      const data = col.get(id);
+      return {
+        exists: data !== undefined,
+        id,
+        data: () => (data ? JSON.parse(JSON.stringify(data)) : undefined),
+        ref: makeDocRef(colName, id)
+      };
+    },
+    set: async (data: any, options?: any) => {
+      const col = getCol(colName);
+      if (options?.merge && col.has(id)) {
+        col.set(id, { ...col.get(id), ...JSON.parse(JSON.stringify(data)) });
+      } else {
+        col.set(id, JSON.parse(JSON.stringify(data)));
+      }
+      return;
+    },
+    update: async (data: any) => {
+      const col = getCol(colName);
+      col.set(id, { ...(col.get(id) || {}), ...JSON.parse(JSON.stringify(data)) });
+      return;
+    },
+    delete: async () => {
+      getCol(colName).delete(id);
+      return;
+    },
+    ref: { id }
+  });
+
+  return {
+    collection: (colName: string) => ({
+      doc: (id: string) => makeDocRef(colName, id),
+      where: (field: string, op: string, val: any) => {
+        const queryMatches = () => {
+          const col = getCol(colName);
+          const docs: any[] = [];
+          for (const [id, data] of col.entries()) {
+            if (op === '==' && data && data[field] === val) {
+              docs.push({
+                id,
+                data: () => JSON.parse(JSON.stringify(data)),
+                exists: true,
+                ref: makeDocRef(colName, id)
+              });
+            }
+          }
+          return docs;
+        };
+        return {
+          limit: (n: number) => ({
+            get: async () => {
+              const matched = queryMatches().slice(0, n);
+              return { empty: matched.length === 0, docs: matched };
+            }
+          }),
+          get: async () => {
+            const matched = queryMatches();
+            return { empty: matched.length === 0, docs: matched };
+          }
+        };
+      },
+      get: async () => {
+        const col = getCol(colName);
+        const docs = Array.from(col.entries()).map(([id, data]) => ({
+          id,
+          data: () => JSON.parse(JSON.stringify(data)),
+          exists: true,
+          ref: makeDocRef(colName, id)
+        }));
+        return { empty: docs.length === 0, docs };
+      }
+    }),
+    doc: (path: string) => {
+      const parts = path.split('/');
+      const colName = parts[0];
+      const docId = parts.slice(1).join('/');
+      return makeDocRef(colName, docId);
+    },
+    batch: () => {
+      const operations: Array<() => Promise<void> | void> = [];
+      return {
+        set: (docRef: any, data: any, options?: any) => {
+          operations.push(() => docRef.set(data, options));
+        },
+        update: (docRef: any, data: any) => {
+          operations.push(() => docRef.update(data));
+        },
+        delete: (docRef: any) => {
+          operations.push(() => docRef.delete());
+        },
+        commit: async () => {
+          for (const op of operations) {
+            await op();
+          }
+        }
+      };
+    }
+  };
+}
+
+export function getEffectiveAdminDb(req?: express.Request): FirebaseFirestore.Firestore | null {
+  if (req) {
+    const headerMode = req.headers['x-test-admin-db-mode'] || req.headers['x-test-firestore-mode'];
+    if (headerMode === 'missing') {
+      return null;
+    }
+    if (headerMode === 'write_failure') {
+      const msg = typeof req.headers['x-test-write-error'] === 'string'
+        ? req.headers['x-test-write-error']
+        : 'Firestore write failed: 7 PERMISSION_DENIED: Missing or insufficient permissions.';
+      return createFailingAdminDb(msg) as any;
+    }
+    if (headerMode === 'success') {
+      return (customAdminDbForTest && customAdminDbForTest !== null)
+        ? customAdminDbForTest
+        : (createSuccessfulAdminDb() as any);
+    }
+  }
+
+  if (customAdminDbForTest !== undefined) {
+    return customAdminDbForTest;
+  }
+
+  if (simulateFirestoreWriteFailure) {
+    return createFailingAdminDb(simulateFirestoreWriteErrorMessage) as any;
+  }
+
+  return adminDb;
+}
+
 export function isFirestorePersistenceAvailable(req?: express.Request): boolean {
   if (simulateFirestoreUnavailable) return false;
   if (req) {
@@ -450,8 +649,19 @@ export function isFirestorePersistenceAvailable(req?: express.Request): boolean 
     if (req.query?.simulate_firestore_unavailable === 'true') {
       return false;
     }
+    if (
+      req.headers['x-test-admin-db-mode'] === 'missing' ||
+      req.headers['x-test-firestore-mode'] === 'missing'
+    ) {
+      return false;
+    }
   }
   if (process.env.SIMULATE_FIRESTORE_UNAVAILABLE === 'true') {
+    return false;
+  }
+
+  const effective = getEffectiveAdminDb(req);
+  if (!effective) {
     return false;
   }
   return true;
@@ -1287,12 +1497,15 @@ async function handleSyncWrite(
     // If Firebase/Firestore persistence is unavailable, synchronization MUST fail.
     // Do not treat in-memory server cache as successful backup.
     // Do not return success to client when data exists only in RAM.
-    if (!isFirestorePersistenceAvailable(req)) {
+    const effectiveDb = getEffectiveAdminDb(req);
+    if (!isFirestorePersistenceAvailable(req) || !effectiveDb) {
       console.warn(`[The Goated Farm] Cloud Firestore persistence is unavailable for ${collectionName}. Refusing to claim success.`);
       return res.status(503).json({
         success: false,
         persisted: false,
-        error: 'ক্লাউড ফায়ারস্টোর পারসিস্টেন্স অনুপলব্ধ — ডাটা ক্লাউডে সংরক্ষিত হয়নি (Cloud Firestore persistence unavailable — data was not durably persisted to cloud)',
+        error: !effectiveDb
+          ? 'ফায়ারস্টোর অ্যাডমিন ডাটাবেস অনুপলব্ধ (Firestore Admin DB unavailable — cloud persistence not configured)'
+          : 'ক্লাউড ফায়ারস্টোর পারসিস্টেন্স অনুপলব্ধ — ডাটা ক্লাউডে সংরক্ষিত হয়নি (Cloud Firestore persistence unavailable — data was not durably persisted to cloud)',
         collection: collectionName,
         id: data?.id || req.body?.id
       });
@@ -1456,10 +1669,10 @@ async function handleSyncWrite(
       }
     }
 
-    // C. Check adminDb by exact document ID
-    if (!existingDoc && adminDb) {
+    // C. Check effectiveDb by exact document ID
+    if (!existingDoc && effectiveDb) {
       try {
-        const snap = await adminDb.collection(targetCol).doc(docId).get();
+        const snap = await effectiveDb.collection(targetCol).doc(docId).get();
         if (snap.exists) {
           existingDoc = snap.data();
         }
@@ -1468,61 +1681,61 @@ async function handleSyncWrite(
       }
     }
 
-    // D. Check adminDb by idempotency key / document reference
-    if (!existingDoc && adminDb) {
+    // D. Check effectiveDb by idempotency key / document reference
+    if (!existingDoc && effectiveDb) {
       try {
         if (effectiveIdempotencyKey) {
-          const qSnap = await adminDb.collection(targetCol).where('idempotencyKey', '==', effectiveIdempotencyKey).limit(1).get();
+          const qSnap = await effectiveDb.collection(targetCol).where('idempotencyKey', '==', effectiveIdempotencyKey).limit(1).get();
           if (!qSnap.empty) {
             existingDoc = { id: qSnap.docs[0].id, ...qSnap.docs[0].data() };
           }
         }
         if (!existingDoc && targetCol === 'journalEntries' && data.voucherNumber) {
-          const qSnap = await adminDb.collection(targetCol).where('voucherNumber', '==', data.voucherNumber).limit(1).get();
+          const qSnap = await effectiveDb.collection(targetCol).where('voucherNumber', '==', data.voucherNumber).limit(1).get();
           if (!qSnap.empty) {
             existingDoc = { id: qSnap.docs[0].id, ...qSnap.docs[0].data() };
           }
         }
         if (!existingDoc && (targetCol === 'sales' || targetCol === 'purchases') && data.invoiceNumber) {
-          const qSnap = await adminDb.collection(targetCol).where('invoiceNumber', '==', data.invoiceNumber).limit(1).get();
+          const qSnap = await effectiveDb.collection(targetCol).where('invoiceNumber', '==', data.invoiceNumber).limit(1).get();
           if (!qSnap.empty) {
             existingDoc = { id: qSnap.docs[0].id, ...qSnap.docs[0].data() };
           }
         }
         if (!existingDoc && targetCol === 'payments' && data.paymentNumber) {
-          const qSnap = await adminDb.collection(targetCol).where('paymentNumber', '==', data.paymentNumber).limit(1).get();
+          const qSnap = await effectiveDb.collection(targetCol).where('paymentNumber', '==', data.paymentNumber).limit(1).get();
           if (!qSnap.empty) {
             existingDoc = { id: qSnap.docs[0].id, ...qSnap.docs[0].data() };
           }
         }
         if (!existingDoc && targetCol === 'bankTransfers') {
           if (data.voucherNumber) {
-            const qSnap = await adminDb.collection(targetCol).where('voucherNumber', '==', data.voucherNumber).limit(1).get();
+            const qSnap = await effectiveDb.collection(targetCol).where('voucherNumber', '==', data.voucherNumber).limit(1).get();
             if (!qSnap.empty) {
               existingDoc = { id: qSnap.docs[0].id, ...qSnap.docs[0].data() };
             }
           }
           if (!existingDoc && data.reference) {
-            const qSnap = await adminDb.collection(targetCol).where('reference', '==', data.reference).limit(1).get();
+            const qSnap = await effectiveDb.collection(targetCol).where('reference', '==', data.reference).limit(1).get();
             if (!qSnap.empty) {
               existingDoc = { id: qSnap.docs[0].id, ...qSnap.docs[0].data() };
             }
           }
         }
         if (!existingDoc && (targetCol === 'salesReturns' || targetCol === 'purchaseReturns') && data.returnNumber) {
-          const qSnap = await adminDb.collection(targetCol).where('returnNumber', '==', data.returnNumber).limit(1).get();
+          const qSnap = await effectiveDb.collection(targetCol).where('returnNumber', '==', data.returnNumber).limit(1).get();
           if (!qSnap.empty) {
             existingDoc = { id: qSnap.docs[0].id, ...qSnap.docs[0].data() };
           }
         }
         if (!existingDoc && targetCol === 'advancePayments' && data.advanceNumber) {
-          const qSnap = await adminDb.collection(targetCol).where('advanceNumber', '==', data.advanceNumber).limit(1).get();
+          const qSnap = await effectiveDb.collection(targetCol).where('advanceNumber', '==', data.advanceNumber).limit(1).get();
           if (!qSnap.empty) {
             existingDoc = { id: qSnap.docs[0].id, ...qSnap.docs[0].data() };
           }
         }
         if (!existingDoc && targetCol === 'accounts' && data.code) {
-          const qSnap = await adminDb.collection(targetCol).where('code', '==', data.code).limit(1).get();
+          const qSnap = await effectiveDb.collection(targetCol).where('code', '==', data.code).limit(1).get();
           if (!qSnap.empty) {
             existingDoc = { id: qSnap.docs[0].id, ...qSnap.docs[0].data() };
           }
@@ -2524,40 +2737,41 @@ async function handleSyncWrite(
     };
 
     // 4. Durably persist to Cloud Firestore
+    // F7: Ensure sync success is returned ONLY after Firestore durably confirms the write.
+    // Local disk or in-memory persistence must NEVER be reported as cloud success.
+    // Verify actual Firestore availability/write outcome; do not rely only on simulation flags.
     let persistedToCloud = false;
-    let persistenceNotice: string | null = null;
 
-    if (adminDb) {
-      try {
-        await adminDb.collection(targetCol).doc(finalDocId).set(recordToWrite, { merge: true });
-        persistedToCloud = true;
-      } catch (adminErr: any) {
-        console.warn(`[The Goated Farm] Admin Firestore write notice for ${collectionName}:`, adminErr.message);
-        persistenceNotice = adminErr.message;
-        if (hasServiceAccountKey) {
-          return res.status(503).json({
-            success: false,
-            persisted: false,
-            error: `ক্লাউড ফায়ারস্টোরে সংরক্ষণ ব্যর্থ হয়েছে (Cloud Firestore write failed): ${adminErr.message}`
-          });
-        }
-      }
-    }
-
-    // Durably store on non-volatile disk to guarantee persistence survives server restarts and is never only in RAM
     try {
-      saveRecordToDurableDisk(targetCol, finalDocId, recordToWrite);
+      await effectiveDb.collection(targetCol).doc(finalDocId).set(recordToWrite, { merge: true });
       persistedToCloud = true;
-    } catch (diskErr: any) {
-      console.error('[The Goated Farm] Durable storage write error:', diskErr);
+    } catch (adminErr: any) {
+      console.warn(`[The Goated Farm] Cloud Firestore durable write failed for ${collectionName}:`, adminErr.message);
+      return res.status(503).json({
+        success: false,
+        persisted: false,
+        error: `ক্লাউড ফায়ারস্টোরে সংরক্ষণ ব্যর্থ হয়েছে (Cloud Firestore write failed): ${adminErr.message}`,
+        collection: collectionName,
+        id: finalDocId
+      });
     }
 
     if (!persistedToCloud) {
       return res.status(503).json({
         success: false,
         persisted: false,
-        error: `ক্লাউড স্টোরেজ অনুপলব্ধ — ডাটা স্থায়ীভাবে সংরক্ষিত হয়নি (Cloud persistence unavailable: ${persistenceNotice || 'No durable store available'})`
+        error: 'ক্লাউড ফায়ারস্টোর পারসিস্টেন্স নিশ্চিত হয়নি (Cloud Firestore persistence was not confirmed)',
+        collection: collectionName,
+        id: finalDocId
       });
+    }
+
+    // Durably store on non-volatile disk for offline local restart recovery ONLY after confirmed cloud write.
+    // Local disk or in-memory persistence alone is NEVER reported as cloud success.
+    try {
+      saveRecordToDurableDisk(targetCol, finalDocId, recordToWrite);
+    } catch (diskErr: any) {
+      console.error('[The Goated Farm] Durable storage write error:', diskErr);
     }
 
     // CRITICAL: Update in-memory store ONLY after confirmed durable cloud persistence!
@@ -2706,14 +2920,36 @@ app.post('/api/test/simulate-firestore-unavailable', (req, res) => {
   setSimulateFirestoreUnavailable(unavailable === undefined ? true : Boolean(unavailable));
   return res.json({
     simulateFirestoreUnavailable,
-    available: isFirestorePersistenceAvailable(req)
+    available: isFirestorePersistenceAvailable(req),
+    hasAdminDb: Boolean(getEffectiveAdminDb(req))
+  });
+});
+
+// F7: Test endpoint to control Admin DB state for persistence verification tests
+app.post('/api/test/admin-db-mode', (req, res) => {
+  const { mode, errorMessage } = req.body;
+  if (mode === 'missing') {
+    setAdminDbForTest(null);
+  } else if (mode === 'write_failure') {
+    setAdminDbForTest(createFailingAdminDb(errorMessage));
+  } else if (mode === 'success') {
+    setAdminDbForTest(createSuccessfulAdminDb());
+  } else {
+    resetAdminDbForTest();
+  }
+  return res.json({
+    mode: mode || 'reset',
+    available: isFirestorePersistenceAvailable(req),
+    hasAdminDb: Boolean(getEffectiveAdminDb(req))
   });
 });
 
 app.get('/api/test/firestore-status', (req, res) => {
+  const effective = getEffectiveAdminDb(req);
   return res.json({
     simulateFirestoreUnavailable,
-    available: isFirestorePersistenceAvailable(req)
+    available: isFirestorePersistenceAvailable(req),
+    hasAdminDb: Boolean(effective)
   });
 });
 

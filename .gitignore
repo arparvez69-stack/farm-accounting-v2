@@ -6,3 +6,13 @@ coverage/
 *.log
 .env*
 !.env.example
+
+# Runtime financial/farm data, durable storage, and session secrets
+data/durable_cloud_storage.json
+durable_cloud_storage.json
+data/.session_secret
+*.session_secret
+data/*.json
+!data/owner_allow_list.json
+data/backups/
+backups/
