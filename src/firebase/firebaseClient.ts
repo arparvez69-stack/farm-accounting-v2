@@ -428,19 +428,7 @@ export async function synchronizePendingData(): Promise<{ syncedCount: number; e
       }
     }
 
-    // 9. Sync Inventory Items
-    const pendingInventory = await db.inventoryItems.filter((item) => !item.synced).toArray();
-    for (const item of pendingInventory) {
-      try {
-        const syncRes = await syncRecordToServer('inventoryItems', item);
-        await handleSyncedResult(db.inventoryItems, item.id, syncRes);
-        count++;
-      } catch (err: any) {
-        errors.push(`Inventory item ${item.id}: ${err.message}`);
-      }
-    }
-
-    // 10. Sync Stock Movements
+    // 9. Sync Stock Movements
     const pendingStock = await db.stockMovements.filter((m) => !m.synced).toArray();
     for (const sm of pendingStock) {
       try {
@@ -449,6 +437,18 @@ export async function synchronizePendingData(): Promise<{ syncedCount: number; e
         count++;
       } catch (err: any) {
         errors.push(`Stock movement ${sm.id}: ${err.message}`);
+      }
+    }
+
+    // 10. Sync Inventory Items
+    const pendingInventory = await db.inventoryItems.filter((item) => !item.synced).toArray();
+    for (const item of pendingInventory) {
+      try {
+        const syncRes = await syncRecordToServer('inventoryItems', item);
+        await handleSyncedResult(db.inventoryItems, item.id, syncRes);
+        count++;
+      } catch (err: any) {
+        errors.push(`Inventory item ${item.id}: ${err.message}`);
       }
     }
 

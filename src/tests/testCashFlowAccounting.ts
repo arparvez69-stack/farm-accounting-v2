@@ -367,3 +367,10 @@ export async function runCashFlowAccountingTests(): Promise<{ success: boolean; 
     failures
   };
 }
+
+if (import.meta.url === `file://${process.argv[1]}`) {
+  runCashFlowAccountingTests().then((res) => {
+    console.log(`Cash flow test: success=${res.success}, passed=${res.passed}/${res.total}`);
+    if (!res.success) process.exit(1);
+  });
+}

@@ -1231,3 +1231,13 @@ export async function runAccountingIntegrityAudit(): Promise<{
   const allPassed = auditResults.every((r) => r.verificationResult === 'PASSED');
   return { allPassed, results: auditResults };
 }
+
+if (import.meta.url === `file://${process.argv[1]}`) {
+  runAccountingIntegrityAudit().then((res) => {
+    console.log(`Audit result: allPassed=${res.allPassed}, total=${res.results.length}`);
+    for (const r of res.results) {
+      console.log(`[Item ${r.id}] ${r.name}: ${r.verificationResult}`);
+    }
+    if (!res.allPassed) process.exit(1);
+  });
+}

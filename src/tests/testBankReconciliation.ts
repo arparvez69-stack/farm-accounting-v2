@@ -8,6 +8,7 @@
  * 4. Zero mutations occur on journal entries, account balances, or reports.
  */
 
+import 'fake-indexeddb/auto';
 import { db } from '../db/indexedDb';
 import {
   BankReconcileTransaction,
@@ -195,3 +196,11 @@ export async function runBankReconciliationTests(): Promise<{
     failures
   };
 }
+
+if (import.meta.url === `file://${process.argv[1]}`) {
+  runBankReconciliationTests().then((res) => {
+    console.log(`Bank reconciliation test: total=${res.total}, passed=${res.passed}, failed=${res.failed}`);
+    if (res.failed > 0) process.exit(1);
+  });
+}
+

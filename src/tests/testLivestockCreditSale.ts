@@ -129,7 +129,7 @@ export async function runLivestockSalesTest() {
     name: 'নগদ ক্যাশ (Main Cash)',
     accountName: 'নগদ ক্যাশ (Main Cash)',
     accountType: 'CASH',
-    currentBalance: 200000,
+    currentBalance: 500000,
     isActive: true,
     synced: false
   };

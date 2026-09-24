@@ -1,3 +1,4 @@
+import 'fake-indexeddb/auto';
 import { createMockAgroDatabase } from './regressionTests';
 import {
   executeInvestorProfitPaymentTransaction,

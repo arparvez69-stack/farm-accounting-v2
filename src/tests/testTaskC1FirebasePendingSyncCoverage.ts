@@ -1,3 +1,4 @@
+import 'fake-indexeddb/auto';
 import { db } from '../db/indexedDb';
 import { synchronizePendingData, listenToOnlineSync } from '../firebase/firebaseClient';
 import { BankTransfer, AnimalEvent, Reminder, InternalFlow, ProcessingRun, Pond, Plot } from '../types';

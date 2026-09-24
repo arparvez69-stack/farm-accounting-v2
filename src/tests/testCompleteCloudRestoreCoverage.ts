@@ -220,6 +220,16 @@ export async function runCompleteCloudRestoreCoverageTests(): Promise<AssertionR
         status: 'ACTIVE',
         synced: true
       },
+      stockMovements: {
+        id: `sm_${runTag}`,
+        date: '2026-09-24',
+        itemId: itemId,
+        movementType: 'OPENING',
+        quantity: 100,
+        unitCost: 1250,
+        totalCost: 125000,
+        synced: true
+      },
       inventoryItems: {
         id: itemId,
         code: `ITEM-${runTag.slice(-4)}`,
@@ -232,21 +242,12 @@ export async function runCompleteCloudRestoreCoverageTests(): Promise<AssertionR
         sellingPrice: 1450,
         synced: true
       },
-      stockMovements: {
-        id: `sm_${runTag}`,
-        date: '2026-09-24',
-        itemId: itemId,
-        movementType: 'IN',
-        quantity: 100,
-        unitCost: 1250,
-        totalCost: 125000,
-        synced: true
-      },
       cashBankAccounts: {
         id: cashAccId,
         name: `Farm Operational Cash ${runTag.slice(-4)}`,
         accountType: 'CASH',
         currency: 'BDT',
+        openingBalance: 500000,
         currentBalance: 500000,
         synced: true
       },
@@ -366,7 +367,7 @@ export async function runCompleteCloudRestoreCoverageTests(): Promise<AssertionR
         id: loanId,
         lenderName: 'Bangladesh Krishi Bank',
         principalAmount: 200000,
-        remainingBalance: 180000,
+        remainingBalance: 200000,
         interestRatePercent: 8,
         status: 'ACTIVE',
         synced: true
@@ -375,8 +376,9 @@ export async function runCompleteCloudRestoreCoverageTests(): Promise<AssertionR
         id: investorId,
         name: 'Haji Shamsul Huda',
         phone: '01819223344',
+        initialCapital: 350000,
         currentCapitalBalance: 350000,
-        profitPayable: 14000,
+        profitPayable: 0,
         status: 'ACTIVE',
         synced: true
       },

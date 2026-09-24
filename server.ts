@@ -1930,6 +1930,334 @@ async function handleSyncWrite(
           }
         }
       }
+    } else {
+      // ========================================================
+      // NEW OPERATIONAL RECORD VALIDATION (!existingDoc)
+      // A newly created record must not be able to establish arbitrary
+      // calculated financial balances merely because no previous cloud document exists.
+      // Distinguish legitimate initial/opening balances from calculated balances that must be supported by transactions.
+      // ========================================================
+
+      // 1. Inventory Items: currentStock / avgCostPrice
+      if (targetCol === 'inventoryItems') {
+        const incomingStock = Number(data.currentStock ?? 0);
+        const incomingAvgCost = Number(data.avgCostPrice ?? data.costPrice ?? 0);
+
+        if (incomingStock < 0 || incomingAvgCost < 0) {
+          return res.status(400).json({
+            error: `হিসাবরক্ষণ সীমাবদ্ধতা: পণ্যের মজুদ বা গড় মূল্য ঋণাত্মক হতে পারে না (Inventory currentStock and avgCostPrice cannot be negative).`
+          });
+        }
+
+        // Legitimate creation with zero stock is always allowed (catalog registration)
+        if (incomingStock > 0) {
+          // A newly created inventory item cannot establish positive stock out of thin air.
+          // It MUST be supported by:
+          // A. Stock movements (opening stock, purchase, or production movement)
+          // B. Opening stock journal entry debiting inventory and crediting retained earnings / equity
+          const allMovements = await getCollectionRecordsForValidation('stockMovements');
+          const itemMovements = allMovements.filter(
+            (m: any) =>
+              m.itemId === finalDocId ||
+              m.itemId === docId ||
+              (data.code && m.itemCode === data.code)
+          );
+
+          let isSupportedByMovements = false;
+          if (itemMovements.length > 0) {
+            let movementStockTotal = 0;
+            let totalMovementCost = 0;
+            let totalInflowQty = 0;
+            for (const m of itemMovements) {
+              const type = String(m.movementType || '').toUpperCase();
+              const qty = Math.abs(Number(m.quantity) || 0);
+              const cost = Number(m.unitCost) || 0;
+              if (type === 'PURCHASE' || type === 'PRODUCTION' || type === 'HARVEST' || type === 'OPENING') {
+                movementStockTotal += qty;
+                totalMovementCost += qty * cost;
+                totalInflowQty += qty;
+              } else if (type === 'CONSUMPTION' || type === 'SALE' || type === 'WASTE' || type === 'DAMAGE') {
+                movementStockTotal -= qty;
+              } else if (type === 'ADJUSTMENT' || type === 'TRANSFER') {
+                movementStockTotal += Number(m.quantity) || 0;
+              }
+            }
+            movementStockTotal = Math.max(0, Math.round(movementStockTotal * 10000) / 10000);
+            const expectedAvgCost = totalInflowQty > 0 ? Math.round((totalMovementCost / totalInflowQty) * 100) / 100 : incomingAvgCost;
+
+            const stockMatches = Math.abs(movementStockTotal - incomingStock) < 0.0001;
+            const costMatches = incomingAvgCost <= 0 || expectedAvgCost <= 0 || Math.abs(expectedAvgCost - incomingAvgCost) < 0.01;
+            if (!stockMatches || !costMatches) {
+              return res.status(400).json({
+                error: `হিসাবরক্ষণ সীমাবদ্ধতা: নতুন পণ্যের বর্তমান মজুদ বা গড় মূল্য স্টক মুভমেন্টের সাথে অমিল (New inventory item currentStock/avgCostPrice does not match supporting movements. Expected stock: ${movementStockTotal}, received: ${incomingStock}).`
+              });
+            }
+            isSupportedByMovements = true;
+          }
+
+          let isSupportedByJournal = false;
+          if (!isSupportedByMovements) {
+            const allJournals = await getCollectionRecordsForValidation('journalEntries');
+            for (const j of allJournals) {
+              const isItemRef =
+                j.reference === finalDocId ||
+                j.reference === docId ||
+                (data.journalEntryId && j.id === data.journalEntryId);
+              const mentionsItem =
+                (data.nameBn && j.narration && j.narration.includes(data.nameBn)) ||
+                (data.nameEn && j.narration && j.narration.includes(data.nameEn)) ||
+                (data.code && j.narration && j.narration.includes(data.code)) ||
+                (j.lines &&
+                  j.lines.some(
+                    (l: any) =>
+                      l.memo &&
+                      ((data.nameBn && l.memo.includes(data.nameBn)) ||
+                        (data.code && l.memo.includes(data.code)) ||
+                        l.memo.includes(finalDocId) ||
+                        l.memo.includes(docId))
+                  ));
+
+              if (isItemRef || ((j.reference === 'OPENING_STOCK' || (j.narration && j.narration.includes('প্রারম্ভিক'))) && mentionsItem)) {
+                let totalInvDebits = 0;
+                for (const l of j.lines || []) {
+                  const code = String(l.accountCode || l.accountId || '');
+                  if (code.startsWith('105')) {
+                    totalInvDebits += (Number(l.debit) || 0) - (Number(l.credit) || 0);
+                  }
+                }
+                const expectedValue = Math.round(incomingStock * incomingAvgCost * 100) / 100;
+                if (totalInvDebits > 0 && (expectedValue === 0 || Math.abs(totalInvDebits - expectedValue) <= 1.0)) {
+                  isSupportedByJournal = true;
+                  break;
+                }
+              }
+            }
+          }
+
+          if (!isSupportedByMovements && !isSupportedByJournal) {
+            return res.status(400).json({
+              error: `হিসাবরক্ষণ সীমাবদ্ধতা: নতুন পণ্যের প্রারম্ভিক মজুদ বা গড় মূল্য সমর্থিত স্টক মুভমেন্ট বা প্রারম্ভিক জাবেদা দাখিলা ছাড়া সরাসরি নির্ধারণ করা যাবে না (Cannot establish calculated inventory currentStock/avgCostPrice on a new record without supporting stock movements or opening journal entry).`
+            });
+          }
+        }
+      }
+
+      // 2. Cash/Bank Accounts: currentBalance
+      else if (targetCol === 'cashBankAccounts') {
+        const incomingBal = Number(data.currentBalance ?? data.balance ?? 0);
+        const openingBal = Number(data.openingBalance ?? 0);
+
+        // Legitimate zero-balance account registration is allowed
+        if (incomingBal !== 0 || openingBal !== 0) {
+          const allJournals = await getCollectionRecordsForValidation('journalEntries');
+          const accCode = data.code;
+          let netJournalDelta = 0;
+
+          for (const j of allJournals) {
+            const lines = Array.isArray(j.lines) ? j.lines : [];
+            for (const l of lines) {
+              const matchesAccount =
+                l.accountId === finalDocId ||
+                l.accountId === docId ||
+                (accCode && l.accountCode === accCode) ||
+                (l.memo && (l.memo.includes(finalDocId) || l.memo.includes(docId)));
+              if (matchesAccount) {
+                netJournalDelta += (Number(l.debit) || 0) - (Number(l.credit) || 0);
+              }
+            }
+          }
+
+          const expectedBal = Math.round((openingBal + netJournalDelta) * 100) / 100;
+
+          if (Math.abs(expectedBal - incomingBal) > 0.01) {
+            return res.status(400).json({
+              error: `হিসাবরক্ষণ সীমাবদ্ধতা: নতুন নগদ বা ব্যাংক হিসাবের ব্যালেন্স প্রারম্ভিক উদ্বৃত্ত বা সমর্থিত জাবেদা দাখিলা ছাড়া সরাসরি নির্ধারণ করা যাবে না (Cannot establish arbitrary cash/bank currentBalance on a new record without valid opening balance or supporting journal entries. Expected: ৳${expectedBal}, Received: ৳${incomingBal}).`
+            });
+          }
+        }
+      }
+
+      // 3. Investors: capital / payable balances
+      else if (targetCol === 'investors') {
+        const initialCap = Number(data.initialCapital ?? data.capitalContributed ?? 0);
+        const incomingCap = Number(
+          data.currentCapitalBalance ??
+            data.capitalAmount ??
+            data.totalContribution ??
+            data.netCapital ??
+            data.currentBalance ??
+            data.currentEquityBalance ??
+            initialCap
+        );
+        const incomingReturned = Number(
+          data.totalCapitalReturned ?? data.withdrawals ?? data.totalWithdrawals ?? data.drawings ?? 0
+        );
+        const incomingProfitPayable = Number(data.profitPayable ?? 0);
+        const incomingProfitAllocated = Number(data.totalProfitAllocated ?? 0);
+        const incomingProfitPaid = Number(data.totalProfitPaid ?? 0);
+
+        let allJournals: any[] | null = null;
+        const getJournals = async () => {
+          if (!allJournals) {
+            allJournals = await getCollectionRecordsForValidation('journalEntries');
+          }
+          return allJournals;
+        };
+
+        // A. Validate Profit Payable balances:
+        // A newly created investor cannot establish profit payable out of nowhere;
+        // profit payable is a calculated liability that MUST be supported by GL 2050 journals.
+        if (incomingProfitPayable > 0 || incomingProfitAllocated > 0 || incomingProfitPaid > 0) {
+          const journals = await getJournals();
+          const investorJournals = journals.filter((j: any) => {
+            return (
+              j.reference === finalDocId ||
+              j.reference === docId ||
+              (data.name && j.narration && j.narration.includes(data.name)) ||
+              (j.lines &&
+                j.lines.some(
+                  (l: any) =>
+                    l.memo && (l.memo.includes(finalDocId) || l.memo.includes(docId) || (data.name && l.memo.includes(data.name)))
+                ))
+            );
+          });
+
+          let netPayCredits = 0;
+          for (const j of investorJournals) {
+            for (const l of j.lines || []) {
+              if (l.accountCode === CANONICAL_ACCOUNTS.INVESTOR_PROFIT_PAYABLE) {
+                netPayCredits += (Number(l.credit) || 0) - (Number(l.debit) || 0);
+              }
+            }
+          }
+
+          const expectedPayable = Math.max(0, Math.round(netPayCredits * 100) / 100);
+          if (netPayCredits <= 0 || Math.abs(expectedPayable - incomingProfitPayable) > 0.01) {
+            return res.status(400).json({
+              error: `হিসাবরক্ষণ সীমাবদ্ধতা: নতুন বিনিয়োগকারী রেকর্ডে প্রদেয় লভ্যাংশের ব্যালেন্স সমর্থিত জাবেদা দাখিলা ছাড়া সরাসরি নির্ধারণ করা যাবে না (Cannot establish calculated profit payable balance on a new investor record without supporting journal entries).`
+            });
+          }
+        }
+
+        // B. Validate Capital balances:
+        // Initial capital can be set legitimately as initialCapital (matching incomingCap with 0 returns).
+        // Any divergence (additional capital, returns/withdrawals, or non-matching current capital)
+        // must be supported by GL 3020 journals.
+        if (incomingCap !== 0 || initialCap !== 0 || incomingReturned !== 0) {
+          if (incomingReturned > 0 || (initialCap === 0 && incomingCap > 0) || Math.abs(incomingCap - initialCap) > 0.01) {
+            const journals = await getJournals();
+            const investorJournals = journals.filter((j: any) => {
+              return (
+                j.reference === finalDocId ||
+                j.reference === docId ||
+                (data.name && j.narration && j.narration.includes(data.name)) ||
+                (j.lines &&
+                  j.lines.some(
+                    (l: any) =>
+                      l.memo && (l.memo.includes(finalDocId) || l.memo.includes(docId) || (data.name && l.memo.includes(data.name)))
+                  ))
+              );
+            });
+
+            let netCapCredits = 0;
+            for (const j of investorJournals) {
+              for (const l of j.lines || []) {
+                if (l.accountCode === CANONICAL_ACCOUNTS.INVESTOR_CAPITAL) {
+                  netCapCredits += (Number(l.credit) || 0) - (Number(l.debit) || 0);
+                }
+              }
+            }
+
+            const expectedCapFromJournals = Math.max(0, Math.round((initialCap + netCapCredits) * 100) / 100);
+            const matchesJournals =
+              Math.abs(expectedCapFromJournals - incomingCap) <= 0.01 ||
+              (netCapCredits > 0 && Math.abs(netCapCredits - incomingCap) <= 0.01);
+
+            if (!matchesJournals) {
+              return res.status(400).json({
+                error: `হিসাবরক্ষণ সীমাবদ্ধতা: নতুন বিনিয়োগকারীর মূলধন স্থিতি সমর্থিত প্রাথমিক মূলধন বা জাবেদা দাখিলা ছাড়া সরাসরি নির্ধারণ করা যাবে না (Cannot establish arbitrary investor capital balance on a new record without valid initial capital or supporting journal entries).`
+              });
+            }
+          }
+        }
+      }
+
+      // 4. Loans: remaining balances
+      else if (targetCol === 'loans') {
+        const principal = Number(data.principalAmount || 0);
+        if (principal <= 0) {
+          return res.status(400).json({
+            error: `হিসাবরক্ষণ সীমাবদ্ধতা: ঋণের মূল আসল অবশ্যই শূন্যের চেয়ে বেশি হতে হবে (Loan principal amount must be greater than zero).`
+          });
+        }
+
+        const incomingRemaining = Number(
+          data.remainingBalance ?? data.outstandingPrincipal ?? data.remainingPrincipal ?? principal
+        );
+        const incomingPaidPrincipal = Number(data.totalPaidPrincipal || 0);
+        const incomingPaidInterest = Number(data.totalPaidInterest || 0);
+        const hasSchedulePaid = Array.isArray(data.schedule) && data.schedule.some((s: any) => s.isPaid);
+
+        if (incomingRemaining > principal + 0.01) {
+          return res.status(400).json({
+            error: `হিসাবরক্ষণ সীমাবদ্ধতা: ঋণের বকেয়া ব্যালেন্স মূল আসলের চেয়ে বেশি হতে পারে না (Loan remaining balance cannot exceed principal amount).`
+          });
+        }
+
+        if (
+          Math.abs(incomingRemaining - principal) > 0.01 ||
+          incomingPaidPrincipal > 0 ||
+          hasSchedulePaid
+        ) {
+          const allJournals = await getCollectionRecordsForValidation('journalEntries');
+          const loanJournals = allJournals.filter((j: any) => {
+            return (
+              j.reference === finalDocId ||
+              j.reference === docId ||
+              (data.loanNumber && j.reference === data.loanNumber) ||
+              (data.lenderName && j.narration && j.narration.includes(data.lenderName)) ||
+              (j.lines &&
+                j.lines.some(
+                  (l: any) =>
+                    l.memo && (l.memo.includes(finalDocId) || l.memo.includes(docId) || (data.lenderName && l.memo.includes(data.lenderName)))
+                ))
+            );
+          });
+
+          let repaidPrincipal = 0;
+          for (const j of loanJournals) {
+            for (const l of j.lines || []) {
+              if (
+                l.accountCode === CANONICAL_ACCOUNTS.SHORT_TERM_LOANS ||
+                l.accountCode === CANONICAL_ACCOUNTS.LONG_TERM_LOANS
+              ) {
+                repaidPrincipal += (Number(l.debit) || 0) - (Number(l.credit) || 0);
+              }
+            }
+          }
+
+          if (repaidPrincipal <= 0 && hasSchedulePaid) {
+            for (const s of data.schedule) {
+              if (s.isPaid) {
+                repaidPrincipal += Number(s.principalPortion || 0);
+              }
+            }
+          }
+
+          if (repaidPrincipal <= 0 && loanJournals.length === 0) {
+            return res.status(400).json({
+              error: `হিসাবরক্ষণ সীমাবদ্ধতা: নতুন ঋণে পরিশোধিত আসল বা হ্রাসকৃত বকেয়া স্থিতি সমর্থিত পরিশোধ দাখিলা ছাড়া সরাসরি নির্ধারণ করা যাবে না (Cannot establish reduced loan remaining balance or paid principal on a new record without supporting repayment entries).`
+            });
+          }
+
+          const expectedRemaining = Math.max(0, Math.round((principal - repaidPrincipal) * 100) / 100);
+          if (Math.abs(expectedRemaining - incomingRemaining) > 0.01) {
+            return res.status(400).json({
+              error: `হিসাবরক্ষণ সীমাবদ্ধতা: ঋণের বকেয়া ব্যালেন্সের অমিল (Cannot arbitrarily establish loan remaining balance. Expected: ৳${expectedRemaining}, Received: ৳${incomingRemaining}).`
+            });
+          }
+        }
+      }
     }
 
     // Mark synced metadata and safeguard calculated operational fields on partial updates

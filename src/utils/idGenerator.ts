@@ -77,40 +77,43 @@ export async function generateDisplayNumber(
 
   let maxSeq = 0;
   try {
-    let records: any[] = [];
-    if (docType === 'SAL' && dbInstance.sales) {
-      records = await dbInstance.sales.toArray();
-    } else if (docType === 'PUR' && dbInstance.purchases) {
-      records = await dbInstance.purchases.toArray();
-    } else if (docType === 'CN' && dbInstance.salesReturns) {
-      records = await dbInstance.salesReturns.toArray();
-    } else if (docType === 'DN' && dbInstance.purchaseReturns) {
-      records = await dbInstance.purchaseReturns.toArray();
-    } else if (docType === 'ADV' && dbInstance.advancePayments) {
-      records = await dbInstance.advancePayments.toArray();
-    } else if (dbInstance.journalEntries) {
-      records = await dbInstance.journalEntries.toArray();
-    }
-    let legacyCountInYear = 0;
-    for (const r of records) {
-      if (r.displayNumber) {
-        const match = r.displayNumber.match(new RegExp(`^${prefix}-${targetYear}-(\\d+)$`));
-        if (match) {
-          const num = parseInt(match[1], 10);
-          if (!isNaN(num) && num > maxSeq) {
-            maxSeq = num;
+    const hasDb = dbInstance && (typeof dbInstance.isOpen === 'function' ? (typeof indexedDB !== 'undefined' && dbInstance.isOpen()) : true);
+    if (hasDb) {
+      let records: any[] = [];
+      if (docType === 'SAL' && dbInstance.sales) {
+        records = await dbInstance.sales.toArray();
+      } else if (docType === 'PUR' && dbInstance.purchases) {
+        records = await dbInstance.purchases.toArray();
+      } else if (docType === 'CN' && dbInstance.salesReturns) {
+        records = await dbInstance.salesReturns.toArray();
+      } else if (docType === 'DN' && dbInstance.purchaseReturns) {
+        records = await dbInstance.purchaseReturns.toArray();
+      } else if (docType === 'ADV' && dbInstance.advancePayments) {
+        records = await dbInstance.advancePayments.toArray();
+      } else if (dbInstance.journalEntries) {
+        records = await dbInstance.journalEntries.toArray();
+      }
+      let legacyCountInYear = 0;
+      for (const r of records) {
+        if (r && r.displayNumber) {
+          const match = r.displayNumber.match(new RegExp(`^${prefix}-${targetYear}-(\\d+)$`));
+          if (match) {
+            const num = parseInt(match[1], 10);
+            if (!isNaN(num) && num > maxSeq) {
+              maxSeq = num;
+            }
+          }
+        } else if (r && r.date) {
+          const rYear = r.date ? r.date.slice(0, 4) : '';
+          if (rYear === targetYear) {
+            legacyCountInYear++;
           }
         }
-      } else {
-        const rYear = r.date ? r.date.slice(0, 4) : '';
-        if (rYear === targetYear) {
-          legacyCountInYear++;
-        }
       }
+      maxSeq = Math.max(maxSeq, legacyCountInYear);
     }
-    maxSeq = Math.max(maxSeq, legacyCountInYear);
-  } catch (err) {
-    console.warn('Error querying existing records in generateDisplayNumber:', err);
+  } catch (_err) {
+    // Non-blocking fallback for sequence generation
   }
 
   const nextSeq = maxSeq + 1;

@@ -1,3 +1,4 @@
+import 'fake-indexeddb/auto';
 import { createMockAgroDatabase } from './regressionTests';
 import { executeContraTransferTransaction } from '../services/transactionService';
 import { DEFAULT_CHART_OF_ACCOUNTS } from '../accounting/defaultAccounts';
