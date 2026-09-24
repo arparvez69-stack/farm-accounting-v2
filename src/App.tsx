@@ -271,8 +271,16 @@ export default function App() {
 
   const handleSyncNow = async () => {
     setSyncState('SYNCING');
-    await synchronizePendingData();
-    setSyncState(navigator.onLine ? 'ONLINE' : 'OFFLINE');
+    try {
+      const syncRes = await synchronizePendingData();
+      if (syncRes.errors && syncRes.errors.length > 0) {
+        setSyncState('SYNC_FAILED');
+      } else {
+        setSyncState(navigator.onLine ? 'ONLINE' : 'OFFLINE');
+      }
+    } catch {
+      setSyncState('SYNC_FAILED');
+    }
   };
 
   if (loading) {

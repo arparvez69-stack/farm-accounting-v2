@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { WifiOff, RefreshCw, CheckCircle2 } from 'lucide-react';
+import { WifiOff, RefreshCw, CheckCircle2, AlertCircle } from 'lucide-react';
 import { SyncState } from '../types';
 import { listenToOnlineSync, synchronizePendingData } from '../firebase/firebaseClient';
 
@@ -36,6 +36,7 @@ export const SyncStatusBadge: React.FC<Props> = ({
   const isOnline = typeof navigator !== 'undefined' ? navigator.onLine : true;
   const isOffline = !isOnline || currentSyncState === 'OFFLINE';
   const isSyncing = currentSyncState === 'SYNCING';
+  const isFailed = currentSyncState === 'SYNC_FAILED' || currentSyncState === 'ERROR';
 
   const handleSyncClick = async () => {
     if (isSyncing || isOffline) return;
@@ -44,8 +45,12 @@ export const SyncStatusBadge: React.FC<Props> = ({
     } else {
       setInternalSyncState('SYNCING');
       try {
-        await synchronizePendingData();
-        setInternalSyncState(navigator.onLine ? 'ONLINE' : 'OFFLINE');
+        const syncRes = await synchronizePendingData();
+        if (syncRes.errors && syncRes.errors.length > 0) {
+          setInternalSyncState('SYNC_FAILED');
+        } else {
+          setInternalSyncState(navigator.onLine ? 'ONLINE' : 'OFFLINE');
+        }
       } catch {
         setInternalSyncState('SYNC_FAILED');
       }
@@ -63,6 +68,8 @@ export const SyncStatusBadge: React.FC<Props> = ({
           ? 'বর্তমানে অফলাইন — সংযোগ এলে স্বয়ংক্রিয়ভাবে সিঙ্ক হবে'
           : isSyncing
           ? 'সার্ভারে ডেটা সিঙ্ক হচ্ছে...'
+          : isFailed
+          ? 'ক্লাউড পারসিস্টেন্স ব্যর্থ হয়েছে। ডেটা ডিভাইসে নিরাপদে আছে (ট্যাপ করে পুনরায় চেষ্টা করুন)'
           : 'সিঙ্ক সম্পন্ন (ট্যাপ করে পুনরায় যাচাই করুন)'
       }
       className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[13px] font-medium border transition-all cursor-pointer min-h-[36px] shadow-xs active:scale-95 ${
@@ -70,6 +77,8 @@ export const SyncStatusBadge: React.FC<Props> = ({
           ? 'bg-amber-50 text-amber-900 border-amber-300 hover:bg-amber-100'
           : isSyncing
           ? 'bg-blue-50 text-blue-900 border-blue-300 animate-pulse'
+          : isFailed
+          ? 'bg-rose-50 text-rose-800 border-rose-300 hover:bg-rose-100'
           : 'bg-[#F0FDF4] text-[#15803D] border-[#BBF7D0] hover:bg-emerald-100/60'
       }`}
     >
@@ -82,6 +91,13 @@ export const SyncStatusBadge: React.FC<Props> = ({
         <>
           <RefreshCw className="w-3.5 h-3.5 animate-spin text-blue-600 shrink-0" />
           <span className="whitespace-nowrap font-medium text-xs">সিঙ্ক হচ্ছে</span>
+        </>
+      ) : isFailed ? (
+        <>
+          <AlertCircle className="w-3.5 h-3.5 text-rose-600 shrink-0" />
+          <span className="whitespace-nowrap font-medium text-xs">
+            {currentPendingCount > 0 ? `সিঙ্ক ব্যর্থ (${currentPendingCount})` : 'সিঙ্ক ব্যর্থ'}
+          </span>
         </>
       ) : (
         <>

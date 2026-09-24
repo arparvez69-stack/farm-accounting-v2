@@ -266,17 +266,29 @@ async function syncRecordToServer(collection: string, data: any): Promise<any> {
 
   if (!res.ok) {
     const errorData = await res.json().catch(() => ({}));
-    throw new Error(errorData.error || `Server returned ${res.status}`);
+    throw new Error(errorData.error || `Server returned ${res.status}: Cloud persistence failed`);
   }
 
-  return await res.json().catch(() => ({ success: true }));
+  const json = await res.json().catch(() => ({ success: false, persisted: false }));
+  // F7: Never claim cloud sync success without confirmed durable persistence
+  if (!json || json.success !== true || json.persisted === false) {
+    throw new Error(json?.error || 'ক্লাউড পারসিস্টেন্স নিশ্চিত হয়নি (Cloud persistence was not confirmed)');
+  }
+
+  return json;
 }
 
 /**
- * Handles sync result: if cloud was newer (staleIgnored), safely updates local IndexedDB
- * record to authoritative cloud state and marks synchronized (F6 conflict protection).
+ * Handles sync result: a record is marked synced=true ONLY after confirmed durable cloud persistence.
+ * If cloud was newer (staleIgnored), safely updates local IndexedDB record to authoritative
+ * cloud state and marks synchronized (F6 conflict protection).
  */
 async function handleSyncedResult(table: any, recordId: string, syncRes: any): Promise<void> {
+  // F7: Never mark synced=true without confirmed durable cloud persistence
+  if (!syncRes || syncRes.success !== true || syncRes.persisted === false) {
+    throw new Error(syncRes?.error || 'Cloud persistence was not confirmed. Record remains unpersisted.');
+  }
+
   if (syncRes?.staleIgnored && syncRes?.data) {
     await table.put({
       ...syncRes.data,
@@ -778,9 +790,13 @@ export function listenToOnlineSync(
     isRunning = true;
     onStateChange('SYNCING');
     try {
-      await synchronizePendingData();
-      onStateChange('SYNCED');
-      setTimeout(() => onStateChange(navigator.onLine ? 'ONLINE' : 'OFFLINE'), 2000);
+      const syncRes = await synchronizePendingData();
+      if (syncRes.errors && syncRes.errors.length > 0) {
+        onStateChange('SYNC_FAILED');
+      } else {
+        onStateChange('SYNCED');
+        setTimeout(() => onStateChange(navigator.onLine ? 'ONLINE' : 'OFFLINE'), 2000);
+      }
     } catch (e) {
       onStateChange('SYNC_FAILED');
     } finally {

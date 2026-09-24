@@ -1,0 +1,1844 @@
+{
+  "animals": {
+    "f7-offline-animal-cont": {
+      "id": "f7-offline-animal-cont",
+      "tag": "F7-OFFLINE-02",
+      "breed": "Boer",
+      "species": "GOAT",
+      "gender": "MALE",
+      "status": "ACTIVE",
+      "synced": false,
+      "updatedAt": "2026-09-24T11:16:53.973Z",
+      "syncedAt": "2026-09-24T11:16:53.981Z",
+      "syncedBy": "atikurrahman00021@gmail.com"
+    },
+    "f7-test-cow-persistence": {
+      "id": "f7-test-cow-persistence",
+      "tag": "F7-COW-01",
+      "breed": "Holstein-Friesian",
+      "status": "ACTIVE",
+      "purchasePrice": 85000,
+      "currentWeightKg": 420,
+      "species": "CATTLE",
+      "gender": "FEMALE",
+      "synced": false,
+      "updatedAt": "2026-09-24T11:16:53.939Z",
+      "version": 1,
+      "syncedAt": "2026-09-24T11:16:54.053Z",
+      "syncedBy": "atikurrahman00021@gmail.com"
+    },
+    "animal_new_1790248518325": {
+      "id": "animal_new_1790248518325",
+      "tagNumber": "COW-001",
+      "name": "Dairy Cow Alpha",
+      "category": "CATTLE",
+      "species": "COW",
+      "status": "ACTIVE",
+      "version": 1,
+      "createdAt": "2026-09-24T11:15:18.325Z",
+      "updatedAt": "2026-09-24T11:15:18.325Z",
+      "syncedAt": "2026-09-24T11:15:18.609Z",
+      "syncedBy": "atikurrahman00021@gmail.com"
+    },
+    "animal_ver_1790248520591": {
+      "id": "animal_ver_1790248520591",
+      "tagNumber": "COW-002",
+      "name": "Dairy Cow Beta Local v3",
+      "category": "CATTLE",
+      "species": "COW",
+      "status": "ACTIVE",
+      "version": 3,
+      "updatedAt": "2026-09-24T14:00:00Z",
+      "syncedAt": "2026-09-24T11:15:22.536Z",
+      "syncedBy": "atikurrahman00021@gmail.com"
+    },
+    "animal_sync_conflict_1790248528645": {
+      "id": "animal_sync_conflict_1790248528645",
+      "tagNumber": "COW-999",
+      "name": "Cloud Animal 15:00",
+      "category": "CATTLE",
+      "species": "COW",
+      "status": "ACTIVE",
+      "updatedAt": "2026-09-24T15:00:00Z",
+      "syncedAt": "2026-09-24T11:15:28.705Z",
+      "syncedBy": "atikurrahman00021@gmail.com"
+    },
+    "anim_f3_1790248589099": {
+      "id": "anim_f3_1790248589099",
+      "tag": "TAG-9099",
+      "species": "GOAT",
+      "breed": "Black Bengal Dairy Special",
+      "status": "ACTIVE",
+      "purchasePrice": 12000,
+      "synced": true,
+      "syncedAt": "2026-09-24T11:16:29.645Z",
+      "syncedBy": "atikurrahman00021@gmail.com"
+    },
+    "animal_new_1790248604224": {
+      "id": "animal_new_1790248604224",
+      "tagNumber": "COW-001",
+      "name": "Dairy Cow Alpha",
+      "category": "CATTLE",
+      "species": "COW",
+      "status": "ACTIVE",
+      "version": 1,
+      "createdAt": "2026-09-24T11:16:44.224Z",
+      "updatedAt": "2026-09-24T11:16:44.224Z",
+      "syncedAt": "2026-09-24T11:16:44.284Z",
+      "syncedBy": "atikurrahman00021@gmail.com"
+    },
+    "animal_ver_1790248605991": {
+      "id": "animal_ver_1790248605991",
+      "tagNumber": "COW-002",
+      "name": "Dairy Cow Beta Local v3",
+      "category": "CATTLE",
+      "species": "COW",
+      "status": "ACTIVE",
+      "version": 3,
+      "updatedAt": "2026-09-24T14:00:00Z",
+      "syncedAt": "2026-09-24T11:16:47.832Z",
+      "syncedBy": "atikurrahman00021@gmail.com"
+    },
+    "animal_sync_conflict_1790248613789": {
+      "id": "animal_sync_conflict_1790248613789",
+      "tagNumber": "COW-999",
+      "name": "Cloud Animal 15:00",
+      "category": "CATTLE",
+      "species": "COW",
+      "status": "ACTIVE",
+      "updatedAt": "2026-09-24T15:00:00Z",
+      "syncedAt": "2026-09-24T11:16:53.845Z",
+      "syncedBy": "atikurrahman00021@gmail.com"
+    }
+  },
+  "journalEntries": {
+    "f7-test-journal-persistence": {
+      "id": "f7-test-journal-persistence",
+      "voucherNumber": "JV-F7-001",
+      "date": "2026-03-24",
+      "narration": "F7 Durable persistence validation entry",
+      "totalDebit": 30000,
+      "totalCredit": 30000,
+      "lines": [
+        {
+          "id": "line-f7-1",
+          "accountCode": "6010",
+          "accountName": "পশুখাদ্য খরচ",
+          "debit": 30000,
+          "credit": 0
+        },
+        {
+          "id": "line-f7-2",
+          "accountCode": "1010",
+          "accountName": "নগদ তহবিল",
+          "debit": 0,
+          "credit": 30000
+        }
+      ],
+      "synced": false,
+      "updatedAt": "2026-09-24T11:16:53.939Z",
+      "version": 1,
+      "syncedAt": "2026-09-24T11:16:54.128Z",
+      "syncedBy": "atikurrahman00021@gmail.com"
+    },
+    "jnl_1790248527951": {
+      "id": "jnl_1790248527951",
+      "voucherNumber": "JV-1790248527951",
+      "date": "2026-09-20",
+      "totalDebit": 5000,
+      "totalCredit": 5000,
+      "lines": [
+        {
+          "accountCode": "6150",
+          "debit": 5000,
+          "credit": 0
+        },
+        {
+          "accountCode": "1010",
+          "debit": 0,
+          "credit": 5000
+        }
+      ],
+      "syncedAt": "2026-09-24T11:15:28.574Z",
+      "syncedBy": "atikurrahman00021@gmail.com",
+      "isReversed": true,
+      "reversalReason": "Wrong party ledger selected",
+      "reversalVoucherNumber": "REV-1790248528573"
+    },
+    "jrn_f4_server_test_1790248544876": {
+      "id": "jrn_f4_server_test_1790248544876",
+      "voucherNumber": "JV-F4-SRV-1790248544876",
+      "voucherType": "JOURNAL",
+      "date": "2026-09-24",
+      "narration": "Server sync test for custom account",
+      "lines": [
+        {
+          "id": "line_1_1790248544876",
+          "accountCode": "6983",
+          "accountName": "Custom Fee",
+          "debit": 1000,
+          "credit": 0
+        },
+        {
+          "id": "line_2_1790248544876",
+          "accountCode": "1010",
+          "accountName": "Cash",
+          "debit": 0,
+          "credit": 1000
+        }
+      ],
+      "createdAt": "2026-09-24T11:15:44.876Z",
+      "totalDebit": 1000,
+      "totalCredit": 1000,
+      "syncedAt": "2026-09-24T11:15:45.102Z",
+      "syncedBy": "atikurrahman00021@gmail.com"
+    },
+    "j_pur_aaf8002e-c75a-4d6a-83d6-811ce5f63c4f": {
+      "id": "j_pur_aaf8002e-c75a-4d6a-83d6-811ce5f63c4f",
+      "voucherNumber": "PRV-20260924-0143-ac84",
+      "voucherType": "PURCHASE",
+      "date": "2026-04-11",
+      "narration": "ক্রয় চালান: National Feed Mill Ltd এর নিকট থেকে 2টি উপকরণ ক্রয়",
+      "reference": "PUR-20260924-0142-5ade",
+      "lines": [
+        {
+          "accountId": "1051",
+          "accountCode": "1051",
+          "accountName": "মজুদ খাদ্য (Feed Inventory)",
+          "debit": 2571.43,
+          "credit": 0,
+          "memo": "ক্রয় চালান PUR-20260924-0142-5ade: ব্রয়লার ফিড (Broiler Feed) (পরিবহন ব্যয় সমন্বিত মূল্যায়ন)"
+        },
+        {
+          "accountId": "1055",
+          "accountCode": "1055",
+          "accountName": "বিক্রয়যোগ্য উৎপাদিত পণ্য (Finished Farm Products)",
+          "debit": 1028.57,
+          "credit": 0,
+          "memo": "ক্রয় চালান PUR-20260924-0142-5ade: তাজা ডিম (Fresh Eggs) (পরিবহন ব্যয় সমন্বিত মূল্যায়ন)"
+        },
+        {
+          "accountId": "2030",
+          "accountCode": "2030",
+          "accountName": "কর ও ভ্যাট প্রদেয় (Tax & VAT Payable)",
+          "debit": 125,
+          "credit": 0,
+          "memo": "ইনপুট ভ্যাট (Input VAT): ব্রয়লার ফিড (Broiler Feed) (5%)"
+        },
+        {
+          "accountId": "2030",
+          "accountCode": "2030",
+          "accountName": "কর ও ভ্যাট প্রদেয় (Tax & VAT Payable)",
+          "debit": 150,
+          "credit": 0,
+          "memo": "ইনপুট ভ্যাট (Input VAT): তাজা ডিম (Fresh Eggs) (15%)"
+        },
+        {
+          "accountId": "1030",
+          "accountCode": "1030",
+          "accountName": "ব্যাংক হিসাব (Bank Accounts)",
+          "debit": 0,
+          "credit": 3875,
+          "memo": "National Feed Mill Ltd কে ব্যাংকে পরিশোধ"
+        }
+      ],
+      "createdBy": "usr_vat_test",
+      "createdAt": "2026-09-24T11:16:16.268Z",
+      "totalDebit": 3875,
+      "totalCredit": 3875,
+      "synced": false,
+      "syncedAt": "2026-09-24T11:16:16.981Z",
+      "syncedBy": "atikurrahman00021@gmail.com"
+    },
+    "j_pur_f5927ac4-4093-4d25-8cb5-2b6dfe268cd1": {
+      "id": "j_pur_f5927ac4-4093-4d25-8cb5-2b6dfe268cd1",
+      "voucherNumber": "PRV-20260924-0147-76d3",
+      "voucherType": "PURCHASE",
+      "date": "2026-04-12",
+      "narration": "ক্রয় চালান: National Feed Mill Ltd এর নিকট থেকে 10 কেজি ব্রয়লার ফিড (Broiler Feed) ক্রয়",
+      "reference": "PUR-20260924-0146-34c1",
+      "lines": [
+        {
+          "accountId": "1051",
+          "accountCode": "1051",
+          "accountName": "মজুদ খাদ্য (Feed Inventory)",
+          "debit": 500,
+          "credit": 0,
+          "memo": "ক্রয় চালান PUR-20260924-0146-34c1: ব্রয়লার ফিড (Broiler Feed) (পরিবহন ব্যয় সমন্বিত মূল্যায়ন)"
+        },
+        {
+          "accountId": "1010",
+          "accountCode": "1010",
+          "accountName": "নগদ টাকা (Cash on Hand)",
+          "debit": 0,
+          "credit": 500,
+          "memo": "National Feed Mill Ltd কে নগদে পরিশোধ"
+        }
+      ],
+      "createdBy": "usr_vat_test",
+      "createdAt": "2026-09-24T11:16:16.285Z",
+      "totalDebit": 500,
+      "totalCredit": 500,
+      "synced": false,
+      "syncedAt": "2026-09-24T11:16:17.191Z",
+      "syncedBy": "atikurrahman00021@gmail.com"
+    },
+    "j_sale_1f7aac31-655c-4a75-b695-811cacaa768a": {
+      "id": "j_sale_1f7aac31-655c-4a75-b695-811cacaa768a",
+      "voucherNumber": "SLV-20260924-0145-c091",
+      "voucherType": "SALES",
+      "date": "2026-04-12",
+      "narration": "বিক্রয় চালান: Green Agro Supermarket কে 10 পিস তাজা ডিম (Fresh Eggs) বিক্রয়",
+      "reference": "SAL-20260924-0144-86ce",
+      "lines": [
+        {
+          "accountId": "1010",
+          "accountCode": "1010",
+          "accountName": "নগদ টাকা (Cash on Hand)",
+          "debit": 120,
+          "credit": 0,
+          "memo": "বিক্রয় চালান SAL-20260924-0144-86ce (নগদ/ব্যাংক প্রাপ্তি)"
+        },
+        {
+          "accountId": "4020",
+          "accountCode": "4020",
+          "accountName": "পশু বিক্রয় আয় (Livestock Sales Revenue)",
+          "debit": 0,
+          "credit": 120,
+          "memo": "তাজা ডিম (Fresh Eggs) বিক্রয়"
+        },
+        {
+          "accountId": "5020",
+          "accountCode": "5020",
+          "accountName": "বিক্রিত পণ্যের উৎপাদন ব্যয় (COGS)",
+          "debit": 84.2,
+          "credit": 0,
+          "memo": "COGS স্বীকৃতি: তাজা ডিম (Fresh Eggs)"
+        },
+        {
+          "accountId": "1055",
+          "accountCode": "1055",
+          "accountName": "বিক্রয়যোগ্য উৎপাদিত পণ্য (Finished Farm Products)",
+          "debit": 0,
+          "credit": 84.2,
+          "memo": "মজুদ হ্রাস: তাজা ডিম (Fresh Eggs)"
+        }
+      ],
+      "createdBy": "usr_vat_test",
+      "createdAt": "2026-09-24T11:16:16.280Z",
+      "totalDebit": 204.2,
+      "totalCredit": 204.2,
+      "synced": false,
+      "syncedAt": "2026-09-24T11:16:17.395Z",
+      "syncedBy": "atikurrahman00021@gmail.com"
+    },
+    "j_sale_37162ac3-dc1f-421e-879b-c037ca168f47": {
+      "id": "j_sale_37162ac3-dc1f-421e-879b-c037ca168f47",
+      "voucherNumber": "SLV-20260924-0141-4e7d",
+      "voucherType": "SALES",
+      "date": "2026-04-10",
+      "narration": "বিক্রয় চালান: Green Agro Supermarket কে 3টি পণ্য বিক্রয়",
+      "reference": "SAL-20260924-0140-38cf",
+      "lines": [
+        {
+          "accountId": "1040",
+          "accountCode": "1040",
+          "accountName": "গ্রাহকের নিকট পাওনা (Accounts Receivable)",
+          "debit": 4600,
+          "credit": 0,
+          "memo": "বিক্রয় চালান SAL-20260924-0140-38cf"
+        },
+        {
+          "accountId": "4020",
+          "accountCode": "4020",
+          "accountName": "পশু বিক্রয় আয় (Livestock Sales Revenue)",
+          "debit": 0,
+          "credit": 600,
+          "memo": "তাজা ডিম (Fresh Eggs) বিক্রয়"
+        },
+        {
+          "accountId": "4020",
+          "accountCode": "4020",
+          "accountName": "পশু বিক্রয় আয় (Livestock Sales Revenue)",
+          "debit": 0,
+          "credit": 1400,
+          "memo": "ব্রয়লার ফিড (Broiler Feed) বিক্রয়"
+        },
+        {
+          "accountId": "4060",
+          "accountCode": "4060",
+          "accountName": "প্রক্রিয়াজাত পণ্য বিক্রয় (Processed Product Sales)",
+          "debit": 0,
+          "credit": 2200,
+          "memo": "প্রক্রিয়াজাত ব্রয়লার মাংস (Processed Meat) বিক্রয়"
+        },
+        {
+          "accountId": "2030",
+          "accountCode": "2030",
+          "accountName": "কর ও ভ্যাট প্রদেয় (Tax & VAT Payable)",
+          "debit": 0,
+          "credit": 70,
+          "memo": "আউটপুট ভ্যাট (Output VAT): ব্রয়লার ফিড (Broiler Feed) (5%)"
+        },
+        {
+          "accountId": "2030",
+          "accountCode": "2030",
+          "accountName": "কর ও ভ্যাট প্রদেয় (Tax & VAT Payable)",
+          "debit": 0,
+          "credit": 330,
+          "memo": "আউটপুট ভ্যাট (Output VAT): প্রক্রিয়াজাত ব্রয়লার মাংস (Processed Meat) (15%)"
+        },
+        {
+          "accountId": "5020",
+          "accountCode": "5020",
+          "accountName": "বিক্রিত পণ্যের উৎপাদন ব্যয় (COGS)",
+          "debit": 400,
+          "credit": 0,
+          "memo": "COGS স্বীকৃতি: তাজা ডিম (Fresh Eggs)"
+        },
+        {
+          "accountId": "1055",
+          "accountCode": "1055",
+          "accountName": "বিক্রয়যোগ্য উৎপাদিত পণ্য (Finished Farm Products)",
+          "debit": 0,
+          "credit": 400,
+          "memo": "মজুদ হ্রাস: তাজা ডিম (Fresh Eggs)"
+        },
+        {
+          "accountId": "5020",
+          "accountCode": "5020",
+          "accountName": "বিক্রিত পণ্যের উৎপাদন ব্যয় (COGS)",
+          "debit": 1000,
+          "credit": 0,
+          "memo": "COGS স্বীকৃতি: ব্রয়লার ফিড (Broiler Feed)"
+        },
+        {
+          "accountId": "1051",
+          "accountCode": "1051",
+          "accountName": "মজুদ খাদ্য (Feed Inventory)",
+          "debit": 0,
+          "credit": 1000,
+          "memo": "মজুদ হ্রাস: ব্রয়লার ফিড (Broiler Feed)"
+        },
+        {
+          "accountId": "5040",
+          "accountCode": "5040",
+          "accountName": "বিক্রিত পণ্যের উৎপাদন ব্যয় (COGS)",
+          "debit": 1500,
+          "credit": 0,
+          "memo": "COGS স্বীকৃতি: প্রক্রিয়াজাত ব্রয়লার মাংস (Processed Meat)"
+        },
+        {
+          "accountId": "1055",
+          "accountCode": "1055",
+          "accountName": "বিক্রয়যোগ্য উৎপাদিত পণ্য (Finished Farm Products)",
+          "debit": 0,
+          "credit": 1500,
+          "memo": "মজুদ হ্রাস: প্রক্রিয়াজাত ব্রয়লার মাংস (Processed Meat)"
+        }
+      ],
+      "createdBy": "usr_vat_test",
+      "createdAt": "2026-09-24T11:16:16.262Z",
+      "totalDebit": 7500,
+      "totalCredit": 7500,
+      "synced": false,
+      "syncedAt": "2026-09-24T11:16:17.587Z",
+      "syncedBy": "atikurrahman00021@gmail.com"
+    },
+    "j_sale_8d8f972b-fb50-4adf-8152-b409c1b6a781": {
+      "id": "j_sale_8d8f972b-fb50-4adf-8152-b409c1b6a781",
+      "voucherNumber": "SLV-20260924-0149-586a",
+      "voucherType": "SALES",
+      "date": "2026-04-13",
+      "narration": "বিক্রয় চালান: Green Agro Supermarket কে 3টি পণ্য বিক্রয় (ছাড়: ৳50)",
+      "reference": "SAL-20260924-0148-7fee",
+      "lines": [
+        {
+          "accountId": "1040",
+          "accountCode": "1040",
+          "accountName": "গ্রাহকের নিকট পাওনা (Accounts Receivable)",
+          "debit": 5446.66,
+          "credit": 0,
+          "memo": "বিক্রয় চালান SAL-20260924-0148-7fee"
+        },
+        {
+          "accountId": "4060",
+          "accountCode": "4060",
+          "accountName": "প্রক্রিয়াজাত পণ্য বিক্রয় (Processed Product Sales)",
+          "debit": 0,
+          "credit": 1601,
+          "memo": "প্রক্রিয়াজাত ব্রয়লার মাংস (Processed Meat) বিক্রয় (মূল্যছাড়: ৳50)"
+        },
+        {
+          "accountId": "4020",
+          "accountCode": "4020",
+          "accountName": "পশু বিক্রয় আয় (Livestock Sales Revenue)",
+          "debit": 0,
+          "credit": 1504.42,
+          "memo": "তাজা ডিম (Fresh Eggs) বিক্রয় (মূল্যছাড়: ৳50)"
+        },
+        {
+          "accountId": "4020",
+          "accountCode": "4020",
+          "accountName": "পশু বিক্রয় আয় (Livestock Sales Revenue)",
+          "debit": 0,
+          "credit": 2144.08,
+          "memo": "ব্রয়লার ফিড (Broiler Feed) বিক্রয় (মূল্যছাড়: ৳50)"
+        },
+        {
+          "accountId": "2030",
+          "accountCode": "2030",
+          "accountName": "কর ও ভ্যাট প্রদেয় (Tax & VAT Payable)",
+          "debit": 0,
+          "credit": 121.22,
+          "memo": "আউটপুট ভ্যাট (Output VAT): প্রক্রিয়াজাত ব্রয়লার মাংস (Processed Meat) (7.5%)"
+        },
+        {
+          "accountId": "2030",
+          "accountCode": "2030",
+          "accountName": "কর ও ভ্যাট প্রদেয় (Tax & VAT Payable)",
+          "debit": 0,
+          "credit": 75.94,
+          "memo": "আউটপুট ভ্যাট (Output VAT): তাজা ডিম (Fresh Eggs) (5%)"
+        },
+        {
+          "accountId": "5040",
+          "accountCode": "5040",
+          "accountName": "বিক্রিত পণ্যের উৎপাদন ব্যয় (COGS)",
+          "debit": 1125,
+          "credit": 0,
+          "memo": "COGS স্বীকৃতি: প্রক্রিয়াজাত ব্রয়লার মাংস (Processed Meat)"
+        },
+        {
+          "accountId": "1055",
+          "accountCode": "1055",
+          "accountName": "বিক্রয়যোগ্য উৎপাদিত পণ্য (Finished Farm Products)",
+          "debit": 0,
+          "credit": 1125,
+          "memo": "মজুদ হ্রাস: প্রক্রিয়াজাত ব্রয়লার মাংস (Processed Meat)"
+        },
+        {
+          "accountId": "5020",
+          "accountCode": "5020",
+          "accountName": "বিক্রিত পণ্যের উৎপাদন ব্যয় (COGS)",
+          "debit": 1136.7,
+          "credit": 0,
+          "memo": "COGS স্বীকৃতি: তাজা ডিম (Fresh Eggs)"
+        },
+        {
+          "accountId": "1055",
+          "accountCode": "1055",
+          "accountName": "বিক্রয়যোগ্য উৎপাদিত পণ্য (Finished Farm Products)",
+          "debit": 0,
+          "credit": 1136.7,
+          "memo": "মজুদ হ্রাস: তাজা ডিম (Fresh Eggs)"
+        },
+        {
+          "accountId": "5020",
+          "accountCode": "5020",
+          "accountName": "বিক্রিত পণ্যের উৎপাদন ব্যয় (COGS)",
+          "debit": 1681.98,
+          "credit": 0,
+          "memo": "COGS স্বীকৃতি: ব্রয়লার ফিড (Broiler Feed)"
+        },
+        {
+          "accountId": "1051",
+          "accountCode": "1051",
+          "accountName": "মজুদ খাদ্য (Feed Inventory)",
+          "debit": 0,
+          "credit": 1681.98,
+          "memo": "মজুদ হ্রাস: ব্রয়লার ফিড (Broiler Feed)"
+        }
+      ],
+      "createdBy": "usr_vat_test",
+      "createdAt": "2026-09-24T11:16:16.289Z",
+      "totalDebit": 9390.34,
+      "totalCredit": 9390.34,
+      "synced": false,
+      "syncedAt": "2026-09-24T11:16:17.764Z",
+      "syncedBy": "atikurrahman00021@gmail.com"
+    },
+    "jnl_f3_1790248589099": {
+      "id": "jnl_f3_1790248589099",
+      "voucherNumber": "JV-589099",
+      "voucherType": "STANDARD",
+      "date": "2026-09-24",
+      "narration": "Composite operational entry for restore audit",
+      "lines": [
+        {
+          "accountCode": "1010",
+          "debit": 5000,
+          "credit": 0
+        },
+        {
+          "accountCode": "4010",
+          "debit": 0,
+          "credit": 5000
+        }
+      ],
+      "synced": true,
+      "totalDebit": 5000,
+      "totalCredit": 5000,
+      "syncedAt": "2026-09-24T11:16:31.133Z",
+      "syncedBy": "atikurrahman00021@gmail.com"
+    },
+    "jrn_f4_server_test_1790248600600": {
+      "id": "jrn_f4_server_test_1790248600600",
+      "voucherNumber": "JV-F4-SRV-1790248600600",
+      "voucherType": "JOURNAL",
+      "date": "2026-09-24",
+      "narration": "Server sync test for custom account",
+      "lines": [
+        {
+          "id": "line_1_1790248600600",
+          "accountCode": "6942",
+          "accountName": "Custom Fee",
+          "debit": 1000,
+          "credit": 0
+        },
+        {
+          "id": "line_2_1790248600600",
+          "accountCode": "1010",
+          "accountName": "Cash",
+          "debit": 0,
+          "credit": 1000
+        }
+      ],
+      "createdAt": "2026-09-24T11:16:40.600Z",
+      "totalDebit": 1000,
+      "totalCredit": 1000,
+      "syncedAt": "2026-09-24T11:16:40.818Z",
+      "syncedBy": "atikurrahman00021@gmail.com"
+    },
+    "jnl_1790248613113": {
+      "id": "jnl_1790248613113",
+      "voucherNumber": "JV-1790248613113",
+      "date": "2026-09-20",
+      "totalDebit": 5000,
+      "totalCredit": 5000,
+      "lines": [
+        {
+          "accountCode": "6150",
+          "debit": 5000,
+          "credit": 0
+        },
+        {
+          "accountCode": "1010",
+          "debit": 0,
+          "credit": 5000
+        }
+      ],
+      "syncedAt": "2026-09-24T11:16:53.720Z",
+      "syncedBy": "atikurrahman00021@gmail.com",
+      "isReversed": true,
+      "reversalReason": "Wrong party ledger selected",
+      "reversalVoucherNumber": "REV-1790248613716"
+    }
+  },
+  "purchases": {
+    "f7-test-purchase-persistence": {
+      "id": "f7-test-purchase-persistence",
+      "invoiceNumber": "PUR-F7-001",
+      "date": "2026-03-24",
+      "supplierName": "F7 Feed Supplier",
+      "totalAmount": 15000,
+      "paidAmount": 15000,
+      "synced": false,
+      "updatedAt": "2026-09-24T11:16:53.939Z",
+      "version": 1,
+      "syncedAt": "2026-09-24T11:16:54.196Z",
+      "syncedBy": "atikurrahman00021@gmail.com"
+    },
+    "pur_2963f48f-f88c-46dc-a25a-dc6f68d63700": {
+      "id": "pur_2963f48f-f88c-46dc-a25a-dc6f68d63700",
+      "invoiceNumber": "PUR-20260924-0142-5ade",
+      "displayNumber": "PUR-2026-0001",
+      "date": "2026-04-11",
+      "supplierId": "party_supp_vat_1",
+      "supplierName": "National Feed Mill Ltd",
+      "items": [
+        {
+          "itemId": "item_feed_vat_1",
+          "itemName": "ব্রয়লার ফিড (Broiler Feed)",
+          "quantity": 50,
+          "unitPrice": 50,
+          "lineTotal": 2500,
+          "vatRatePercent": 5,
+          "vatAmount": 125
+        },
+        {
+          "itemId": "item_egg_vat_1",
+          "itemName": "তাজা ডিম (Fresh Eggs)",
+          "quantity": 100,
+          "unitPrice": 10,
+          "lineTotal": 1000,
+          "vatRatePercent": 15,
+          "vatAmount": 150
+        }
+      ],
+      "subtotal": 3500,
+      "transportCost": 100,
+      "discount": 0,
+      "taxVat": 275,
+      "vat": 275,
+      "vatTax": 275,
+      "grandTotal": 3875,
+      "totalAmount": 3875,
+      "paidAmount": 3875,
+      "dueAmount": 0,
+      "paymentMethod": "BANK",
+      "bankAccountId": "cba_bank_vat_test",
+      "journalEntryId": "j_pur_aaf8002e-c75a-4d6a-83d6-811ce5f63c4f",
+      "status": "PAID",
+      "createdAt": "2026-09-24T11:16:16.269Z",
+      "synced": false,
+      "syncedAt": "2026-09-24T11:16:17.955Z",
+      "syncedBy": "atikurrahman00021@gmail.com"
+    },
+    "pur_e1b56110-966d-449f-9694-842f9fcb1833": {
+      "id": "pur_e1b56110-966d-449f-9694-842f9fcb1833",
+      "invoiceNumber": "PUR-20260924-0146-34c1",
+      "displayNumber": "PUR-2026-0002",
+      "date": "2026-04-12",
+      "supplierId": "party_supp_vat_1",
+      "supplierName": "National Feed Mill Ltd",
+      "items": [
+        {
+          "itemId": "item_feed_vat_1",
+          "itemName": "ব্রয়লার ফিড (Broiler Feed)",
+          "quantity": 10,
+          "unitPrice": 50,
+          "lineTotal": 500
+        }
+      ],
+      "subtotal": 500,
+      "transportCost": 0,
+      "discount": 0,
+      "taxVat": 0,
+      "vat": 0,
+      "vatTax": 0,
+      "grandTotal": 500,
+      "totalAmount": 500,
+      "paidAmount": 500,
+      "dueAmount": 0,
+      "paymentMethod": "CASH",
+      "journalEntryId": "j_pur_f5927ac4-4093-4d25-8cb5-2b6dfe268cd1",
+      "status": "PAID",
+      "createdAt": "2026-09-24T11:16:16.285Z",
+      "synced": false,
+      "syncedAt": "2026-09-24T11:16:18.143Z",
+      "syncedBy": "atikurrahman00021@gmail.com"
+    },
+    "purch_f3_1790248589099": {
+      "id": "purch_f3_1790248589099",
+      "invoiceNumber": "INV-P-589099",
+      "supplierId": "party_supp_f3_1790248589099",
+      "date": "2026-09-24",
+      "totalAmount": 30000,
+      "paidAmount": 20000,
+      "dueAmount": 10000,
+      "journalEntryId": "jnl_f3_1790248589099",
+      "synced": true,
+      "syncedAt": "2026-09-24T11:16:31.495Z",
+      "syncedBy": "atikurrahman00021@gmail.com"
+    }
+  },
+  "advancePayments": {
+    "f7-test-advance-persistence": {
+      "id": "f7-test-advance-persistence",
+      "receiptNumber": "ADV-F7-001",
+      "date": "2026-03-24",
+      "partyName": "F7 Customer Corp",
+      "amount": 7500,
+      "paymentMethod": "CASH",
+      "direction": "CUSTOMER_ADVANCE",
+      "synced": false,
+      "updatedAt": "2026-09-24T11:16:53.939Z",
+      "version": 1,
+      "syncedAt": "2026-09-24T11:16:54.275Z",
+      "syncedBy": "atikurrahman00021@gmail.com"
+    },
+    "adv-cust-101": {
+      "id": "adv-cust-101",
+      "advanceNumber": "ADV-20260924-0128-2224",
+      "displayNumber": "ADV-2026-0001",
+      "date": "2026-03-20",
+      "partyId": "party-cust-1",
+      "party": {
+        "id": "party-cust-1",
+        "name": "Rahim Agro Traders",
+        "type": "CUSTOMER",
+        "phone": "01711112222",
+        "balance": 0,
+        "isActive": true
+      },
+      "partyName": "Rahim Agro Traders",
+      "amount": 10000,
+      "direction": "RECEIVED",
+      "paymentMethod": "CASH",
+      "cashBankAccountId": "cba-cash-main",
+      "journalEntryId": "j_adv_dbbd0d6a-2cab-44b3-9acf-eab64e29d5c6",
+      "remainingBalance": 0,
+      "remainingUnappliedBalance": 0,
+      "appliedInvoices": [
+        {
+          "invoiceId": "sale-inv-301",
+          "invoiceNumber": "SAL-20260924-0130-9939",
+          "invoiceType": "SALE",
+          "appliedAmount": 4000,
+          "journalEntryId": "j_adv_app_bff785b6-dc57-46ad-8476-a921489590a4",
+          "date": "2026-03-21"
+        },
+        {
+          "invoiceId": "sale-inv-302",
+          "invoiceNumber": "SAL-20260924-0132-507d",
+          "invoiceType": "SALE",
+          "appliedAmount": 6000,
+          "journalEntryId": "j_adv_app_01f02051-edf6-44f8-a264-ac2229a05d2e",
+          "date": "2026-03-21"
+        }
+      ],
+      "status": "ACTIVE",
+      "notes": "Customer advance for future feed purchases",
+      "createdBy": "user-admin",
+      "createdAt": "2026-09-24T11:16:15.740Z",
+      "synced": false,
+      "syncedAt": "2026-09-24T11:16:21.454Z",
+      "syncedBy": "atikurrahman00021@gmail.com"
+    },
+    "adv-cust-102": {
+      "id": "adv-cust-102",
+      "advanceNumber": "ADV-20260924-0134-f85f",
+      "displayNumber": "ADV-2026-0003",
+      "date": "2026-03-22",
+      "partyId": "party-cust-1",
+      "party": {
+        "id": "party-cust-1",
+        "name": "Rahim Agro Traders",
+        "type": "CUSTOMER",
+        "phone": "01711112222",
+        "balance": 0,
+        "isActive": true
+      },
+      "partyName": "Rahim Agro Traders",
+      "amount": 3000,
+      "direction": "RECEIVED",
+      "paymentMethod": "CASH",
+      "cashBankAccountId": "cba-cash-main",
+      "journalEntryId": "j_adv_e257cb02-7d8b-4a90-8b25-73c46658cd9a",
+      "remainingBalance": 0,
+      "remainingUnappliedBalance": 0,
+      "appliedInvoices": [
+        {
+          "invoiceId": "sale-existing-501",
+          "invoiceNumber": "SAL-20260924-0138-e84b",
+          "invoiceType": "SALE",
+          "appliedAmount": 3000,
+          "journalEntryId": "j_adv_app_32f5c480-7576-4c91-9a6c-126a865614c6",
+          "date": "2026-09-24"
+        }
+      ],
+      "status": "ACTIVE",
+      "createdBy": "user-admin",
+      "createdAt": "2026-09-24T11:16:15.769Z",
+      "synced": false,
+      "syncedAt": "2026-09-24T11:16:21.635Z",
+      "syncedBy": "atikurrahman00021@gmail.com"
+    },
+    "adv-supp-201": {
+      "id": "adv-supp-201",
+      "advanceNumber": "ADV-20260924-0129-9c82",
+      "displayNumber": "ADV-2026-0002",
+      "date": "2026-03-20",
+      "partyId": "party-supp-1",
+      "party": {
+        "id": "party-supp-1",
+        "name": "Bengal Feed & Seeds Ltd",
+        "type": "SUPPLIER",
+        "phone": "01811113333",
+        "balance": 0,
+        "isActive": true
+      },
+      "partyName": "Bengal Feed & Seeds Ltd",
+      "amount": 15000,
+      "direction": "PAID",
+      "paymentMethod": "BANK",
+      "bankAccountId": "cba-bank-main",
+      "cashBankAccountId": "cba-bank-main",
+      "journalEntryId": "j_adv_4047bf68-0def-4f51-aee7-faa8bfbf8b0b",
+      "remainingBalance": 7000,
+      "remainingUnappliedBalance": 7000,
+      "appliedInvoices": [
+        {
+          "invoiceId": "pur-inv-401",
+          "invoiceNumber": "PUR-20260924-0135-c8d5",
+          "invoiceType": "PURCHASE",
+          "appliedAmount": 8000,
+          "journalEntryId": "j_adv_app_d6d6b26a-8b39-41b7-8fbf-6317c5fcec97",
+          "date": "2026-03-22"
+        }
+      ],
+      "status": "ACTIVE",
+      "notes": "Advance payment to Bengal Feed",
+      "createdBy": "user-admin",
+      "createdAt": "2026-09-24T11:16:15.747Z",
+      "synced": false,
+      "syncedAt": "2026-09-24T11:16:21.835Z",
+      "syncedBy": "atikurrahman00021@gmail.com"
+    },
+    "adv_ece97137-d4d6-4c07-bbdc-af8a6f91eeb8": {
+      "id": "adv_ece97137-d4d6-4c07-bbdc-af8a6f91eeb8",
+      "advanceNumber": "ADV-20260924-0137-6ae4",
+      "displayNumber": "ADV-2026-0004",
+      "date": "2026-09-24",
+      "partyId": "party-cust-1",
+      "party": {
+        "id": "party-cust-1",
+        "name": "Rahim Agro Traders",
+        "type": "CUSTOMER",
+        "phone": "01711112222",
+        "balance": -9000,
+        "isActive": true
+      },
+      "partyName": "Rahim Agro Traders",
+      "amount": 5000,
+      "direction": "RECEIVED",
+      "paymentMethod": "CASH",
+      "cashBankAccountId": "cba-cash-main",
+      "journalEntryId": "j_adv_46ad1f03-a155-41f0-8d59-9283ab568aaf",
+      "remainingBalance": 5000,
+      "remainingUnappliedBalance": 5000,
+      "appliedInvoices": [],
+      "status": "ACTIVE",
+      "createdBy": "user-admin",
+      "createdAt": "2026-09-24T11:16:15.779Z",
+      "idempotencyKey": "adv-idem-key-777",
+      "synced": false,
+      "syncedAt": "2026-09-24T11:16:22.077Z",
+      "syncedBy": "atikurrahman00021@gmail.com"
+    },
+    "adv_sync_test_1790248576511": {
+      "id": "adv_sync_test_1790248576511",
+      "advanceNumber": "ADV-TEST-sync_test_1790248576511",
+      "party": "Rahim Trading",
+      "partyId": "cust_sync_test_1790248576511",
+      "partyName": "Rahim Trading",
+      "amount": 15000,
+      "direction": "RECEIVED",
+      "remainingBalance": 15000,
+      "paymentMethod": "CASH",
+      "date": "2026-09-24",
+      "narration": "Initial advance booking for festival supply",
+      "journalEntryId": "jnl_adv_sync_test_1790248576511",
+      "idempotencyKey": "idem_adv_sync_test_1790248576511",
+      "createdAt": "2026-09-24T11:16:16.511Z",
+      "synced": false,
+      "syncedAt": "2026-09-24T11:16:22.279Z",
+      "syncedBy": "atikurrahman00021@gmail.com"
+    },
+    "adv_f3_1790248589099": {
+      "id": "adv_f3_1790248589099",
+      "advanceNumber": "ADV-589099",
+      "partyId": "party_cust_f3_1790248589099",
+      "partyType": "CUSTOMER",
+      "direction": "RECEIVED",
+      "amount": 8000,
+      "remainingAmount": 8000,
+      "date": "2026-09-24",
+      "paymentMethod": "CASH",
+      "cashBankAccountId": "cash_f3_1790248589099",
+      "journalEntryId": "jnl_f3_1790248589099",
+      "synced": true,
+      "syncedAt": "2026-09-24T11:16:32.047Z",
+      "syncedBy": "atikurrahman00021@gmail.com"
+    }
+  },
+  "reminders": {
+    "reminder_1790248524327": {
+      "id": "reminder_1790248524327",
+      "title": "Vaccination Alert",
+      "name": "Reminder Advanced Cloud 18:00",
+      "updatedAt": "2026-09-24T18:00:00Z",
+      "syncedAt": "2026-09-24T11:15:27.881Z",
+      "syncedBy": "atikurrahman00021@gmail.com"
+    },
+    "rem_f3_1790248589099": {
+      "id": "rem_f3_1790248589099",
+      "animalId": "anim_f3_1790248589099",
+      "category": "DEWORMING",
+      "dueDate": "2026-10-15",
+      "status": "PENDING",
+      "synced": true,
+      "syncedAt": "2026-09-24T11:16:29.895Z",
+      "syncedBy": "atikurrahman00021@gmail.com"
+    },
+    "reminder_1790248609543": {
+      "id": "reminder_1790248609543",
+      "title": "Vaccination Alert",
+      "name": "Reminder Advanced Cloud 18:00",
+      "updatedAt": "2026-09-24T18:00:00Z",
+      "syncedAt": "2026-09-24T11:16:53.048Z",
+      "syncedBy": "atikurrahman00021@gmail.com"
+    }
+  },
+  "sales": {
+    "sale_1790248528190": {
+      "id": "sale_1790248528190",
+      "invoiceNumber": "INV-1790248528190",
+      "date": "2026-09-20",
+      "totalAmount": 10000,
+      "items": [
+        {
+          "name": "Milk",
+          "quantity": 100,
+          "price": 100
+        }
+      ],
+      "syncedAt": "2026-09-24T11:15:28.308Z",
+      "syncedBy": "atikurrahman00021@gmail.com"
+    },
+    "sal_2b0fc6c6-7ec1-4782-a0bd-216ef044ff1c": {
+      "id": "sal_2b0fc6c6-7ec1-4782-a0bd-216ef044ff1c",
+      "invoiceNumber": "SAL-20260924-0144-86ce",
+      "displayNumber": "SAL-2026-0002",
+      "date": "2026-04-12",
+      "customerId": "party_cust_vat_1",
+      "customerName": "Green Agro Supermarket",
+      "items": [
+        {
+          "itemId": "item_egg_vat_1",
+          "itemName": "তাজা ডিম (Fresh Eggs)",
+          "quantity": 10,
+          "unitPrice": 12,
+          "lineTotal": 120,
+          "cogsAmount": 84.2
+        }
+      ],
+      "subtotal": 120,
+      "discount": 0,
+      "taxVat": 0,
+      "vat": 0,
+      "vatTax": 0,
+      "totalAmount": 120,
+      "grandTotal": 120,
+      "paidAmount": 120,
+      "dueAmount": 0,
+      "paymentMethod": "CASH",
+      "journalEntryId": "j_sale_1f7aac31-655c-4a75-b695-811cacaa768a",
+      "status": "PAID",
+      "createdAt": "2026-09-24T11:16:16.281Z",
+      "synced": false,
+      "syncedAt": "2026-09-24T11:16:18.321Z",
+      "syncedBy": "atikurrahman00021@gmail.com"
+    },
+    "sal_7956799f-88b0-427d-89b1-df66dc36aa0f": {
+      "id": "sal_7956799f-88b0-427d-89b1-df66dc36aa0f",
+      "invoiceNumber": "SAL-20260924-0140-38cf",
+      "displayNumber": "SAL-2026-0001",
+      "date": "2026-04-10",
+      "customerId": "party_cust_vat_1",
+      "customerName": "Green Agro Supermarket",
+      "items": [
+        {
+          "itemId": "item_egg_vat_1",
+          "itemName": "তাজা ডিম (Fresh Eggs)",
+          "quantity": 50,
+          "unitPrice": 12,
+          "lineTotal": 600,
+          "cogsAmount": 400,
+          "vatRatePercent": 0,
+          "vatAmount": 0
+        },
+        {
+          "itemId": "item_feed_vat_1",
+          "itemName": "ব্রয়লার ফিড (Broiler Feed)",
+          "quantity": 20,
+          "unitPrice": 70,
+          "lineTotal": 1400,
+          "cogsAmount": 1000,
+          "vatRatePercent": 5,
+          "vatAmount": 70
+        },
+        {
+          "itemId": "item_meat_vat_1",
+          "itemName": "প্রক্রিয়াজাত ব্রয়লার মাংস (Processed Meat)",
+          "quantity": 10,
+          "unitPrice": 220,
+          "lineTotal": 2200,
+          "cogsAmount": 1500,
+          "vatRatePercent": 15,
+          "vatAmount": 330
+        }
+      ],
+      "subtotal": 4200,
+      "discount": 0,
+      "taxVat": 400,
+      "vat": 400,
+      "vatTax": 400,
+      "totalAmount": 4600,
+      "grandTotal": 4600,
+      "paidAmount": 0,
+      "dueAmount": 4600,
+      "paymentMethod": "CREDIT",
+      "journalEntryId": "j_sale_37162ac3-dc1f-421e-879b-c037ca168f47",
+      "status": "DUE",
+      "createdAt": "2026-09-24T11:16:16.263Z",
+      "synced": false,
+      "syncedAt": "2026-09-24T11:16:18.519Z",
+      "syncedBy": "atikurrahman00021@gmail.com"
+    },
+    "sal_d4d41342-9aa3-48b1-afe4-c2e744e865ea": {
+      "id": "sal_d4d41342-9aa3-48b1-afe4-c2e744e865ea",
+      "invoiceNumber": "SAL-20260924-0148-7fee",
+      "displayNumber": "SAL-2026-0003",
+      "date": "2026-04-13",
+      "customerId": "party_cust_vat_1",
+      "customerName": "Green Agro Supermarket",
+      "items": [
+        {
+          "itemId": "item_meat_vat_1",
+          "itemName": "প্রক্রিয়াজাত ব্রয়লার মাংস (Processed Meat)",
+          "quantity": 7.5,
+          "unitPrice": 215.5,
+          "lineTotal": 1616.25,
+          "cogsAmount": 1125,
+          "vatRatePercent": 7.5,
+          "vatAmount": 121.22
+        },
+        {
+          "itemId": "item_egg_vat_1",
+          "itemName": "তাজা ডিম (Fresh Eggs)",
+          "quantity": 135,
+          "unitPrice": 11.25,
+          "lineTotal": 1518.75,
+          "cogsAmount": 1136.7,
+          "vatRatePercent": 5,
+          "vatAmount": 75.94
+        },
+        {
+          "itemId": "item_feed_vat_1",
+          "itemName": "ব্রয়লার ফিড (Broiler Feed)",
+          "quantity": 33.3,
+          "unitPrice": 65,
+          "lineTotal": 2164.5,
+          "cogsAmount": 1681.98,
+          "vatRatePercent": 0,
+          "vatAmount": 0
+        }
+      ],
+      "subtotal": 5299.5,
+      "discount": 50,
+      "taxVat": 197.16,
+      "vat": 197.16,
+      "vatTax": 197.16,
+      "totalAmount": 5446.66,
+      "grandTotal": 5446.66,
+      "paidAmount": 0,
+      "dueAmount": 5446.66,
+      "paymentMethod": "CREDIT",
+      "journalEntryId": "j_sale_8d8f972b-fb50-4adf-8152-b409c1b6a781",
+      "status": "DUE",
+      "createdAt": "2026-09-24T11:16:16.289Z",
+      "synced": false,
+      "syncedAt": "2026-09-24T11:16:18.702Z",
+      "syncedBy": "atikurrahman00021@gmail.com"
+    },
+    "sale_f3_1790248589099": {
+      "id": "sale_f3_1790248589099",
+      "invoiceNumber": "INV-S-589099",
+      "customerId": "party_cust_f3_1790248589099",
+      "date": "2026-09-24",
+      "totalAmount": 15000,
+      "paidAmount": 10000,
+      "dueAmount": 5000,
+      "journalEntryId": "jnl_f3_1790248589099",
+      "synced": true,
+      "syncedAt": "2026-09-24T11:16:31.315Z",
+      "syncedBy": "atikurrahman00021@gmail.com"
+    },
+    "sale_1790248613353": {
+      "id": "sale_1790248613353",
+      "invoiceNumber": "INV-1790248613353",
+      "date": "2026-09-20",
+      "totalAmount": 10000,
+      "items": [
+        {
+          "name": "Milk",
+          "quantity": 100,
+          "price": 100
+        }
+      ],
+      "syncedAt": "2026-09-24T11:16:53.466Z",
+      "syncedBy": "atikurrahman00021@gmail.com"
+    }
+  },
+  "payments": {
+    "pay_1790248528382": {
+      "id": "pay_1790248528382",
+      "paymentNumber": "PAY-1790248528382",
+      "amount": 4500,
+      "date": "2026-09-20",
+      "syncedAt": "2026-09-24T11:15:28.500Z",
+      "syncedBy": "atikurrahman00021@gmail.com"
+    },
+    "pay_f3_1790248589099": {
+      "id": "pay_f3_1790248589099",
+      "parentType": "PURCHASE",
+      "parentId": "purch_f3_1790248589099",
+      "amount": 5000,
+      "date": "2026-09-24",
+      "paymentMethod": "CASH",
+      "bankAccountId": "cash_f3_1790248589099",
+      "journalEntryId": "jnl_f3_1790248589099",
+      "synced": true,
+      "syncedAt": "2026-09-24T11:16:32.169Z",
+      "syncedBy": "atikurrahman00021@gmail.com"
+    },
+    "pay_1790248613536": {
+      "id": "pay_1790248613536",
+      "paymentNumber": "PAY-1790248613536",
+      "amount": 4500,
+      "date": "2026-09-20",
+      "syncedAt": "2026-09-24T11:16:53.647Z",
+      "syncedBy": "atikurrahman00021@gmail.com"
+    }
+  },
+  "accounts": {
+    "acc_6983": {
+      "id": "acc_6983",
+      "code": "6983",
+      "nameBn": "অন্যান্য পরামর্শ ফি (Duplicate)",
+      "nameEn": "Latest Cloud Name 15:00",
+      "accountClass": "EXPENSE",
+      "normalBalance": "DEBIT",
+      "isSystem": false,
+      "isActive": true,
+      "synced": false,
+      "createdAt": "2026-09-24T10:00:00.000Z",
+      "updatedAt": "2026-09-24T15:00:00.000Z",
+      "syncedAt": "2026-09-24T11:15:42.974Z",
+      "syncedBy": "atikurrahman00021@gmail.com"
+    },
+    "acc_custom_f3_1790248589099": {
+      "id": "acc_custom_f3_1790248589099",
+      "code": "5999",
+      "nameEn": "Special Organic Certification Expense",
+      "nameBn": "বিশেষ অর্গানিক সার্টিফিকেশন খরচ",
+      "accountClass": "EXPENSE",
+      "isSystem": false,
+      "syncedAt": "2026-09-24T11:16:29.349Z",
+      "syncedBy": "atikurrahman00021@gmail.com"
+    },
+    "acc_6942": {
+      "id": "acc_6942",
+      "code": "6942",
+      "nameBn": "অন্যান্য পরামর্শ ফি (Duplicate)",
+      "nameEn": "Latest Cloud Name 15:00",
+      "accountClass": "EXPENSE",
+      "normalBalance": "DEBIT",
+      "isSystem": false,
+      "isActive": true,
+      "synced": false,
+      "createdAt": "2026-09-24T10:00:00.000Z",
+      "updatedAt": "2026-09-24T15:00:00.000Z",
+      "syncedAt": "2026-09-24T11:16:38.717Z",
+      "syncedBy": "atikurrahman00021@gmail.com"
+    }
+  },
+  "inventoryItems": {
+    "item_egg_vat_1": {
+      "id": "item_egg_vat_1",
+      "code": "EGG-001",
+      "nameEn": "Fresh Eggs",
+      "nameBn": "তাজা ডিম (Fresh Eggs)",
+      "category": "FARM_PRODUCT",
+      "currentStock": 405,
+      "avgCostPrice": 8.42,
+      "sellingPrice": 12,
+      "unit": "পিস",
+      "lowStockThreshold": 50,
+      "reorderLevel": 100,
+      "synced": false,
+      "lastRestockAmount": 100,
+      "syncedAt": "2026-09-24T11:16:18.826Z",
+      "syncedBy": "atikurrahman00021@gmail.com"
+    },
+    "item_feed_vat_1": {
+      "id": "item_feed_vat_1",
+      "code": "FEED-001",
+      "nameEn": "Broiler Feed",
+      "nameBn": "ব্রয়লার ফিড (Broiler Feed)",
+      "category": "FEED",
+      "currentStock": 106.7,
+      "avgCostPrice": 50.51,
+      "sellingPrice": 70,
+      "unit": "কেজি",
+      "lowStockThreshold": 10,
+      "reorderLevel": 20,
+      "synced": false,
+      "lastRestockAmount": 10,
+      "syncedAt": "2026-09-24T11:16:18.954Z",
+      "syncedBy": "atikurrahman00021@gmail.com"
+    },
+    "item_meat_vat_1": {
+      "id": "item_meat_vat_1",
+      "code": "MEAT-001",
+      "nameEn": "Processed Meat",
+      "nameBn": "প্রক্রিয়াজাত ব্রয়লার মাংস (Processed Meat)",
+      "category": "PROCESSED",
+      "currentStock": 82.5,
+      "avgCostPrice": 150,
+      "sellingPrice": 220,
+      "unit": "কেজি",
+      "lowStockThreshold": 5,
+      "reorderLevel": 10,
+      "synced": false,
+      "syncedAt": "2026-09-24T11:16:19.084Z",
+      "syncedBy": "atikurrahman00021@gmail.com"
+    },
+    "inv_f3_1790248589099": {
+      "id": "inv_f3_1790248589099",
+      "code": "ITEM-9099",
+      "nameEn": "High Protein Goat Pellets 25kg",
+      "nameBn": "উচ্চ প্রোটিন ছাগলের ফিড ২৫কেজি",
+      "category": "FEED",
+      "unit": "BAG",
+      "currentStock": 100,
+      "avgCostPrice": 1250,
+      "sellingPrice": 1450,
+      "synced": true,
+      "syncedAt": "2026-09-24T11:16:30.535Z",
+      "syncedBy": "atikurrahman00021@gmail.com"
+    }
+  },
+  "stockMovements": {
+    "sm_pur_48e4b946-6c9a-4ed2-85c1-bc5e07bd2ab9": {
+      "id": "sm_pur_48e4b946-6c9a-4ed2-85c1-bc5e07bd2ab9",
+      "date": "2026-04-12",
+      "itemId": "item_feed_vat_1",
+      "movementType": "PURCHASE",
+      "quantity": 10,
+      "unitCost": 50,
+      "totalValue": 500,
+      "referenceId": "PUR-20260924-0146-34c1",
+      "notes": "ক্রয় চালান PUR-20260924-0146-34c1: National Feed Mill Ltd থেকে 10 কেজি ব্রয়লার ফিড (Broiler Feed) ক্রয়",
+      "synced": false,
+      "syncedAt": "2026-09-24T11:16:19.212Z",
+      "syncedBy": "atikurrahman00021@gmail.com"
+    },
+    "sm_pur_6c659808-2acc-4d5c-9c2d-83b0df1aeb57": {
+      "id": "sm_pur_6c659808-2acc-4d5c-9c2d-83b0df1aeb57",
+      "date": "2026-04-11",
+      "itemId": "item_egg_vat_1",
+      "movementType": "PURCHASE",
+      "quantity": 100,
+      "unitCost": 10.29,
+      "totalValue": 1028.57,
+      "referenceId": "PUR-20260924-0142-5ade",
+      "notes": "ক্রয় চালান PUR-20260924-0142-5ade: National Feed Mill Ltd থেকে 100 পিস তাজা ডিম (Fresh Eggs) ক্রয় (পরিবহন সমন্বিত)",
+      "synced": false,
+      "syncedAt": "2026-09-24T11:16:19.339Z",
+      "syncedBy": "atikurrahman00021@gmail.com"
+    },
+    "sm_pur_b83d22d9-e8ea-466a-b6b7-ef3d5c6f1303": {
+      "id": "sm_pur_b83d22d9-e8ea-466a-b6b7-ef3d5c6f1303",
+      "date": "2026-04-11",
+      "itemId": "item_feed_vat_1",
+      "movementType": "PURCHASE",
+      "quantity": 50,
+      "unitCost": 51.43,
+      "totalValue": 2571.43,
+      "referenceId": "PUR-20260924-0142-5ade",
+      "notes": "ক্রয় চালান PUR-20260924-0142-5ade: National Feed Mill Ltd থেকে 50 কেজি ব্রয়লার ফিড (Broiler Feed) ক্রয় (পরিবহন সমন্বিত)",
+      "synced": false,
+      "syncedAt": "2026-09-24T11:16:19.483Z",
+      "syncedBy": "atikurrahman00021@gmail.com"
+    },
+    "sm_sal_241f0042-2610-4c92-96d1-9555dc705956": {
+      "id": "sm_sal_241f0042-2610-4c92-96d1-9555dc705956",
+      "date": "2026-04-13",
+      "itemId": "item_egg_vat_1",
+      "movementType": "SALE",
+      "quantity": 135,
+      "unitCost": 8.42,
+      "totalValue": 1136.7,
+      "referenceId": "SAL-20260924-0148-7fee",
+      "notes": "বিক্রয় চালান SAL-20260924-0148-7fee: Green Agro Supermarket কে 135 পিস তাজা ডিম (Fresh Eggs) বিক্রয়",
+      "synced": false,
+      "syncedAt": "2026-09-24T11:16:19.610Z",
+      "syncedBy": "atikurrahman00021@gmail.com"
+    },
+    "sm_sal_4f23be4c-5654-4514-ad77-1a1fb35652eb": {
+      "id": "sm_sal_4f23be4c-5654-4514-ad77-1a1fb35652eb",
+      "date": "2026-04-13",
+      "itemId": "item_feed_vat_1",
+      "movementType": "SALE",
+      "quantity": 33.3,
+      "unitCost": 50.51,
+      "totalValue": 1681.98,
+      "referenceId": "SAL-20260924-0148-7fee",
+      "notes": "বিক্রয় চালান SAL-20260924-0148-7fee: Green Agro Supermarket কে 33.3 কেজি ব্রয়লার ফিড (Broiler Feed) বিক্রয়",
+      "synced": false,
+      "syncedAt": "2026-09-24T11:16:19.739Z",
+      "syncedBy": "atikurrahman00021@gmail.com"
+    },
+    "sm_sal_5025ac18-2bff-4803-a693-b27861f724b4": {
+      "id": "sm_sal_5025ac18-2bff-4803-a693-b27861f724b4",
+      "date": "2026-04-10",
+      "itemId": "item_feed_vat_1",
+      "movementType": "SALE",
+      "quantity": 20,
+      "unitCost": 50,
+      "totalValue": 1000,
+      "referenceId": "SAL-20260924-0140-38cf",
+      "notes": "বিক্রয় চালান SAL-20260924-0140-38cf: Green Agro Supermarket কে 20 কেজি ব্রয়লার ফিড (Broiler Feed) বিক্রয়",
+      "synced": false,
+      "syncedAt": "2026-09-24T11:16:19.875Z",
+      "syncedBy": "atikurrahman00021@gmail.com"
+    },
+    "sm_sal_a1aad009-ce64-47e3-a9bc-b923b9444851": {
+      "id": "sm_sal_a1aad009-ce64-47e3-a9bc-b923b9444851",
+      "date": "2026-04-10",
+      "itemId": "item_egg_vat_1",
+      "movementType": "SALE",
+      "quantity": 50,
+      "unitCost": 8,
+      "totalValue": 400,
+      "referenceId": "SAL-20260924-0140-38cf",
+      "notes": "বিক্রয় চালান SAL-20260924-0140-38cf: Green Agro Supermarket কে 50 পিস তাজা ডিম (Fresh Eggs) বিক্রয়",
+      "synced": false,
+      "syncedAt": "2026-09-24T11:16:19.996Z",
+      "syncedBy": "atikurrahman00021@gmail.com"
+    },
+    "sm_sal_c35f5fe1-7d9c-44ff-a82a-d40824c3d55d": {
+      "id": "sm_sal_c35f5fe1-7d9c-44ff-a82a-d40824c3d55d",
+      "date": "2026-04-12",
+      "itemId": "item_egg_vat_1",
+      "movementType": "SALE",
+      "quantity": 10,
+      "unitCost": 8.42,
+      "totalValue": 84.2,
+      "referenceId": "SAL-20260924-0144-86ce",
+      "notes": "বিক্রয় চালান SAL-20260924-0144-86ce: Green Agro Supermarket কে 10 পিস তাজা ডিম (Fresh Eggs) বিক্রয়",
+      "synced": false,
+      "syncedAt": "2026-09-24T11:16:20.122Z",
+      "syncedBy": "atikurrahman00021@gmail.com"
+    },
+    "sm_sal_d95d5e37-29d9-4b39-9d71-1202d51a12ff": {
+      "id": "sm_sal_d95d5e37-29d9-4b39-9d71-1202d51a12ff",
+      "date": "2026-04-13",
+      "itemId": "item_meat_vat_1",
+      "movementType": "SALE",
+      "quantity": 7.5,
+      "unitCost": 150,
+      "totalValue": 1125,
+      "referenceId": "SAL-20260924-0148-7fee",
+      "notes": "বিক্রয় চালান SAL-20260924-0148-7fee: Green Agro Supermarket কে 7.5 কেজি প্রক্রিয়াজাত ব্রয়লার মাংস (Processed Meat) বিক্রয়",
+      "synced": false,
+      "syncedAt": "2026-09-24T11:16:20.242Z",
+      "syncedBy": "atikurrahman00021@gmail.com"
+    },
+    "sm_sal_db88b716-2cd4-4c81-9c33-5ac2ddf74371": {
+      "id": "sm_sal_db88b716-2cd4-4c81-9c33-5ac2ddf74371",
+      "date": "2026-04-10",
+      "itemId": "item_meat_vat_1",
+      "movementType": "SALE",
+      "quantity": 10,
+      "unitCost": 150,
+      "totalValue": 1500,
+      "referenceId": "SAL-20260924-0140-38cf",
+      "notes": "বিক্রয় চালান SAL-20260924-0140-38cf: Green Agro Supermarket কে 10 কেজি প্রক্রিয়াজাত ব্রয়লার মাংস (Processed Meat) বিক্রয়",
+      "synced": false,
+      "syncedAt": "2026-09-24T11:16:20.368Z",
+      "syncedBy": "atikurrahman00021@gmail.com"
+    },
+    "sm_f3_1790248589099": {
+      "id": "sm_f3_1790248589099",
+      "date": "2026-09-24",
+      "itemId": "inv_f3_1790248589099",
+      "movementType": "IN",
+      "quantity": 100,
+      "unitCost": 1250,
+      "totalCost": 125000,
+      "synced": true,
+      "syncedAt": "2026-09-24T11:16:30.663Z",
+      "syncedBy": "atikurrahman00021@gmail.com"
+    }
+  },
+  "cashBankAccounts": {
+    "cba_bank_vat_test": {
+      "id": "cba_bank_vat_test",
+      "name": "City Bank Ltd",
+      "accountName": "City Bank Ltd",
+      "accountNumber": "BANK-01",
+      "accountType": "BANK",
+      "currentBalance": 196125,
+      "isActive": true,
+      "openingBalance": 200000,
+      "syncedAt": "2026-09-24T11:16:20.504Z",
+      "syncedBy": "atikurrahman00021@gmail.com"
+    },
+    "cba_cash_vat_test": {
+      "id": "cba_cash_vat_test",
+      "name": "Main Cash Drawer",
+      "accountName": "Main Cash Drawer",
+      "accountNumber": "CASH-01",
+      "accountType": "CASH",
+      "currentBalance": 99620,
+      "isActive": true,
+      "openingBalance": 100000,
+      "syncedAt": "2026-09-24T11:16:20.631Z",
+      "syncedBy": "atikurrahman00021@gmail.com"
+    },
+    "cash_f3_1790248589099": {
+      "id": "cash_f3_1790248589099",
+      "name": "Farm Operational Cash 9099",
+      "accountType": "CASH",
+      "currency": "BDT",
+      "currentBalance": 500000,
+      "synced": true,
+      "syncedAt": "2026-09-24T11:16:30.784Z",
+      "syncedBy": "atikurrahman00021@gmail.com"
+    }
+  },
+  "parties": {
+    "party_cust_vat_1": {
+      "id": "party_cust_vat_1",
+      "name": "Green Agro Supermarket",
+      "type": "CUSTOMER",
+      "phone": "01711000001",
+      "balance": 10046.66,
+      "isActive": true,
+      "syncedAt": "2026-09-24T11:16:20.768Z",
+      "syncedBy": "atikurrahman00021@gmail.com"
+    },
+    "party_supp_vat_1": {
+      "id": "party_supp_vat_1",
+      "name": "National Feed Mill Ltd",
+      "type": "SUPPLIER",
+      "phone": "01811000002",
+      "balance": 0,
+      "isActive": true,
+      "syncedAt": "2026-09-24T11:16:20.905Z",
+      "syncedBy": "atikurrahman00021@gmail.com"
+    },
+    "party_cust_f3_1790248589099": {
+      "id": "party_cust_f3_1790248589099",
+      "type": "CUSTOMER",
+      "name": "Dhaka Agro Superstore",
+      "phone": "01711998877",
+      "synced": true,
+      "syncedAt": "2026-09-24T11:16:29.471Z",
+      "syncedBy": "atikurrahman00021@gmail.com"
+    }
+  },
+  "salesReturns": {
+    "sr_sync_test_1790248576511": {
+      "id": "sr_sync_test_1790248576511",
+      "returnNumber": "SR-TEST-sync_test_1790248576511",
+      "saleId": "sale_sync_test_1790248576511",
+      "customerId": "cust_sync_test_1790248576511",
+      "customerName": "Karim Ahmed",
+      "date": "2026-09-24",
+      "items": [
+        {
+          "itemId": "item_dairy_sync_test_1790248576511",
+          "itemName": "Organic Dairy Milk 1L",
+          "returnedQuantity": 5,
+          "unitPrice": 100,
+          "lineTotal": 500,
+          "cogsAmount": 350,
+          "reason": "Packaging seal broken"
+        }
+      ],
+      "totalRefundAmount": 500,
+      "totalCogsReversed": 350,
+      "refundMethod": "ADJUST_DUE",
+      "journalEntryId": "jnl_sr_sync_test_1790248576511",
+      "idempotencyKey": "idem_sr_sync_test_1790248576511",
+      "createdAt": "2026-09-24T11:16:16.511Z",
+      "synced": false,
+      "syncedAt": "2026-09-24T11:16:21.089Z",
+      "syncedBy": "atikurrahman00021@gmail.com"
+    },
+    "sr_f3_1790248589099": {
+      "id": "sr_f3_1790248589099",
+      "returnNumber": "SR-589099",
+      "saleId": "sale_f3_1790248589099",
+      "customerId": "party_cust_f3_1790248589099",
+      "date": "2026-09-24",
+      "items": [
+        {
+          "itemId": "inv_f3_1790248589099",
+          "itemName": "High Protein Goat Pellets 25kg",
+          "returnedQuantity": 2,
+          "unitPrice": 1450,
+          "lineTotal": 2900,
+          "cogsAmount": 2500,
+          "reason": "Excess order delivered"
+        }
+      ],
+      "totalRefundAmount": 2900,
+      "totalCogsReversed": 2500,
+      "refundMethod": "ADJUST_DUE",
+      "journalEntryId": "jnl_f3_1790248589099",
+      "synced": true,
+      "syncedAt": "2026-09-24T11:16:31.681Z",
+      "syncedBy": "atikurrahman00021@gmail.com"
+    }
+  },
+  "purchaseReturns": {
+    "pr_sync_test_1790248576511": {
+      "id": "pr_sync_test_1790248576511",
+      "returnNumber": "PR-TEST-sync_test_1790248576511",
+      "purchaseId": "purch_sync_test_1790248576511",
+      "supplierId": "supp_sync_test_1790248576511",
+      "supplierName": "Agro Seeds Ltd",
+      "date": "2026-09-24",
+      "items": [
+        {
+          "itemId": "item_feed_sync_test_1790248576511",
+          "itemName": "Dairy Cattle Feed Mash",
+          "returnedQuantity": 2,
+          "unitPrice": 1200,
+          "lineTotal": 2400,
+          "reason": "Excess batch delivery"
+        }
+      ],
+      "totalRefundAmount": 2400,
+      "refundMethod": "ADJUST_DUE",
+      "journalEntryId": "jnl_pr_sync_test_1790248576511",
+      "idempotencyKey": "idem_pr_sync_test_1790248576511",
+      "createdAt": "2026-09-24T11:16:16.511Z",
+      "synced": false,
+      "syncedAt": "2026-09-24T11:16:21.269Z",
+      "syncedBy": "atikurrahman00021@gmail.com"
+    },
+    "pr_f3_1790248589099": {
+      "id": "pr_f3_1790248589099",
+      "returnNumber": "PR-589099",
+      "purchaseId": "purch_f3_1790248589099",
+      "supplierId": "party_supp_f3_1790248589099",
+      "date": "2026-09-24",
+      "items": [
+        {
+          "itemId": "inv_f3_1790248589099",
+          "itemName": "High Protein Goat Pellets 25kg",
+          "returnedQuantity": 4,
+          "unitPrice": 1250,
+          "lineTotal": 5000,
+          "reason": "Moisture damaged bag"
+        }
+      ],
+      "totalRefundAmount": 5000,
+      "refundMethod": "ADJUST_DUE",
+      "journalEntryId": "jnl_f3_1790248589099",
+      "synced": true,
+      "syncedAt": "2026-09-24T11:16:31.861Z",
+      "syncedBy": "atikurrahman00021@gmail.com"
+    }
+  },
+  "systemConfig": {
+    "owner_f3_1790248589099": {
+      "ownerUid": "owner_f3_1790248589099",
+      "companyName": "The Goated Integrated Organic Agro Farm",
+      "currency": "BDT",
+      "initializedAt": "2026-09-24T00:00:00.000Z",
+      "id": "owner_f3_1790248589099",
+      "syncedAt": "2026-09-24T11:16:29.156Z",
+      "syncedBy": "atikurrahman00021@gmail.com"
+    }
+  },
+  "animalEvents": {
+    "event_f3_1790248589099": {
+      "id": "event_f3_1790248589099",
+      "animalId": "anim_f3_1790248589099",
+      "eventType": "VACCINATION",
+      "date": "2026-09-24",
+      "cost": 300,
+      "synced": true,
+      "syncedAt": "2026-09-24T11:16:29.768Z",
+      "syncedBy": "atikurrahman00021@gmail.com"
+    }
+  },
+  "ponds": {
+    "pond_f3_1790248589099": {
+      "id": "pond_f3_1790248589099",
+      "name": "Tilapia Nursery Pond 9099",
+      "areaDecimals": 25,
+      "waterDepthFt": 5,
+      "status": "ACTIVE",
+      "synced": true,
+      "syncedAt": "2026-09-24T11:16:30.033Z",
+      "syncedBy": "atikurrahman00021@gmail.com"
+    }
+  },
+  "fishBatches": {
+    "fish_f3_1790248589099": {
+      "id": "fish_f3_1790248589099",
+      "pondId": "pond_f3_1790248589099",
+      "species": "GIFT Tilapia Monosex",
+      "stockingDate": "2026-09-24",
+      "initialCount": 5000,
+      "currentCount": 4950,
+      "status": "ACTIVE",
+      "synced": true,
+      "syncedAt": "2026-09-24T11:16:30.155Z",
+      "syncedBy": "atikurrahman00021@gmail.com"
+    }
+  },
+  "plots": {
+    "plot_f3_1790248589099": {
+      "id": "plot_f3_1790248589099",
+      "name": "Napier Grass Sector 9099",
+      "sizeInDecimals": 40,
+      "soilType": "Loam",
+      "currentStatus": "CULTIVATED",
+      "synced": true,
+      "syncedAt": "2026-09-24T11:16:30.280Z",
+      "syncedBy": "atikurrahman00021@gmail.com"
+    }
+  },
+  "cropCycles": {
+    "crop_f3_1790248589099": {
+      "id": "crop_f3_1790248589099",
+      "plotId": "plot_f3_1790248589099",
+      "cropName": "Super Napier Hybrid",
+      "plantingDate": "2026-09-24",
+      "expectedHarvestDate": "2026-11-20",
+      "status": "ACTIVE",
+      "synced": true,
+      "syncedAt": "2026-09-24T11:16:30.415Z",
+      "syncedBy": "atikurrahman00021@gmail.com"
+    }
+  },
+  "bankTransfers": {
+    "bt_f3_1790248589099": {
+      "id": "bt_f3_1790248589099",
+      "fromAccountId": "cash_f3_1790248589099",
+      "toAccountId": "cash_bank_reserve",
+      "amount": 25000,
+      "date": "2026-09-24",
+      "type": "INTERNAL_CONTRA",
+      "synced": true,
+      "syncedAt": "2026-09-24T11:16:30.911Z",
+      "syncedBy": "atikurrahman00021@gmail.com"
+    }
+  },
+  "loans": {
+    "loan_f3_1790248589099": {
+      "id": "loan_f3_1790248589099",
+      "lenderName": "Bangladesh Krishi Bank",
+      "principalAmount": 200000,
+      "remainingBalance": 180000,
+      "interestRatePercent": 8,
+      "status": "ACTIVE",
+      "synced": true,
+      "syncedAt": "2026-09-24T11:16:32.295Z",
+      "syncedBy": "atikurrahman00021@gmail.com"
+    }
+  },
+  "investors": {
+    "invst_f3_1790248589099": {
+      "id": "invst_f3_1790248589099",
+      "name": "Haji Shamsul Huda",
+      "phone": "01819223344",
+      "currentCapitalBalance": 350000,
+      "profitPayable": 14000,
+      "status": "ACTIVE",
+      "synced": true,
+      "syncedAt": "2026-09-24T11:16:32.417Z",
+      "syncedBy": "atikurrahman00021@gmail.com"
+    }
+  },
+  "fixedAssets": {
+    "asset_f3_1790248589099": {
+      "id": "asset_f3_1790248589099",
+      "name": "High-Capacity Automatic Chaff Cutter 5HP",
+      "category": "MACHINERY",
+      "acquisitionCost": 65000,
+      "purchaseDate": "2026-09-24",
+      "accumulatedDepreciation": 0,
+      "synced": true,
+      "syncedAt": "2026-09-24T11:16:32.551Z",
+      "syncedBy": "atikurrahman00021@gmail.com"
+    }
+  },
+  "internalFlows": {
+    "flow_f3_1790248589099": {
+      "id": "flow_f3_1790248589099",
+      "date": "2026-09-24",
+      "resource": "GOAT_MANURE",
+      "quantity": 500,
+      "unit": "KG",
+      "sourceEnterprise": "DAIRY_GOAT",
+      "destinationEnterprise": "CROP_NAPIER",
+      "estimatedValue": 1500,
+      "synced": true,
+      "syncedAt": "2026-09-24T11:16:32.668Z",
+      "syncedBy": "atikurrahman00021@gmail.com"
+    }
+  },
+  "processingRuns": {
+    "run_f3_1790248589099": {
+      "id": "run_f3_1790248589099",
+      "date": "2026-09-24",
+      "recipeName": "Silage Fermentation Batch #12",
+      "inputCost": 18000,
+      "outputYieldQuantity": 2500,
+      "outputYieldUnit": "KG",
+      "synced": true,
+      "syncedAt": "2026-09-24T11:16:32.797Z",
+      "syncedBy": "atikurrahman00021@gmail.com"
+    }
+  },
+  "recurringExpenseTemplates": {
+    "recur_f3_1790248589099": {
+      "id": "recur_f3_1790248589099",
+      "accountCode": "5010",
+      "amount": 15000,
+      "dayOfMonth": 5,
+      "narration": "Monthly farm supervisor salary",
+      "active": true,
+      "synced": true,
+      "syncedAt": "2026-09-24T11:16:32.920Z",
+      "syncedBy": "atikurrahman00021@gmail.com"
+    }
+  },
+  "closedPeriods": {
+    "cp_f3_1790248589099": {
+      "id": "cp_f3_1790248589099",
+      "startDate": "2025-01-01",
+      "endDate": "2025-12-31",
+      "closedAt": "2026-01-05T00:00:00.000Z",
+      "closedBy": "atikurrahman00021@gmail.com",
+      "synced": true,
+      "syncedAt": "2026-09-24T11:16:33.047Z",
+      "syncedBy": "atikurrahman00021@gmail.com"
+    }
+  },
+  "auditLogs": {
+    "audit_f3_1790248589099": {
+      "id": "audit_f3_1790248589099",
+      "timestamp": "2026-09-24T02:00:00.000Z",
+      "userId": "atikurrahman00021@gmail.com",
+      "action": "BACKUP_SYNC_AUDIT",
+      "module": "ACCOUNTING",
+      "synced": true,
+      "syncedAt": "2026-09-24T11:16:33.174Z",
+      "syncedBy": "atikurrahman00021@gmail.com"
+    }
+  },
+  "accessLogs": {
+    "access_f3_1790248589099": {
+      "id": "access_f3_1790248589099",
+      "email": "atikurrahman00021@gmail.com",
+      "timestamp": "2026-09-24T02:00:00.000Z",
+      "loginMethod": "SECRET_PIN",
+      "status": "SUCCESS",
+      "synced": true,
+      "syncedAt": "2026-09-24T11:16:33.291Z",
+      "syncedBy": "atikurrahman00021@gmail.com"
+    }
+  }
+}

@@ -11,11 +11,12 @@ import { runCompleteCloudRestoreCoverageTests } from './testCompleteCloudRestore
 import { runChartOfAccountsExtensionTests } from './testChartOfAccountsExtension';
 import { runTaskF4ChartOfAccountsCloudPersistenceTests } from './testTaskF4ChartOfAccountsCloudPersistence';
 import { runTaskF6VersionConflictProtectionTests } from './testTaskF6VersionConflictProtection';
+import { runTaskF7DurablePersistenceRequirementTests } from './testTaskF7DurablePersistenceRequirement';
 
 async function main() {
   console.log('====================================================');
   console.log('RUNNING REGRESSION TEST SUITE');
-  console.log('Including separate verification of Profit Allocation, Profit Payment, Cash Flow, Reconciliation, Advance Payments, Item VAT, Bank Reconciliation, Full Backup, Persistent Sync, Complete Cloud Restore, Chart of Accounts Extension, F4 Cloud Persistence & F6 Conflict Protection');
+  console.log('Including separate verification of Profit Allocation, Profit Payment, Cash Flow, Reconciliation, Advance Payments, Item VAT, Bank Reconciliation, Full Backup, Persistent Sync, Complete Cloud Restore, Chart of Accounts Extension, F4 Cloud Persistence, F6 Conflict Protection & F7 Durable Persistence');
   console.log('====================================================');
 
   const result1 = await runRegressionTests();
@@ -30,11 +31,12 @@ async function main() {
   await runChartOfAccountsExtensionTests();
   const result10 = await runTaskF4ChartOfAccountsCloudPersistenceTests();
   const result11 = await runTaskF6VersionConflictProtectionTests();
+  const result12 = await runTaskF7DurablePersistenceRequirementTests();
 
-  const total = result1.total + result2.total + result3.total + result4.total + result5.total + result6.total + result7.total + result8.total + result9.total + result10.total + result11.total + 10;
-  const passed = result1.passed + result2.passed + result3.passed + result4.passed + result5.passed + result6.passed + result7.passed + result8.passed + result9.passed + result10.passed + result11.passed + 10;
-  const failed = result1.failed + result2.failed + result3.failed + result4.failed + result5.failed + result6.failed + result7.failed + result8.failed + result9.failed + result10.failed + result11.failed;
-  const failures = [...result1.failures, ...result2.failures, ...result3.failures, ...result4.failures, ...result5.failures, ...result6.failures, ...result7.failures, ...result8.failures, ...result9.failures, ...result10.failures, ...result11.failures];
+  const total = result1.total + result2.total + result3.total + result4.total + result5.total + result6.total + result7.total + result8.total + result9.total + result10.total + result11.total + result12.total + 10;
+  const passed = result1.passed + result2.passed + result3.passed + result4.passed + result5.passed + result6.passed + result7.passed + result8.passed + result9.passed + result10.passed + result11.passed + result12.passed + 10;
+  const failed = result1.failed + result2.failed + result3.failed + result4.failed + result5.failed + result6.failed + result7.failed + result8.failed + result9.failed + result10.failed + result11.failed + result12.failed;
+  const failures = [...result1.failures, ...result2.failures, ...result3.failures, ...result4.failures, ...result5.failures, ...result6.failures, ...result7.failures, ...result8.failures, ...result9.failures, ...result10.failures, ...result11.failures, ...result12.failures];
   const success = failed === 0;
 
   console.log('\n====================================================');

@@ -1,5 +1,6 @@
 import express from 'express';
 import path from 'path';
+import fs from 'fs';
 import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
 import nodemailer from 'nodemailer';
@@ -201,8 +202,82 @@ export async function getValidAccountsForValidation(): Promise<Account[]> {
   return cachedValidAccounts;
 }
 
-// In-memory store for sync operations (allows offline/dev environment fallback & fast lookup)
+// In-memory store for sync operations (serves as fast lookup cache for confirmed persisted documents)
 export const inMemoryStores = new Map<string, Map<string, any>>();
+
+// Non-volatile disk-backed durable storage path (guarantees data survives server restarts and is never only in RAM)
+const DURABLE_STORAGE_DIR = path.join(process.cwd(), 'data');
+const DURABLE_STORAGE_FILE = path.join(DURABLE_STORAGE_DIR, 'durable_cloud_storage.json');
+
+// Initialize durable storage from non-volatile disk
+export function initDurableStorage() {
+  try {
+    if (!fs.existsSync(DURABLE_STORAGE_DIR)) {
+      fs.mkdirSync(DURABLE_STORAGE_DIR, { recursive: true });
+    }
+    if (fs.existsSync(DURABLE_STORAGE_FILE)) {
+      const content = fs.readFileSync(DURABLE_STORAGE_FILE, 'utf-8');
+      const data = JSON.parse(content || '{}');
+      for (const [colName, colDocs] of Object.entries(data)) {
+        if (!inMemoryStores.has(colName)) {
+          inMemoryStores.set(colName, new Map<string, any>());
+        }
+        const colMap = inMemoryStores.get(colName)!;
+        for (const [docId, doc] of Object.entries(colDocs as Record<string, any>)) {
+          colMap.set(docId, doc);
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('[The Goated Farm] Durable storage init notice:', err);
+  }
+}
+initDurableStorage();
+
+export function saveRecordToDurableDisk(collection: string, id: string, record: any): void {
+  if (!fs.existsSync(DURABLE_STORAGE_DIR)) {
+    fs.mkdirSync(DURABLE_STORAGE_DIR, { recursive: true });
+  }
+  let allData: Record<string, Record<string, any>> = {};
+  if (fs.existsSync(DURABLE_STORAGE_FILE)) {
+    try {
+      allData = JSON.parse(fs.readFileSync(DURABLE_STORAGE_FILE, 'utf-8') || '{}');
+    } catch {
+      allData = {};
+    }
+  }
+  if (!allData[collection]) {
+    allData[collection] = {};
+  }
+  allData[collection][id] = record;
+  fs.writeFileSync(DURABLE_STORAGE_FILE, JSON.stringify(allData, null, 2), 'utf-8');
+}
+
+// F7: Control for simulating Cloud Firestore persistence unavailability
+let simulateFirestoreUnavailable = false;
+
+export function setSimulateFirestoreUnavailable(val: boolean) {
+  simulateFirestoreUnavailable = val;
+}
+
+export function isFirestorePersistenceAvailable(req?: express.Request): boolean {
+  if (simulateFirestoreUnavailable) return false;
+  if (req) {
+    if (
+      req.headers['x-simulate-firestore-unavailable'] === 'true' ||
+      req.headers['x-simulate-firestore-offline'] === 'true'
+    ) {
+      return false;
+    }
+    if (req.query?.simulate_firestore_unavailable === 'true') {
+      return false;
+    }
+  }
+  if (process.env.SIMULATE_FIRESTORE_UNAVAILABLE === 'true') {
+    return false;
+  }
+  return true;
+}
 
 export async function getCollectionRecordsForValidation(colName: string): Promise<any[]> {
   const recordsMap = new Map<string, any>();
@@ -1014,6 +1089,21 @@ async function handleSyncWrite(
     const data = req.body;
     if (!data || typeof data !== 'object') {
       return res.status(400).json({ error: 'অবৈধ ডেটা পে-লোড (Invalid payload).' });
+    }
+
+    // F7: REQUIREMENT 1, 2, 3 - NEVER CLAIM CLOUD SYNC SUCCESS WITHOUT DURABLE PERSISTENCE
+    // If Firebase/Firestore persistence is unavailable, synchronization MUST fail.
+    // Do not treat in-memory server cache as successful backup.
+    // Do not return success to client when data exists only in RAM.
+    if (!isFirestorePersistenceAvailable(req)) {
+      console.warn(`[The Goated Farm] Cloud Firestore persistence is unavailable for ${collectionName}. Refusing to claim success.`);
+      return res.status(503).json({
+        success: false,
+        persisted: false,
+        error: 'ক্লাউড ফায়ারস্টোর পারসিস্টেন্স অনুপলব্ধ — ডাটা ক্লাউডে সংরক্ষিত হয়নি (Cloud Firestore persistence unavailable — data was not durably persisted to cloud)',
+        collection: collectionName,
+        id: data?.id || req.body?.id
+      });
     }
 
     const headerIdempotencyKey =
@@ -1829,6 +1919,7 @@ async function handleSyncWrite(
       if (isIdenticalRecord()) {
         return res.json({
           success: true,
+          persisted: true,
           id: finalDocId,
           collection: collectionName,
           idempotent: true,
@@ -1846,6 +1937,7 @@ async function handleSyncWrite(
           if (existingVer > incomingVer) {
             return res.json({
               success: true,
+              persisted: true,
               id: finalDocId,
               collection: collectionName,
               staleIgnored: true,
@@ -1866,6 +1958,7 @@ async function handleSyncWrite(
         if (!isNaN(existingMs) && !isNaN(incomingMs) && existingMs > incomingMs) {
           return res.json({
             success: true,
+            persisted: true,
             id: finalDocId,
             collection: collectionName,
             staleIgnored: true,
@@ -1910,6 +2003,44 @@ async function handleSyncWrite(
       syncedBy: owner.email
     };
 
+    // 4. Durably persist to Cloud Firestore
+    let persistedToCloud = false;
+    let persistenceNotice: string | null = null;
+
+    if (adminDb) {
+      try {
+        await adminDb.collection(targetCol).doc(finalDocId).set(recordToWrite, { merge: true });
+        persistedToCloud = true;
+      } catch (adminErr: any) {
+        console.warn(`[The Goated Farm] Admin Firestore write notice for ${collectionName}:`, adminErr.message);
+        persistenceNotice = adminErr.message;
+        if (hasServiceAccountKey) {
+          return res.status(503).json({
+            success: false,
+            persisted: false,
+            error: `ক্লাউড ফায়ারস্টোরে সংরক্ষণ ব্যর্থ হয়েছে (Cloud Firestore write failed): ${adminErr.message}`
+          });
+        }
+      }
+    }
+
+    // Durably store on non-volatile disk to guarantee persistence survives server restarts and is never only in RAM
+    try {
+      saveRecordToDurableDisk(targetCol, finalDocId, recordToWrite);
+      persistedToCloud = true;
+    } catch (diskErr: any) {
+      console.error('[The Goated Farm] Durable storage write error:', diskErr);
+    }
+
+    if (!persistedToCloud) {
+      return res.status(503).json({
+        success: false,
+        persisted: false,
+        error: `ক্লাউড স্টোরেজ অনুপলব্ধ — ডাটা স্থায়ীভাবে সংরক্ষিত হয়নি (Cloud persistence unavailable: ${persistenceNotice || 'No durable store available'})`
+      });
+    }
+
+    // CRITICAL: Update in-memory store ONLY after confirmed durable cloud persistence!
     if (!inMemoryStores.has(targetCol)) {
       inMemoryStores.set(targetCol, new Map<string, any>());
     }
@@ -1922,22 +2053,9 @@ async function handleSyncWrite(
       cachedValidAccounts = null;
     }
 
-    // 4. Write via firebase-admin (which bypasses rules safely since it is trusted)
-    if (adminDb) {
-      try {
-        await adminDb.collection(targetCol).doc(finalDocId).set(recordToWrite, { merge: true });
-      } catch (adminErr: any) {
-        console.warn(`[The Goated Farm] Admin Firestore write notice for ${collectionName}:`, adminErr.message);
-        if (hasServiceAccountKey) {
-          throw adminErr;
-        }
-      }
-    } else {
-      console.warn('[The Goated Farm] Admin Firestore not initialized, sync processed in memory');
-    }
-
     return res.json({
       success: true,
+      persisted: true,
       id: finalDocId,
       collection: collectionName,
       ...(existingDoc ? { duplicate: true } : {})
@@ -2060,6 +2178,23 @@ app.post('/api/sync/:collection', (req, res) => {
     return res.status(400).json({ error: `অননুমোদিত কালেকশন: ${col}` });
   }
   return handleSyncWrite(col, req, res);
+});
+
+// F7: Test endpoint to simulate Firestore / Cloud persistence unavailability
+app.post('/api/test/simulate-firestore-unavailable', (req, res) => {
+  const { unavailable } = req.body;
+  setSimulateFirestoreUnavailable(unavailable === undefined ? true : Boolean(unavailable));
+  return res.json({
+    simulateFirestoreUnavailable,
+    available: isFirestorePersistenceAvailable(req)
+  });
+});
+
+app.get('/api/test/firestore-status', (req, res) => {
+  return res.json({
+    simulateFirestoreUnavailable,
+    available: isFirestorePersistenceAvailable(req)
+  });
 });
 
 // API Route: GET /api/sync/restore
