@@ -565,6 +565,7 @@ export async function runTaskF10ValidateCalculatedFieldsOnNewRecordsTests(): Pro
   assert(localLoanResult.loan !== undefined, 'Local loan created via domain transaction');
 
   // C. Investor contribution created locally
+  await db.investors.clear();
   const localInvResult = await executeInvestorTransaction({
     investorName: `আনিসুর রহমান ${testRunTag.slice(-4)}`,
     phone: '01711223344',

@@ -1409,14 +1409,13 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
                   const descMatch = (j.narration && j.narration.toLowerCase().includes(q)) ||
                     j.lines.some((l) => l.memo && l.memo.toLowerCase().includes(q));
                   const amountMatch =
-                    j.totalDebit.toString().includes(q) ||
-                    j.totalCredit.toString().includes(q) ||
-                    j.totalDebit.toLocaleString().includes(q) ||
-                    j.lines.some((l) => (l.debit > 0 && l.debit.toString().includes(q)) || (l.credit > 0 && l.credit.toString().includes(q)));
+                    (j.totalDebit != null && (j.totalDebit.toString().includes(q) || j.totalDebit.toLocaleString().includes(q))) ||
+                    (j.totalCredit != null && (j.totalCredit.toString().includes(q) || j.totalCredit.toLocaleString().includes(q))) ||
+                    (j.lines || []).some((l) => (l.debit > 0 && l.debit.toString().includes(q)) || (l.credit > 0 && l.credit.toString().includes(q)));
                   const dateMatch = j.date && j.date.includes(q);
                   const voucherMatch = j.voucherNumber && j.voucherNumber.toLowerCase().includes(q);
                   const idMatch = j.id && j.id.toLowerCase().includes(q);
-                  const accountMatch = j.lines.some((l) => l.accountCode.includes(q) || l.accountName.toLowerCase().includes(q));
+                  const accountMatch = (j.lines || []).some((l) => (l.accountCode && l.accountCode.includes(q)) || (l.accountName && l.accountName.toLowerCase().includes(q)));
                   const badgeMatch =
                     (j.reversedBy && ('সংশোধিত'.includes(q) || 'corrected'.includes(q))) ||
                     (j.reversalOf && ('রিভার্সাল'.includes(q) || 'reversal'.includes(q))) ||
@@ -1441,7 +1440,7 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
               <div className="flex items-center gap-2">
                 <Lock className="w-4 h-4 text-purple-700 shrink-0" />
                 <span>
-                  <strong>সর্বশেষ সমাপ্ত হিসাবকাল:</strong> {latestClosed.endDate} পর্যন্ত সময়কাল সমাপ্ত (Year-End Closed)। পুঞ্জীভূত লাভে স্থানান্তরিত: <strong>৳{latestClosed.netProfitTransferred.toLocaleString('en-IN')}</strong>
+                  <strong>সর্বশেষ সমাপ্ত হিসাবকাল:</strong> {latestClosed.endDate} পর্যন্ত সময়কাল সমাপ্ত (Year-End Closed)। পুঞ্জীভূত লাভে স্থানান্তরিত: <strong>৳{Number(latestClosed.netProfitTransferred || 0).toLocaleString('en-IN')}</strong>
                 </span>
               </div>
               <div className="flex items-center gap-2">
@@ -1471,16 +1470,15 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
               const filtered = journals.filter((j) => {
                 if (!q) return true;
                 const descMatch = (j.narration && j.narration.toLowerCase().includes(q)) ||
-                  j.lines.some((l) => l.memo && l.memo.toLowerCase().includes(q));
+                  (j.lines || []).some((l) => l.memo && l.memo.toLowerCase().includes(q));
                 const amountMatch =
-                  j.totalDebit.toString().includes(q) ||
-                  j.totalCredit.toString().includes(q) ||
-                  j.totalDebit.toLocaleString().includes(q) ||
-                  j.lines.some((l) => (l.debit > 0 && l.debit.toString().includes(q)) || (l.credit > 0 && l.credit.toString().includes(q)));
+                  (j.totalDebit != null && (j.totalDebit.toString().includes(q) || j.totalDebit.toLocaleString().includes(q))) ||
+                  (j.totalCredit != null && (j.totalCredit.toString().includes(q) || j.totalCredit.toLocaleString().includes(q))) ||
+                  (j.lines || []).some((l) => (l.debit > 0 && l.debit.toString().includes(q)) || (l.credit > 0 && l.credit.toString().includes(q)));
                 const dateMatch = j.date && j.date.includes(q);
                 const voucherMatch = j.voucherNumber && j.voucherNumber.toLowerCase().includes(q);
                 const idMatch = j.id && j.id.toLowerCase().includes(q);
-                const accountMatch = j.lines.some((l) => l.accountCode.includes(q) || l.accountName.toLowerCase().includes(q));
+                const accountMatch = (j.lines || []).some((l) => (l.accountCode && l.accountCode.includes(q)) || (l.accountName && l.accountName.toLowerCase().includes(q)));
                 const badgeMatch =
                   (j.reversedBy && ('সংশোধিত'.includes(q) || 'corrected'.includes(q))) ||
                   (j.reversalOf && ('রিভার্সাল'.includes(q) || 'reversal'.includes(q))) ||
@@ -1720,10 +1718,9 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
                   if (!q) return true;
                   const descMatch = row.narration && row.narration.toLowerCase().includes(q);
                   const amountMatch =
-                    (row.debit > 0 && (row.debit.toString().includes(q) || row.debit.toLocaleString().includes(q))) ||
-                    (row.credit > 0 && (row.credit.toString().includes(q) || row.credit.toLocaleString().includes(q))) ||
-                    row.runningBalance.toString().includes(q) ||
-                    row.runningBalance.toLocaleString().includes(q);
+                    (row.debit != null && row.debit > 0 && (row.debit.toString().includes(q) || row.debit.toLocaleString().includes(q))) ||
+                    (row.credit != null && row.credit > 0 && (row.credit.toString().includes(q) || row.credit.toLocaleString().includes(q))) ||
+                    (row.runningBalance != null && (row.runningBalance.toString().includes(q) || row.runningBalance.toLocaleString().includes(q)));
                   const dateMatch = row.date && row.date.includes(q);
                   const voucherMatch = row.voucherNumber && row.voucherNumber.toLowerCase().includes(q);
                   const personMatch = Boolean(row.relatedPerson && row.relatedPerson.toLowerCase().includes(q));
@@ -1749,10 +1746,9 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
               if (!q) return true;
               const descMatch = row.narration && row.narration.toLowerCase().includes(q);
               const amountMatch =
-                (row.debit > 0 && (row.debit.toString().includes(q) || row.debit.toLocaleString().includes(q))) ||
-                (row.credit > 0 && (row.credit.toString().includes(q) || row.credit.toLocaleString().includes(q))) ||
-                row.runningBalance.toString().includes(q) ||
-                row.runningBalance.toLocaleString().includes(q);
+                (row.debit != null && row.debit > 0 && (row.debit.toString().includes(q) || row.debit.toLocaleString().includes(q))) ||
+                (row.credit != null && row.credit > 0 && (row.credit.toString().includes(q) || row.credit.toLocaleString().includes(q))) ||
+                (row.runningBalance != null && (row.runningBalance.toString().includes(q) || row.runningBalance.toLocaleString().includes(q)));
               const dateMatch = row.date && row.date.includes(q);
               const voucherMatch = row.voucherNumber && row.voucherNumber.toLowerCase().includes(q);
               const personMatch = Boolean(row.relatedPerson && row.relatedPerson.toLowerCase().includes(q));
@@ -2582,7 +2578,7 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
                           <span className="text-gray-500 text-[11px] ml-2">({new Date(p.closedAt).toLocaleDateString('bn-BD')})</span>
                         </div>
                         <div className="font-mono font-bold text-purple-900">
-                          ৳{p.netProfitTransferred.toLocaleString('en-IN')}
+                          ৳{Number(p.netProfitTransferred || 0).toLocaleString('en-IN')}
                         </div>
                       </div>
                     ))}
@@ -2675,7 +2671,7 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
               )}
               <div className="flex justify-between pt-1 border-t border-gray-200">
                 <span className="text-gray-500 font-sans">মোট পরিমাণ:</span>
-                <span className="font-bold text-emerald-800 font-sans text-[14px]">৳{reversingEntry.totalDebit.toLocaleString('en-IN')}</span>
+                <span className="font-bold text-emerald-800 font-sans text-[14px]">৳{Number(reversingEntry.totalDebit || 0).toLocaleString('en-IN')}</span>
               </div>
             </div>
 
@@ -2718,7 +2714,7 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
             </div>
 
             <p className="text-gray-800 text-[15px] font-medium leading-relaxed">
-              আপনি কি {confirmHighAmountVoucher.amount.toLocaleString('en-IN')} টাকার এই এন্ট্রিটি পোস্ট করতে নিশ্চিত?
+              আপনি কি {Number(confirmHighAmountVoucher.amount || 0).toLocaleString('en-IN')} টাকার এই এন্ট্রিটি পোস্ট করতে নিশ্চিত?
             </p>
 
             <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-gray-100">

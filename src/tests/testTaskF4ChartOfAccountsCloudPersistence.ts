@@ -4,7 +4,7 @@ import {
   synchronizePendingData,
   restoreRemoteDataIfLocalEmpty
 } from '../firebase/firebaseClient';
-import { createSessionToken } from '../../server';
+import { createSessionToken, inMemoryStores } from '../../server';
 import { Account, JournalEntry } from '../types';
 import {
   postJournalEntry,
@@ -80,7 +80,19 @@ export async function runTaskF4ChartOfAccountsCloudPersistenceTests(): Promise<A
     // TEST 2: Creation and Automatic Sync of Custom Account
     // ----------------------------------------------------
     console.log('\n--- TEST 2: Sync Custom Account via Sync Architecture ---');
-    const customExpenseCode = `69${String((Date.now() + Math.floor(Math.random() * 80)) % 89 + 10)}`;
+    const customExpenseCode = `6${String(Math.floor(100 + Math.random() * 899))}`;
+    const memAccounts = inMemoryStores.get('accounts');
+    if (memAccounts) {
+      for (const [key, val] of memAccounts.entries()) {
+        if (val?.code === customExpenseCode) memAccounts.delete(key);
+      }
+    }
+    const memJournal = inMemoryStores.get('journalEntries');
+    if (memJournal) {
+      for (const [key, val] of memJournal.entries()) {
+        if (val?.lines?.some((l: any) => l.accountCode === customExpenseCode)) memJournal.delete(key);
+      }
+    }
     const customExpenseAccount: Account = {
       id: `acc_${customExpenseCode}`,
       code: customExpenseCode,

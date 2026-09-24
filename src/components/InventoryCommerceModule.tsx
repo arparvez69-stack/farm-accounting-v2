@@ -23,7 +23,9 @@ import {
   Check,
   MessageCircle,
   Copy,
-  RotateCcw
+  RotateCcw,
+  Plus,
+  Trash2
 } from 'lucide-react';
 import { jsPDF } from 'jspdf';
 import QRCode from 'qrcode';
@@ -44,7 +46,11 @@ import {
   Party,
   PaymentRecord,
   Purchase,
+  PurchaseItem,
+  PurchaseLineInput,
   Sale,
+  SaleItem,
+  SaleLineInput,
   UserRole,
   CashBankAccount,
   SalesReturn,
@@ -602,7 +608,9 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
           dueAmount: due,
           status: due <= 0 || s.status === 'PAID' ? 'PAID' : paid > 0 ? 'PARTIAL' : 'DUE',
           paymentMethod: s.paymentMethod,
-          items: s.items || [],
+          items: (s.items && s.items.length > 0)
+            ? s.items
+            : ((s as any).itemName ? [{ itemId: (s as any).itemId || '', itemName: (s as any).itemName, quantity: (s as any).quantity || 1, unitPrice: (s as any).unitPrice || total, unit: (s as any).unit || 'একক' }] : []),
           payments: invPayments,
           returns: invReturns
         };
@@ -632,7 +640,9 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
           dueAmount: due,
           status: due <= 0 || p.status === 'PAID' ? 'PAID' : paid > 0 ? 'PARTIAL' : 'DUE',
           paymentMethod: p.paymentMethod,
-          items: p.items || [],
+          items: (p.items && p.items.length > 0)
+            ? p.items
+            : ((p as any).itemName ? [{ itemId: (p as any).itemId || '', itemName: (p as any).itemName, quantity: (p as any).quantity || 1, unitPrice: (p as any).unitPrice || total, unit: (p as any).unit || 'একক' }] : []),
           payments: invPayments,
           returns: invReturns
         };
@@ -772,6 +782,15 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
     return localStorage.getItem('goted_vat_registered') === 'true';
   });
 
+  // Multi-line Voucher Line Item Interface
+  interface VoucherLineItem {
+    id: string;
+    itemId: string;
+    quantity: string;
+    unitPrice: string;
+    vatRatePercent?: string;
+  }
+
   // New Sale Form
   const [showNewSale, setShowNewSale] = useState(false);
   const [saleDate, setSaleDate] = useState<string>(() => new Date().toISOString().split('T')[0]);
@@ -783,6 +802,9 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
   const [saleDiscountType, setSaleDiscountType] = useState<'FIXED' | 'PERCENT'>('FIXED');
   const [saleVatRate, setSaleVatRate] = useState('0');
   const [salePaymentMethod, setSalePaymentMethod] = useState<'CASH' | 'BANK' | 'CREDIT'>('CASH');
+  const [saleLines, setSaleLines] = useState<VoucherLineItem[]>([
+    { id: 'sale_line_1', itemId: '', quantity: '1', unitPrice: '', vatRatePercent: '0' }
+  ]);
 
   // New Purchase Form
   const [showNewPurchase, setShowNewPurchase] = useState(false);
@@ -796,6 +818,140 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
   const [purchDiscountType, setPurchDiscountType] = useState<'FIXED' | 'PERCENT'>('FIXED');
   const [purchVatRate, setPurchVatRate] = useState('0');
   const [purchPaymentMethod, setPurchPaymentMethod] = useState<'CASH' | 'BANK' | 'CREDIT'>('CASH');
+  const [purchLines, setPurchLines] = useState<VoucherLineItem[]>([
+    { id: 'purch_line_1', itemId: '', quantity: '1', unitPrice: '', vatRatePercent: '0' }
+  ]);
+
+  // Multi-line Sale Handlers
+  const resetSaleForm = () => {
+    setSaleLines([{ id: 'sale_line_1', itemId: '', quantity: '1', unitPrice: '', vatRatePercent: '0' }]);
+    setSaleItemId('');
+    setSaleQty('1');
+    setSaleUnitPrice('');
+    setSaleDiscount('');
+    setSaleDiscountType('FIXED');
+    setSaleVatRate('0');
+    setSaleAdvanceApplied('');
+    setSaleCustomerId('');
+    setSaleDate(new Date().toISOString().split('T')[0]);
+  };
+
+  const handleAddSaleLine = () => {
+    setSaleLines((prev) => [
+      ...prev,
+      {
+        id: 'sale_line_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7),
+        itemId: '',
+        quantity: '1',
+        unitPrice: '',
+        vatRatePercent: '0'
+      }
+    ]);
+  };
+
+  const handleRemoveSaleLine = (index: number) => {
+    setSaleLines((prev) => {
+      if (prev.length <= 1) {
+        setSaleItemId('');
+        setSaleQty('1');
+        setSaleUnitPrice('');
+        return [{ id: 'sale_line_' + Date.now(), itemId: '', quantity: '1', unitPrice: '', vatRatePercent: '0' }];
+      }
+      const next = prev.filter((_, i) => i !== index);
+      if (next[0]) {
+        setSaleItemId(next[0].itemId);
+        setSaleQty(next[0].quantity);
+        setSaleUnitPrice(next[0].unitPrice);
+      }
+      return next;
+    });
+  };
+
+  const handleUpdateSaleLine = (index: number, field: keyof VoucherLineItem, value: string) => {
+    setSaleLines((prev) => {
+      const updated = [...prev];
+      const current = { ...updated[index], [field]: value };
+      if (field === 'itemId') {
+        const selectedItem = items.find((i) => i.id === value);
+        if (selectedItem && selectedItem.sellingPrice > 0) {
+          current.unitPrice = selectedItem.sellingPrice.toString();
+        }
+      }
+      updated[index] = current;
+      if (index === 0) {
+        if (field === 'itemId') setSaleItemId(value);
+        if (field === 'quantity') setSaleQty(value);
+        if (field === 'unitPrice') setSaleUnitPrice(value);
+      }
+      return updated;
+    });
+  };
+
+  // Multi-line Purchase Handlers
+  const resetPurchForm = () => {
+    setPurchLines([{ id: 'purch_line_1', itemId: '', quantity: '1', unitPrice: '', vatRatePercent: '0' }]);
+    setPurchItemId('');
+    setPurchQty('1');
+    setPurchUnitPrice('');
+    setPurchTransportCost('0');
+    setPurchDiscount('');
+    setPurchDiscountType('FIXED');
+    setPurchVatRate('0');
+    setPurchAdvanceApplied('');
+    setPurchSupplierId('');
+    setPurchDate(new Date().toISOString().split('T')[0]);
+  };
+
+  const handleAddPurchLine = () => {
+    setPurchLines((prev) => [
+      ...prev,
+      {
+        id: 'purch_line_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7),
+        itemId: '',
+        quantity: '1',
+        unitPrice: '',
+        vatRatePercent: '0'
+      }
+    ]);
+  };
+
+  const handleRemovePurchLine = (index: number) => {
+    setPurchLines((prev) => {
+      if (prev.length <= 1) {
+        setPurchItemId('');
+        setPurchQty('1');
+        setPurchUnitPrice('');
+        return [{ id: 'purch_line_' + Date.now(), itemId: '', quantity: '1', unitPrice: '', vatRatePercent: '0' }];
+      }
+      const next = prev.filter((_, i) => i !== index);
+      if (next[0]) {
+        setPurchItemId(next[0].itemId);
+        setPurchQty(next[0].quantity);
+        setPurchUnitPrice(next[0].unitPrice);
+      }
+      return next;
+    });
+  };
+
+  const handleUpdatePurchLine = (index: number, field: keyof VoucherLineItem, value: string) => {
+    setPurchLines((prev) => {
+      const updated = [...prev];
+      const current = { ...updated[index], [field]: value };
+      if (field === 'itemId') {
+        const selectedItem = items.find((i) => i.id === value);
+        if (selectedItem && selectedItem.avgCostPrice > 0) {
+          current.unitPrice = selectedItem.avgCostPrice.toString();
+        }
+      }
+      updated[index] = current;
+      if (index === 0) {
+        if (field === 'itemId') setPurchItemId(value);
+        if (field === 'quantity') setPurchQty(value);
+        if (field === 'unitPrice') setPurchUnitPrice(value);
+      }
+      return updated;
+    });
+  };
 
   // Add Party Modal
   const [showAddParty, setShowAddParty] = useState(false);
@@ -1055,25 +1211,36 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
 
   // EXECUTE SALE WITH ATOMIC TRANSACTION & CANONICAL MAPPINGS
   const executeSaveSale = async () => {
-    const item = items.find((i) => i.id === saleItemId);
     const customer = parties.find((p) => p.id === saleCustomerId);
-    if (!item || !customer) return;
+    if (!customer) return;
 
-    const qty = parseFloat(saleQty) || 0;
-    const price = parseFloat(saleUnitPrice) || item.sellingPrice || 0;
-    const vatRate = isVatRegistered ? (parseFloat(saleVatRate) || 0) : 0;
-    const subtotal = Math.round(qty * price * 100) / 100;
+    // Collect all valid line inputs
+    const lineInputs: SaleLineInput[] = [];
+    for (const line of saleLines) {
+      const it = items.find((i) => i.id === line.itemId);
+      if (!it) continue;
+      const q = parseFloat(line.quantity) || 0;
+      const p = parseFloat(line.unitPrice) || it.sellingPrice || 0;
+      const vatRate = isVatRegistered ? (parseFloat(line.vatRatePercent || saleVatRate || '0') || 0) : 0;
+      lineInputs.push({
+        item: it,
+        quantity: q,
+        unitPrice: p,
+        vatRatePercent: vatRate
+      });
+    }
+
+    if (lineInputs.length === 0) return;
+
+    const subtotal = lineInputs.reduce((sum, l) => sum + Math.round(l.quantity * l.unitPrice * 100) / 100, 0);
     const discountAmount = Math.min(subtotal, Math.max(0, calcSaleDiscountAmount(subtotal, saleDiscount, saleDiscountType)));
     const advanceApplied = parseFloat(saleAdvanceApplied) || 0;
 
     try {
       const res = await executeSaleTransaction({
         customer,
-        item,
-        quantity: qty,
-        unitPrice: price,
+        items: lineInputs,
         discount: discountAmount,
-        vatRatePercent: vatRate,
         isVatRegistered,
         paymentMethod: salePaymentMethod,
         advanceAppliedAmount: advanceApplied > 0 ? advanceApplied : undefined,
@@ -1082,31 +1249,25 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
       });
 
       setShowNewSale(false);
-      setSaleQty('1');
-      setSaleUnitPrice('');
-      setSaleDiscount('');
-      setSaleDiscountType('FIXED');
-      setSaleVatRate('0');
-      setSaleAdvanceApplied('');
-      setSaleCustomerId('');
-      setSaleItemId('');
-      setSaleDate(new Date().toISOString().split('T')[0]);
+      resetSaleForm();
       setMsg({
         type: 'success',
         text: `বিক্রয় চালান ${res.sale.displayNumber || res.sale.invoiceNumber} (৳${res.sale.totalAmount}) সফলভাবে সম্পন্ন এবং দ্বৈত-দাখিলায় পোস্ট হয়েছে!`
       });
       triggerSuccessAnimation('বিক্রয় চালান সফলভাবে তৈরি হয়েছে!', `চালান: ${res.sale.displayNumber || res.sale.invoiceNumber} (৳${res.sale.totalAmount.toLocaleString()})`);
-      notifyUndoableAction({
-        type: 'SALE',
-        saleId: res.sale.id,
-        journalEntryId: res.journalEntryId,
-        itemId: item.id,
-        quantity: qty,
-        customerId: customer.id,
-        totalAmount: res.sale.totalAmount,
-        paymentMethod: salePaymentMethod,
-        currentUserId
-      });
+      if (lineInputs[0]) {
+        notifyUndoableAction({
+          type: 'SALE',
+          saleId: res.sale.id,
+          journalEntryId: res.journalEntryId,
+          itemId: lineInputs[0].item.id,
+          quantity: lineInputs[0].quantity,
+          customerId: customer.id,
+          totalAmount: res.sale.totalAmount,
+          paymentMethod: salePaymentMethod,
+          currentUserId
+        });
+      }
       loadCommerceData();
     } catch (err: any) {
       setMsg({ type: 'error', text: err.message || 'বিক্রয় লেনদেন ব্যর্থ হয়েছে।' });
@@ -1115,20 +1276,14 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
 
   const handleCreateSale = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!saleCustomerId || !saleItemId) {
-      setMsg({ type: 'error', text: 'ক্রেতা ও পণ্য নির্বাচন করুন।' });
+    if (!saleCustomerId) {
+      setMsg({ type: 'error', text: 'ক্রেতা নির্বাচন করুন।' });
       return;
     }
 
-    const item = items.find((i) => i.id === saleItemId);
     const customer = parties.find((p) => p.id === saleCustomerId);
-    if (!item || !customer) return;
-
-    const qty = parseFloat(saleQty) || 0;
-    const price = parseFloat(saleUnitPrice) || item.sellingPrice || 0;
-
-    if (qty <= 0 || price <= 0) {
-      setMsg({ type: 'error', text: 'পরিমাণ ও মূল্য সঠিকভাবে প্রদান করুন।' });
+    if (!customer) {
+      setMsg({ type: 'error', text: 'সঠিক ক্রেতা পাওয়া যায়নি।' });
       return;
     }
 
@@ -1141,12 +1296,65 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
       return;
     }
 
-    const subtotal = Math.round(qty * price * 100) / 100;
-    const discountAmount = Math.min(subtotal, Math.max(0, calcSaleDiscountAmount(subtotal, saleDiscount, saleDiscountType)));
-    const netBeforeVat = Math.max(0, Math.round((subtotal - discountAmount) * 100) / 100);
-    const vatRate = isVatRegistered ? (parseFloat(saleVatRate) || 0) : 0;
-    const vatAmount = vatRate > 0 ? Math.round(netBeforeVat * (vatRate / 100) * 100) / 100 : 0;
-    const totalAmount = Math.max(0, Math.round((netBeforeVat + vatAmount) * 100) / 100);
+    if (!saleLines || saleLines.length === 0) {
+      setMsg({ type: 'error', text: 'কমপক্ষে একটি বিক্রয় পণ্য লাইন যোগ করুন।' });
+      return;
+    }
+
+    // Atomic validation across all sale lines
+    const seenItemIds = new Set<string>();
+    let totalSubtotal = 0;
+    let totalVat = 0;
+
+    for (let idx = 0; idx < saleLines.length; idx++) {
+      const line = saleLines[idx];
+      if (!line.itemId) {
+        setMsg({ type: 'error', text: `লাইন #${idx + 1}: পণ্য নির্বাচন করুন।` });
+        return;
+      }
+      if (seenItemIds.has(line.itemId)) {
+        const dupItem = items.find((i) => i.id === line.itemId);
+        setMsg({
+          type: 'error',
+          text: `লাইন #${idx + 1}: "${dupItem?.nameBn || 'পণ্য'}" একই চালানে একাধিকবার যোগ করা হয়েছে। অনুগ্রহ করে পরিমাণ একত্রিত করুন।`
+        });
+        return;
+      }
+      seenItemIds.add(line.itemId);
+
+      const it = items.find((i) => i.id === line.itemId);
+      if (!it) {
+        setMsg({ type: 'error', text: `লাইন #${idx + 1}: নির্বাচিত পণ্য পাওয়া যায়নি।` });
+        return;
+      }
+
+      const qty = parseFloat(line.quantity) || 0;
+      const price = parseFloat(line.unitPrice) || it.sellingPrice || 0;
+
+      if (qty <= 0 || price <= 0) {
+        setMsg({ type: 'error', text: `লাইন #${idx + 1} (${it.nameBn}): পরিমাণ ও দর ০ এর বেশি হতে হবে।` });
+        return;
+      }
+
+      if (it.currentStock < qty) {
+        setMsg({
+          type: 'error',
+          text: `লাইন #${idx + 1} (${it.nameBn}): পর্যাপ্ত স্টক নেই (অনুরোধ: ${qty} ${it.unit}, মজুদ: ${it.currentStock} ${it.unit})। সমগ্র চালানটি স্থগিত করা হয়েছে।`
+        });
+        return;
+      }
+
+      const lineSub = Math.round(qty * price * 100) / 100;
+      const vatRate = isVatRegistered ? (parseFloat(line.vatRatePercent || saleVatRate || '0') || 0) : 0;
+      const lineVat = vatRate > 0 ? Math.round(lineSub * (vatRate / 100) * 100) / 100 : 0;
+
+      totalSubtotal += lineSub;
+      totalVat += lineVat;
+    }
+
+    const discountAmount = Math.min(totalSubtotal, Math.max(0, calcSaleDiscountAmount(totalSubtotal, saleDiscount, saleDiscountType)));
+    const netBeforeVat = Math.max(0, Math.round((totalSubtotal - discountAmount) * 100) / 100);
+    const totalAmount = Math.max(0, Math.round((netBeforeVat + totalVat) * 100) / 100);
 
     if (totalAmount <= 0) {
       setMsg({ type: 'error', text: 'মূল্যছাড়ের পর চালানের সর্বমোট মূল্য ০ এর বেশি হতে হবে।' });
@@ -1179,27 +1387,38 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
 
   // EXECUTE PURCHASE WITH ATOMIC TRANSACTION & CANONICAL MAPPINGS
   const executeSavePurchase = async () => {
-    const item = items.find((i) => i.id === purchItemId);
     const supplier = parties.find((p) => p.id === purchSupplierId);
-    if (!item || !supplier) return;
+    if (!supplier) return;
 
-    const qty = parseFloat(purchQty) || 0;
-    const price = parseFloat(purchUnitPrice) || item.avgCostPrice || 0;
+    // Collect all valid line inputs
+    const lineInputs: PurchaseLineInput[] = [];
+    for (const line of purchLines) {
+      const it = items.find((i) => i.id === line.itemId);
+      if (!it) continue;
+      const q = parseFloat(line.quantity) || 0;
+      const p = parseFloat(line.unitPrice) || it.avgCostPrice || 0;
+      const vatRate = isVatRegistered ? (parseFloat(line.vatRatePercent || purchVatRate || '0') || 0) : 0;
+      lineInputs.push({
+        item: it,
+        quantity: q,
+        unitPrice: p,
+        vatRatePercent: vatRate
+      });
+    }
+
+    if (lineInputs.length === 0) return;
+
+    const itemsTotal = lineInputs.reduce((sum, l) => sum + Math.round(l.quantity * l.unitPrice * 100) / 100, 0);
     const transport = parseFloat(purchTransportCost) || 0;
-    const vatRate = isVatRegistered ? (parseFloat(purchVatRate) || 0) : 0;
-    const itemsTotal = Math.round(qty * price * 100) / 100;
     const discountAmount = Math.min(itemsTotal + transport, Math.max(0, calcPurchDiscountAmount(itemsTotal, purchDiscount, purchDiscountType)));
     const advanceApplied = parseFloat(purchAdvanceApplied) || 0;
 
     try {
       const res = await executePurchaseTransaction({
         supplier,
-        item,
-        quantity: qty,
-        unitPrice: price,
+        items: lineInputs,
         transportCost: transport,
         discount: discountAmount,
-        vatRatePercent: vatRate,
         isVatRegistered,
         paymentMethod: purchPaymentMethod,
         advanceAppliedAmount: advanceApplied > 0 ? advanceApplied : undefined,
@@ -1208,32 +1427,25 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
       });
 
       setShowNewPurchase(false);
-      setPurchQty('1');
-      setPurchUnitPrice('');
-      setPurchTransportCost('0');
-      setPurchDiscount('');
-      setPurchDiscountType('FIXED');
-      setPurchVatRate('0');
-      setPurchAdvanceApplied('');
-      setPurchSupplierId('');
-      setPurchItemId('');
-      setPurchDate(new Date().toISOString().split('T')[0]);
+      resetPurchForm();
       setMsg({
         type: 'success',
         text: `ক্রয় চালান ${res.purchase.displayNumber || res.purchase.invoiceNumber} (৳${res.purchase.grandTotal}) সফলভাবে সংরক্ষিত এবং স্টকে যুক্ত হয়েছে!`
       });
       triggerSuccessAnimation('ক্রয় চালান সফলভাবে সংরক্ষিত হয়েছে!', `চালান: ${res.purchase.displayNumber || res.purchase.invoiceNumber} (৳${res.purchase.grandTotal.toLocaleString()})`);
-      notifyUndoableAction({
-        type: 'PURCHASE',
-        purchaseId: res.purchase.id,
-        journalEntryId: res.journalEntryId,
-        itemId: item.id,
-        quantity: qty,
-        supplierId: supplier.id,
-        grandTotal: res.purchase.grandTotal,
-        paymentMethod: purchPaymentMethod,
-        currentUserId
-      });
+      if (lineInputs[0]) {
+        notifyUndoableAction({
+          type: 'PURCHASE',
+          purchaseId: res.purchase.id,
+          journalEntryId: res.journalEntryId,
+          itemId: lineInputs[0].item.id,
+          quantity: lineInputs[0].quantity,
+          supplierId: supplier.id,
+          grandTotal: res.purchase.grandTotal,
+          paymentMethod: purchPaymentMethod,
+          currentUserId
+        });
+      }
       loadCommerceData();
     } catch (err: any) {
       setMsg({ type: 'error', text: err.message || 'ক্রয় লেনদেন ব্যর্থ হয়েছে।' });
@@ -1242,21 +1454,14 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
 
   const handleCreatePurchase = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!purchSupplierId || !purchItemId) {
-      setMsg({ type: 'error', text: 'সরবরাহকারী ও পণ্য নির্বাচন করুন।' });
+    if (!purchSupplierId) {
+      setMsg({ type: 'error', text: 'সরবরাহকারী নির্বাচন করুন।' });
       return;
     }
 
-    const item = items.find((i) => i.id === purchItemId);
     const supplier = parties.find((p) => p.id === purchSupplierId);
-    if (!item || !supplier) return;
-
-    const qty = parseFloat(purchQty) || 0;
-    const price = parseFloat(purchUnitPrice) || item.avgCostPrice || 0;
-    const transport = parseFloat(purchTransportCost) || 0;
-
-    if (qty <= 0 || price <= 0) {
-      setMsg({ type: 'error', text: 'পরিমাণ ও দর সঠিকভাবে প্রদান করুন।' });
+    if (!supplier) {
+      setMsg({ type: 'error', text: 'সঠিক সরবরাহকারী পাওয়া যায়নি।' });
       return;
     }
 
@@ -1269,12 +1474,58 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
       return;
     }
 
-    const itemsTotal = Math.round(qty * price * 100) / 100;
+    if (!purchLines || purchLines.length === 0) {
+      setMsg({ type: 'error', text: 'কমপক্ষে একটি ক্রয় পণ্য লাইন যোগ করুন।' });
+      return;
+    }
+
+    // Atomic validation across all purchase lines
+    const seenItemIds = new Set<string>();
+    let itemsTotal = 0;
+    let totalVat = 0;
+
+    for (let idx = 0; idx < purchLines.length; idx++) {
+      const line = purchLines[idx];
+      if (!line.itemId) {
+        setMsg({ type: 'error', text: `লাইন #${idx + 1}: পণ্য নির্বাচন করুন।` });
+        return;
+      }
+      if (seenItemIds.has(line.itemId)) {
+        const dupItem = items.find((i) => i.id === line.itemId);
+        setMsg({
+          type: 'error',
+          text: `লাইন #${idx + 1}: "${dupItem?.nameBn || 'পণ্য'}" একই চালানে একাধিকবার যোগ করা হয়েছে। অনুগ্রহ করে পরিমাণ একত্রিত করুন।`
+        });
+        return;
+      }
+      seenItemIds.add(line.itemId);
+
+      const it = items.find((i) => i.id === line.itemId);
+      if (!it) {
+        setMsg({ type: 'error', text: `লাইন #${idx + 1}: নির্বাচিত পণ্য পাওয়া যায়নি।` });
+        return;
+      }
+
+      const qty = parseFloat(line.quantity) || 0;
+      const price = parseFloat(line.unitPrice) || it.avgCostPrice || 0;
+
+      if (qty <= 0 || price <= 0) {
+        setMsg({ type: 'error', text: `লাইন #${idx + 1} (${it.nameBn}): পরিমাণ ও দর ০ এর বেশি হতে হবে।` });
+        return;
+      }
+
+      const lineSub = Math.round(qty * price * 100) / 100;
+      const vatRate = isVatRegistered ? (parseFloat(line.vatRatePercent || purchVatRate || '0') || 0) : 0;
+      const lineVat = vatRate > 0 ? Math.round(lineSub * (vatRate / 100) * 100) / 100 : 0;
+
+      itemsTotal += lineSub;
+      totalVat += lineVat;
+    }
+
+    const transport = parseFloat(purchTransportCost) || 0;
     const discountAmount = Math.min(itemsTotal + transport, Math.max(0, calcPurchDiscountAmount(itemsTotal, purchDiscount, purchDiscountType)));
     const netBeforeVat = Math.max(0, Math.round((itemsTotal + transport - discountAmount) * 100) / 100);
-    const vatRate = isVatRegistered ? (parseFloat(purchVatRate) || 0) : 0;
-    const vatAmount = vatRate > 0 ? Math.round(netBeforeVat * (vatRate / 100) * 100) / 100 : 0;
-    const grandTotal = Math.max(0, Math.round((netBeforeVat + vatAmount) * 100) / 100);
+    const grandTotal = Math.max(0, Math.round((netBeforeVat + totalVat) * 100) / 100);
 
     if (grandTotal <= 0) {
       setMsg({ type: 'error', text: 'মূল্যছাড়ের পর চালানের সর্বমোট মূল্য ০ এর বেশি হতে হবে।' });
@@ -2350,9 +2601,16 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
           </div>
 
           {showNewSale && (
-            <form onSubmit={handleCreateSale} className="p-4 bg-amber-50/40 border border-amber-200 rounded-xl space-y-3">
-              <div className="font-bold text-amber-900 text-[15px]">নতুন বিক্রয় চালান তৈরি করুন</div>
-              <div className="grid grid-cols-1 sm:grid-cols-4 gap-2.5">
+            <form onSubmit={handleCreateSale} className="p-4 bg-amber-50/40 border border-amber-200 rounded-xl space-y-4">
+              <div className="flex items-center justify-between">
+                <div className="font-bold text-amber-900 text-[15px]">নতুন বিক্রয় চালান তৈরি করুন (Multi-Line Sales Voucher)</div>
+                <span className="text-xs text-amber-700 bg-amber-100/70 px-2 py-0.5 rounded font-medium">
+                  {saleLines.length} টি পণ্য লাইন
+                </span>
+              </div>
+
+              {/* Header Info */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
                 <div>
                   <label className="block text-[13px] font-medium text-gray-700 mb-1">চালানের তারিখ</label>
                   <input
@@ -2385,26 +2643,6 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                 </div>
 
                 <div>
-                  <label className="block text-[13px] font-medium text-gray-700 mb-1">বিক্রয়ের পণ্য</label>
-                  <select
-                    value={saleItemId}
-                    onChange={(e) => {
-                      setSaleItemId(e.target.value);
-                      const it = items.find((i) => i.id === e.target.value);
-                      if (it && it.sellingPrice > 0) setSaleUnitPrice(it.sellingPrice.toString());
-                    }}
-                    className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900"
-                  >
-                    <option value="">-- পণ্য নির্বাচন --</option>
-                    {items.map((it) => (
-                      <option key={it.id} value={it.id}>
-                        {it.nameBn} (স্টক: {it.currentStock} {it.unit})
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
                   <label className="block text-[13px] font-medium text-gray-700 mb-1">পরিশোধের মাধ্যম</label>
                   <select
                     value={salePaymentMethod}
@@ -2418,26 +2656,131 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                 </div>
               </div>
 
-              <div className={`grid grid-cols-1 ${isVatRegistered ? 'sm:grid-cols-4' : 'sm:grid-cols-3'} gap-2.5`}>
-                <div>
-                  <label className="block text-[13px] font-medium text-gray-700 mb-1">পরিমাণ</label>
-                  <input
-                    type="number"
-                    value={saleQty}
-                    onChange={(e) => setSaleQty(e.target.value)}
-                    className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900"
-                  />
+              {/* Multi-Line Items Table */}
+              <div className="border border-amber-200/80 rounded-xl overflow-hidden bg-white">
+                <div className="bg-amber-100/60 px-3 py-2 border-b border-amber-200/80 flex items-center justify-between">
+                  <span className="text-xs font-bold text-amber-900 uppercase tracking-wider">
+                    বিক্রয়যোগ্য পণ্যসমূহের তালিকা (Voucher Item Lines)
+                  </span>
+                  <button
+                    type="button"
+                    onClick={handleAddSaleLine}
+                    className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-bold text-amber-800 bg-amber-200/80 hover:bg-amber-300/80 rounded-md transition-colors cursor-pointer"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>+ লাইন যোগ করুন</span>
+                  </button>
                 </div>
-                <div>
-                  <label className="block text-[13px] font-medium text-gray-700 mb-1">একক দর ৳</label>
-                  <input
-                    type="number"
-                    placeholder="৳"
-                    value={saleUnitPrice}
-                    onChange={(e) => setSaleUnitPrice(e.target.value)}
-                    className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900"
-                  />
+
+                <div className="divide-y divide-gray-100">
+                  {saleLines.map((line, idx) => {
+                    const selItem = items.find((i) => i.id === line.itemId);
+                    const q = parseFloat(line.quantity) || 0;
+                    const p = parseFloat(line.unitPrice) || 0;
+                    const lineTotal = Math.round(q * p * 100) / 100;
+                    const hasStockAlert = selItem && selItem.currentStock < q;
+
+                    return (
+                      <div key={line.id} className="p-3 hover:bg-amber-50/20 transition-colors">
+                        <div className="grid grid-cols-1 sm:grid-cols-12 gap-2.5 items-center">
+                          <div className="sm:col-span-1 flex items-center gap-1 text-xs font-mono font-bold text-gray-500">
+                            <span>#{idx + 1}</span>
+                          </div>
+
+                          <div className="sm:col-span-4">
+                            <label className="sm:hidden block text-[11px] font-medium text-gray-500 mb-0.5">পণ্য</label>
+                            <select
+                              value={line.itemId}
+                              onChange={(e) => handleUpdateSaleLine(idx, 'itemId', e.target.value)}
+                              className="w-full bg-white border border-gray-300 rounded-lg p-2 text-[13px] text-gray-900"
+                            >
+                              <option value="">-- পণ্য নির্বাচন করুন --</option>
+                              {items.map((it) => (
+                                <option key={it.id} value={it.id}>
+                                  {it.nameBn} (মজুদ: {it.currentStock} {it.unit})
+                                </option>
+                              ))}
+                            </select>
+                            {hasStockAlert && (
+                              <p className="text-[11px] text-rose-600 font-medium mt-0.5">
+                                অপূর্ণ মজুদ! বর্তমান স্টক: {selItem.currentStock} {selItem.unit}
+                              </p>
+                            )}
+                          </div>
+
+                          <div className="sm:col-span-2">
+                            <label className="sm:hidden block text-[11px] font-medium text-gray-500 mb-0.5">পরিমাণ</label>
+                            <div className="relative">
+                              <input
+                                type="number"
+                                min="0.001"
+                                step="any"
+                                placeholder="পরিমাণ"
+                                value={line.quantity}
+                                onChange={(e) => handleUpdateSaleLine(idx, 'quantity', e.target.value)}
+                                className="w-full bg-white border border-gray-300 rounded-lg p-2 text-[13px] text-gray-900 pr-8"
+                              />
+                              {selItem?.unit && (
+                                <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[11px] text-gray-400 pointer-events-none">
+                                  {selItem.unit}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+
+                          <div className="sm:col-span-2">
+                            <label className="sm:hidden block text-[11px] font-medium text-gray-500 mb-0.5">একক দর ৳</label>
+                            <input
+                              type="number"
+                              min="0"
+                              step="any"
+                              placeholder="দর ৳"
+                              value={line.unitPrice}
+                              onChange={(e) => handleUpdateSaleLine(idx, 'unitPrice', e.target.value)}
+                              className="w-full bg-white border border-gray-300 rounded-lg p-2 text-[13px] text-gray-900 font-mono"
+                            />
+                          </div>
+
+                          <div className="sm:col-span-2 text-right">
+                            <label className="sm:hidden block text-[11px] font-medium text-gray-500 mb-0.5">মোট ৳</label>
+                            <span className="font-mono font-bold text-gray-900 text-[14px]">
+                              ৳{lineTotal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                            </span>
+                          </div>
+
+                          <div className="sm:col-span-1 flex justify-end">
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveSaleLine(idx)}
+                              title="লাইন মুছুন"
+                              className="p-1.5 rounded-lg text-gray-400 hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
+
+                <div className="p-2.5 bg-gray-50/70 border-t border-gray-100 flex justify-between items-center">
+                  <button
+                    type="button"
+                    onClick={handleAddSaleLine}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-amber-800 bg-amber-50 hover:bg-amber-100 border border-amber-200 rounded-lg transition-colors cursor-pointer"
+                  >
+                    <Plus className="w-3.5 h-3.5 text-amber-700" />
+                    <span>+ আরও পণ্য যোগ করুন</span>
+                  </button>
+                  <div className="text-xs text-gray-600 font-medium">
+                    মোট লাইন: <strong className="font-mono text-gray-900">{saleLines.length}</strong>
+                  </div>
+                </div>
+              </div>
+
+              {/* Discount & VAT Options */}
+              <div className={`grid grid-cols-1 ${isVatRegistered ? 'sm:grid-cols-2' : 'sm:grid-cols-1'} gap-2.5`}>
                 <div>
                   <label className="block text-[13px] font-medium text-gray-700 mb-1">মূল্যছাড় / Discount (ঐচ্ছিক)</label>
                   <div className="flex gap-1.5">
@@ -2458,6 +2801,7 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                     </select>
                   </div>
                 </div>
+
                 {isVatRegistered && (
                   <div>
                     <label className="block text-[13px] font-medium text-gray-700 mb-1">ভ্যাট হার (%) / VAT Rate</label>
@@ -2484,29 +2828,19 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                         <option value="15">১৫% (আদর্শ হার / Standard)</option>
                       </datalist>
                     </div>
-                    {(() => {
-                      const sQty = parseFloat(saleQty) || 0;
-                      const sPrice = parseFloat(saleUnitPrice) || 0;
-                      const sub = Math.round(sQty * sPrice * 100) / 100;
-                      const disc = Math.min(sub, Math.max(0, calcSaleDiscountAmount(sub, saleDiscount, saleDiscountType)));
-                      const net = Math.max(0, Math.round((sub - disc) * 100) / 100);
-                      const vatRate = parseFloat(saleVatRate) || 0;
-                      const lineVat = vatRate > 0 ? Math.round(net * (vatRate / 100) * 100) / 100 : 0;
-                      return (
-                        <div className="text-[11px] text-emerald-700 mt-1 font-sans font-medium flex items-center justify-between">
-                          <span>ভ্যাট পরিমাণ: ৳{lineVat.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
-                        </div>
-                      );
-                    })()}
                   </div>
                 )}
               </div>
 
               {/* Dynamic Sale Preview Summary */}
               {(() => {
-                const sQty = parseFloat(saleQty) || 0;
-                const sPrice = parseFloat(saleUnitPrice) || 0;
-                const sub = Math.round(sQty * sPrice * 100) / 100;
+                const sub = Math.round(
+                  saleLines.reduce((sum, l) => {
+                    const q = parseFloat(l.quantity) || 0;
+                    const p = parseFloat(l.unitPrice) || 0;
+                    return sum + Math.round(q * p * 100) / 100;
+                  }, 0) * 100
+                ) / 100;
                 const disc = Math.min(sub, Math.max(0, calcSaleDiscountAmount(sub, saleDiscount, saleDiscountType)));
                 const net = Math.max(0, Math.round((sub - disc) * 100) / 100);
                 const vatRate = isVatRegistered ? (parseFloat(saleVatRate) || 0) : 0;
@@ -2514,7 +2848,7 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                 const total = Math.max(0, Math.round((net + vatAmt) * 100) / 100);
                 return (
                   <div className="bg-amber-50 border border-amber-200 rounded-lg p-2.5 flex flex-wrap items-center justify-between gap-2 text-[13px]">
-                    <span className="text-gray-700">উপমোট: <strong className="text-gray-900 font-mono">৳{sub.toLocaleString('en-IN')}</strong></span>
+                    <span className="text-gray-700">উপমোট ({saleLines.length} আইটেম): <strong className="text-gray-900 font-mono">৳{sub.toLocaleString('en-IN')}</strong></span>
                     {disc > 0 && (
                       <span className="text-rose-700">ছাড় ({saleDiscountType === 'PERCENT' ? `${saleDiscount}%` : 'নির্দিষ্ট'}): <strong className="font-mono">-৳{disc.toLocaleString('en-IN')}</strong></span>
                     )}
@@ -2531,9 +2865,13 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
 
               {/* Customer Advance Application (Requirement 2) */}
               {availableCustomerAdvance > 0 && (() => {
-                const sQty = parseFloat(saleQty) || 0;
-                const sPrice = parseFloat(saleUnitPrice) || 0;
-                const sub = Math.round(sQty * sPrice * 100) / 100;
+                const sub = Math.round(
+                  saleLines.reduce((sum, l) => {
+                    const q = parseFloat(l.quantity) || 0;
+                    const p = parseFloat(l.unitPrice) || 0;
+                    return sum + Math.round(q * p * 100) / 100;
+                  }, 0) * 100
+                ) / 100;
                 const disc = Math.min(sub, Math.max(0, calcSaleDiscountAmount(sub, saleDiscount, saleDiscountType)));
                 const net = Math.max(0, Math.round((sub - disc) * 100) / 100);
                 const vatRate = isVatRegistered ? (parseFloat(saleVatRate) || 0) : 0;
@@ -2647,6 +2985,17 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                       return (Number(i.quantity) || 0) - retQty > 0.0001;
                     });
 
+                    const sItems = (s.items && Array.isArray(s.items) && s.items.length > 0)
+                      ? s.items
+                      : [{
+                          itemId: (s as any).itemId || '',
+                          itemName: (s as any).itemName || 'আইটেম',
+                          quantity: (s as any).quantity || 1,
+                          unitPrice: (s as any).unitPrice || total,
+                          unit: (s as any).unit || 'একক',
+                          total: total
+                        }];
+
                     return (
                       <React.Fragment key={s.id}>
                         <tr className="hover:bg-gray-50/80">
@@ -2654,7 +3003,7 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                           <td className="p-3 text-gray-600">{s.date}</td>
                           <td className="p-3 font-semibold text-gray-900">{s.customerName}</td>
                           <td className="p-3">
-                            {s.items.map((i, idx) => {
+                            {sItems.map((i, idx) => {
                               const returnedQty = getItemReturnedQtyForSale(s.id, i.itemId);
                               const remainingReturnable = Math.max(0, Math.round(((Number(i.quantity) || 0) - returnedQty) * 1000) / 1000);
                               return (
@@ -2877,9 +3226,16 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
           </div>
 
           {showNewPurchase && (
-            <form onSubmit={handleCreatePurchase} className="p-4 bg-amber-50/40 border border-amber-200 rounded-xl space-y-3">
-              <div className="font-bold text-amber-900 text-[15px]">নতুন ক্রয় চালান লিপিবদ্ধ করুন</div>
-              <div className="grid grid-cols-1 sm:grid-cols-4 gap-2.5">
+            <form onSubmit={handleCreatePurchase} className="p-4 bg-amber-50/40 border border-amber-200 rounded-xl space-y-4">
+              <div className="flex items-center justify-between">
+                <div className="font-bold text-amber-900 text-[15px]">নতুন ক্রয় চালান লিপিবদ্ধ করুন (Multi-Line Purchase Voucher)</div>
+                <span className="text-xs text-amber-700 bg-amber-100/70 px-2 py-0.5 rounded font-medium">
+                  {purchLines.length} টি পণ্য লাইন
+                </span>
+              </div>
+
+              {/* Header Info */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
                 <div>
                   <label className="block text-[13px] font-medium text-gray-700 mb-1">চালানের তারিখ</label>
                   <input
@@ -2912,26 +3268,6 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                 </div>
 
                 <div>
-                  <label className="block text-[13px] font-medium text-gray-700 mb-1">ক্রয়কৃত আইটেম</label>
-                  <select
-                    value={purchItemId}
-                    onChange={(e) => {
-                      setPurchItemId(e.target.value);
-                      const it = items.find((i) => i.id === e.target.value);
-                      if (it) setPurchUnitPrice(it.avgCostPrice.toString());
-                    }}
-                    className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900"
-                  >
-                    <option value="">-- পণ্য নির্বাচন --</option>
-                    {items.map((it) => (
-                      <option key={it.id} value={it.id}>
-                        {it.nameBn} ({getInventoryAssetAccount(it.category)})
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
                   <label className="block text-[13px] font-medium text-gray-700 mb-1">পরিশোধের মাধ্যম</label>
                   <select
                     value={purchPaymentMethod}
@@ -2945,36 +3281,138 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                 </div>
               </div>
 
-              <div className={`grid grid-cols-1 ${isVatRegistered ? 'sm:grid-cols-5' : 'sm:grid-cols-4'} gap-2.5`}>
-                <div>
-                  <label className="block text-[13px] font-medium text-gray-700 mb-1">পরিমাণ</label>
-                  <input
-                    type="number"
-                    value={purchQty}
-                    onChange={(e) => setPurchQty(e.target.value)}
-                    className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900"
-                  />
+              {/* Multi-Line Items Table */}
+              <div className="border border-amber-200/80 rounded-xl overflow-hidden bg-white">
+                <div className="bg-amber-100/60 px-3 py-2 border-b border-amber-200/80 flex items-center justify-between">
+                  <span className="text-xs font-bold text-amber-900 uppercase tracking-wider">
+                    ক্রয়কৃত পণ্যসমূহের তালিকা (Voucher Item Lines)
+                  </span>
+                  <button
+                    type="button"
+                    onClick={handleAddPurchLine}
+                    className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-bold text-amber-800 bg-amber-200/80 hover:bg-amber-300/80 rounded-md transition-colors cursor-pointer"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>+ লাইন যোগ করুন</span>
+                  </button>
                 </div>
-                <div>
-                  <label className="block text-[13px] font-medium text-gray-700 mb-1">একক ক্রয়মূল্য ৳</label>
-                  <input
-                    type="number"
-                    placeholder="৳"
-                    value={purchUnitPrice}
-                    onChange={(e) => setPurchUnitPrice(e.target.value)}
-                    className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900"
-                  />
+
+                <div className="divide-y divide-gray-100">
+                  {purchLines.map((line, idx) => {
+                    const selItem = items.find((i) => i.id === line.itemId);
+                    const q = parseFloat(line.quantity) || 0;
+                    const p = parseFloat(line.unitPrice) || 0;
+                    const lineTotal = Math.round(q * p * 100) / 100;
+
+                    return (
+                      <div key={line.id} className="p-3 hover:bg-amber-50/20 transition-colors">
+                        <div className="grid grid-cols-1 sm:grid-cols-12 gap-2.5 items-center">
+                          <div className="sm:col-span-1 flex items-center gap-1 text-xs font-mono font-bold text-gray-500">
+                            <span>#{idx + 1}</span>
+                          </div>
+
+                          <div className="sm:col-span-4">
+                            <label className="sm:hidden block text-[11px] font-medium text-gray-500 mb-0.5">ক্রয়কৃত আইটেম</label>
+                            <select
+                              value={line.itemId}
+                              onChange={(e) => handleUpdatePurchLine(idx, 'itemId', e.target.value)}
+                              className="w-full bg-white border border-gray-300 rounded-lg p-2 text-[13px] text-gray-900"
+                            >
+                              <option value="">-- পণ্য নির্বাচন করুন --</option>
+                              {items.map((it) => (
+                                <option key={it.id} value={it.id}>
+                                  {it.nameBn} ({getInventoryAssetAccount(it.category)})
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+
+                          <div className="sm:col-span-2">
+                            <label className="sm:hidden block text-[11px] font-medium text-gray-500 mb-0.5">পরিমাণ</label>
+                            <div className="relative">
+                              <input
+                                type="number"
+                                min="0.001"
+                                step="any"
+                                placeholder="পরিমাণ"
+                                value={line.quantity}
+                                onChange={(e) => handleUpdatePurchLine(idx, 'quantity', e.target.value)}
+                                className="w-full bg-white border border-gray-300 rounded-lg p-2 text-[13px] text-gray-900 pr-8"
+                              />
+                              {selItem?.unit && (
+                                <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[11px] text-gray-400 pointer-events-none">
+                                  {selItem.unit}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+
+                          <div className="sm:col-span-2">
+                            <label className="sm:hidden block text-[11px] font-medium text-gray-500 mb-0.5">একক দর ৳</label>
+                            <input
+                              type="number"
+                              min="0"
+                              step="any"
+                              placeholder="দর ৳"
+                              value={line.unitPrice}
+                              onChange={(e) => handleUpdatePurchLine(idx, 'unitPrice', e.target.value)}
+                              className="w-full bg-white border border-gray-300 rounded-lg p-2 text-[13px] text-gray-900 font-mono"
+                            />
+                          </div>
+
+                          <div className="sm:col-span-2 text-right">
+                            <label className="sm:hidden block text-[11px] font-medium text-gray-500 mb-0.5">মোট ৳</label>
+                            <span className="font-mono font-bold text-gray-900 text-[14px]">
+                              ৳{lineTotal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                            </span>
+                          </div>
+
+                          <div className="sm:col-span-1 flex justify-end">
+                            <button
+                              type="button"
+                              onClick={() => handleRemovePurchLine(idx)}
+                              title="লাইন মুছুন"
+                              className="p-1.5 rounded-lg text-gray-400 hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
+
+                <div className="p-2.5 bg-gray-50/70 border-t border-gray-100 flex justify-between items-center">
+                  <button
+                    type="button"
+                    onClick={handleAddPurchLine}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-amber-800 bg-amber-50 hover:bg-amber-100 border border-amber-200 rounded-lg transition-colors cursor-pointer"
+                  >
+                    <Plus className="w-3.5 h-3.5 text-amber-700" />
+                    <span>+ আরও পণ্য যোগ করুন</span>
+                  </button>
+                  <div className="text-xs text-gray-600 font-medium">
+                    মোট লাইন: <strong className="font-mono text-gray-900">{purchLines.length}</strong>
+                  </div>
+                </div>
+              </div>
+
+              {/* Extra Costs, Discount & VAT */}
+              <div className={`grid grid-cols-1 ${isVatRegistered ? 'sm:grid-cols-3' : 'sm:grid-cols-2'} gap-2.5`}>
                 <div>
                   <label className="block text-[13px] font-medium text-gray-700 mb-1">পরিবহন খরচ ৳ (Carriage Inward)</label>
                   <input
                     type="number"
+                    min="0"
+                    step="any"
                     placeholder="৳"
                     value={purchTransportCost}
                     onChange={(e) => setPurchTransportCost(e.target.value)}
                     className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900"
                   />
                 </div>
+
                 <div>
                   <label className="block text-[13px] font-medium text-gray-700 mb-1">মূল্যছাড় / Discount (ঐচ্ছিক)</label>
                   <div className="flex gap-1.5">
@@ -2995,6 +3433,7 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                     </select>
                   </div>
                 </div>
+
                 {isVatRegistered && (
                   <div>
                     <label className="block text-[13px] font-medium text-gray-700 mb-1">ভ্যাট হার (%) / VAT Rate</label>
@@ -3014,38 +3453,27 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                       />
                       <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 text-xs pointer-events-none">%</span>
                       <datalist id="purch-vat-presets">
-                        <option value="0">০% (অব্যাহতিপ্রাপ্ত / Exempt)</option>
+                        <option value="0">০% (অব্যাহতির হার / Exempt)</option>
                         <option value="5">৫% (হ্রাসকৃত / Reduced)</option>
                         <option value="7.5">৭.৫% (সেবা / Services)</option>
                         <option value="10">১০% (মধ্যম / Intermediate)</option>
                         <option value="15">১৫% (আদর্শ হার / Standard)</option>
                       </datalist>
                     </div>
-                    {(() => {
-                      const pQty = parseFloat(purchQty) || 0;
-                      const pPrice = parseFloat(purchUnitPrice) || 0;
-                      const pTrans = parseFloat(purchTransportCost) || 0;
-                      const itemsTotal = Math.round(pQty * pPrice * 100) / 100;
-                      const disc = Math.min(itemsTotal + pTrans, Math.max(0, calcPurchDiscountAmount(itemsTotal, purchDiscount, purchDiscountType)));
-                      const net = Math.max(0, Math.round((itemsTotal + pTrans - disc) * 100) / 100);
-                      const vatRate = parseFloat(purchVatRate) || 0;
-                      const lineVat = vatRate > 0 ? Math.round(net * (vatRate / 100) * 100) / 100 : 0;
-                      return (
-                        <div className="text-[11px] text-emerald-700 mt-1 font-sans font-medium flex items-center justify-between">
-                          <span>ভ্যাট পরিমাণ: ৳{lineVat.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
-                        </div>
-                      );
-                    })()}
                   </div>
                 )}
               </div>
 
               {/* Dynamic Purchase Preview Summary */}
               {(() => {
-                const pQty = parseFloat(purchQty) || 0;
-                const pPrice = parseFloat(purchUnitPrice) || 0;
+                const itemsTotal = Math.round(
+                  purchLines.reduce((sum, l) => {
+                    const q = parseFloat(l.quantity) || 0;
+                    const p = parseFloat(l.unitPrice) || 0;
+                    return sum + Math.round(q * p * 100) / 100;
+                  }, 0) * 100
+                ) / 100;
                 const pTrans = parseFloat(purchTransportCost) || 0;
-                const itemsTotal = Math.round(pQty * pPrice * 100) / 100;
                 const disc = Math.min(itemsTotal + pTrans, Math.max(0, calcPurchDiscountAmount(itemsTotal, purchDiscount, purchDiscountType)));
                 const net = Math.max(0, Math.round((itemsTotal + pTrans - disc) * 100) / 100);
                 const vatRate = isVatRegistered ? (parseFloat(purchVatRate) || 0) : 0;
@@ -3053,7 +3481,7 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                 const grand = Math.max(0, Math.round((net + vatAmt) * 100) / 100);
                 return (
                   <div className="bg-amber-50 border border-amber-200 rounded-lg p-2.5 flex flex-wrap items-center justify-between gap-2 text-[13px]">
-                    <span className="text-gray-700">পণ্যের মোট: <strong className="text-gray-900 font-mono">৳{itemsTotal.toLocaleString('en-IN')}</strong></span>
+                    <span className="text-gray-700">পণ্যের মোট ({purchLines.length} আইটেম): <strong className="text-gray-900 font-mono">৳{itemsTotal.toLocaleString('en-IN')}</strong></span>
                     {pTrans > 0 && (
                       <span className="text-amber-800">পরিবহন: <strong className="font-mono">+৳{pTrans.toLocaleString('en-IN')}</strong></span>
                     )}
@@ -3073,10 +3501,14 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
 
               {/* Supplier Advance Application (Requirement 2) */}
               {availableSupplierAdvance > 0 && (() => {
-                const pQty = parseFloat(purchQty) || 0;
-                const pPrice = parseFloat(purchUnitPrice) || 0;
+                const itemsTotal = Math.round(
+                  purchLines.reduce((sum, l) => {
+                    const q = parseFloat(l.quantity) || 0;
+                    const p = parseFloat(l.unitPrice) || 0;
+                    return sum + Math.round(q * p * 100) / 100;
+                  }, 0) * 100
+                ) / 100;
                 const pTrans = parseFloat(purchTransportCost) || 0;
-                const itemsTotal = Math.round(pQty * pPrice * 100) / 100;
                 const disc = Math.min(itemsTotal + pTrans, Math.max(0, calcPurchDiscountAmount(itemsTotal, purchDiscount, purchDiscountType)));
                 const net = Math.max(0, Math.round((itemsTotal + pTrans - disc) * 100) / 100);
                 const vatRate = isVatRegistered ? (parseFloat(purchVatRate) || 0) : 0;
@@ -3191,6 +3623,17 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                       return (Number(i.quantity) || 0) - retQty > 0.0001;
                     });
 
+                    const pItems = (p.items && Array.isArray(p.items) && p.items.length > 0)
+                      ? p.items
+                      : [{
+                          itemId: (p as any).itemId || '',
+                          itemName: (p as any).itemName || 'আইটেম',
+                          quantity: (p as any).quantity || 1,
+                          unitPrice: (p as any).unitPrice || total,
+                          unit: (p as any).unit || 'একক',
+                          total: total
+                        }];
+
                     return (
                       <React.Fragment key={p.id}>
                         <tr className="hover:bg-gray-50/80">
@@ -3198,7 +3641,7 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                           <td className="p-3 text-gray-600">{p.date}</td>
                           <td className="p-3 font-semibold text-gray-900">{p.supplierName}</td>
                           <td className="p-3">
-                            {p.items.map((i, idx) => {
+                            {pItems.map((i, idx) => {
                               const returnedQty = getItemReturnedQtyForPurchase(p.id, i.itemId);
                               const remainingReturnable = Math.max(0, Math.round(((Number(i.quantity) || 0) - returnedQty) * 1000) / 1000);
                               return (
@@ -4202,13 +4645,13 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                 <label className="block text-xs font-semibold text-gray-700 mb-1">
                   ফেরতযোগ্য পণ্য নির্বাচন করুন <span className="text-red-500">*</span>
                 </label>
-                {returnModal.items.length > 1 ? (
+                {(returnModal.items || []).length > 1 ? (
                   <select
                     value={returnSelectedItemId}
                     onChange={(e) => handleSwitchReturnItem(e.target.value)}
                     className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-sm text-gray-900 focus:outline-hidden focus:ring-1 focus:ring-amber-500"
                   >
-                    {returnModal.items.map((it) => (
+                    {(returnModal.items || []).map((it) => (
                       <option
                         key={it.itemId}
                         value={it.itemId}
@@ -4221,14 +4664,14 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                   </select>
                 ) : (
                   <div className="bg-gray-50 border border-gray-200 rounded-lg p-2.5 text-sm font-semibold text-gray-800">
-                    {returnModal.items[0]?.itemName} ({returnModal.items[0]?.soldOrPurchasedQty} {returnModal.items[0]?.unit})
+                    {(returnModal.items || [])[0]?.itemName} ({(returnModal.items || [])[0]?.soldOrPurchasedQty} {(returnModal.items || [])[0]?.unit})
                   </div>
                 )}
               </div>
 
               {/* Selected Item Stats Card */}
               {(() => {
-                const target = returnModal.items.find((it) => it.itemId === returnSelectedItemId) || returnModal.items[0];
+                const target = (returnModal.items || []).find((it) => it.itemId === returnSelectedItemId) || (returnModal.items || [])[0];
                 if (!target) return null;
 
                 const qty = parseFloat(returnQuantity) || 0;

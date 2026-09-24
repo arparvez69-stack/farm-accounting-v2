@@ -197,7 +197,7 @@ export const FarmOperationsModule: React.FC<Props> = ({
     // Lookup animal by ID or Tag (case-insensitive)
     const matched = animals.find(
       (a) =>
-        a.id.toLowerCase() === cleanCode.toLowerCase() ||
+        (a.id && a.id.toLowerCase() === cleanCode.toLowerCase()) ||
         (a.tag && a.tag.toLowerCase() === cleanCode.toLowerCase())
     );
 
@@ -1840,7 +1840,7 @@ export const FarmOperationsModule: React.FC<Props> = ({
                     (r) =>
                       (r.animalId === a.id || r.animalId === a.tag) &&
                       r.status === 'PENDING' &&
-                      (r.category === 'VACCINE' || r.category === 'TREATMENT' || r.title.toLowerCase().includes('vaccin') || r.title.includes('টিকা'))
+                      (r.category === 'VACCINE' || r.category === 'TREATMENT' || (r.title && r.title.toLowerCase().includes('vaccin')) || (r.title && r.title.includes('টিকা')))
                   );
 
                   const overdueReminder = animalVaccineReminders.find((r) => {
@@ -1865,6 +1865,7 @@ export const FarmOperationsModule: React.FC<Props> = ({
                     <Card
                       key={a.id}
                       id={`animal-card-${a.id}`}
+                      as="div"
                       variant="interactive"
                       onClick={() => setSelectedAnimalId(a.id)}
                       className={`flex flex-col justify-between group overflow-hidden animate-fade-slide-up ${

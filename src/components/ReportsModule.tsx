@@ -2767,10 +2767,9 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
                       const q = reportLedgerSearchQuery.toLowerCase().trim();
                       const descMatch = row.narration && row.narration.toLowerCase().includes(q);
                       const amountMatch =
-                        (row.debit > 0 && (row.debit.toString().includes(q) || row.debit.toLocaleString().includes(q))) ||
-                        (row.credit > 0 && (row.credit.toString().includes(q) || row.credit.toLocaleString().includes(q))) ||
-                        row.runningBalance.toString().includes(q) ||
-                        row.runningBalance.toLocaleString().includes(q);
+                        (row.debit != null && row.debit > 0 && (row.debit.toString().includes(q) || row.debit.toLocaleString().includes(q))) ||
+                        (row.credit != null && row.credit > 0 && (row.credit.toString().includes(q) || row.credit.toLocaleString().includes(q))) ||
+                        (row.runningBalance != null && (row.runningBalance.toString().includes(q) || row.runningBalance.toLocaleString().includes(q)));
                       const dateMatch = row.date && row.date.includes(q);
                       const voucherMatch = row.voucherNumber && row.voucherNumber.toLowerCase().includes(q);
                       return descMatch || amountMatch || dateMatch || voucherMatch;
@@ -2790,10 +2789,9 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
               if (!q) return true;
               const descMatch = row.narration && row.narration.toLowerCase().includes(q);
               const amountMatch =
-                (row.debit > 0 && (row.debit.toString().includes(q) || row.debit.toLocaleString().includes(q))) ||
-                (row.credit > 0 && (row.credit.toString().includes(q) || row.credit.toLocaleString().includes(q))) ||
-                row.runningBalance.toString().includes(q) ||
-                row.runningBalance.toLocaleString().includes(q);
+                (row.debit != null && row.debit > 0 && (row.debit.toString().includes(q) || row.debit.toLocaleString().includes(q))) ||
+                (row.credit != null && row.credit > 0 && (row.credit.toString().includes(q) || row.credit.toLocaleString().includes(q))) ||
+                (row.runningBalance != null && (row.runningBalance.toString().includes(q) || row.runningBalance.toLocaleString().includes(q)));
               const dateMatch = row.date && row.date.includes(q);
               const voucherMatch = row.voucherNumber && row.voucherNumber.toLowerCase().includes(q);
               return descMatch || amountMatch || dateMatch || voucherMatch;
@@ -3307,7 +3305,7 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
                 {pondSummary.totalBatches} <span className="text-[12px] font-normal text-gray-500">টি ব্যাচ</span>
               </div>
               <div className="text-[11px] text-gray-600">
-                মোট ওজন: {pondSummary.totalHarvestWeight.toLocaleString()} কেজি
+                মোট ওজন: {Number(pondSummary.totalHarvestWeight || 0).toLocaleString()} কেজি
               </div>
             </div>
 
@@ -3484,7 +3482,7 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
                           </div>
                           <div className="text-[11px] text-gray-500 mt-0.5">
                             {row.pondName}
-                            {row.fingerlingQty > 0 ? ` • ${row.fingerlingQty.toLocaleString()}টি পোনা` : ''}
+                            {row.fingerlingQty > 0 ? ` • ${Number(row.fingerlingQty || 0).toLocaleString()}টি পোনা` : ''}
                           </div>
                         </td>
 
@@ -3521,7 +3519,7 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
 
                         {/* Harvest Weight */}
                         <td className="py-3 px-3 whitespace-nowrap font-mono text-gray-800">
-                          <div className="font-semibold">{row.harvestWeightKg.toLocaleString()} কেজি</div>
+                          <div className="font-semibold">{Number(row.harvestWeightKg || 0).toLocaleString()} কেজি</div>
                         </td>
 
                         {/* Total Revenue */}
@@ -3588,7 +3586,7 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
                       {fmt(sortedPondRows.reduce((acc, r) => acc + r.totalCost, 0))}
                     </td>
                     <td className="py-3 px-3 font-mono text-gray-800">
-                      {sortedPondRows.reduce((acc, r) => acc + r.harvestWeightKg, 0).toLocaleString()} কেজি
+                      {Number(sortedPondRows.reduce((acc, r) => acc + (r.harvestWeightKg || 0), 0)).toLocaleString()} কেজি
                     </td>
                     <td className="py-3 px-3 font-mono text-cyan-900">
                       {fmt(sortedPondRows.reduce((acc, r) => acc + r.totalRevenue, 0))}
@@ -3671,7 +3669,7 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
                 {cropSummary.totalCycles} <span className="text-[12px] font-normal text-gray-500">টি ফসল</span>
               </div>
               <div className="text-[11px] text-gray-600">
-                মোট ফলন: {cropSummary.totalHarvestYield.toLocaleString()} কেজি
+                মোট ফলন: {Number(cropSummary.totalHarvestYield || 0).toLocaleString()} কেজি
               </div>
             </div>
 
@@ -3888,7 +3886,7 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
 
                         {/* Harvest Yield */}
                         <td className="py-3 px-3 whitespace-nowrap font-mono text-gray-800">
-                          <div className="font-semibold">{row.harvestYieldKg.toLocaleString()} কেজি</div>
+                          <div className="font-semibold">{Number(row.harvestYieldKg || 0).toLocaleString()} কেজি</div>
                         </td>
 
                         {/* Total Revenue */}
@@ -3955,7 +3953,7 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
                       {fmt(sortedCropRows.reduce((acc, r) => acc + r.totalCost, 0))}
                     </td>
                     <td className="py-3 px-3 font-mono text-gray-800">
-                      {sortedCropRows.reduce((acc, r) => acc + r.harvestYieldKg, 0).toLocaleString()} কেজি
+                      {Number(sortedCropRows.reduce((acc, r) => acc + (r.harvestYieldKg || 0), 0)).toLocaleString()} কেজি
                     </td>
                     <td className="py-3 px-3 font-mono text-cyan-900">
                       {fmt(sortedCropRows.reduce((acc, r) => acc + r.totalRevenue, 0))}
@@ -5463,7 +5461,7 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
                   >
                     {closedPeriodsList.map((p) => (
                       <option key={p.id} value={p.id}>
-                        সমাপ্তির তারিখ: {p.endDate} (স্থানান্তরিত লাভ: ৳{p.netProfitTransferred.toLocaleString('en-IN')})
+                        সমাপ্তির তারিখ: {p.endDate} (স্থানান্তরিত লাভ: ৳{Number(p.netProfitTransferred || 0).toLocaleString('en-IN')})
                       </option>
                     ))}
                   </select>
@@ -5501,7 +5499,7 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
                     {yoyData.lastYearRange.startDate} হতে {yoyData.lastYearRange.endDate}
                     {yoyData.closedPeriodRecord && (
                       <span className="ml-2 font-sans text-purple-800 font-semibold">
-                        • পুঞ্জীভূত লাভে স্থানান্তর: ৳{yoyData.closedPeriodRecord.netProfitTransferred.toLocaleString('en-IN')}
+                        • পুঞ্জীভূত লাভে স্থানান্তর: ৳{Number(yoyData.closedPeriodRecord.netProfitTransferred || 0).toLocaleString('en-IN')}
                       </span>
                     )}
                   </div>
@@ -5766,7 +5764,7 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
                   <div className="flex items-center gap-2">
                     <Lock className="w-4 h-4 text-purple-700 shrink-0" />
                     <span>
-                      <strong>সমাপ্তি দাখিলা ও মালিকানা তহবিল:</strong> বিগত হিসাবকালের মোট নিট লাভ <strong>৳{yoyData.closedPeriodRecord.netProfitTransferred.toLocaleString('en-IN')}</strong> সফলভাবে পুঞ্জীভূত লাভ/মুনাফা (Retained Earnings - Code 3050) হিসেবে স্থানান্তরিত হয়েছে।
+                      <strong>সমাপ্তি দাখিলা ও মালিকানা তহবিল:</strong> বিগত হিসাবকালের মোট নিট লাভ <strong>৳{Number(yoyData.closedPeriodRecord.netProfitTransferred || 0).toLocaleString('en-IN')}</strong> সফলভাবে পুঞ্জীভূত লাভ/মুনাফা (Retained Earnings - Code 3050) হিসেবে স্থানান্তরিত হয়েছে।
                     </span>
                   </div>
                   <span className="font-mono text-[11px] bg-purple-200/80 text-purple-900 px-2 py-0.5 rounded font-semibold">
@@ -5858,7 +5856,7 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
                 <div className="flex justify-between">
                   <span>নির্বাচিত সময়কালে মোট দুধ:</span>
                   <span className="font-semibold text-gray-900 font-mono">
-                    {herdKpiData.totalMilkLiters.toLocaleString()} লিটার
+                    {Number(herdKpiData.totalMilkLiters || 0).toLocaleString()} লিটার
                   </span>
                 </div>
                 <div className="flex justify-between">
@@ -5908,7 +5906,7 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
                 <div className="flex justify-between">
                   <span>মোট উৎপাদিত দুধ:</span>
                   <span className="font-semibold text-gray-900 font-mono">
-                    {herdKpiData.totalMilkLiters.toLocaleString()} লিটার
+                    {Number(herdKpiData.totalMilkLiters || 0).toLocaleString()} লিটার
                   </span>
                 </div>
                 <div className="flex justify-between">
@@ -6082,7 +6080,7 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
                           <td className="py-2 px-3 font-sans font-medium text-gray-900">{spName}</td>
                           <td className="py-2 px-3 text-right">{sb.total}টি</td>
                           <td className="py-2 px-3 text-right text-emerald-800 font-semibold">{sb.active}টি</td>
-                          <td className="py-2 px-3 text-right">{sb.milkLiters.toLocaleString()} L</td>
+                          <td className="py-2 px-3 text-right">{Number(sb.milkLiters || 0).toLocaleString()} L</td>
                           <td className="py-2 px-3 text-right">{fmt(sb.feedCost)}</td>
                           <td className="py-2 px-3 text-right font-semibold">
                             {sb.milkLiters > 0 ? fmt(spFeedPerLiter) : '—'}

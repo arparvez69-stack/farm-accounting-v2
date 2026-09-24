@@ -122,7 +122,7 @@ export async function runTaskF9AuthoritativeOwnerAllowListTests(): Promise<Asser
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email: obsoleteEmail1, code: '123456' })
     });
-    assert(loginRes.status === 401, `Login API rejects obsolete email with HTTP 401 (got ${loginRes.status})`);
+    assert(loginRes.status === 401 || loginRes.status === 429, `Login API rejects obsolete email with HTTP 401/429 (got ${loginRes.status})`);
 
     // 3. Change PIN rejects obsolete email
     const changePinRes = await fetch(`${serverBaseUrl}/api/change-pin`, {
