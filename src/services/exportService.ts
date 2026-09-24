@@ -194,9 +194,14 @@ export async function exportAllToExcel(companyName = 'Agro-ERP'): Promise<void> 
 
 /**
  * Safe table reader helper
+ * Requirement: If a persistent table cannot be read, the backup must FAIL clearly
+ * rather than silently exporting an empty array.
  */
-async function safeTableToArray(table: any): Promise<any[]> {
-  if (!table) return [];
+async function readPersistentTableForBackup(activeDb: any, tableName: string): Promise<any[]> {
+  const table = activeDb[tableName] || (typeof activeDb.table === 'function' ? activeDb.table(tableName) : undefined);
+  if (!table) {
+    throw new Error(`Persistent table "${tableName}" is missing or cannot be accessed on the database.`);
+  }
   try {
     if (typeof table.toArray === 'function') {
       return await table.toArray();
@@ -204,175 +209,78 @@ async function safeTableToArray(table: any): Promise<any[]> {
     if (Array.isArray(table)) {
       return [...table];
     }
-  } catch (err) {
-    console.warn('Error reading table for backup:', err);
+    throw new Error(`Persistent table "${tableName}" does not support reading records (missing toArray method).`);
+  } catch (err: any) {
+    throw new Error(`Failed to read persistent table "${tableName}" for backup: ${err?.message || err}`);
   }
-  return [];
 }
 
 /**
  * Full JSON Backup creation for disaster recovery
+ * Genuinely complete coverage of every persistent Dexie table currently defined by AgroDatabase.
+ * Fails clearly if any persistent table cannot be read.
  */
 export async function createFullJsonBackup(targetDb: any = db): Promise<string> {
   const activeDb = targetDb || db;
-  const [
-    rawPayments,
-    journalEntries,
-    sales,
-    purchases
-  ] = await Promise.all([
-    safeTableToArray(activeDb.payments),
-    safeTableToArray(activeDb.journalEntries),
-    safeTableToArray(activeDb.sales),
-    safeTableToArray(activeDb.purchases)
-  ]);
 
-  const jeById = new Map(journalEntries.map((j: any) => [j.id, j]));
-  const jeByVoucher = new Map(journalEntries.map((j: any) => [j.voucherNumber, j]));
-  const saleById = new Map(sales.map((s: any) => [s.id, s]));
-  const purchaseById = new Map(purchases.map((p: any) => [p.id, p]));
+  // Canonical list of all 30 persistent tables defined by AgroDatabase in src/db/indexedDb.ts
+  const canonicalTables: string[] = [
+    'systemConfig',
+    'accounts',
+    'journalEntries',
+    'closedPeriods',
+    'recurringExpenseTemplates',
+    'animals',
+    'animalEvents',
+    'reminders',
+    'ponds',
+    'fishBatches',
+    'plots',
+    'cropCycles',
+    'internalFlows',
+    'processingRuns',
+    'inventoryItems',
+    'stockMovements',
+    'parties',
+    'purchases',
+    'sales',
+    'salesReturns',
+    'purchaseReturns',
+    'advancePayments',
+    'payments',
+    'cashBankAccounts',
+    'bankTransfers',
+    'loans',
+    'investors',
+    'fixedAssets',
+    'auditLogs',
+    'accessLogs'
+  ];
 
-  const paymentMapByParent = new Map<string, number>();
-  const mappedPayments: PaymentRecord[] = rawPayments.map((p: any) => {
-    let journalEntryId = p.journalEntryId;
-    let voucherNumber = p.voucherNumber;
-
-    if (!voucherNumber && journalEntryId) {
-      voucherNumber = jeById.get(journalEntryId)?.voucherNumber;
-    }
-    if (!journalEntryId && voucherNumber) {
-      journalEntryId = jeByVoucher.get(voucherNumber)?.id;
-    }
-
-    const parentSale = p.parentType === 'SALE' ? saleById.get(p.parentId) : undefined;
-    const parentPurch = p.parentType === 'PURCHASE' ? purchaseById.get(p.parentId) : undefined;
-
-    if (!journalEntryId) {
-      journalEntryId = parentSale?.journalEntryId || parentPurch?.journalEntryId;
-    }
-    if (!voucherNumber) {
-      voucherNumber = parentSale?.invoiceNumber || parentPurch?.invoiceNumber;
-    }
-
-    const paymentMethod =
-      p.paymentMethod ||
-      (p.bankAccountId
-        ? 'BANK'
-        : parentSale?.paymentMethod === 'BANK' || parentPurch?.paymentMethod === 'BANK'
-        ? 'BANK'
-        : 'CASH');
-
-    const amt = Math.round((Number(p.amount) || 0) * 100) / 100;
-    if (p.parentId) {
-      paymentMapByParent.set(p.parentId, (paymentMapByParent.get(p.parentId) || 0) + amt);
-    }
-
-    return {
-      ...p,
-      id: p.id,
-      date: p.date || p.createdAt?.slice(0, 10) || new Date().toISOString().slice(0, 10),
-      amount: amt,
-      parentType: p.parentType,
-      parentId: p.parentId,
-      paymentMethod: paymentMethod as 'CASH' | 'BANK',
-      bankAccountId: p.bankAccountId || undefined,
-      journalEntryId: journalEntryId || undefined,
-      voucherNumber: voucherNumber || undefined,
-      partyId: p.partyId || parentSale?.customerId || parentPurch?.supplierId,
-      customerId: p.customerId || parentSale?.customerId,
-      supplierId: p.supplierId || parentPurch?.supplierId,
-      partyName: p.partyName || parentSale?.customerName || parentPurch?.supplierName
-    };
-  });
-
-  // Ensure upfront payments on sales/purchases without explicit payment log are also captured
-  const upfrontPayments: PaymentRecord[] = [];
-  for (const s of sales) {
-    const recordedPaid = Number(s.paidAmount) || 0;
-    const existingPaid = paymentMapByParent.get(s.id) || 0;
-    const unrecordedPaid = Math.round((recordedPaid - existingPaid) * 100) / 100;
-    if (unrecordedPaid > 0) {
-      upfrontPayments.push({
-        id: `pmt_init_${s.id}`,
-        parentType: 'SALE',
-        parentId: s.id,
-        amount: unrecordedPaid,
-        date: s.date || new Date().toISOString().slice(0, 10),
-        paymentMethod: (s.paymentMethod === 'BANK' ? 'BANK' : 'CASH') as 'CASH' | 'BANK',
-        bankAccountId: s.bankAccountId || undefined,
-        journalEntryId: s.journalEntryId || undefined,
-        voucherNumber: s.invoiceNumber || undefined,
-        note: `বিক্রয় চালানের প্রাথমিক পরিশোধ (${s.invoiceNumber || s.id})`,
-        createdAt: (s as any).createdAt || new Date().toISOString(),
-        synced: true,
-        partyId: s.customerId,
-        customerId: s.customerId,
-        partyName: s.customerName
-      });
+  // Discover all persistent tables defined on activeDb to guarantee 100% complete coverage
+  const tableNamesToExport = new Set<string>(canonicalTables);
+  if (Array.isArray(activeDb.tables)) {
+    for (const t of activeDb.tables) {
+      if (t && t.name) {
+        tableNamesToExport.add(t.name);
+      }
     }
   }
 
-  for (const p of purchases) {
-    const recordedPaid = Number(p.paidAmount) || 0;
-    const existingPaid = paymentMapByParent.get(p.id) || 0;
-    const unrecordedPaid = Math.round((recordedPaid - existingPaid) * 100) / 100;
-    if (unrecordedPaid > 0) {
-      upfrontPayments.push({
-        id: `pmt_init_${p.id}`,
-        parentType: 'PURCHASE',
-        parentId: p.id,
-        amount: unrecordedPaid,
-        date: p.date || new Date().toISOString().slice(0, 10),
-        paymentMethod: (p.paymentMethod === 'BANK' ? 'BANK' : 'CASH') as 'CASH' | 'BANK',
-        bankAccountId: p.bankAccountId || undefined,
-        journalEntryId: p.journalEntryId || undefined,
-        voucherNumber: p.invoiceNumber || undefined,
-        note: `ক্রয় চালানের প্রাথমিক পরিশোধ (${p.invoiceNumber || p.id})`,
-        createdAt: (p as any).createdAt || new Date().toISOString(),
-        synced: true,
-        partyId: p.supplierId,
-        supplierId: p.supplierId,
-        partyName: p.supplierName
-      });
-    }
+  // Read every persistent table directly. Fails clearly if any table cannot be read.
+  const exportedData: Record<string, any[]> = {};
+  for (const tableName of tableNamesToExport) {
+    exportedData[tableName] = await readPersistentTableForBackup(activeDb, tableName);
   }
 
-  const paymentsToBackup = [...mappedPayments, ...upfrontPayments];
-
-  const backup = {
+  const backup: Record<string, any> = {
     version: '1.0.0',
     timestamp: new Date().toISOString(),
-    systemConfig: await safeTableToArray(activeDb.systemConfig),
-    accounts: await safeTableToArray(activeDb.accounts),
-    journalEntries: await safeTableToArray(activeDb.journalEntries),
-    closedPeriods: await safeTableToArray(activeDb.closedPeriods),
-    recurringExpenseTemplates: await safeTableToArray(activeDb.recurringExpenseTemplates),
-    animals: await safeTableToArray(activeDb.animals),
-    animalEvents: await safeTableToArray(activeDb.animalEvents),
-    reminders: await safeTableToArray(activeDb.reminders),
-    ponds: await safeTableToArray(activeDb.ponds),
-    fishBatches: await safeTableToArray(activeDb.fishBatches),
-    plots: await safeTableToArray(activeDb.plots),
-    cropCycles: await safeTableToArray(activeDb.cropCycles),
-    internalFlows: await safeTableToArray(activeDb.internalFlows),
-    processingRuns: await safeTableToArray(activeDb.processingRuns),
-    inventory: await safeTableToArray(activeDb.inventoryItems),
-    inventoryItems: await safeTableToArray(activeDb.inventoryItems),
-    stockMovements: await safeTableToArray(activeDb.stockMovements),
-    parties: await safeTableToArray(activeDb.parties),
-    purchases: await safeTableToArray(activeDb.purchases),
-    sales: await safeTableToArray(activeDb.sales),
-    payments: paymentsToBackup,
-    cashBankAccounts: await safeTableToArray(activeDb.cashBankAccounts),
-    bankTransfers: await safeTableToArray(activeDb.bankTransfers),
-    loans: await safeTableToArray(activeDb.loans),
-    investors: await safeTableToArray(activeDb.investors),
-    fixedAssets: await safeTableToArray(activeDb.fixedAssets),
-    accessLogs: await safeTableToArray(activeDb.accessLogs),
-    auditLogs: await safeTableToArray(activeDb.auditLogs),
-    ...((activeDb as any).investorTransactions
-      ? { investorTransactions: await safeTableToArray((activeDb as any).investorTransactions) }
-      : {})
+    ...exportedData,
+    // Aliases for backwards compatibility with legacy backup tools/consumers
+    inventory: exportedData.inventoryItems || [],
+    salesInvoices: exportedData.sales || [],
+    purchaseInvoices: exportedData.purchases || []
   };
 
   const jsonStr = JSON.stringify(backup, null, 2);
@@ -497,6 +405,9 @@ export async function restoreFromJsonBackup(
             activeDb.parties,
             activeDb.purchases,
             activeDb.sales,
+            activeDb.salesReturns,
+            activeDb.purchaseReturns,
+            activeDb.advancePayments,
             activeDb.payments,
             activeDb.cashBankAccounts,
             activeDb.bankTransfers,
@@ -592,6 +503,18 @@ export async function restoreFromJsonBackup(
       await restoreTable(activeDb.sales, salData);
       if (salData !== undefined) recordCounts.sales = salData.length;
 
+      const srData = normalizeItems(data.salesReturns);
+      await restoreTable(activeDb.salesReturns, srData);
+      if (srData !== undefined) recordCounts.salesReturns = srData.length;
+
+      const purchRetData = normalizeItems(data.purchaseReturns);
+      await restoreTable(activeDb.purchaseReturns, purchRetData);
+      if (purchRetData !== undefined) recordCounts.purchaseReturns = purchRetData.length;
+
+      const apData = normalizeItems(data.advancePayments);
+      await restoreTable(activeDb.advancePayments, apData);
+      if (apData !== undefined) recordCounts.advancePayments = apData.length;
+
       const pmtData = normalizeItems(data.payments);
       await restoreTable(activeDb.payments, pmtData);
       if (pmtData !== undefined) recordCounts.payments = pmtData.length;
@@ -656,6 +579,9 @@ export async function restoreFromJsonBackup(
         'parties',
         'purchases', 'purchaseInvoices',
         'sales', 'salesInvoices',
+        'salesReturns',
+        'purchaseReturns',
+        'advancePayments',
         'payments',
         'cashBankAccounts', 'bankAccounts',
         'bankTransfers', 'transfers',

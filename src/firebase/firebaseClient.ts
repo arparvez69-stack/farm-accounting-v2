@@ -248,7 +248,13 @@ async function syncRecordToServer(collection: string, data: any): Promise<void> 
     } catch {}
   }
 
-  const endpoint = `/api/sync/${collection}`;
+  const baseUrl =
+    typeof window !== 'undefined' && window.location?.origin
+      ? window.location.origin
+      : typeof process !== 'undefined' && process.env?.PORT
+      ? `http://localhost:${process.env.PORT}`
+      : 'http://localhost:3000';
+  const endpoint = `${baseUrl}/api/sync/${collection}`;
   const res = await fetch(endpoint, {
     method: 'POST',
     headers: {
@@ -270,7 +276,7 @@ let activeSyncPromise: Promise<{ syncedCount: number; errors: string[] }> | null
  * Synchronize pending offline data to server endpoints (Admin SDK write)
  */
 export async function synchronizePendingData(): Promise<{ syncedCount: number; errors: string[] }> {
-  if (typeof navigator !== 'undefined' && !navigator.onLine) {
+  if (typeof window !== 'undefined' && typeof navigator !== 'undefined' && !navigator.onLine) {
     return { syncedCount: 0, errors: ['Offline'] };
   }
 
@@ -583,6 +589,42 @@ export async function synchronizePendingData(): Promise<{ syncedCount: number; e
         errors.push(`Recurring Template ${rt.id}: ${err.message}`);
       }
     }
+
+    // 26. Sync Sales Returns
+    const pendingSalesReturns = await db.salesReturns.filter((sr) => !sr.synced).toArray();
+    for (const sr of pendingSalesReturns) {
+      try {
+        await syncRecordToServer('salesReturns', sr);
+        await db.salesReturns.update(sr.id, { synced: true });
+        count++;
+      } catch (err: any) {
+        errors.push(`Sales Return ${sr.id}: ${err.message}`);
+      }
+    }
+
+    // 27. Sync Purchase Returns
+    const pendingPurchaseReturns = await db.purchaseReturns.filter((pr) => !pr.synced).toArray();
+    for (const pr of pendingPurchaseReturns) {
+      try {
+        await syncRecordToServer('purchaseReturns', pr);
+        await db.purchaseReturns.update(pr.id, { synced: true });
+        count++;
+      } catch (err: any) {
+        errors.push(`Purchase Return ${pr.id}: ${err.message}`);
+      }
+    }
+
+    // 28. Sync Advance Payments
+    const pendingAdvancePayments = await db.advancePayments.filter((ap) => !ap.synced).toArray();
+    for (const ap of pendingAdvancePayments) {
+      try {
+        await syncRecordToServer('advancePayments', ap);
+        await db.advancePayments.update(ap.id, { synced: true });
+        count++;
+      } catch (err: any) {
+        errors.push(`Advance Payment ${ap.id}: ${err.message}`);
+      }
+    }
   } catch (globalErr: any) {
     errors.push(`Sync failed: ${globalErr.message}`);
   }
@@ -655,6 +697,9 @@ export function listenToOnlineSync(
       const pPlots = await db.plots.filter((p) => !p.synced).count();
       const pAccessLogs = await db.accessLogs.filter((al) => !al.synced).count();
       const pRecurring = await db.recurringExpenseTemplates.filter((rt) => !rt.synced).count();
+      const pSalesReturns = await db.salesReturns.filter((sr) => !sr.synced).count();
+      const pPurchaseReturns = await db.purchaseReturns.filter((pr) => !pr.synced).count();
+      const pAdvancePayments = await db.advancePayments.filter((ap) => !ap.synced).count();
       const total =
         pAnimals +
         pFish +
@@ -679,7 +724,10 @@ export function listenToOnlineSync(
         pPonds +
         pPlots +
         pAccessLogs +
-        pRecurring;
+        pRecurring +
+        pSalesReturns +
+        pPurchaseReturns +
+        pAdvancePayments;
       onPendingChange(total);
       if (!navigator.onLine) {
         onStateChange('OFFLINE');
@@ -797,7 +845,10 @@ export async function restoreRemoteDataIfLocalEmpty(userEmail?: string, force?: 
       db.internalFlows.count(),
       db.processingRuns.count(),
       db.recurringExpenseTemplates.count(),
-      db.closedPeriods.count()
+      db.closedPeriods.count(),
+      db.salesReturns.count(),
+      db.purchaseReturns.count(),
+      db.advancePayments.count()
     ]);
     const totalLocalRecords = localOperationalCounts.reduce((a, b) => a + b, 0);
 
@@ -812,7 +863,7 @@ export async function restoreRemoteDataIfLocalEmpty(userEmail?: string, force?: 
     const isKnownOwner = allowed.length === 0 || (cleanEmail && allowed.includes(cleanEmail));
 
     // If genuinely empty and no internet connection available
-    if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+    if (typeof window !== 'undefined' && typeof navigator !== 'undefined' && navigator.onLine === false) {
       if (isKnownOwner) {
         console.warn('[The Goated Farm] Known owner opened app with empty local database while offline.');
         return { restored: false, count: 0, offlineEmptyWarning: true };
@@ -873,6 +924,9 @@ export async function restoreRemoteDataIfLocalEmpty(userEmail?: string, force?: 
           await restoreTableItems(db.sales, c.sales);
           await restoreTableItems(db.purchases, c.purchases);
           await restoreTableItems(db.payments, c.payments);
+          await restoreTableItems(db.salesReturns, c.salesReturns);
+          await restoreTableItems(db.purchaseReturns, c.purchaseReturns);
+          await restoreTableItems(db.advancePayments, c.advancePayments);
           await restoreTableItems(db.cropCycles, c.cropCycles);
           await restoreTableItems(db.fishBatches, c.fishBatches);
           await restoreTableItems(db.ponds, c.ponds);
@@ -909,6 +963,9 @@ export async function restoreRemoteDataIfLocalEmpty(userEmail?: string, force?: 
           { col: 'sales', table: db.sales },
           { col: 'purchases', table: db.purchases },
           { col: 'payments', table: db.payments },
+          { col: 'salesReturns', table: db.salesReturns },
+          { col: 'purchaseReturns', table: db.purchaseReturns },
+          { col: 'advancePayments', table: db.advancePayments },
           { col: 'cropCycles', table: db.cropCycles },
           { col: 'fishBatches', table: db.fishBatches },
           { col: 'ponds', table: db.ponds },

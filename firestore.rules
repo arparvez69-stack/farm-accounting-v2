@@ -173,6 +173,20 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // Sales Returns, Purchase Returns, and Advance Payments
+    match /salesReturns/{returnId} {
+      allow read: if isApprovedOwner();
+      allow write: if false;
+    }
+    match /purchaseReturns/{returnId} {
+      allow read: if isApprovedOwner();
+      allow write: if false;
+    }
+    match /advancePayments/{advanceId} {
+      allow read: if isApprovedOwner();
+      allow write: if false;
+    }
+
     // Accounting Periods & Recurring Templates
     match /closedPeriods/{periodId} {
       allow read: if isApprovedOwner();

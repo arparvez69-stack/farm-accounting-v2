@@ -303,6 +303,59 @@
         "synced": { "type": "boolean", "description": "Sync status" }
       },
       "required": ["id", "endDate", "netProfitTransferred", "closedAt"]
+    },
+    "salesReturn": {
+      "title": "Sales Return",
+      "description": "Customer return invoice record with inventory and account adjustments",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Return ID" },
+        "returnNumber": { "type": "string", "description": "Return number" },
+        "saleId": { "type": "string", "description": "Original sales ID" },
+        "customerId": { "type": "string", "description": "Customer party ID" },
+        "date": { "type": "string", "description": "Return date" },
+        "totalRefundAmount": { "type": "number", "description": "Refund amount" },
+        "refundMethod": { "type": "string", "enum": ["CASH", "BANK", "ADJUST_DUE"] },
+        "bankAccountId": { "type": "string", "description": "Bank account ID" },
+        "journalEntryId": { "type": "string", "description": "Journal entry ID" },
+        "synced": { "type": "boolean", "description": "Sync status" }
+      },
+      "required": ["id", "returnNumber", "saleId", "customerId", "date", "totalRefundAmount", "refundMethod"]
+    },
+    "purchaseReturn": {
+      "title": "Purchase Return",
+      "description": "Supplier return invoice record with inventory and account adjustments",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Return ID" },
+        "returnNumber": { "type": "string", "description": "Return number" },
+        "purchaseId": { "type": "string", "description": "Original purchase ID" },
+        "supplierId": { "type": "string", "description": "Supplier party ID" },
+        "date": { "type": "string", "description": "Return date" },
+        "totalRefundAmount": { "type": "number", "description": "Refund amount" },
+        "refundMethod": { "type": "string", "enum": ["CASH", "BANK", "ADJUST_DUE"] },
+        "bankAccountId": { "type": "string", "description": "Bank account ID" },
+        "journalEntryId": { "type": "string", "description": "Journal entry ID" },
+        "synced": { "type": "boolean", "description": "Sync status" }
+      },
+      "required": ["id", "returnNumber", "purchaseId", "supplierId", "date", "totalRefundAmount", "refundMethod"]
+    },
+    "advancePayment": {
+      "title": "Advance Payment",
+      "description": "Customer advance received or supplier advance paid tracking",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Advance ID" },
+        "advanceNumber": { "type": "string", "description": "Advance number" },
+        "partyId": { "type": "string", "description": "Party ID" },
+        "amount": { "type": "number", "description": "Advance amount" },
+        "direction": { "type": "string", "enum": ["RECEIVED", "PAID"] },
+        "paymentMethod": { "type": "string", "enum": ["CASH", "BANK"] },
+        "date": { "type": "string", "description": "Advance date" },
+        "journalEntryId": { "type": "string", "description": "Journal entry ID" },
+        "synced": { "type": "boolean", "description": "Sync status" }
+      },
+      "required": ["id", "partyId", "amount", "direction", "paymentMethod", "date"]
     }
   },
   "firestore": {
@@ -417,6 +470,18 @@
     "/closedPeriods/{periodId}": {
       "schema": "closedPeriod",
       "description": "Closed accounting periods"
+    },
+    "/salesReturns/{returnId}": {
+      "schema": "salesReturn",
+      "description": "Customer return records"
+    },
+    "/purchaseReturns/{returnId}": {
+      "schema": "purchaseReturn",
+      "description": "Supplier return records"
+    },
+    "/advancePayments/{advanceId}": {
+      "schema": "advancePayment",
+      "description": "Customer and supplier advance payment records"
     }
   }
 }

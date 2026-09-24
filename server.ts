@@ -17,7 +17,7 @@ import { Account, ClosedPeriod } from './src/types';
 
 dotenv.config();
 
-const app = express();
+export const app = express();
 const PORT = 3000;
 
 app.use(express.json());
@@ -981,7 +981,10 @@ const ALLOWED_SYNC_COLLECTIONS = [
   'auditLogs',
   'system',
   'payments',
-  'closedPeriods'
+  'closedPeriods',
+  'salesReturns',
+  'purchaseReturns',
+  'advancePayments'
 ];
 
 async function handleSyncWrite(
@@ -1074,6 +1077,12 @@ async function handleSyncWrite(
         ? 'recurringExpenseTemplates'
         : collectionName === 'closedPeriod' || collectionName === 'closedPeriods'
         ? 'closedPeriods'
+        : collectionName === 'salesReturn' || collectionName === 'salesReturns'
+        ? 'salesReturns'
+        : collectionName === 'purchaseReturn' || collectionName === 'purchaseReturns'
+        ? 'purchaseReturns'
+        : collectionName === 'advancePayment' || collectionName === 'advancePayments'
+        ? 'advancePayments'
         : collectionName;
 
     let docId = data.id || (collectionName === 'system' ? 'config' : null);
@@ -1136,6 +1145,14 @@ async function handleSyncWrite(
             break;
           }
         }
+        if ((targetCol === 'salesReturns' || targetCol === 'purchaseReturns') && data.returnNumber && item.returnNumber === data.returnNumber) {
+          existingDoc = item;
+          break;
+        }
+        if (targetCol === 'advancePayments' && data.advanceNumber && item.advanceNumber === data.advanceNumber) {
+          existingDoc = item;
+          break;
+        }
       }
     }
 
@@ -1190,6 +1207,18 @@ async function handleSyncWrite(
             if (!qSnap.empty) {
               existingDoc = { id: qSnap.docs[0].id, ...qSnap.docs[0].data() };
             }
+          }
+        }
+        if (!existingDoc && (targetCol === 'salesReturns' || targetCol === 'purchaseReturns') && data.returnNumber) {
+          const qSnap = await adminDb.collection(targetCol).where('returnNumber', '==', data.returnNumber).limit(1).get();
+          if (!qSnap.empty) {
+            existingDoc = { id: qSnap.docs[0].id, ...qSnap.docs[0].data() };
+          }
+        }
+        if (!existingDoc && targetCol === 'advancePayments' && data.advanceNumber) {
+          const qSnap = await adminDb.collection(targetCol).where('advanceNumber', '==', data.advanceNumber).limit(1).get();
+          if (!qSnap.empty) {
+            existingDoc = { id: qSnap.docs[0].id, ...qSnap.docs[0].data() };
           }
         }
       } catch {
@@ -1734,6 +1763,12 @@ app.post('/api/sync/recurringExpenseTemplate', (req, res) => handleSyncWrite('re
 app.post('/api/sync/recurringExpenseTemplates', (req, res) => handleSyncWrite('recurringExpenseTemplates', req, res));
 app.post('/api/sync/closedPeriod', (req, res) => handleSyncWrite('closedPeriods', req, res));
 app.post('/api/sync/closedPeriods', (req, res) => handleSyncWrite('closedPeriods', req, res));
+app.post('/api/sync/salesReturn', (req, res) => handleSyncWrite('salesReturns', req, res));
+app.post('/api/sync/salesReturns', (req, res) => handleSyncWrite('salesReturns', req, res));
+app.post('/api/sync/purchaseReturn', (req, res) => handleSyncWrite('purchaseReturns', req, res));
+app.post('/api/sync/purchaseReturns', (req, res) => handleSyncWrite('purchaseReturns', req, res));
+app.post('/api/sync/advancePayment', (req, res) => handleSyncWrite('advancePayments', req, res));
+app.post('/api/sync/advancePayments', (req, res) => handleSyncWrite('advancePayments', req, res));
 
 // Generic sync endpoint: POST /api/sync/:collection
 app.post('/api/sync/:collection', (req, res) => {
@@ -1768,7 +1803,13 @@ app.post('/api/sync/:collection', (req, res) => {
     col !== 'plot' &&
     col !== 'accessLog' &&
     col !== 'recurringExpenseTemplate' &&
-    col !== 'closedPeriod'
+    col !== 'closedPeriod' &&
+    col !== 'salesReturn' &&
+    col !== 'salesReturns' &&
+    col !== 'purchaseReturn' &&
+    col !== 'purchaseReturns' &&
+    col !== 'advancePayment' &&
+    col !== 'advancePayments'
   ) {
     return res.status(400).json({ error: `অননুমোদিত কালেকশন: ${col}` });
   }
@@ -1792,6 +1833,9 @@ app.get('/api/sync/restore', async (req, res) => {
       'sales',
       'purchases',
       'payments',
+      'salesReturns',
+      'purchaseReturns',
+      'advancePayments',
       'cropCycles',
       'fishBatches',
       'ponds',
@@ -1989,7 +2033,14 @@ async function startServer() {
   });
 }
 
-if (process.argv[1]?.includes('server') || process.env.NODE_ENV !== 'test') {
+const isDirectRun =
+  Boolean(process.argv[1]) &&
+  (process.argv[1].endsWith('server.ts') ||
+    process.argv[1].endsWith('server.cjs') ||
+    process.argv[1].endsWith('server.js') ||
+    process.argv[1].endsWith('server'));
+
+if (isDirectRun && process.env.NODE_ENV !== 'test') {
   startServer().catch((err) => {
     console.error('[The Goated Farm] Failed to start server:', err);
   });
