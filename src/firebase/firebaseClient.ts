@@ -276,7 +276,7 @@ let activeSyncPromise: Promise<{ syncedCount: number; errors: string[] }> | null
  * Synchronize pending offline data to server endpoints (Admin SDK write)
  */
 export async function synchronizePendingData(): Promise<{ syncedCount: number; errors: string[] }> {
-  if (typeof window !== 'undefined' && typeof navigator !== 'undefined' && !navigator.onLine) {
+  if (typeof window !== 'undefined' && typeof navigator !== 'undefined' && navigator.onLine === false) {
     return { syncedCount: 0, errors: ['Offline'] };
   }
 
@@ -906,11 +906,12 @@ export async function restoreRemoteDataIfLocalEmpty(userEmail?: string, force?: 
         if (payload.success && payload.collections) {
           const c = payload.collections;
 
-          const restoreTableItems = async (table: any, items: any[] | undefined) => {
+          const restoreTableItems = async (table: any, items: any[] | undefined, tableName?: string) => {
             if (Array.isArray(items) && items.length > 0 && table && typeof table.bulkPut === 'function') {
               const prepared = items.map((item: any) => ({
                 ...item,
-                id: item.id,
+                ownerUid: item.ownerUid || (table === db.systemConfig || tableName === 'systemConfig' ? (item.id || item.ownerUid || 'config') : item.ownerUid),
+                id: item.id || (table === db.systemConfig || tableName === 'systemConfig' ? (item.ownerUid || item.id || 'config') : item.id),
                 synced: true
               }));
               await table.bulkPut(prepared);
@@ -918,6 +919,8 @@ export async function restoreRemoteDataIfLocalEmpty(userEmail?: string, force?: 
             }
           };
 
+          await restoreTableItems(db.systemConfig, c.systemConfig, 'systemConfig');
+          await restoreTableItems(db.accounts, c.accounts, 'accounts');
           await restoreTableItems(db.animals, c.animals);
           await restoreTableItems(db.animalEvents, c.animalEvents);
           await restoreTableItems(db.journalEntries, c.journalEntries);
@@ -947,6 +950,24 @@ export async function restoreRemoteDataIfLocalEmpty(userEmail?: string, force?: 
           await restoreTableItems(db.accessLogs, c.accessLogs);
           await restoreTableItems(db.auditLogs, c.auditLogs);
           await restoreTableItems(db.closedPeriods, c.closedPeriods);
+
+          // Universal persistent Dexie table sweep: ensures NO table is ever silently omitted
+          for (const tbl of db.tables) {
+            const tblName = tbl.name;
+            const items = c[tblName] || (tblName === 'inventoryItems' ? c.inventory : undefined) || (tblName === 'systemConfig' ? c.system : undefined);
+            if (Array.isArray(items) && items.length > 0) {
+              const currentCount = await tbl.count();
+              if (currentCount === 0) {
+                const prepared = items.map((item: any) => ({
+                  ...item,
+                  id: item.id || (tblName === 'systemConfig' ? (item.ownerUid || item.id) : item.id),
+                  synced: true
+                }));
+                await tbl.bulkPut(prepared);
+                restoredCount += prepared.length;
+              }
+            }
+          }
         }
       }
     } catch (serverErr) {
@@ -957,6 +978,8 @@ export async function restoreRemoteDataIfLocalEmpty(userEmail?: string, force?: 
     if (restoredCount === 0 && auth.currentUser) {
       try {
         const collectionsToFetchFromFirestore: Array<{ col: string; table: any }> = [
+          { col: 'systemConfig', table: db.systemConfig },
+          { col: 'accounts', table: db.accounts },
           { col: 'animals', table: db.animals },
           { col: 'animalEvents', table: db.animalEvents },
           { col: 'journalEntries', table: db.journalEntries },

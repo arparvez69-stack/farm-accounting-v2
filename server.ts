@@ -984,7 +984,9 @@ const ALLOWED_SYNC_COLLECTIONS = [
   'closedPeriods',
   'salesReturns',
   'purchaseReturns',
-  'advancePayments'
+  'advancePayments',
+  'accounts',
+  'systemConfig'
 ];
 
 async function handleSyncWrite(
@@ -1083,9 +1085,13 @@ async function handleSyncWrite(
         ? 'purchaseReturns'
         : collectionName === 'advancePayment' || collectionName === 'advancePayments'
         ? 'advancePayments'
+        : collectionName === 'account' || collectionName === 'accounts'
+        ? 'accounts'
+        : collectionName === 'systemConfig' || collectionName === 'system'
+        ? 'systemConfig'
         : collectionName;
 
-    let docId = data.id || (collectionName === 'system' ? 'config' : null);
+    let docId = data.id || data.ownerUid || (collectionName === 'system' || collectionName === 'systemConfig' ? 'config' : null);
     if (!docId && effectiveIdempotencyKey) {
       docId = effectiveIdempotencyKey;
     }
@@ -1769,6 +1775,10 @@ app.post('/api/sync/purchaseReturn', (req, res) => handleSyncWrite('purchaseRetu
 app.post('/api/sync/purchaseReturns', (req, res) => handleSyncWrite('purchaseReturns', req, res));
 app.post('/api/sync/advancePayment', (req, res) => handleSyncWrite('advancePayments', req, res));
 app.post('/api/sync/advancePayments', (req, res) => handleSyncWrite('advancePayments', req, res));
+app.post('/api/sync/account', (req, res) => handleSyncWrite('accounts', req, res));
+app.post('/api/sync/accounts', (req, res) => handleSyncWrite('accounts', req, res));
+app.post('/api/sync/systemConfig', (req, res) => handleSyncWrite('systemConfig', req, res));
+app.post('/api/sync/system', (req, res) => handleSyncWrite('systemConfig', req, res));
 
 // Generic sync endpoint: POST /api/sync/:collection
 app.post('/api/sync/:collection', (req, res) => {
@@ -1809,7 +1819,11 @@ app.post('/api/sync/:collection', (req, res) => {
     col !== 'purchaseReturn' &&
     col !== 'purchaseReturns' &&
     col !== 'advancePayment' &&
-    col !== 'advancePayments'
+    col !== 'advancePayments' &&
+    col !== 'account' &&
+    col !== 'accounts' &&
+    col !== 'systemConfig' &&
+    col !== 'system'
   ) {
     return res.status(400).json({ error: `অননুমোদিত কালেকশন: ${col}` });
   }
@@ -1827,34 +1841,36 @@ app.get('/api/sync/restore', async (req, res) => {
 
   try {
     const collectionsToRestore = [
+      'systemConfig',
+      'accounts',
+      'journalEntries',
       'animals',
       'animalEvents',
-      'journalEntries',
-      'sales',
-      'purchases',
-      'payments',
-      'salesReturns',
-      'purchaseReturns',
-      'advancePayments',
-      'cropCycles',
-      'fishBatches',
+      'reminders',
       'ponds',
+      'fishBatches',
       'plots',
+      'cropCycles',
+      'internalFlows',
+      'processingRuns',
       'inventoryItems',
       'stockMovements',
       'parties',
-      'fixedAssets',
-      'loans',
-      'investors',
+      'purchases',
+      'sales',
+      'salesReturns',
+      'purchaseReturns',
+      'advancePayments',
+      'payments',
       'cashBankAccounts',
       'bankTransfers',
-      'reminders',
-      'internalFlows',
-      'processingRuns',
-      'recurringExpenseTemplates',
-      'closedPeriods',
+      'loans',
+      'investors',
+      'fixedAssets',
       'auditLogs',
-      'accessLogs'
+      'accessLogs',
+      'closedPeriods',
+      'recurringExpenseTemplates'
     ];
 
     const result: Record<string, any[]> = {};
@@ -1868,6 +1884,12 @@ app.get('/api/sync/restore', async (req, res) => {
           docsMap.set(id, { id, ...doc });
         }
       }
+      // Check systemConfig aliases in memory
+      if (colName === 'systemConfig' && inMemoryStores.has('system')) {
+        for (const [id, doc] of inMemoryStores.get('system')!.entries()) {
+          docsMap.set(id, { id, ...doc });
+        }
+      }
       // 2. Firestore Admin SDK
       if (adminDb) {
         try {
@@ -1875,6 +1897,14 @@ app.get('/api/sync/restore', async (req, res) => {
           snap.forEach((doc) => {
             docsMap.set(doc.id, { id: doc.id, ...doc.data() });
           });
+          if (colName === 'systemConfig') {
+            const cfgSnap = await adminDb.doc('system/config').get();
+            if (cfgSnap.exists) {
+              const data = cfgSnap.data();
+              const id = data?.ownerUid || 'config';
+              docsMap.set(id, { id, ...data });
+            }
+          }
         } catch (err: any) {
           console.warn(`[The Goated Farm] Restore read note for ${colName}:`, err.message);
         }
@@ -1913,30 +1943,36 @@ app.post('/api/wipe-all-data', async (req, res) => {
   }
 
   const collectionsToWipe = [
+    'systemConfig',
+    'accounts',
+    'journalEntries',
     'animals',
     'animalEvents',
-    'journalEntries',
-    'sales',
-    'purchases',
-    'payments',
-    'cropCycles',
-    'fishBatches',
+    'reminders',
     'ponds',
+    'fishBatches',
     'plots',
+    'cropCycles',
+    'internalFlows',
+    'processingRuns',
     'inventoryItems',
     'stockMovements',
     'parties',
-    'fixedAssets',
-    'loans',
-    'investors',
+    'purchases',
+    'sales',
+    'salesReturns',
+    'purchaseReturns',
+    'advancePayments',
+    'payments',
     'cashBankAccounts',
     'bankTransfers',
-    'reminders',
-    'internalFlows',
-    'processingRuns',
+    'loans',
+    'investors',
+    'fixedAssets',
+    'auditLogs',
+    'accessLogs',
     'closedPeriods',
-    'recurringExpenseTemplates',
-    'auditLogs'
+    'recurringExpenseTemplates'
   ];
 
   let deletedTotal = 0;
