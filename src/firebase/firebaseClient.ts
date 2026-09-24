@@ -23,6 +23,14 @@ import { migrateLegacyAccounts } from '../accounting/accountingEngine';
 import { SyncState, SystemConfig, UserProfile } from '../types';
 import { recordSyncTime } from '../services/exportService';
 
+export const AUTHORIZED_OWNER_EMAILS: readonly string[] = Object.freeze([
+  'arparvez111@gmail.com',
+  'arparvez69@gmail.com',
+  'arparvez4@gmail.com',
+  'lubaiyatasnum111@gmail.com',
+  'atikurrahman00021@gmail.com'
+]);
+
 // Helper to retrieve authorized owner emails received via authenticated API response
 export function getStoredOwnerEmails(): string[] {
   try {
@@ -30,17 +38,22 @@ export function getStoredOwnerEmails(): string[] {
     if (raw) {
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed.authorizedEmails) && parsed.authorizedEmails.length > 0) {
-        return parsed.authorizedEmails;
+        const valid = parsed.authorizedEmails
+          .map((e: any) => (typeof e === 'string' ? e.trim().toLowerCase() : ''))
+          .filter((e: string) => e.length > 0 && e.includes('@'));
+        if (valid.length > 0) {
+          return valid;
+        }
       }
     }
   } catch {}
-  return [];
+  return [...AUTHORIZED_OWNER_EMAILS];
 }
 
 export const DEFAULT_SYSTEM_CONFIG: SystemConfig = {
   ownerUid: 'the_goated_farm_owners',
   companyName: 'The Goated Farm',
-  ownerEmails: [],
+  ownerEmails: [...AUTHORIZED_OWNER_EMAILS],
   companyAddress: 'ঢাকা, বাংলাদেশ',
   phone: '', // Set via app settings
   currency: '৳',
@@ -171,7 +184,7 @@ export async function resolveUserRole(user: User | null): Promise<UserProfile> {
   // 1. Check Firebase Auth user email
   if (user && user.email) {
     const email = user.email.toLowerCase().trim();
-    const isApproved = allowed.length === 0 || allowed.includes(email);
+    const isApproved = allowed.length > 0 && allowed.includes(email);
     const prof: UserProfile = {
       uid: user.uid,
       email: email,
@@ -182,16 +195,18 @@ export async function resolveUserRole(user: User | null): Promise<UserProfile> {
     };
     if (isApproved) {
       try {
-        const prevRaw = localStorage.getItem('goted_owner_session');
-        const prev = prevRaw ? JSON.parse(prevRaw) : {};
-        localStorage.setItem('goted_owner_session', JSON.stringify({
-          ...prev,
-          uid: prof.uid,
-          email: prof.email,
-          displayName: prof.displayName,
-          role: 'OWNER',
-          authenticatedAt: new Date().toISOString()
-        }));
+        if (typeof localStorage !== 'undefined') {
+          const prevRaw = localStorage.getItem('goted_owner_session');
+          const prev = prevRaw ? JSON.parse(prevRaw) : {};
+          localStorage.setItem('goted_owner_session', JSON.stringify({
+            ...prev,
+            uid: prof.uid,
+            email: prof.email,
+            displayName: prof.displayName,
+            role: 'OWNER',
+            authenticatedAt: new Date().toISOString()
+          }));
+        }
       } catch (e) {
         // Ignore localStorage quota errors
       }
@@ -200,16 +215,16 @@ export async function resolveUserRole(user: User | null): Promise<UserProfile> {
   }
 
   // 2. Check local verified session in container dev environment
-  const sessionRaw = localStorage.getItem('goted_owner_session');
+  const sessionRaw = typeof localStorage !== 'undefined' ? localStorage.getItem('goted_owner_session') : null;
   if (sessionRaw) {
     try {
       const session = JSON.parse(sessionRaw);
       if (session.email && session.email.includes('@')) {
         const email = session.email.toLowerCase().trim();
         const sessionAllowed = Array.isArray(session.authorizedEmails) && session.authorizedEmails.length > 0
-          ? session.authorizedEmails
+          ? session.authorizedEmails.map((e: any) => typeof e === 'string' ? e.trim().toLowerCase() : '')
           : allowed;
-        const isApproved = sessionAllowed.length === 0 || sessionAllowed.includes(email);
+        const isApproved = sessionAllowed.length > 0 && sessionAllowed.includes(email) && allowed.includes(email);
         return {
           uid: session.uid || `goted_owner_${email}`,
           email: email,
@@ -219,7 +234,9 @@ export async function resolveUserRole(user: User | null): Promise<UserProfile> {
         };
       }
     } catch (e) {
-      localStorage.removeItem('goted_owner_session');
+      if (typeof localStorage !== 'undefined') {
+        localStorage.removeItem('goted_owner_session');
+      }
     }
   }
 

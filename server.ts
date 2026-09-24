@@ -50,6 +50,14 @@ export function getRawPinEnv(): string {
 
 const ALLOW_LIST_FILE = path.resolve(process.cwd(), 'data', 'owner_allow_list.json');
 
+export const AUTHORIZED_OWNER_EMAILS: readonly string[] = Object.freeze([
+  'arparvez111@gmail.com',
+  'arparvez69@gmail.com',
+  'arparvez4@gmail.com',
+  'lubaiyatasnum111@gmail.com',
+  'atikurrahman00021@gmail.com'
+]);
+
 let testApprovedOwnerEmailsOverride: string[] | null | undefined = undefined;
 
 export function setApprovedOwnerEmailsForTest(emails: string[] | null | undefined): void {
@@ -89,6 +97,10 @@ export function getApprovedOwnerEmails(): string[] {
     } catch (err: any) {
       console.warn('[The Goated Farm] Failed to read data/owner_allow_list.json:', err.message);
     }
+  }
+
+  if (list.size === 0) {
+    AUTHORIZED_OWNER_EMAILS.forEach((e) => list.add(e.toLowerCase().trim()));
   }
 
   return Array.from(list);

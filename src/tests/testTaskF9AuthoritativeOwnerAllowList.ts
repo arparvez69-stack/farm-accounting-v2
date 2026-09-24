@@ -9,6 +9,7 @@ import {
   setApprovedOwnerEmailsForTest,
   isSetupComplete
 } from '../../server';
+import { resolveUserRole, AUTHORIZED_OWNER_EMAILS } from '../firebase/firebaseClient';
 
 export interface AssertionResult {
   total: number;
@@ -46,36 +47,59 @@ export async function runTaskF9AuthoritativeOwnerAllowListTests(): Promise<Asser
   const obsoleteEmail1 = 'brandingdeshi@gmail.com';
   const obsoleteEmail2 = 'legacy-owner@olddomain.com';
   const randomAttacker = 'attacker@evil.corp';
-  const authorizedOwner1 = 'arparvez111@gmail.com';
-  const authorizedOwner2 = 'atikurrahman00021@gmail.com';
+
+  const EXACT_5_AUTHORIZED_OWNERS = [
+    'arparvez111@gmail.com',
+    'arparvez69@gmail.com',
+    'arparvez4@gmail.com',
+    'lubaiyatasnum111@gmail.com',
+    'atikurrahman00021@gmail.com'
+  ];
 
   // Ensure test override is reset
   setApprovedOwnerEmailsForTest(undefined);
 
   // -------------------------------------------------------------
-  // TEST SCENARIO 1: Authoritative Owner Allow-List Audit
+  // TEST SCENARIO 1: Authoritative Owner Allow-List Audit (Exact 5 Owners)
   // -------------------------------------------------------------
   console.log('--- Scenario 1: Authoritative Allow-List Audit ---');
   const effectiveOwners = getApprovedOwnerEmails();
   console.log('Effective ERP Owner Allow-List:', effectiveOwners);
 
-  assert(effectiveOwners.length >= 2, `Authoritative list has configured owners (count: ${effectiveOwners.length})`);
-  assert(effectiveOwners.includes(authorizedOwner1), `Currently authorized owner ${authorizedOwner1} is preserved`);
-  assert(effectiveOwners.includes(authorizedOwner2), `Currently authorized owner ${authorizedOwner2} is preserved`);
+  assert(effectiveOwners.length === 5, `Authoritative list has exactly 5 configured owners (actual: ${effectiveOwners.length})`);
+  for (const owner of EXACT_5_AUTHORIZED_OWNERS) {
+    assert(effectiveOwners.includes(owner), `Authoritative owner ${owner} is present in allow-list`);
+  }
   assert(!effectiveOwners.includes(obsoleteEmail1), `Obsolete email ${obsoleteEmail1} is NOT in the authoritative list`);
   assert(!effectiveOwners.includes(obsoleteEmail2), `Legacy email ${obsoleteEmail2} is NOT in the authoritative list`);
+  assert(!effectiveOwners.includes(randomAttacker), `Attacker email ${randomAttacker} is NOT in the authoritative list`);
 
   // -------------------------------------------------------------
   // TEST SCENARIO 2: Obsolete & Non-Authorized Emails Cannot Authenticate as OWNER
   // -------------------------------------------------------------
   console.log('\n--- Scenario 2: Obsolete & Non-Authorized Emails Cannot Authenticate as OWNER ---');
+  // All 5 must return isOwnerEmail === true
+  for (const owner of EXACT_5_AUTHORIZED_OWNERS) {
+    assert(isOwnerEmail(owner), `isOwnerEmail('${owner}') strictly returns true`);
+  }
+
+  // Any non-authorized email must return false
   assert(!isOwnerEmail(obsoleteEmail1), `isOwnerEmail('${obsoleteEmail1}') strictly returns false`);
   assert(!isOwnerEmail(obsoleteEmail2), `isOwnerEmail('${obsoleteEmail2}') strictly returns false`);
   assert(!isOwnerEmail(randomAttacker), `isOwnerEmail('${randomAttacker}') strictly returns false`);
   assert(!isOwnerEmail(''), 'isOwnerEmail with empty string returns false');
   assert(!isOwnerEmail(null as any), 'isOwnerEmail with null returns false');
+  assert(!isOwnerEmail(undefined as any), 'isOwnerEmail with undefined returns false');
 
-  // Token creation refusal for obsolete email
+  // Token creation succeeds for all 5 authorized owners
+  for (const owner of EXACT_5_AUTHORIZED_OWNERS) {
+    const token = createSessionToken(owner);
+    assert(typeof token === 'string' && token.length > 30, `createSessionToken succeeds for owner ${owner}`);
+    const verified = verifySessionToken(token);
+    assert(verified !== null && verified.email === owner, `verifySessionToken verifies valid token for owner ${owner}`);
+  }
+
+  // Token creation refusal for obsolete / attacker email
   let createObsolete1Threw = false;
   try {
     createSessionToken(obsoleteEmail1);
@@ -84,6 +108,15 @@ export async function runTaskF9AuthoritativeOwnerAllowListTests(): Promise<Asser
     assert(err.message.includes('not in approved owner allow-list'), 'createSessionToken throws clear error rejecting obsolete email');
   }
   assert(createObsolete1Threw, 'createSessionToken strictly threw for obsolete email');
+
+  let createAttackerThrew = false;
+  try {
+    createSessionToken(randomAttacker);
+  } catch (err: any) {
+    createAttackerThrew = true;
+    assert(err.message.includes('not in approved owner allow-list'), 'createSessionToken throws clear error rejecting attacker email');
+  }
+  assert(createAttackerThrew, 'createSessionToken strictly threw for attacker email');
 
   // Token verification rejection: even if someone crafts or presents a token signed with the secret
   const sessionSecret = process.env.SESSION_SECRET || 'a8f3b49c71e2056d4981fae620c384157d092bf3589a1c4e70624e5b38d91c2f';
@@ -150,12 +183,14 @@ export async function runTaskF9AuthoritativeOwnerAllowListTests(): Promise<Asser
   try {
     setApprovedOwnerEmailsForTest([]);
     assert(!isSetupComplete(), 'isSetupComplete returns false when allow-list is empty');
-    assert(!isOwnerEmail(authorizedOwner1), 'isOwnerEmail returns false for any email when allow-list is empty');
+    for (const owner of EXACT_5_AUTHORIZED_OWNERS) {
+      assert(!isOwnerEmail(owner), `isOwnerEmail returns false for ${owner} when allow-list is empty`);
+    }
     assert(!isOwnerEmail(obsoleteEmail1), 'isOwnerEmail returns false for obsolete email when allow-list is empty');
 
     let createEmptyThrew = false;
     try {
-      createSessionToken(authorizedOwner1);
+      createSessionToken(EXACT_5_AUTHORIZED_OWNERS[0]);
     } catch {
       createEmptyThrew = true;
     }
@@ -173,7 +208,9 @@ export async function runTaskF9AuthoritativeOwnerAllowListTests(): Promise<Asser
     setApprovedOwnerEmailsForTest([singleCustomOwner]);
 
     assert(isOwnerEmail(singleCustomOwner), 'Explicitly overridden owner is granted owner access');
-    assert(!isOwnerEmail(authorizedOwner1), 'Previous owner is safely revoked when configuration overrides list');
+    for (const owner of EXACT_5_AUTHORIZED_OWNERS) {
+      assert(!isOwnerEmail(owner), `Previous owner ${owner} is safely revoked when configuration overrides list`);
+    }
     assert(!isOwnerEmail(obsoleteEmail1), 'Obsolete email is strictly not granted access');
   } finally {
     setApprovedOwnerEmailsForTest(undefined);
@@ -183,12 +220,14 @@ export async function runTaskF9AuthoritativeOwnerAllowListTests(): Promise<Asser
   // TEST SCENARIO 6: Legitimate Authorized Owners Retain Full Access & Data
   // -------------------------------------------------------------
   console.log('\n--- Scenario 6: Legitimate Authorized Owners Retain Full Access ---');
-  assert(isOwnerEmail(authorizedOwner1), `Authoritative owner ${authorizedOwner1} is verified`);
-  assert(isOwnerEmail(authorizedOwner2), `Authoritative owner ${authorizedOwner2} is verified`);
+  for (const owner of EXACT_5_AUTHORIZED_OWNERS) {
+    assert(isOwnerEmail(owner), `Authoritative owner ${owner} is verified`);
+  }
 
-  const validToken = createSessionToken(authorizedOwner1);
+  const primaryOwner = EXACT_5_AUTHORIZED_OWNERS[0];
+  const validToken = createSessionToken(primaryOwner);
   const verifiedValid = verifySessionToken(validToken);
-  assert(verifiedValid !== null && verifiedValid.email === authorizedOwner1, 'Legitimate owner session token is issued and verified successfully');
+  assert(verifiedValid !== null && verifiedValid.email === primaryOwner, 'Legitimate owner session token is issued and verified successfully');
 
   // Verify sync works cleanly for legitimate owner
   const testAnimalId = 'f9-authorized-owner-animal';
@@ -231,6 +270,31 @@ export async function runTaskF9AuthoritativeOwnerAllowListTests(): Promise<Asser
   const localAnimal = await db.animals.get(testAnimalId);
   assert(localAnimal !== undefined && localAnimal.tag === 'F9-LEGIT-OWNER-COW', 'Local animal data remains intact');
   await db.animals.delete(testAnimalId);
+
+  // -------------------------------------------------------------
+  // TEST SCENARIO 7: Firebase Authentication & Role Resolution
+  // -------------------------------------------------------------
+  console.log('\n--- Scenario 7: Firebase Auth & Role Resolution ---');
+  assert(AUTHORIZED_OWNER_EMAILS.length === 5, 'Client AUTHORIZED_OWNER_EMAILS has exactly 5 owners');
+  for (const owner of EXACT_5_AUTHORIZED_OWNERS) {
+    assert(AUTHORIZED_OWNER_EMAILS.includes(owner), `Client constants include ${owner}`);
+    const prof = await resolveUserRole({ uid: `test_${owner}`, email: owner } as any);
+    assert(prof.role === 'OWNER', `${owner} resolves to OWNER role`);
+    assert(prof.isApproved === true, `${owner} has isApproved === true`);
+  }
+
+  // Non-authorized emails must be rejected by resolveUserRole
+  const attackerProf = await resolveUserRole({ uid: 'test_attacker', email: randomAttacker } as any);
+  assert(attackerProf.role === 'UNAPPROVED', `Attacker ${randomAttacker} resolves to UNAPPROVED`);
+  assert(attackerProf.isApproved === false, `Attacker ${randomAttacker} has isApproved === false`);
+
+  const obsoleteProf = await resolveUserRole({ uid: 'test_obsolete', email: obsoleteEmail1 } as any);
+  assert(obsoleteProf.role === 'UNAPPROVED', `Obsolete ${obsoleteEmail1} resolves to UNAPPROVED`);
+  assert(obsoleteProf.isApproved === false, `Obsolete ${obsoleteEmail1} has isApproved === false`);
+
+  const unauthenticatedProf = await resolveUserRole(null);
+  assert(unauthenticatedProf.role === 'UNAUTHENTICATED', 'Null user resolves to UNAUTHENTICATED');
+  assert(unauthenticatedProf.isApproved === false, 'Null user has isApproved === false');
 
   console.log('\n========================================================');
   console.log(`F9 TEST RESULT: ${result.passed}/${result.total} Assertions Passed`);

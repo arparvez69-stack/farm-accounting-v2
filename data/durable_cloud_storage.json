@@ -155,9 +155,9 @@
       "status": "ACTIVE",
       "purchasePrice": 95000,
       "currentWeightKg": 450,
-      "updatedAt": "2026-09-24T13:23:24.037Z",
+      "updatedAt": "2026-09-24T13:45:36.857Z",
       "version": 1,
-      "syncedAt": "2026-09-24T13:23:24.040Z",
+      "syncedAt": "2026-09-24T13:45:36.908Z",
       "syncedBy": "atikurrahman00021@gmail.com"
     },
     "test-sync-obsolete": {
@@ -173,9 +173,9 @@
       "breed": "Brahman",
       "gender": "FEMALE",
       "status": "ACTIVE",
-      "updatedAt": "2026-09-24T13:23:24.118Z",
+      "updatedAt": "2026-09-24T13:45:25.856Z",
       "version": 1,
-      "syncedAt": "2026-09-24T13:23:24.122Z",
+      "syncedAt": "2026-09-24T13:45:25.909Z",
       "syncedBy": "arparvez111@gmail.com"
     },
     "anim_f3_1790249361487": {

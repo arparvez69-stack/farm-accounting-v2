@@ -8,6 +8,14 @@ import { auth, resolveUserRole, seedSystemConfigIfNecessary } from '../firebase/
 import { UserProfile, AppAccessLog } from '../types';
 import { db } from '../db/indexedDb';
 
+export const AUTHORIZED_OWNER_EMAILS: readonly string[] = Object.freeze([
+  'arparvez111@gmail.com',
+  'arparvez69@gmail.com',
+  'arparvez4@gmail.com',
+  'lubaiyatasnum111@gmail.com',
+  'atikurrahman00021@gmail.com'
+]);
+
 /**
  * Retrieve authorized owner emails received from authenticated server API response
  */
@@ -16,12 +24,12 @@ export function getStoredAuthorizedEmails(): string[] {
     const raw = typeof window !== 'undefined' ? localStorage.getItem('goted_owner_session') : null;
     if (raw) {
       const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed.authorizedEmails)) {
+      if (Array.isArray(parsed.authorizedEmails) && parsed.authorizedEmails.length > 0) {
         return parsed.authorizedEmails;
       }
     }
   } catch {}
-  return [];
+  return [...AUTHORIZED_OWNER_EMAILS];
 }
 
 export interface VerifyPinResponse {
