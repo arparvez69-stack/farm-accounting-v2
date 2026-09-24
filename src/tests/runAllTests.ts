@@ -16,11 +16,12 @@ import { runTaskF8HardenOwnerSessionAuthTests } from './testTaskF8HardenOwnerSes
 import { runTaskF9AuthoritativeOwnerAllowListTests } from './testTaskF9AuthoritativeOwnerAllowList';
 import { runTaskF10ValidateCalculatedFieldsOnNewRecordsTests } from './testTaskF10ValidateCalculatedFieldsOnNewRecords';
 import { runTaskF11MultiLineVouchersTests } from './testTaskF11MultiLineVouchers';
+import { runHardenSaveRecordToDurableDiskTests } from './testHardenSaveRecordToDurableDisk';
 
 async function main() {
   console.log('====================================================');
   console.log('RUNNING REGRESSION TEST SUITE');
-  console.log('Including separate verification of Profit Allocation, Profit Payment, Cash Flow, Reconciliation, Advance Payments, Item VAT, Bank Reconciliation, Full Backup, Persistent Sync, Complete Cloud Restore, Chart of Accounts Extension, F4 Cloud Persistence, F6 Conflict Protection, F7 Durable Persistence, F8 Session Hardening, F9 Authoritative Allow-List, F10 Calculated Fields Validation & F11 Multi-Line Vouchers');
+  console.log('Including separate verification of Profit Allocation, Profit Payment, Cash Flow, Reconciliation, Advance Payments, Item VAT, Bank Reconciliation, Full Backup, Persistent Sync, Complete Cloud Restore, Chart of Accounts Extension, F4 Cloud Persistence, F6 Conflict Protection, F7 Durable Persistence, F8 Session Hardening, F9 Authoritative Allow-List, F10 Calculated Fields Validation, F11 Multi-Line Vouchers & Hardened Durable Disk Storage');
   console.log('====================================================');
 
   const result1 = await runRegressionTests();
@@ -40,11 +41,12 @@ async function main() {
   const result14 = await runTaskF9AuthoritativeOwnerAllowListTests();
   const result15 = await runTaskF10ValidateCalculatedFieldsOnNewRecordsTests();
   const result16 = await runTaskF11MultiLineVouchersTests();
+  const result17 = await runHardenSaveRecordToDurableDiskTests();
 
-  const total = result1.total + result2.total + result3.total + result4.total + result5.total + result6.total + result7.total + result8.total + result9.total + result10.total + result11.total + result12.total + result13.total + result14.total + result15.total + result16.total + 10;
-  const passed = result1.passed + result2.passed + result3.passed + result4.passed + result5.passed + result6.passed + result7.passed + result8.passed + result9.passed + result10.passed + result11.passed + result12.passed + result13.passed + result14.passed + result15.passed + result16.passed + 10;
-  const failed = result1.failed + result2.failed + result3.failed + result4.failed + result5.failed + result6.failed + result7.failed + result8.failed + result9.failed + result10.failed + result11.failed + result12.failed + result13.failed + result14.failed + result15.failed + result16.failed;
-  const failures = [...result1.failures, ...result2.failures, ...result3.failures, ...result4.failures, ...result5.failures, ...result6.failures, ...result7.failures, ...result8.failures, ...result9.failures, ...result10.failures, ...result11.failures, ...result12.failures, ...result13.failures, ...result14.failures, ...result15.failures, ...result16.failures];
+  const total = result1.total + result2.total + result3.total + result4.total + result5.total + result6.total + result7.total + result8.total + result9.total + result10.total + result11.total + result12.total + result13.total + result14.total + result15.total + result16.total + result17.total + 10;
+  const passed = result1.passed + result2.passed + result3.passed + result4.passed + result5.passed + result6.passed + result7.passed + result8.passed + result9.passed + result10.passed + result11.passed + result12.passed + result13.passed + result14.passed + result15.passed + result16.passed + result17.passed + 10;
+  const failed = result1.failed + result2.failed + result3.failed + result4.failed + result5.failed + result6.failed + result7.failed + result8.failed + result9.failed + result10.failed + result11.failed + result12.failed + result13.failed + result14.failed + result15.failed + result16.failed + result17.failed;
+  const failures = [...result1.failures, ...result2.failures, ...result3.failures, ...result4.failures, ...result5.failures, ...result6.failures, ...result7.failures, ...result8.failures, ...result9.failures, ...result10.failures, ...result11.failures, ...result12.failures, ...result13.failures, ...result14.failures, ...result15.failures, ...result16.failures, ...result17.failures];
   const success = failed === 0;
 
   console.log('\n====================================================');

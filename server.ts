@@ -387,14 +387,143 @@ export const inMemoryStores = new Map<string, Map<string, any>>();
 const DURABLE_STORAGE_DIR = path.join(process.cwd(), 'data');
 const DURABLE_STORAGE_FILE = path.join(DURABLE_STORAGE_DIR, 'durable_cloud_storage.json');
 
+// Test overrides for safe test isolation and fault injection
+let customDurableStorageFileForTest: string | null = null;
+let simulateWriteInterruptionForTest = false;
+
+export function setDurableStorageFileForTest(filePath: string | null): void {
+  customDurableStorageFileForTest = filePath;
+}
+
+export function setSimulateWriteInterruptionForTest(val: boolean): void {
+  simulateWriteInterruptionForTest = val;
+}
+
+export function getEffectiveDurableStorageFile(): string {
+  return customDurableStorageFileForTest || DURABLE_STORAGE_FILE;
+}
+
+// In-process lock tracker to prevent re-entrant deadlock in the same process thread
+let inProcessLockDepth = 0;
+let activeLockHandle: { release: () => void } | null = null;
+
+function syncSleep(ms: number): void {
+  try {
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+  } catch {
+    const end = Date.now() + ms;
+    while (Date.now() < end) {
+      // spin fallback if SharedArrayBuffer/Atomics is unavailable
+    }
+  }
+}
+
+/**
+ * Acquires a filesystem lock to serialize concurrent writes across processes/threads
+ */
+function acquireStorageLock(targetFile: string, timeoutMs = 10000): { release: () => void } {
+  if (inProcessLockDepth > 0) {
+    inProcessLockDepth++;
+    return {
+      release: () => {
+        inProcessLockDepth--;
+        if (inProcessLockDepth === 0 && activeLockHandle) {
+          activeLockHandle.release();
+          activeLockHandle = null;
+        }
+      }
+    };
+  }
+
+  const lockFile = `${targetFile}.lock`;
+  const startTime = Date.now();
+  let fd: number | null = null;
+
+  while (true) {
+    try {
+      fd = fs.openSync(lockFile, 'wx');
+      fs.writeSync(fd, `${process.pid}\n${Date.now()}`);
+      break;
+    } catch (err: any) {
+      if (err.code === 'EEXIST') {
+        // Stale lock detection (e.g. process was killed or lock is older than 10s)
+        try {
+          const content = fs.readFileSync(lockFile, 'utf-8');
+          const [pidStr, timeStr] = content.split('\n');
+          const lockPid = parseInt(pidStr, 10);
+          const lockTime = parseInt(timeStr, 10);
+
+          let isProcessDead = false;
+          if (!isNaN(lockPid)) {
+            try {
+              process.kill(lockPid, 0);
+            } catch (kErr: any) {
+              if (kErr.code === 'ESRCH') {
+                isProcessDead = true;
+              }
+            }
+          }
+
+          const isStale = (Date.now() - (lockTime || 0) > 10000) || isProcessDead;
+          if (isStale) {
+            try {
+              fs.unlinkSync(lockFile);
+              continue;
+            } catch {}
+          }
+        } catch {}
+
+        if (Date.now() - startTime > timeoutMs) {
+          throw new Error(`Timeout acquiring durable storage lock for "${targetFile}" after ${timeoutMs}ms`);
+        }
+
+        syncSleep(10);
+      } else {
+        throw err;
+      }
+    }
+  }
+
+  const handle = {
+    release: () => {
+      try {
+        if (fd !== null) {
+          fs.closeSync(fd);
+          fd = null;
+        }
+      } catch {}
+      try {
+        if (fs.existsSync(lockFile)) {
+          fs.unlinkSync(lockFile);
+        }
+      } catch {}
+    }
+  };
+
+  activeLockHandle = handle;
+  inProcessLockDepth = 1;
+
+  return {
+    release: () => {
+      inProcessLockDepth--;
+      if (inProcessLockDepth === 0 && activeLockHandle) {
+        activeLockHandle.release();
+        activeLockHandle = null;
+      }
+    }
+  };
+}
+
 // Initialize durable storage from non-volatile disk
 export function initDurableStorage() {
   try {
-    if (!fs.existsSync(DURABLE_STORAGE_DIR)) {
-      fs.mkdirSync(DURABLE_STORAGE_DIR, { recursive: true });
+    const targetFile = getEffectiveDurableStorageFile();
+    const targetDir = path.dirname(targetFile);
+    if (!fs.existsSync(targetDir)) {
+      fs.mkdirSync(targetDir, { recursive: true });
     }
-    if (fs.existsSync(DURABLE_STORAGE_FILE)) {
-      const content = fs.readFileSync(DURABLE_STORAGE_FILE, 'utf-8');
+    if (fs.existsSync(targetFile)) {
+      const content = fs.readFileSync(targetFile, 'utf-8');
       const data = JSON.parse(content || '{}');
       for (const [colName, colDocs] of Object.entries(data)) {
         if (!inMemoryStores.has(colName)) {
@@ -412,23 +541,87 @@ export function initDurableStorage() {
 }
 initDurableStorage();
 
+/**
+ * Hardened durable storage persistence:
+ * 1. Serializes writes via filesystem lock and in-process tracker to eliminate concurrent-write data loss.
+ * 2. Reads existing JSON. CRITICAL: If existing durable JSON cannot be parsed or is invalid, fails closed immediately.
+ *    Never replaces it with an empty object or overwrites it with partial data.
+ * 3. Writes safely using atomic replacement (temp file in same dir -> fsync -> close -> atomic rename)
+ *    to prevent partial JSON overwrites and protect against interrupted writes.
+ */
 export function saveRecordToDurableDisk(collection: string, id: string, record: any): void {
-  if (!fs.existsSync(DURABLE_STORAGE_DIR)) {
-    fs.mkdirSync(DURABLE_STORAGE_DIR, { recursive: true });
+  const targetFile = getEffectiveDurableStorageFile();
+  const targetDir = path.dirname(targetFile);
+
+  if (!fs.existsSync(targetDir)) {
+    fs.mkdirSync(targetDir, { recursive: true });
   }
-  let allData: Record<string, Record<string, any>> = {};
-  if (fs.existsSync(DURABLE_STORAGE_FILE)) {
-    try {
-      allData = JSON.parse(fs.readFileSync(DURABLE_STORAGE_FILE, 'utf-8') || '{}');
-    } catch {
-      allData = {};
+
+  const lock = acquireStorageLock(targetFile);
+  try {
+    let allData: Record<string, Record<string, any>> = {};
+
+    if (fs.existsSync(targetFile)) {
+      const rawContent = fs.readFileSync(targetFile, 'utf-8');
+      try {
+        const parsed = JSON.parse(rawContent);
+        if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+          throw new Error('Root structure must be a non-null object');
+        }
+        allData = parsed;
+      } catch (parseErr: any) {
+        // CRITICAL: Fail closed! Never replace with an empty object or overwrite with partial data.
+        throw new Error(
+          `[The Goated Farm] CRITICAL: Existing durable JSON at "${targetFile}" cannot be parsed (${parseErr.message}). Failing closed to prevent data loss.`
+        );
+      }
     }
+
+    if (!allData[collection]) {
+      allData[collection] = {};
+    }
+    allData[collection][id] = record;
+
+    // Safe atomic replacement:
+    // 1. Write full serialized JSON to a temporary file in the target directory (ensuring same filesystem)
+    // 2. Flush file descriptor to disk (fsyncSync)
+    // 3. Close file descriptor
+    // 4. Atomically rename temp file over target file
+    const tempFile = path.join(
+      targetDir,
+      `.${path.basename(targetFile)}.tmp.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2, 9)}`
+    );
+
+    let fd: number | null = null;
+    try {
+      fd = fs.openSync(tempFile, 'w', 0o600);
+      const serialized = JSON.stringify(allData, null, 2);
+      fs.writeFileSync(fd, serialized, 'utf-8');
+      fs.fsyncSync(fd);
+      fs.closeSync(fd);
+      fd = null;
+
+      // Simulated write interruption hook for test suite
+      if (simulateWriteInterruptionForTest) {
+        throw new Error('SIMULATED_DISK_WRITE_INTERRUPTION');
+      }
+
+      fs.renameSync(tempFile, targetFile);
+    } finally {
+      if (fd !== null) {
+        try {
+          fs.closeSync(fd);
+        } catch {}
+      }
+      if (fs.existsSync(tempFile)) {
+        try {
+          fs.unlinkSync(tempFile);
+        } catch {}
+      }
+    }
+  } finally {
+    lock.release();
   }
-  if (!allData[collection]) {
-    allData[collection] = {};
-  }
-  allData[collection][id] = record;
-  fs.writeFileSync(DURABLE_STORAGE_FILE, JSON.stringify(allData, null, 2), 'utf-8');
 }
 
 // F7: Control for simulating Cloud Firestore persistence unavailability
@@ -2951,6 +3144,31 @@ app.get('/api/test/firestore-status', (req, res) => {
     available: isFirestorePersistenceAvailable(req),
     hasAdminDb: Boolean(effective)
   });
+});
+
+// Test endpoints for durable disk storage hardening verification
+app.post('/api/test/durable-storage/config', (req, res) => {
+  const { testFilePath, simulateInterruption } = req.body;
+  if (testFilePath !== undefined) {
+    setDurableStorageFileForTest(testFilePath || null);
+  }
+  if (simulateInterruption !== undefined) {
+    setSimulateWriteInterruptionForTest(Boolean(simulateInterruption));
+  }
+  return res.json({
+    effectiveFile: getEffectiveDurableStorageFile(),
+    simulateInterruption: simulateWriteInterruptionForTest
+  });
+});
+
+app.post('/api/test/durable-storage/save', (req, res) => {
+  const { collection, id, record } = req.body;
+  try {
+    saveRecordToDurableDisk(collection, id, record);
+    return res.json({ success: true, collection, id });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
 });
 
 // API Route: GET /api/sync/restore
