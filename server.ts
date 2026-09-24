@@ -21,7 +21,17 @@ dotenv.config();
 export const app = express();
 const PORT = 3000;
 
-app.use(express.json());
+app.use(express.json({ limit: '25mb' }));
+app.use(express.urlencoded({ extended: true, limit: '25mb' }));
+app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
+  if (err instanceof SyntaxError && 'status' in err && (err as any).status === 400) {
+    return res.status(400).json({ error: 'অবৈধ JSON ডেটা পে-লোড (Malformed JSON payload).' });
+  }
+  if (err && (err.type === 'entity.too.large' || err.status === 413)) {
+    return res.status(413).json({ error: 'পে-লোড সীমা অতিক্রম করেছে (Payload too large).' });
+  }
+  next(err);
+});
 
 // Helper to read owner email secrets from environment variables (supports standard or lowercase aliases)
 export function getRawEmailsEnv(): string {
@@ -1731,7 +1741,7 @@ app.post('/api/confirm-pin-reset', async (req, res) => {
 // Server-side validation and write via Admin SDK
 // ==========================================
 
-const ALLOWED_SYNC_COLLECTIONS = [
+export const ALLOWED_SYNC_COLLECTIONS = [
   'journalEntries',
   'sales',
   'purchases',
@@ -1766,6 +1776,288 @@ const ALLOWED_SYNC_COLLECTIONS = [
   'systemConfig'
 ];
 
+/**
+ * Validates document ID to prevent Firestore path injection, traversal, reserved names, and non-string types.
+ */
+export function isValidDocumentId(id: any): boolean {
+  if (typeof id !== 'string') return false;
+  const trimmed = id.trim();
+  if (trimmed.length === 0 || trimmed.length > 255) return false;
+  if (trimmed.includes('/') || trimmed.includes('\\')) return false;
+  if (trimmed === '.' || trimmed === '..' || trimmed === '__proto__' || trimmed === 'constructor' || trimmed === 'prototype') return false;
+  if (/^__.*__$/.test(trimmed)) return false;
+  if (/[\x00-\x1f\x7f]/.test(trimmed)) return false;
+  return true;
+}
+
+/**
+ * Validates record shape for supported collections before any database persistence.
+ */
+export function validateRecordShape(targetCol: string, data: any): { valid: boolean; error?: string } {
+  if (!data || typeof data !== 'object' || Array.isArray(data)) {
+    return { valid: false, error: 'অবৈধ রেকর্ড অবজেক্ট (Record must be a valid non-array object).' };
+  }
+
+  const isNonEmptyStr = (val: any): boolean => typeof val === 'string' && val.trim().length > 0;
+  const isPositiveNum = (val: any): boolean => typeof val === 'number' && !isNaN(val) && isFinite(val) && val > 0;
+  const isNonNegativeNum = (val: any): boolean => typeof val === 'number' && !isNaN(val) && isFinite(val) && val >= 0;
+
+  switch (targetCol) {
+    case 'journalEntries': {
+      if (data.date !== undefined && !isNonEmptyStr(data.date)) {
+        return { valid: false, error: 'জাবেদা এন্ট্রির তারিখ আবশ্যক (Journal entry date is required).' };
+      }
+      if (data.lines !== undefined && !Array.isArray(data.lines)) {
+        return { valid: false, error: 'জাবেদা লাইন অবশ্যই একটি অ্যারে হতে হবে (Journal lines must be an array).' };
+      }
+      break;
+    }
+    case 'sales': {
+      const hasCustomer = isNonEmptyStr(data.customerId) || isNonEmptyStr(data.customerName) || isNonEmptyStr(data.partyId);
+      if (!hasCustomer) {
+        return { valid: false, error: 'বিক্রয় রেকর্ডে ক্রেতার তথ্য আবশ্যক (Sale record must specify customerId, customerName, or partyId).' };
+      }
+      if (!isNonEmptyStr(data.date) && !isNonEmptyStr(data.saleDate)) {
+        return { valid: false, error: 'বিক্রয় রেকর্ডে তারিখ আবশ্যক (Sale record must specify a valid date).' };
+      }
+      const total = data.totalAmount ?? data.grandTotal ?? data.netAmount;
+      if (total !== undefined && !isNonNegativeNum(total)) {
+        return { valid: false, error: 'বিক্রয়ের মোট পরিমাণ ঋণাত্মক বা অবৈধ হতে পারে না (Sale total amount cannot be negative or invalid).' };
+      }
+      break;
+    }
+    case 'purchases': {
+      const hasSupplier = isNonEmptyStr(data.supplierId) || isNonEmptyStr(data.supplierName) || isNonEmptyStr(data.partyId);
+      if (!hasSupplier) {
+        return { valid: false, error: 'ক্রয় রেকর্ডে সরবরাহকারীর তথ্য আবশ্যক (Purchase record must specify supplierId, supplierName, or partyId).' };
+      }
+      if (!isNonEmptyStr(data.date) && !isNonEmptyStr(data.purchaseDate)) {
+        return { valid: false, error: 'ক্রয় রেকর্ডে তারিখ আবশ্যক (Purchase record must specify a valid date).' };
+      }
+      const total = data.totalAmount ?? data.grandTotal ?? data.totalCost;
+      if (total !== undefined && !isNonNegativeNum(total)) {
+        return { valid: false, error: 'ক্রয়ের মোট পরিমাণ ঋণাত্মক বা অবৈধ হতে পারে না (Purchase total amount cannot be negative or invalid).' };
+      }
+      break;
+    }
+    case 'salesReturns': {
+      if (!isNonEmptyStr(data.returnNumber) && !isNonEmptyStr(data.id)) {
+        return { valid: false, error: 'বিক্রয় ফেরত নম্বর আবশ্যক (Sales return must have a returnNumber or id).' };
+      }
+      const total = data.totalRefundAmount ?? data.amount;
+      if (total !== undefined && !isNonNegativeNum(total)) {
+        return { valid: false, error: 'ফেরত মূল্য ঋণাত্মক বা অবৈধ হতে পারে না (Refund amount cannot be negative).' };
+      }
+      break;
+    }
+    case 'purchaseReturns': {
+      if (!isNonEmptyStr(data.returnNumber) && !isNonEmptyStr(data.id)) {
+        return { valid: false, error: 'ক্রয় ফেরত নম্বর আবশ্যক (Purchase return must have a returnNumber or id).' };
+      }
+      const total = data.totalRefundAmount ?? data.amount;
+      if (total !== undefined && !isNonNegativeNum(total)) {
+        return { valid: false, error: 'ফেরত মূল্য ঋণাত্মক বা অবৈধ হতে পারে না (Refund amount cannot be negative).' };
+      }
+      break;
+    }
+    case 'advancePayments': {
+      const hasParty = isNonEmptyStr(data.partyId) || isNonEmptyStr(data.partyName);
+      if (!hasParty) {
+        return { valid: false, error: 'অগ্রিম পেমেন্টে পার্টির তথ্য আবশ্যক (Advance payment must specify partyId or partyName).' };
+      }
+      if (!isPositiveNum(data.amount)) {
+        return { valid: false, error: 'অগ্রিম পেমেন্টের পরিমাণ অবশ্যই শূন্যের চেয়ে বেশি হতে হবে (Advance payment amount must be greater than zero).' };
+      }
+      if (!isNonEmptyStr(data.direction)) {
+        return { valid: false, error: 'অগ্রিম পেমেন্টের ধরন (RECEIVED বা PAID) আবশ্যক (Advance payment direction is required).' };
+      }
+      break;
+    }
+    case 'payments': {
+      if (!isPositiveNum(data.amount)) {
+        return { valid: false, error: 'পেমেন্টের পরিমাণ অবশ্যই শূন্যের চেয়ে বেশি হতে হবে (Payment amount must be greater than zero).' };
+      }
+      break;
+    }
+    case 'bankTransfers': {
+      if (!isNonEmptyStr(data.fromAccountId) || !isNonEmptyStr(data.toAccountId)) {
+        return { valid: false, error: 'ব্যাংক স্থানান্তরে প্রেরক ও প্রাপক অ্যাকাউন্ট আবশ্যক (Bank transfer must specify fromAccountId and toAccountId).' };
+      }
+      if (data.fromAccountId.trim() === data.toAccountId.trim()) {
+        return { valid: false, error: 'একই অ্যাকাউন্টে ফান্ড স্থানান্তর করা যাবে না (From and To accounts cannot be identical).' };
+      }
+      if (!isPositiveNum(data.amount)) {
+        return { valid: false, error: 'স্থানান্তরের পরিমাণ শূন্যের চেয়ে বেশি হতে হবে (Transfer amount must be greater than zero).' };
+      }
+      break;
+    }
+    case 'accounts': {
+      if (!isNonEmptyStr(data.code)) {
+        return { valid: false, error: 'হিসাব কোড আবশ্যক (Account code is required).' };
+      }
+      const hasName = isNonEmptyStr(data.nameBn) || isNonEmptyStr(data.nameEn) || isNonEmptyStr(data.name);
+      if (!hasName) {
+        return { valid: false, error: 'হিসাবের নাম আবশ্যক (Account name is required).' };
+      }
+      break;
+    }
+    case 'animals': {
+      const hasIdentifier = isNonEmptyStr(data.species) || isNonEmptyStr(data.tag) || isNonEmptyStr(data.tagNumber);
+      if (!hasIdentifier) {
+        return { valid: false, error: 'পশুর প্রজাতি বা ট্যাগ নম্বর আবশ্যক (Animal must specify species or tag).' };
+      }
+      break;
+    }
+    case 'animalEvents': {
+      if (!isNonEmptyStr(data.animalId)) {
+        return { valid: false, error: 'ইভেন্টে পশুর আইডি আবশ্যক (Animal event must specify animalId).' };
+      }
+      if (!isNonEmptyStr(data.eventType)) {
+        return { valid: false, error: 'ইভেন্টের ধরন আবশ্যক (Animal event must specify eventType).' };
+      }
+      break;
+    }
+    case 'inventoryItems': {
+      const hasName = isNonEmptyStr(data.nameBn) || isNonEmptyStr(data.nameEn) || isNonEmptyStr(data.name);
+      if (!hasName) {
+        return { valid: false, error: 'পণ্যের নাম আবশ্যক (Inventory item must have a name).' };
+      }
+      break;
+    }
+    case 'stockMovements': {
+      const hasItem = isNonEmptyStr(data.itemId) || isNonEmptyStr(data.itemCode);
+      if (!hasItem) {
+        return { valid: false, error: 'স্টক মুভমেন্টে পণ্যের আইডি আবশ্যক (Stock movement must specify itemId or itemCode).' };
+      }
+      if (!isNonEmptyStr(data.movementType)) {
+        return { valid: false, error: 'স্টক মুভমেন্টের ধরন আবশ্যক (Stock movement must specify movementType).' };
+      }
+      if (typeof data.quantity !== 'number' || isNaN(data.quantity) || !isFinite(data.quantity) || data.quantity === 0) {
+        return { valid: false, error: 'স্টক মুভমেন্টের পরিমাণ শূন্য বা অবৈধ হতে পারবে না (Stock movement quantity cannot be zero or invalid).' };
+      }
+      break;
+    }
+    case 'cashBankAccounts': {
+      const hasName = isNonEmptyStr(data.name) || isNonEmptyStr(data.accountName);
+      if (!hasName) {
+        return { valid: false, error: 'ব্যাংক/ক্যাশ অ্যাকাউন্টের নাম আবশ্যক (Account name is required).' };
+      }
+      break;
+    }
+    case 'parties': {
+      if (!isNonEmptyStr(data.name)) {
+        return { valid: false, error: 'পার্টির নাম আবশ্যক (Party name is required).' };
+      }
+      break;
+    }
+    case 'loans': {
+      if (!isNonEmptyStr(data.lenderName)) {
+        return { valid: false, error: 'ঋণদাতার নাম আবশ্যক (Lender name is required).' };
+      }
+      break;
+    }
+    case 'investors': {
+      if (!isNonEmptyStr(data.name)) {
+        return { valid: false, error: 'বিনিয়োগকারীর নাম আবশ্যক (Investor name is required).' };
+      }
+      break;
+    }
+    case 'fixedAssets': {
+      if (!isNonEmptyStr(data.name)) {
+        return { valid: false, error: 'স্থায়ী সম্পদের নাম আবশ্যক (Fixed asset name is required).' };
+      }
+      break;
+    }
+    case 'ponds': {
+      if (!isNonEmptyStr(data.name)) {
+        return { valid: false, error: 'পুকুরের নাম আবশ্যক (Pond name is required).' };
+      }
+      break;
+    }
+    case 'plots': {
+      if (!isNonEmptyStr(data.name)) {
+        return { valid: false, error: 'জমির প্লটের নাম আবশ্যক (Plot name is required).' };
+      }
+      break;
+    }
+    case 'fishBatches': {
+      if (!isNonEmptyStr(data.pondId)) {
+        return { valid: false, error: 'মাছের ব্যাচে পুকুর আইডি আবশ্যক (Fish batch must specify pondId).' };
+      }
+      if (!isNonEmptyStr(data.species)) {
+        return { valid: false, error: 'মাছের প্রজাতি আবশ্যক (Fish batch must specify species).' };
+      }
+      break;
+    }
+    case 'cropCycles': {
+      if (!isNonEmptyStr(data.plotId)) {
+        return { valid: false, error: 'ফসলের সাইকেলে জমির প্লট আইডি আবশ্যক (Crop cycle must specify plotId).' };
+      }
+      if (!isNonEmptyStr(data.cropName)) {
+        return { valid: false, error: 'ফসলের নাম আবশ্যক (Crop cycle must specify cropName).' };
+      }
+      break;
+    }
+    case 'reminders': {
+      if (!isNonEmptyStr(data.title)) {
+        return { valid: false, error: 'স্মারক শিরোনাম আবশ্যক (Reminder must specify title).' };
+      }
+      break;
+    }
+    case 'closedPeriods': {
+      if (!isNonEmptyStr(data.endDate)) {
+        return { valid: false, error: 'হিসাবকাল বন্ধের শেষ তারিখ আবশ্যক (Closed period must specify endDate).' };
+      }
+      break;
+    }
+    case 'internalFlows': {
+      if (!isNonEmptyStr(data.date)) {
+        return { valid: false, error: 'অভ্যন্তরীণ বিনিময়ের তারিখ আবশ্যক (Internal flow must specify date).' };
+      }
+      break;
+    }
+    case 'processingRuns': {
+      const hasName = isNonEmptyStr(data.recipeName) || isNonEmptyStr(data.name);
+      if (!hasName) {
+        return { valid: false, error: 'প্রসেসিং রেসিপির নাম আবশ্যক (Processing run must specify recipeName or name).' };
+      }
+      break;
+    }
+    case 'recurringExpenseTemplates': {
+      const hasDesc = isNonEmptyStr(data.accountCode) || isNonEmptyStr(data.narration);
+      if (!hasDesc) {
+        return { valid: false, error: 'নিয়মিত ব্যয়ের হিসাব কোড বা বিবরণ আবশ্যক (Template must specify accountCode or narration).' };
+      }
+      break;
+    }
+    case 'auditLogs': {
+      const hasAction = isNonEmptyStr(data.action) || isNonEmptyStr(data.timestamp);
+      if (!hasAction) {
+        return { valid: false, error: 'অডিট লগে অ্যাকশন বা টাইমস্ট্যাম্প আবশ্যক (Audit log must specify action or timestamp).' };
+      }
+      break;
+    }
+    case 'accessLogs': {
+      if (!isNonEmptyStr(data.email)) {
+        return { valid: false, error: 'অ্যাক্সেস লগে ইমেইল আবশ্যক (Access log must specify email).' };
+      }
+      break;
+    }
+    case 'systemConfig':
+    case 'system': {
+      const hasConfig = isNonEmptyStr(data.companyName) || isNonEmptyStr(data.ownerUid) || isNonEmptyStr(data.currency) || isNonEmptyStr(data.id);
+      if (!hasConfig) {
+        return { valid: false, error: 'সিস্টেম কনফিগারেশনে অন্তত একটি মূল তথ্য আবশ্যক (System config must contain companyName, ownerUid, or currency).' };
+      }
+      break;
+    }
+    default:
+      break;
+  }
+
+  return { valid: true };
+}
+
 async function handleSyncWrite(
   collectionName: string,
   req: express.Request,
@@ -1781,26 +2073,8 @@ async function handleSyncWrite(
     }
 
     const data = req.body;
-    if (!data || typeof data !== 'object') {
-      return res.status(400).json({ error: 'অবৈধ ডেটা পে-লোড (Invalid payload).' });
-    }
-
-    // F7: REQUIREMENT 1, 2, 3 - NEVER CLAIM CLOUD SYNC SUCCESS WITHOUT DURABLE PERSISTENCE
-    // If Firebase/Firestore persistence is unavailable, synchronization MUST fail.
-    // Do not treat in-memory server cache as successful backup.
-    // Do not return success to client when data exists only in RAM.
-    const effectiveDb = getEffectiveAdminDb(req);
-    if (!isFirestorePersistenceAvailable(req) || !effectiveDb) {
-      console.warn(`[The Goated Farm] Cloud Firestore persistence is unavailable for ${collectionName}. Refusing to claim success.`);
-      return res.status(503).json({
-        success: false,
-        persisted: false,
-        error: !effectiveDb
-          ? 'ফায়ারস্টোর অ্যাডমিন ডাটাবেস অনুপলব্ধ (Firestore Admin DB unavailable — cloud persistence not configured)'
-          : 'ক্লাউড ফায়ারস্টোর পারসিস্টেন্স অনুপলব্ধ — ডাটা ক্লাউডে সংরক্ষিত হয়নি (Cloud Firestore persistence unavailable — data was not durably persisted to cloud)',
-        collection: collectionName,
-        id: data?.id || req.body?.id
-      });
+    if (!data || typeof data !== 'object' || Array.isArray(data) || Object.keys(data).length === 0) {
+      return res.status(400).json({ error: 'অবৈধ বা খালি ডেটা পে-লোড (Malformed or empty payload).' });
     }
 
     const headerIdempotencyKey =
@@ -1886,12 +2160,59 @@ async function handleSyncWrite(
         ? 'systemConfig'
         : collectionName;
 
-    let docId = data.id || data.ownerUid || (collectionName === 'system' || collectionName === 'systemConfig' ? 'config' : null);
-    if (!docId && effectiveIdempotencyKey) {
-      docId = effectiveIdempotencyKey;
+    // Check supported collections
+    if (!ALLOWED_SYNC_COLLECTIONS.includes(targetCol)) {
+      return res.status(400).json({
+        error: `অননুমোদিত কালেকশন (Unsupported collection: ${collectionName})।`
+      });
     }
-    if (!docId) {
-      return res.status(400).json({ error: 'নথি আইডি (Document ID) অনুপস্থিত।' });
+
+    // Document ID extraction and validation
+    if (data.id !== undefined && data.id !== null) {
+      if (typeof data.id !== 'string' || !isValidDocumentId(data.id)) {
+        return res.status(400).json({
+          error: `অবৈধ নথি আইডি (Invalid document ID: ${String(data.id).slice(0, 50)})। নথি আইডি অবশ্যই ২৫৫ অক্ষরের মধ্যে বৈধ স্ট্রিং হতে হবে এবং স্ল্যাশ বা সংরক্ষিত নাম থাকতে পারবে না।`
+        });
+      }
+    }
+
+    let docId = (typeof data.id === 'string' && data.id.trim())
+      ? data.id.trim()
+      : (typeof data.ownerUid === 'string' && data.ownerUid.trim()
+          ? data.ownerUid.trim()
+          : (targetCol === 'systemConfig' || targetCol === 'system' ? 'config' : null));
+
+    if (!docId && effectiveIdempotencyKey) {
+      docId = typeof effectiveIdempotencyKey === 'string' ? effectiveIdempotencyKey.trim() : null;
+    }
+
+    if (!docId || !isValidDocumentId(docId)) {
+      return res.status(400).json({ error: 'অবৈধ বা অনুপস্থিত নথি আইডি (Invalid or missing document ID)।' });
+    }
+    docId = String(docId).trim();
+
+    // Validate record shape per target collection before any storage access
+    const shapeResult = validateRecordShape(targetCol, data);
+    if (!shapeResult.valid) {
+      return res.status(400).json({ error: shapeResult.error });
+    }
+
+    // F7: REQUIREMENT 1, 2, 3 - NEVER CLAIM CLOUD SYNC SUCCESS WITHOUT DURABLE PERSISTENCE
+    // If Firebase/Firestore persistence is unavailable, synchronization MUST fail.
+    // Do not treat in-memory server cache as successful backup.
+    // Do not return success to client when data exists only in RAM.
+    const effectiveDb = getEffectiveAdminDb(req);
+    if (!isFirestorePersistenceAvailable(req) || !effectiveDb) {
+      console.warn(`[The Goated Farm] Cloud Firestore persistence is unavailable for ${collectionName}. Refusing to claim success.`);
+      return res.status(503).json({
+        success: false,
+        persisted: false,
+        error: !effectiveDb
+          ? 'ফায়ারস্টোর অ্যাডমিন ডাটাবেস অনুপলব্ধ (Firestore Admin DB unavailable — cloud persistence not configured)'
+          : 'ক্লাউড ফায়ারস্টোর পারসিস্টেন্স অনুপলব্ধ — ডাটা ক্লাউডে সংরক্ষিত হয়নি (Cloud Firestore persistence unavailable — data was not durably persisted to cloud)',
+        collection: collectionName,
+        id: data?.id || req.body?.id
+      });
     }
 
     // 2. Duplicate Protection & Idempotency Check for Server Synchronization:
