@@ -28,7 +28,8 @@ import {
   ClosedPeriod,
   RecurringExpenseTemplate,
   SalesReturn,
-  PurchaseReturn
+  PurchaseReturn,
+  AdvancePayment
 } from '../types';
 
 export class AgroDatabase extends Dexie {
@@ -53,6 +54,7 @@ export class AgroDatabase extends Dexie {
   sales!: Table<Sale, string>;
   salesReturns!: Table<SalesReturn, string>;
   purchaseReturns!: Table<PurchaseReturn, string>;
+  advancePayments!: Table<AdvancePayment, string>;
   payments!: Table<PaymentRecord, string>;
   cashBankAccounts!: Table<CashBankAccount, string>;
   bankTransfers!: Table<BankTransfer, string>;
@@ -91,6 +93,7 @@ export class AgroDatabase extends Dexie {
       sales: 'id, invoiceNumber, customerId, date, synced',
       salesReturns: 'id, returnNumber, saleId, customerId, date, synced',
       purchaseReturns: 'id, returnNumber, purchaseId, supplierId, date, synced',
+      advancePayments: 'id, partyId, direction, date, synced',
       cashBankAccounts: 'id, accountType, name, synced',
       bankTransfers: 'id, date, type, synced',
       loans: 'id, lenderName, status, synced',
@@ -139,6 +142,10 @@ export class AgroDatabase extends Dexie {
     this.version(10).stores({
       salesReturns: 'id, returnNumber, saleId, customerId, date, synced',
       purchaseReturns: 'id, returnNumber, purchaseId, supplierId, date, synced'
+    });
+
+    this.version(11).stores({
+      advancePayments: 'id, partyId, direction, date, synced'
     });
   }
 }

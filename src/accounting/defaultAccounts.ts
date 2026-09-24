@@ -114,6 +114,16 @@ export const DEFAULT_CHART_OF_ACCOUNTS: Account[] = [
     isActive: true
   },
   {
+    id: 'acc_1070',
+    code: '1070',
+    nameBn: 'সরবরাহকারী অগ্রিম (Supplier Advance)',
+    nameEn: 'Supplier Advance',
+    accountClass: 'ASSET',
+    normalBalance: 'DEBIT',
+    isSystem: true,
+    isActive: true
+  },
+  {
     id: 'acc_1510',
     code: '1510',
     nameBn: 'জমি ও প্লট (Land & Plots)',
@@ -208,7 +218,7 @@ export const DEFAULT_CHART_OF_ACCOUNTS: Account[] = [
   {
     id: 'acc_2040',
     code: '2040',
-    nameBn: 'গ্রাহকের অগ্রিম জমা (Customer Advances)',
+    nameBn: 'গ্রাহক অগ্রিম (Customer Advance)',
     nameEn: 'Customer Advances',
     accountClass: 'LIABILITY',
     normalBalance: 'CREDIT',

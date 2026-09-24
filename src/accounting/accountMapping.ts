@@ -16,6 +16,7 @@ export const CANONICAL_ACCOUNTS = {
   FINISHED_GOODS: '1055',
   PACKAGING_INVENTORY: '1056',
   PREPAID_EXPENSES: '1060',
+  SUPPLIER_ADVANCES: '1070',
   LAND: '1510',
   BUILDINGS: '1520',
   POND_INFRASTRUCTURE: '1530',
@@ -413,3 +414,18 @@ export function getDepreciationAccounts(): {
     accumulatedCode: CANONICAL_ACCOUNTS.ACCUMULATED_DEPRECIATION // 1590
   };
 }
+
+/**
+ * Maps customer advance liability to 2040 Customer Advances
+ */
+export function getCustomerAdvanceAccount(): string {
+  return CANONICAL_ACCOUNTS.CUSTOMER_ADVANCES; // 2040
+}
+
+/**
+ * Maps supplier advance asset to 1070 Supplier Advances
+ */
+export function getSupplierAdvanceAccount(): string {
+  return CANONICAL_ACCOUNTS.SUPPLIER_ADVANCES; // 1070
+}
+

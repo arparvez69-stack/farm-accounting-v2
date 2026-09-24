@@ -10,7 +10,9 @@ import {
   getLoanLiabilityAccount,
   getInvestorCapitalAccount,
   getInvestorProfitPayableAccount,
-  getProfitDistributionAccount
+  getProfitDistributionAccount,
+  getCustomerAdvanceAccount,
+  getSupplierAdvanceAccount
 } from '../accounting/accountMapping';
 import { postJournalEntry, validateBalancedLines } from '../accounting/accountingEngine';
 import { generateDisplayNumber, generateTransactionNumber, generateUniqueId, safeInsert } from '../utils/idGenerator';
@@ -42,7 +44,9 @@ import {
   PurchaseReturn,
   SalesReturnItem,
   PurchaseReturnItem,
-  ReturnRefundMethod
+  ReturnRefundMethod,
+  AdvancePayment,
+  AdvanceDirection
 } from '../types';
 import { generateAmortizationSchedule } from '../accounting/amortizationService';
 
@@ -50,6 +54,658 @@ const activeSaleLocks = new Set<string>();
 const activeSalesReturnLocks = new Set<string>();
 const activePurchaseLocks = new Set<string>();
 const activePurchaseReturnLocks = new Set<string>();
+const activeAdvanceLocks = new Set<string>();
+
+/**
+ * Ensure canonical advance accounts (2040 and 1070) exist in account list and database
+ */
+async function ensureAdvanceAccounts(accounts: Account[], dbInstance?: any): Promise<void> {
+  if (!accounts.some((a) => a.code === '2040')) {
+    const acc2040: Account = {
+      id: 'acc_2040',
+      code: '2040',
+      nameBn: 'গ্রাহক অগ্রিম (Customer Advance)',
+      nameEn: 'Customer Advances',
+      accountClass: 'LIABILITY',
+      normalBalance: 'CREDIT',
+      isSystem: true,
+      isActive: true
+    };
+    accounts.push(acc2040);
+    if (dbInstance?.accounts?.put) {
+      try { await dbInstance.accounts.put(acc2040); } catch {}
+    }
+  }
+  if (!accounts.some((a) => a.code === '1070')) {
+    const acc1070: Account = {
+      id: 'acc_1070',
+      code: '1070',
+      nameBn: 'সরবরাহকারী অগ্রিম (Supplier Advance)',
+      nameEn: 'Supplier Advance',
+      accountClass: 'ASSET',
+      normalBalance: 'DEBIT',
+      isSystem: true,
+      isActive: true
+    };
+    accounts.push(acc1070);
+    if (dbInstance?.accounts?.put) {
+      try { await dbInstance.accounts.put(acc1070); } catch {}
+    }
+  }
+}
+
+export interface AdvancePaymentTransactionParams {
+  id?: string;
+  advancePaymentId?: string;
+  advanceNumber?: string;
+  partyId?: string;
+  party?: Party;
+  amount: number;
+  direction: AdvanceDirection; // 'RECEIVED' from customer / 'PAID' to supplier
+  paymentMethod: 'CASH' | 'BANK';
+  cashBankAccountId?: string;
+  bankAccountId?: string;
+  date?: string;
+  narration?: string;
+  note?: string;
+  currentUserId?: string;
+  idempotencyKey?: string;
+}
+
+/**
+ * Execute an advance receipt (customer) or advance payment (supplier)
+ * Ensures Liability/Asset recognition ahead of any invoice.
+ * Customer advance: Debit Cash/Bank, Credit Customer Advance (2040)
+ * Supplier advance: Debit Supplier Advance (1070), Credit Cash/Bank
+ */
+export async function executeAdvancePaymentTransaction(
+  params: AdvancePaymentTransactionParams,
+  dbInstance: any = db
+): Promise<{ advancePayment: AdvancePayment; journalEntryId: string }> {
+  const {
+    id: paramId,
+    advancePaymentId: paramAdvId,
+    advanceNumber: paramAdvNumber,
+    partyId,
+    party,
+    amount,
+    direction,
+    paymentMethod,
+    cashBankAccountId,
+    bankAccountId,
+    date,
+    narration,
+    note,
+    currentUserId = 'system',
+    idempotencyKey
+  } = params;
+
+  if (!amount || amount <= 0 || isNaN(amount)) {
+    throw new Error('অগ্রিম অর্থপ্রদানের পরিমাণ অবশ্যই ০ এর বেশি হতে হবে (Advance amount must be greater than 0).');
+  }
+
+  const roundedAmount = Math.round(amount * 100) / 100;
+  const targetAdvId = paramAdvId || paramId;
+  const resolvedPartyId = partyId || party?.id;
+
+  if (!resolvedPartyId) {
+    throw new Error('অগ্রিম লেনদেনের জন্য পক্ষ (গ্রাহক/সরবরাহকারী) নির্বাচন আবশ্যক (Party is required).');
+  }
+
+  const lockKey = idempotencyKey
+    ? `adv_key_${idempotencyKey}`
+    : targetAdvId
+    ? `adv_id_${targetAdvId}`
+    : paramAdvNumber
+    ? `adv_num_${paramAdvNumber}`
+    : `adv_${resolvedPartyId}_${direction}_${roundedAmount}_${paymentMethod}_${date || ''}`;
+
+  if (activeAdvanceLocks.has(lockKey)) {
+    throw new Error('এই অগ্রিম লেনদেনটি বর্তমানে প্রক্রিয়াধীন রয়েছে। ডুপ্লিকেট পোস্টিং প্রতিরোধ করা হয়েছে (Duplicate advance payment prevented)।');
+  }
+  activeAdvanceLocks.add(lockKey);
+
+  try {
+    return await dbInstance.transaction(
+      'rw',
+      [
+        dbInstance.advancePayments,
+        dbInstance.journalEntries,
+        dbInstance.parties,
+        dbInstance.cashBankAccounts,
+        dbInstance.accounts,
+        dbInstance.auditLogs,
+        dbInstance.closedPeriods
+      ],
+      async () => {
+        const todayStr = new Date().toISOString().split('T')[0];
+        const dateStr = date || todayStr;
+        if (dateStr > todayStr) {
+          throw new Error(`অগ্রিম লেনদেনের তারিখ ভবিষ্যতের হতে পারে না (${todayStr} বা তার পূর্বের তারিখ নির্বাচন করুন)।`);
+        }
+
+        // 1. Idempotency and duplicate check
+        if (idempotencyKey) {
+          const existingByKey = await dbInstance.advancePayments
+            .filter((a: any) => a.idempotencyKey === idempotencyKey || a.id === idempotencyKey)
+            .first();
+          if (existingByKey) {
+            throw new Error('এই অগ্রিম লেনদেনটি ইতোমধ্যে সম্পন্ন হয়েছে (ডুপ্লিকেট প্রতিরোধ / Duplicate advance prevented)।');
+          }
+        }
+
+        if (targetAdvId) {
+          const existingById = await dbInstance.advancePayments.get(targetAdvId);
+          if (existingById) {
+            throw new Error(`এই অগ্রিম লেনদেনটি (ID: ${targetAdvId}) ইতিমধ্যে বিদ্যমান রয়েছে।`);
+          }
+        }
+
+        if (paramAdvNumber) {
+          const existingByNum = await dbInstance.advancePayments
+            .filter((a: any) => a.advanceNumber === paramAdvNumber)
+            .first();
+          if (existingByNum) {
+            throw new Error(`এই অগ্রিম ভাউচার নম্বর (${paramAdvNumber}) ইতিমধ্যে ব্যবহৃত হয়েছে।`);
+          }
+        }
+
+        // 2. Verify Party
+        const resolvedParty = party || (await dbInstance.parties.get(resolvedPartyId));
+        if (!resolvedParty) {
+          throw new Error(`নির্বাচিত পক্ষ (ID: ${resolvedPartyId}) সিস্টেমে পাওয়া যায়নি।`);
+        }
+
+        // 3. Resolve and validate Cash/Bank accounts
+        let cashAcc: CashBankAccount | undefined;
+        let bankAcc: CashBankAccount | undefined;
+
+        if (paymentMethod === 'BANK') {
+          const targetBankId = bankAccountId || cashBankAccountId;
+          if (targetBankId) {
+            bankAcc = await dbInstance.cashBankAccounts.get(targetBankId);
+            if (!bankAcc) {
+              throw new Error(`নির্বাচিত ব্যাংক হিসাব (${targetBankId}) পাওয়া যায়নি।`);
+            }
+          } else {
+            bankAcc = await dbInstance.cashBankAccounts.where('accountType').equals('BANK').first();
+            if (!bankAcc) {
+              throw new Error('ব্যাংক হিসাব (Bank Account) পাওয়া যায়নি।');
+            }
+          }
+          if (direction === 'PAID' && Number(bankAcc.currentBalance || 0) < roundedAmount) {
+            throw new Error(`ব্যাংক হিসাবে পর্যাপ্ত ব্যালেন্স নেই (উপলব্ধ: ৳${bankAcc.currentBalance || 0}, প্রয়োজনীয়: ৳${roundedAmount})।`);
+          }
+        } else {
+          const targetAccId = cashBankAccountId || bankAccountId;
+          if (targetAccId) {
+            cashAcc = await dbInstance.cashBankAccounts.get(targetAccId);
+            if (!cashAcc) {
+              throw new Error(`নির্বাচিত নগদ হিসাব (${targetAccId}) পাওয়া যায়নি।`);
+            }
+          } else {
+            cashAcc = await dbInstance.cashBankAccounts.where('accountType').equals('CASH').first();
+            if (!cashAcc) {
+              throw new Error('নগদ হিসাব (Cash Account) পাওয়া যায়নি।');
+            }
+          }
+          if (direction === 'PAID' && Number(cashAcc.currentBalance || 0) < roundedAmount) {
+            throw new Error(`নগদ তহবিলে পর্যাপ্ত ব্যালেন্স নেই (উপলব্ধ: ৳${cashAcc.currentBalance || 0}, প্রয়োজনীয়: ৳${roundedAmount})।`);
+          }
+        }
+
+        // 4. Ensure accounts
+        const accounts = await dbInstance.accounts.toArray();
+        await ensureAdvanceAccounts(accounts, dbInstance);
+
+        const paymentAccountCode = getPaymentAccount(paymentMethod, direction === 'RECEIVED' ? 'SALE' : 'PURCHASE');
+        const journalLines: JournalLine[] = [];
+
+        if (direction === 'RECEIVED') {
+          // Customer advance: Debit Cash/Bank, Credit Customer Advance (2040 Liability)
+          journalLines.push(
+            {
+              accountId: paymentAccountCode,
+              accountCode: paymentAccountCode,
+              accountName: paymentMethod === 'CASH' ? 'নগদ টাকা (Cash on Hand)' : 'ব্যাংক হিসাব (Bank Accounts)',
+              debit: roundedAmount,
+              credit: 0,
+              memo: `গ্রাহক অগ্রিম প্রাপ্তি: ${resolvedParty.name}`
+            },
+            {
+              accountId: CANONICAL_ACCOUNTS.CUSTOMER_ADVANCES,
+              accountCode: CANONICAL_ACCOUNTS.CUSTOMER_ADVANCES,
+              accountName: 'গ্রাহক অগ্রিম (Customer Advance)',
+              debit: 0,
+              credit: roundedAmount,
+              memo: `গ্রাহক অগ্রিম দায় স্বীকৃতি: ${resolvedParty.name}`
+            }
+          );
+        } else {
+          // Supplier advance: Debit Supplier Advance (1070 Asset), Credit Cash/Bank
+          journalLines.push(
+            {
+              accountId: CANONICAL_ACCOUNTS.SUPPLIER_ADVANCES,
+              accountCode: CANONICAL_ACCOUNTS.SUPPLIER_ADVANCES,
+              accountName: 'সরবরাহকারী অগ্রিম (Supplier Advance)',
+              debit: roundedAmount,
+              credit: 0,
+              memo: `সরবরাহকারী অগ্রিম সম্পদ স্বীকৃতি: ${resolvedParty.name}`
+            },
+            {
+              accountId: paymentAccountCode,
+              accountCode: paymentAccountCode,
+              accountName: paymentMethod === 'CASH' ? 'নগদ টাকা (Cash on Hand)' : 'ব্যাংক হিসাব (Bank Accounts)',
+              debit: 0,
+              credit: roundedAmount,
+              memo: `সরবরাহকারীকে অগ্রিম পরিশোধ: ${resolvedParty.name}`
+            }
+          );
+        }
+
+        const advanceId = targetAdvId || generateUniqueId('adv');
+        const advanceNumber = paramAdvNumber || generateTransactionNumber('ADV');
+        const displayNumber = await generateDisplayNumber('ADV', dateStr);
+        const voucherType = direction === 'RECEIVED' ? 'RECEIPT' : 'PAYMENT';
+
+        const journalEntry = await postJournalEntry(
+          {
+            id: generateUniqueId('j_adv'),
+            voucherNumber: await generateDisplayNumber(direction === 'RECEIVED' ? 'RCT' : 'PMT', dateStr),
+            voucherType,
+            date: dateStr,
+            narration: narration || (direction === 'RECEIVED'
+              ? `গ্রাহক অগ্রিম গ্রহণ: ${resolvedParty.name} এর নিকট থেকে ৳${roundedAmount} অগ্রিম গ্রহণ`
+              : `সরবরাহকারী অগ্রিম প্রদান: ${resolvedParty.name} কে ৳${roundedAmount} অগ্রিম পরিশোধ`),
+            reference: advanceNumber,
+            lines: journalLines,
+            createdBy: currentUserId,
+            createdAt: new Date().toISOString()
+          },
+          { accounts, skipDbPut: true, dbInstance }
+        );
+
+        if (idempotencyKey) {
+          (journalEntry as any).idempotencyKey = idempotencyKey;
+        }
+
+        await safeInsert(dbInstance.journalEntries, journalEntry, { idPrefix: 'j' });
+
+        // 5. Create AdvancePayment record
+        const advanceRecord: AdvancePayment = {
+          id: advanceId,
+          advanceNumber,
+          displayNumber,
+          date: dateStr,
+          partyId: resolvedParty.id,
+          party: resolvedParty,
+          partyName: resolvedParty.name,
+          amount: roundedAmount,
+          direction,
+          paymentMethod,
+          bankAccountId: paymentMethod === 'BANK' ? (bankAcc?.id || cashBankAccountId) : undefined,
+          cashBankAccountId: (paymentMethod === 'CASH' ? cashAcc?.id : bankAcc?.id) || undefined,
+          journalEntryId: journalEntry.id,
+          remainingBalance: roundedAmount,
+          remainingUnappliedBalance: roundedAmount,
+          appliedInvoices: [],
+          status: 'ACTIVE',
+          notes: note || narration,
+          createdBy: currentUserId,
+          createdAt: new Date().toISOString(),
+          ...(idempotencyKey ? { idempotencyKey } : {}),
+          synced: false
+        };
+
+        if (targetAdvId) {
+          await dbInstance.advancePayments.add(advanceRecord);
+        } else {
+          await safeInsert(dbInstance.advancePayments, advanceRecord, { idPrefix: 'adv' });
+        }
+
+        // 6. Update Cash/Bank account operational balance
+        if (paymentMethod === 'CASH' && cashAcc) {
+          const newBal = direction === 'RECEIVED'
+            ? Math.round((cashAcc.currentBalance + roundedAmount) * 100) / 100
+            : Math.round((cashAcc.currentBalance - roundedAmount) * 100) / 100;
+          await dbInstance.cashBankAccounts.update(cashAcc.id, { currentBalance: newBal });
+        } else if (paymentMethod === 'BANK' && bankAcc) {
+          const newBal = direction === 'RECEIVED'
+            ? Math.round((bankAcc.currentBalance + roundedAmount) * 100) / 100
+            : Math.round((bankAcc.currentBalance - roundedAmount) * 100) / 100;
+          await dbInstance.cashBankAccounts.update(bankAcc.id, { currentBalance: newBal });
+        }
+
+        // 7. Update party operational balance
+        // Customer: balance reflects receivables. Advance received reduces receivable balance.
+        // Supplier: balance reflects payables. Advance paid reduces payable balance.
+        const freshParty = await dbInstance.parties.get(resolvedParty.id);
+        if (freshParty) {
+          await dbInstance.parties.update(resolvedParty.id, {
+            balance: Math.round(((freshParty.balance || 0) - roundedAmount) * 100) / 100
+          });
+        }
+
+        // 8. Audit log
+        await safeInsert(dbInstance.auditLogs, {
+          id: generateUniqueId('audit'),
+          timestamp: new Date().toISOString(),
+          userId: currentUserId,
+          role: 'OWNER',
+          action: direction === 'RECEIVED' ? 'CUSTOMER_ADVANCE_RECEIPT' : 'SUPPLIER_ADVANCE_PAYMENT',
+          module: 'COMMERCE',
+          recordId: advanceNumber,
+          status: 'SUCCESS',
+          details: `অগ্রিম লেনদেন ${advanceNumber} সম্পন্ন (৳${roundedAmount}, পক্ষ: ${resolvedParty.name}, ধরন: ${direction})`
+        });
+
+        return { advancePayment: advanceRecord, journalEntryId: journalEntry.id };
+      }
+    );
+  } finally {
+    activeAdvanceLocks.delete(lockKey);
+  }
+}
+
+/**
+ * Apply an existing advance balance to an existing unpaid or partially paid invoice
+ */
+export async function executeApplyAdvanceTransaction(
+  params: {
+    advancePaymentId: string;
+    invoiceId: string;
+    invoiceType: 'SALE' | 'PURCHASE';
+    amount?: number;
+    currentUserId?: string;
+    date?: string;
+    idempotencyKey?: string;
+  },
+  dbInstance: any = db
+): Promise<{
+  journalEntryId: string;
+  appliedAmount: number;
+  remainingAdvanceBalance: number;
+  remainingInvoiceDue: number;
+}> {
+  const {
+    advancePaymentId,
+    invoiceId,
+    invoiceType,
+    amount: requestedAmount,
+    currentUserId = 'system',
+    date,
+    idempotencyKey
+  } = params;
+
+  return await dbInstance.transaction(
+    'rw',
+    [
+      dbInstance.advancePayments,
+      dbInstance.sales,
+      dbInstance.purchases,
+      dbInstance.journalEntries,
+      dbInstance.parties,
+      dbInstance.accounts,
+      dbInstance.auditLogs,
+      dbInstance.closedPeriods
+    ],
+    async () => {
+      const todayStr = new Date().toISOString().split('T')[0];
+      const dateStr = date || todayStr;
+
+      const advance: AdvancePayment = await dbInstance.advancePayments.get(advancePaymentId);
+      if (!advance) {
+        throw new Error(`অগ্রিম লেনদেন (${advancePaymentId}) পাওয়া যায়নি।`);
+      }
+
+      const availableBalance = Number(advance.remainingBalance ?? advance.remainingUnappliedBalance ?? 0);
+      if (availableBalance <= 0) {
+        throw new Error('এই অগ্রিম লেনদেনে কোনো সমন্বয়যোগ্য অবশিষ্ট ব্যালেন্স নেই (No available balance).');
+      }
+
+      const accounts = await dbInstance.accounts.toArray();
+      await ensureAdvanceAccounts(accounts, dbInstance);
+
+      if (invoiceType === 'SALE') {
+        if (advance.direction !== 'RECEIVED') {
+          throw new Error('বিক্রয় চালানে শুধুমাত্র গ্রাহকের অগ্রিম (RECEIVED) সমন্বয় করা যাবে।');
+        }
+        const sale: Sale = await dbInstance.sales.get(invoiceId);
+        if (!sale) {
+          throw new Error(`বিক্রয় চালান (${invoiceId}) পাওয়া যায়নি।`);
+        }
+        if (sale.customerId !== advance.partyId && (sale.customerId !== (advance.party as any)?.id)) {
+          throw new Error('অগ্রিম এবং বিক্রয় চালানের গ্রাহক ভিন্ন (Party mismatch).');
+        }
+
+        const currentDue = Number(sale.dueAmount ?? Math.max(0, (sale.totalAmount || 0) - (sale.paidAmount || 0)));
+        if (currentDue <= 0) {
+          throw new Error(`বিক্রয় চালান (${sale.invoiceNumber}) এ কোনো বকেয়া নেই (Invoice is already fully paid).`);
+        }
+
+        const appliedAmount = Math.round(
+          (requestedAmount && requestedAmount > 0 ? requestedAmount : Math.min(availableBalance, currentDue)) * 100
+        ) / 100;
+
+        if (appliedAmount <= 0) {
+          throw new Error('অগ্রিম সমন্বয়ের পরিমাণ অবশ্যই ০ এর বেশি হতে হবে।');
+        }
+        if (appliedAmount > availableBalance + 0.0001) {
+          throw new Error(`অগ্রিম সমন্বয়ের পরিমাণ (৳${appliedAmount}) উপলব্ধ অগ্রিম ব্যালেন্সের (৳${availableBalance}) চেয়ে বেশি হতে পারে না।`);
+        }
+        if (appliedAmount > currentDue + 0.0001) {
+          throw new Error(`অগ্রিম সমন্বয়ের পরিমাণ (৳${appliedAmount}) চালানের বকেয়ার (৳${currentDue}) চেয়ে বেশি হতে পারে না।`);
+        }
+
+        // Customer Advance Application: Debit Customer Advance (2040), Credit Accounts Receivable (1040)
+        const journalLines: JournalLine[] = [
+          {
+            accountId: CANONICAL_ACCOUNTS.CUSTOMER_ADVANCES,
+            accountCode: CANONICAL_ACCOUNTS.CUSTOMER_ADVANCES,
+            accountName: 'গ্রাহক অগ্রিম (Customer Advance)',
+            debit: appliedAmount,
+            credit: 0,
+            memo: `অগ্রিম সমন্বয়: বিক্রয় চালান ${sale.invoiceNumber} এ সমন্বয়`
+          },
+          {
+            accountId: CANONICAL_ACCOUNTS.ACCOUNTS_RECEIVABLE,
+            accountCode: CANONICAL_ACCOUNTS.ACCOUNTS_RECEIVABLE,
+            accountName: 'গ্রাহকের নিকট পাওনা (Accounts Receivable)',
+            debit: 0,
+            credit: appliedAmount,
+            memo: `অগ্রিম সমন্বয়: বিক্রয় চালান ${sale.invoiceNumber} এ সমন্বয়`
+          }
+        ];
+
+        const journalEntry = await postJournalEntry(
+          {
+            id: generateUniqueId('j_adv_app'),
+            voucherNumber: await generateDisplayNumber('JRN', dateStr),
+            voucherType: 'JOURNAL',
+            date: dateStr,
+            narration: `অগ্রিম সমন্বয় (Advance Application): বিক্রয় চালান ${sale.invoiceNumber} এ গ্রাহক অগ্রিম সমন্বয়`,
+            reference: sale.invoiceNumber,
+            lines: journalLines,
+            createdBy: currentUserId,
+            createdAt: new Date().toISOString()
+          },
+          { accounts, skipDbPut: true, dbInstance }
+        );
+
+        if (idempotencyKey) {
+          (journalEntry as any).idempotencyKey = idempotencyKey;
+        }
+        await safeInsert(dbInstance.journalEntries, journalEntry, { idPrefix: 'j' });
+
+        const newRemainingAdvance = Math.max(0, Math.round((availableBalance - appliedAmount) * 100) / 100);
+        await dbInstance.advancePayments.update(advance.id, {
+          remainingBalance: newRemainingAdvance,
+          remainingUnappliedBalance: newRemainingAdvance,
+          appliedInvoices: [
+            ...(advance.appliedInvoices || []),
+            {
+              invoiceId: sale.id,
+              invoiceNumber: sale.invoiceNumber,
+              invoiceType: 'SALE',
+              appliedAmount,
+              journalEntryId: journalEntry.id,
+              date: dateStr
+            }
+          ],
+          synced: false
+        });
+
+        const newDue = Math.max(0, Math.round((currentDue - appliedAmount) * 100) / 100);
+        const newPaid = Math.round(((sale.paidAmount || 0) + appliedAmount) * 100) / 100;
+        await dbInstance.sales.update(sale.id, {
+          dueAmount: newDue,
+          paidAmount: newPaid,
+          status: newDue <= 0 ? 'PAID' : 'PARTIAL',
+          advancePaymentId: advance.id,
+          advanceAppliedAmount: Math.round(((sale.advanceAppliedAmount || 0) + appliedAmount) * 100) / 100,
+          synced: false
+        });
+
+        return {
+          journalEntryId: journalEntry.id,
+          appliedAmount,
+          remainingAdvanceBalance: newRemainingAdvance,
+          remainingInvoiceDue: newDue
+        };
+      } else {
+        if (advance.direction !== 'PAID') {
+          throw new Error('ক্রয় চালানে শুধুমাত্র সরবরাহকারী অগ্রিম (PAID) সমন্বয় করা যাবে।');
+        }
+        const purchase: Purchase = await dbInstance.purchases.get(invoiceId);
+        if (!purchase) {
+          throw new Error(`ক্রয় চালান (${invoiceId}) পাওয়া যায়নি।`);
+        }
+        if (purchase.supplierId !== advance.partyId && (purchase.supplierId !== (advance.party as any)?.id)) {
+          throw new Error('অগ্রিম এবং ক্রয় চালানের সরবরাহকারী ভিন্ন (Party mismatch).');
+        }
+
+        const currentDue = Number(purchase.dueAmount ?? Math.max(0, (purchase.grandTotal || 0) - (purchase.paidAmount || 0)));
+        if (currentDue <= 0) {
+          throw new Error(`ক্রয় চালান (${purchase.invoiceNumber}) এ কোনো বকেয়া নেই (Invoice is already fully paid).`);
+        }
+
+        const appliedAmount = Math.round(
+          (requestedAmount && requestedAmount > 0 ? requestedAmount : Math.min(availableBalance, currentDue)) * 100
+        ) / 100;
+
+        if (appliedAmount <= 0) {
+          throw new Error('অগ্রিম সমন্বয়ের পরিমাণ অবশ্যই ০ এর বেশি হতে হবে।');
+        }
+        if (appliedAmount > availableBalance + 0.0001) {
+          throw new Error(`অগ্রিম সমন্বয়ের পরিমাণ (৳${appliedAmount}) উপলব্ধ অগ্রিম ব্যালেন্সের (৳${availableBalance}) চেয়ে বেশি হতে পারে না।`);
+        }
+        if (appliedAmount > currentDue + 0.0001) {
+          throw new Error(`অগ্রিম সমন্বয়ের পরিমাণ (৳${appliedAmount}) চালানের বকেয়ার (৳${currentDue}) চেয়ে বেশি হতে পারে না।`);
+        }
+
+        // Supplier Advance Application: Debit Accounts Payable (2010), Credit Supplier Advance (1070)
+        const journalLines: JournalLine[] = [
+          {
+            accountId: CANONICAL_ACCOUNTS.ACCOUNTS_PAYABLE,
+            accountCode: CANONICAL_ACCOUNTS.ACCOUNTS_PAYABLE,
+            accountName: 'সরবরাহকারীর দেনা (Accounts Payable)',
+            debit: appliedAmount,
+            credit: 0,
+            memo: `অগ্রিম সমন্বয়: ক্রয় চালান ${purchase.invoiceNumber} এ সমন্বয়`
+          },
+          {
+            accountId: CANONICAL_ACCOUNTS.SUPPLIER_ADVANCES,
+            accountCode: CANONICAL_ACCOUNTS.SUPPLIER_ADVANCES,
+            accountName: 'সরবরাহকারী অগ্রিম (Supplier Advance)',
+            debit: 0,
+            credit: appliedAmount,
+            memo: `অগ্রিম সমন্বয়: ক্রয় চালান ${purchase.invoiceNumber} এ সমন্বয়`
+          }
+        ];
+
+        const journalEntry = await postJournalEntry(
+          {
+            id: generateUniqueId('j_adv_app'),
+            voucherNumber: await generateDisplayNumber('JRN', dateStr),
+            voucherType: 'JOURNAL',
+            date: dateStr,
+            narration: `অগ্রিম সমন্বয় (Advance Application): ক্রয় চালান ${purchase.invoiceNumber} এ সরবরাহকারী অগ্রিম সমন্বয়`,
+            reference: purchase.invoiceNumber,
+            lines: journalLines,
+            createdBy: currentUserId,
+            createdAt: new Date().toISOString()
+          },
+          { accounts, skipDbPut: true, dbInstance }
+        );
+
+        if (idempotencyKey) {
+          (journalEntry as any).idempotencyKey = idempotencyKey;
+        }
+        await safeInsert(dbInstance.journalEntries, journalEntry, { idPrefix: 'j' });
+
+        const newRemainingAdvance = Math.max(0, Math.round((availableBalance - appliedAmount) * 100) / 100);
+        await dbInstance.advancePayments.update(advance.id, {
+          remainingBalance: newRemainingAdvance,
+          remainingUnappliedBalance: newRemainingAdvance,
+          appliedInvoices: [
+            ...(advance.appliedInvoices || []),
+            {
+              invoiceId: purchase.id,
+              invoiceNumber: purchase.invoiceNumber,
+              invoiceType: 'PURCHASE',
+              appliedAmount,
+              journalEntryId: journalEntry.id,
+              date: dateStr
+            }
+          ],
+          synced: false
+        });
+
+        const newDue = Math.max(0, Math.round((currentDue - appliedAmount) * 100) / 100);
+        const newPaid = Math.round(((purchase.paidAmount || 0) + appliedAmount) * 100) / 100;
+        await dbInstance.purchases.update(purchase.id, {
+          dueAmount: newDue,
+          paidAmount: newPaid,
+          status: newDue <= 0 ? 'PAID' : 'PARTIAL',
+          advancePaymentId: advance.id,
+          advanceAppliedAmount: Math.round(((purchase.advanceAppliedAmount || 0) + appliedAmount) * 100) / 100,
+          synced: false
+        });
+
+        return {
+          journalEntryId: journalEntry.id,
+          appliedAmount,
+          remainingAdvanceBalance: newRemainingAdvance,
+          remainingInvoiceDue: newDue
+        };
+      }
+    }
+  );
+}
+
+/**
+ * Get party available advance balance
+ */
+export async function getPartyAvailableAdvance(
+  partyId: string,
+  direction: AdvanceDirection,
+  dbInstance: any = db
+): Promise<number> {
+  if (!dbInstance?.advancePayments) return 0;
+  const advances: AdvancePayment[] = await dbInstance.advancePayments
+    .filter(
+      (a: any) =>
+        (a.partyId === partyId || (a.party as any)?.id === partyId) &&
+        a.direction === direction &&
+        Number(a.remainingBalance ?? a.remainingUnappliedBalance ?? 0) > 0
+    )
+    .toArray();
+
+  return advances.reduce(
+    (sum, a) => Math.round((sum + Number(a.remainingBalance ?? a.remainingUnappliedBalance ?? 0)) * 100) / 100,
+    0
+  );
+}
 
 /**
  * Atomic Execution of Sales Invoice Transaction
@@ -71,9 +727,13 @@ export async function executeSaleTransaction(
     currentUserId: string;
     date?: string;
     note?: string;
+    advancePaymentId?: string;
+    advanceAmount?: number;
+    advanceAppliedAmount?: number;
+    applyAdvanceAmount?: number;
   },
   dbInstance: any = db
-): Promise<{ sale: Sale; journalEntryId: string }> {
+): Promise<{ sale: Sale; journalEntryId: string; advanceJournalEntryId?: string }> {
   const {
     customer,
     item,
@@ -116,7 +776,8 @@ export async function executeSaleTransaction(
         dbInstance.cashBankAccounts,
         dbInstance.accounts,
         dbInstance.auditLogs,
-        dbInstance.closedPeriods
+        dbInstance.closedPeriods,
+        ...(dbInstance.advancePayments ? [dbInstance.advancePayments] : [])
       ],
       async () => {
         const todayStr = new Date().toISOString().split('T')[0];
@@ -207,6 +868,67 @@ export async function executeSaleTransaction(
           throw new Error('একই গ্রাহক ও পণ্যের বিক্রয় চালান ইতিমধ্যে প্রক্রিয়াধীন বা সম্পন্ন হয়েছে। ডুপ্লিকেট বিক্রয় প্রতিরোধ করা হলো (Duplicate sale prevented)।');
         }
 
+        // Advance resolution and validation
+        let targetAdvance: AdvancePayment | undefined;
+        let appliedAdvanceAmount = 0;
+        const requestedAdvanceAmount = Number(
+          params.advanceAppliedAmount ?? params.advanceAmount ?? params.applyAdvanceAmount ?? 0
+        );
+
+        if (params.advancePaymentId || requestedAdvanceAmount > 0) {
+          if (!dbInstance.advancePayments) {
+            throw new Error('Advance payments table is not available in database instance.');
+          }
+          if (params.advancePaymentId) {
+            targetAdvance = await dbInstance.advancePayments.get(params.advancePaymentId);
+            if (!targetAdvance) {
+              throw new Error(`নির্বাচিত অগ্রিম লেনদেনটি (${params.advancePaymentId}) পাওয়া যায়নি (Advance payment not found).`);
+            }
+          } else {
+            const candidateAdvances: AdvancePayment[] = await dbInstance.advancePayments
+              .filter(
+                (adv: any) =>
+                  (adv.partyId === customer.id || (adv.party as any)?.id === customer.id) &&
+                  adv.direction === 'RECEIVED' &&
+                  Number(adv.remainingBalance ?? adv.remainingUnappliedBalance ?? 0) > 0
+              )
+              .toArray();
+            if (candidateAdvances.length > 0) {
+              targetAdvance = candidateAdvances[0];
+            } else {
+              throw new Error(`গ্রাহকের কোনো ব্যবহারের যোগ্য অগ্রিম পাওয়া যায়নি (No available advance found for customer ${customer.name}).`);
+            }
+          }
+
+          if (targetAdvance) {
+            if (targetAdvance.partyId !== customer.id && (targetAdvance.party as any)?.id !== customer.id) {
+              throw new Error('অগ্রিম প্রদানকারী এবং বিক্রয় গ্রাহক ভিন্ন (Party mismatch between advance and sale).');
+            }
+            if (targetAdvance.direction !== 'RECEIVED') {
+              throw new Error('বিক্রয়ে শুধুমাত্র গ্রাহকের কাছ থেকে গৃহীত অগ্রিম (RECEIVED) সমন্বয় করা যাবে।');
+            }
+
+            const currentUnapplied = Number(targetAdvance.remainingBalance ?? targetAdvance.remainingUnappliedBalance ?? 0);
+            appliedAdvanceAmount = Math.round(
+              (requestedAdvanceAmount > 0 ? requestedAdvanceAmount : Math.min(currentUnapplied, totalAmount)) * 100
+            ) / 100;
+
+            if (appliedAdvanceAmount <= 0) {
+              throw new Error('অগ্রিম সমন্বয়ের পরিমাণ অবশ্যই ০ এর বেশি হতে হবে।');
+            }
+            if (appliedAdvanceAmount > currentUnapplied + 0.0001) {
+              throw new Error(
+                `অগ্রিম সমন্বয়ের পরিমাণ (৳${appliedAdvanceAmount}) উপলব্ধ অগ্রিম ব্যালেন্সের (৳${currentUnapplied}) চেয়ে বেশি হতে পারে না (Cannot apply more than available advance balance).`
+              );
+            }
+            if (appliedAdvanceAmount > totalAmount + 0.0001) {
+              throw new Error(
+                `অগ্রিম সমন্বয়ের পরিমাণ (৳${appliedAdvanceAmount}) বিক্রয় চালানের মোট মূল্যের (৳${totalAmount}) চেয়ে বেশি হতে পারে না (Cannot apply more than invoice total).`
+              );
+            }
+          }
+        }
+
         const saleId = targetSaleId || generateUniqueId('sal');
         const invoiceNumber = paramInvoiceNumber || generateTransactionNumber('SAL');
         const displayNumber = await generateDisplayNumber('SAL', dateStr);
@@ -219,10 +941,12 @@ export async function executeSaleTransaction(
         const { revenueCode, cogsCode } = getRevenueAndCogsAccounts(freshItem);
         const inventoryAssetCode = getInventoryAssetAccount(freshItem.category);
 
+        const requiredCashBankAmount = Math.max(0, Math.round((totalAmount - appliedAdvanceAmount) * 100) / 100);
+
         // Validate cash/bank account exists if paying via CASH or BANK
         let cashAcc: CashBankAccount | undefined;
         let bankAcc: CashBankAccount | undefined;
-        if (paymentMethod === 'BANK') {
+        if (paymentMethod === 'BANK' && requiredCashBankAmount > 0) {
           const targetBankId = bankAccountId || (params as any).cashBankAccountId;
           if (targetBankId) {
             bankAcc = await dbInstance.cashBankAccounts.get(targetBankId);
@@ -235,7 +959,7 @@ export async function executeSaleTransaction(
               throw new Error('ব্যাংক হিসাব (Bank Account) পাওয়া যায়নি।');
             }
           }
-        } else if (paymentMethod === 'CASH') {
+        } else if (paymentMethod === 'CASH' && requiredCashBankAmount > 0) {
           const targetAccId = (params as any).cashBankAccountId || bankAccountId;
           if (targetAccId) {
             cashAcc = await dbInstance.cashBankAccounts.get(targetAccId);
@@ -251,29 +975,49 @@ export async function executeSaleTransaction(
         }
 
         const accounts = await dbInstance.accounts.toArray();
-        const journalLines: JournalLine[] = [
-          {
+        await ensureAdvanceAccounts(accounts, dbInstance);
+
+        const journalLines: JournalLine[] = [];
+        if (paymentMethod === 'CREDIT') {
+          journalLines.push({
             accountId: paymentAccountCode,
             accountCode: paymentAccountCode,
-            accountName:
-              paymentMethod === 'CASH'
-                ? 'নগদ টাকা (Cash on Hand)'
-                : paymentMethod === 'BANK'
-                ? 'ব্যাংক হিসাব (Bank Accounts)'
-                : 'গ্রাহকের নিকট পাওনা (Accounts Receivable)',
+            accountName: 'গ্রাহকের নিকট পাওনা (Accounts Receivable)',
             debit: totalAmount,
             credit: 0,
             memo: `বিক্রয় চালান ${invoiceNumber}`
-          },
-          {
-            accountId: revenueCode,
-            accountCode: revenueCode,
-            accountName: 'পণ্য বিক্রয় রাজস্ব (Sales Revenue)',
-            debit: 0,
-            credit: totalAmount,
-            memo: `${freshItem.nameBn} বিক্রয়${validDiscount > 0 ? ` (মূল্যছাড়: ৳${validDiscount})` : ''}`
+          });
+        } else {
+          if (requiredCashBankAmount > 0) {
+            journalLines.push({
+              accountId: paymentAccountCode,
+              accountCode: paymentAccountCode,
+              accountName: paymentMethod === 'CASH' ? 'নগদ টাকা (Cash on Hand)' : 'ব্যাংক হিসাব (Bank Accounts)',
+              debit: requiredCashBankAmount,
+              credit: 0,
+              memo: `বিক্রয় চালান ${invoiceNumber} (নগদ/ব্যাংক প্রাপ্তি)`
+            });
           }
-        ];
+          if (appliedAdvanceAmount > 0) {
+            journalLines.push({
+              accountId: CANONICAL_ACCOUNTS.ACCOUNTS_RECEIVABLE,
+              accountCode: CANONICAL_ACCOUNTS.ACCOUNTS_RECEIVABLE,
+              accountName: 'গ্রাহকের নিকট পাওনা (Accounts Receivable)',
+              debit: appliedAdvanceAmount,
+              credit: 0,
+              memo: `বিক্রয় চালান ${invoiceNumber} (অগ্রিম সমন্বয় প্রাপ্য)`
+            });
+          }
+        }
+
+        journalLines.push({
+          accountId: revenueCode,
+          accountCode: revenueCode,
+          accountName: 'পণ্য বিক্রয় রাজস্ব (Sales Revenue)',
+          debit: 0,
+          credit: totalAmount,
+          memo: `${freshItem.nameBn} বিক্রয়${validDiscount > 0 ? ` (মূল্যছাড়: ৳${validDiscount})` : ''}`
+        });
 
         // COGS & Inventory Asset movement
         if (totalCogs > 0) {
@@ -320,7 +1064,73 @@ export async function executeSaleTransaction(
         // 1. Safe insert journal entry
         await safeInsert(dbInstance.journalEntries, journalEntry, { idPrefix: 'j' });
 
+        // Advance Application Journal Entry (if advance applied)
+        let advanceJournalEntry: JournalEntry | undefined;
+        if (appliedAdvanceAmount > 0 && targetAdvance) {
+          const advVoucherNumber = await generateDisplayNumber('JRN', dateStr);
+          const advanceJournalLines: JournalLine[] = [
+            {
+              accountId: CANONICAL_ACCOUNTS.CUSTOMER_ADVANCES,
+              accountCode: CANONICAL_ACCOUNTS.CUSTOMER_ADVANCES,
+              accountName: 'গ্রাহক অগ্রিম (Customer Advance)',
+              debit: appliedAdvanceAmount,
+              credit: 0,
+              memo: `অগ্রিম সমন্বয়: বিক্রয় চালান ${invoiceNumber} এ সমন্বয়`
+            },
+            {
+              accountId: CANONICAL_ACCOUNTS.ACCOUNTS_RECEIVABLE,
+              accountCode: CANONICAL_ACCOUNTS.ACCOUNTS_RECEIVABLE,
+              accountName: 'গ্রাহকের নিকট পাওনা (Accounts Receivable)',
+              debit: 0,
+              credit: appliedAdvanceAmount,
+              memo: `অগ্রিম সমন্বয়: বিক্রয় চালান ${invoiceNumber} এ সমন্বয়`
+            }
+          ];
+
+          advanceJournalEntry = await postJournalEntry(
+            {
+              id: generateUniqueId('j_adv_app'),
+              voucherNumber: advVoucherNumber,
+              voucherType: 'JOURNAL',
+              date: dateStr,
+              narration: `অগ্রিম সমন্বয় (Advance Application): বিক্রয় চালান ${invoiceNumber} এ গ্রাহক অগ্রিম সমন্বয়`,
+              reference: invoiceNumber,
+              lines: advanceJournalLines,
+              createdBy: currentUserId,
+              createdAt: new Date().toISOString()
+            },
+            { accounts, skipDbPut: true, dbInstance }
+          );
+          await safeInsert(dbInstance.journalEntries, advanceJournalEntry, { idPrefix: 'j' });
+
+          const currentUnapplied = Number(targetAdvance.remainingBalance ?? targetAdvance.remainingUnappliedBalance ?? 0);
+          const newRemaining = Math.max(0, Math.round((currentUnapplied - appliedAdvanceAmount) * 100) / 100);
+          await dbInstance.advancePayments.update(targetAdvance.id, {
+            remainingBalance: newRemaining,
+            remainingUnappliedBalance: newRemaining,
+            appliedInvoices: [
+              ...(targetAdvance.appliedInvoices || []),
+              {
+                invoiceId: saleId,
+                invoiceNumber,
+                invoiceType: 'SALE',
+                appliedAmount: appliedAdvanceAmount,
+                journalEntryId: advanceJournalEntry.id,
+                date: dateStr
+              }
+            ],
+            synced: false
+          });
+        }
+
         // 2. Insert sales invoice
+        const effectiveDue = paymentMethod === 'CREDIT'
+          ? Math.max(0, Math.round((totalAmount - appliedAdvanceAmount) * 100) / 100)
+          : 0;
+        const effectivePaid = paymentMethod === 'CREDIT'
+          ? 0
+          : requiredCashBankAmount;
+
         const saleRecord: Sale = {
           id: saleId,
           invoiceNumber,
@@ -343,12 +1153,14 @@ export async function executeSaleTransaction(
           vatTax: 0,
           totalAmount,
           grandTotal: totalAmount,
-          paidAmount: paymentMethod === 'CREDIT' ? 0 : totalAmount,
-          dueAmount: paymentMethod === 'CREDIT' ? totalAmount : 0,
+          paidAmount: effectivePaid,
+          dueAmount: effectiveDue,
+          advancePaymentId: targetAdvance?.id,
+          advanceAppliedAmount: appliedAdvanceAmount > 0 ? appliedAdvanceAmount : undefined,
           paymentMethod,
           bankAccountId,
           journalEntryId: journalEntry.id,
-          status: paymentMethod === 'CREDIT' ? 'DUE' : 'PAID',
+          status: effectiveDue <= 0 ? 'PAID' : (effectiveDue < totalAmount ? 'PARTIAL' : 'DUE'),
           createdAt: new Date().toISOString(),
           ...(idempotencyKey ? { idempotencyKey } : {}),
           synced: false
@@ -389,19 +1201,19 @@ export async function executeSaleTransaction(
           const freshCustomer = await dbInstance.parties.get(customer.id);
           if (freshCustomer) {
             await dbInstance.parties.update(customer.id, {
-              balance: Math.round(((freshCustomer.balance || 0) + totalAmount) * 100) / 100
+              balance: Math.round(((freshCustomer.balance || 0) + effectiveDue) * 100) / 100
             });
           }
         }
 
         // 6. Update Operational Cash / Bank balance consistently with GL
-        if (paymentMethod === 'CASH' && cashAcc) {
+        if (paymentMethod === 'CASH' && cashAcc && requiredCashBankAmount > 0) {
           await dbInstance.cashBankAccounts.update(cashAcc.id, {
-            currentBalance: Math.round((cashAcc.currentBalance + totalAmount) * 100) / 100
+            currentBalance: Math.round((cashAcc.currentBalance + requiredCashBankAmount) * 100) / 100
           });
-        } else if (paymentMethod === 'BANK' && bankAcc) {
+        } else if (paymentMethod === 'BANK' && bankAcc && requiredCashBankAmount > 0) {
           await dbInstance.cashBankAccounts.update(bankAcc.id, {
-            currentBalance: Math.round((bankAcc.currentBalance + totalAmount) * 100) / 100
+            currentBalance: Math.round((bankAcc.currentBalance + requiredCashBankAmount) * 100) / 100
           });
         }
 
@@ -415,10 +1227,14 @@ export async function executeSaleTransaction(
           module: 'COMMERCE',
           recordId: invoiceNumber,
           status: 'SUCCESS',
-          details: `বিক্রয় চালান ${invoiceNumber} সম্পন্ন (৳${totalAmount})`
+          details: `বিক্রয় চালান ${invoiceNumber} সম্পন্ন (৳${totalAmount}${appliedAdvanceAmount > 0 ? `, অগ্রিম সমন্বয়: ৳${appliedAdvanceAmount}` : ''})`
         });
 
-        return { sale: saleRecord, journalEntryId: journalEntry.id };
+        return {
+          sale: saleRecord,
+          journalEntryId: journalEntry.id,
+          ...(advanceJournalEntry ? { advanceJournalEntryId: advanceJournalEntry.id } : {})
+        };
       }
     );
   } finally {
@@ -447,9 +1263,13 @@ export async function executePurchaseTransaction(
     currentUserId: string;
     date?: string;
     note?: string;
+    advancePaymentId?: string;
+    advanceAmount?: number;
+    advanceAppliedAmount?: number;
+    applyAdvanceAmount?: number;
   },
   dbInstance: any = db
-): Promise<{ purchase: Purchase; journalEntryId: string; stockMovement: StockMovement }> {
+): Promise<{ purchase: Purchase; journalEntryId: string; stockMovement: StockMovement; advanceJournalEntryId?: string }> {
   const {
     supplier,
     item,
@@ -493,7 +1313,8 @@ export async function executePurchaseTransaction(
         dbInstance.cashBankAccounts,
         dbInstance.accounts,
         dbInstance.auditLogs,
-        dbInstance.closedPeriods
+        dbInstance.closedPeriods,
+        ...(dbInstance.advancePayments ? [dbInstance.advancePayments] : [])
       ],
       async () => {
         const todayStr = new Date().toISOString().split('T')[0];
@@ -576,10 +1397,73 @@ export async function executePurchaseTransaction(
           throw new Error('একই সরবরাহকারী ও পণ্যের ক্রয় চালান ইতিমধ্যে প্রক্রিয়াধীন বা সম্পন্ন হয়েছে। ডুপ্লিকেট ক্রয় প্রতিরোধ করা হলো (Duplicate purchase prevented)।');
         }
 
+        // Advance resolution and validation
+        let targetAdvance: AdvancePayment | undefined;
+        let appliedAdvanceAmount = 0;
+        const requestedAdvanceAmount = Number(
+          params.advanceAppliedAmount ?? params.advanceAmount ?? params.applyAdvanceAmount ?? 0
+        );
+
+        if (params.advancePaymentId || requestedAdvanceAmount > 0) {
+          if (!dbInstance.advancePayments) {
+            throw new Error('Advance payments table is not available in database instance.');
+          }
+          if (params.advancePaymentId) {
+            targetAdvance = await dbInstance.advancePayments.get(params.advancePaymentId);
+            if (!targetAdvance) {
+              throw new Error(`নির্বাচিত অগ্রিম লেনদেনটি (${params.advancePaymentId}) পাওয়া যায়নি (Advance payment not found).`);
+            }
+          } else {
+            const candidateAdvances: AdvancePayment[] = await dbInstance.advancePayments
+              .filter(
+                (adv: any) =>
+                  (adv.partyId === supplier.id || (adv.party as any)?.id === supplier.id) &&
+                  adv.direction === 'PAID' &&
+                  Number(adv.remainingBalance ?? adv.remainingUnappliedBalance ?? 0) > 0
+              )
+              .toArray();
+            if (candidateAdvances.length > 0) {
+              targetAdvance = candidateAdvances[0];
+            } else {
+              throw new Error(`সরবরাহকারীর কোনো ব্যবহারের যোগ্য অগ্রিম পাওয়া যায়নি (No available advance found for supplier ${supplier.name}).`);
+            }
+          }
+
+          if (targetAdvance) {
+            if (targetAdvance.partyId !== supplier.id && (targetAdvance.party as any)?.id !== supplier.id) {
+              throw new Error('অগ্রিম গ্রহীতা এবং ক্রয় সরবরাহকারী ভিন্ন (Party mismatch between advance and purchase).');
+            }
+            if (targetAdvance.direction !== 'PAID') {
+              throw new Error('ক্রয়ে শুধুমাত্র সরবরাহকারীকে প্রদত্ত অগ্রিম (PAID) সমন্বয় করা যাবে।');
+            }
+
+            const currentUnapplied = Number(targetAdvance.remainingBalance ?? targetAdvance.remainingUnappliedBalance ?? 0);
+            appliedAdvanceAmount = Math.round(
+              (requestedAdvanceAmount > 0 ? requestedAdvanceAmount : Math.min(currentUnapplied, grandTotal)) * 100
+            ) / 100;
+
+            if (appliedAdvanceAmount <= 0) {
+              throw new Error('অগ্রিম সমন্বয়ের পরিমাণ অবশ্যই ০ এর বেশি হতে হবে।');
+            }
+            if (appliedAdvanceAmount > currentUnapplied + 0.0001) {
+              throw new Error(
+                `অগ্রিম সমন্বয়ের পরিমাণ (৳${appliedAdvanceAmount}) উপলব্ধ অগ্রিম ব্যালেন্সের (৳${currentUnapplied}) চেয়ে বেশি হতে পারে না (Cannot apply more than available advance balance).`
+              );
+            }
+            if (appliedAdvanceAmount > grandTotal + 0.0001) {
+              throw new Error(
+                `অগ্রিম সমন্বয়ের পরিমাণ (৳${appliedAdvanceAmount}) ক্রয় চালানের মোট মূল্যের (৳${grandTotal}) চেয়ে বেশি হতে পারে না (Cannot apply more than invoice total).`
+              );
+            }
+          }
+        }
+
+        const requiredCashBankAmount = Math.max(0, Math.round((grandTotal - appliedAdvanceAmount) * 100) / 100);
+
         // Validate cash/bank account exists & balance to prevent silent negative balances
         let cashAcc: CashBankAccount | undefined;
         let bankAcc: CashBankAccount | undefined;
-        if (paymentMethod === 'CASH') {
+        if (paymentMethod === 'CASH' && requiredCashBankAmount > 0) {
           const targetAccId = (params as any).cashBankAccountId || bankAccountId;
           if (targetAccId) {
             cashAcc = await dbInstance.cashBankAccounts.get(targetAccId);
@@ -592,10 +1476,10 @@ export async function executePurchaseTransaction(
               throw new Error('নগদ হিসাব (Cash Account) পাওয়া যায়নি।');
             }
           }
-          if (Number(cashAcc.currentBalance || 0) < grandTotal) {
-            throw new Error(`নগদ তহবিলে পর্যাপ্ত ব্যালেন্স নেই (Insufficient cash balance: ৳${cashAcc.currentBalance || 0}, ক্রয়ের পরিমাণ: ৳${grandTotal})। ক্যাশ ব্যালেন্স নেগেটিভ হওয়া অনুমোদিত নয়।`);
+          if (Number(cashAcc.currentBalance || 0) < requiredCashBankAmount) {
+            throw new Error(`নগদ তহবিলে পর্যাপ্ত ব্যালেন্স নেই (Insufficient cash balance: ৳${cashAcc.currentBalance || 0}, প্রয়োজনীয় পরিশোধ: ৳${requiredCashBankAmount})। ক্যাশ ব্যালেন্স নেগেটিভ হওয়া অনুমোদিত নয়।`);
           }
-        } else if (paymentMethod === 'BANK') {
+        } else if (paymentMethod === 'BANK' && requiredCashBankAmount > 0) {
           const targetBankId = bankAccountId || (params as any).cashBankAccountId;
           if (targetBankId) {
             bankAcc = await dbInstance.cashBankAccounts.get(targetBankId);
@@ -608,8 +1492,8 @@ export async function executePurchaseTransaction(
               throw new Error('ব্যাংক হিসাব (Bank Account) পাওয়া যায়নি।');
             }
           }
-          if (Number(bankAcc.currentBalance || 0) < grandTotal) {
-            throw new Error(`ব্যাংক হিসাবে পর্যাপ্ত ব্যালেন্স নেই (Insufficient bank balance: ৳${bankAcc.currentBalance || 0}, ক্রয়ের পরিমাণ: ৳${grandTotal})। ব্যাংক ব্যালেন্স নেগেটিভ হওয়া অনুমোদিত নয়।`);
+          if (Number(bankAcc.currentBalance || 0) < requiredCashBankAmount) {
+            throw new Error(`ব্যাংক হিসাবে পর্যাপ্ত ব্যালেন্স নেই (Insufficient bank balance: ৳${bankAcc.currentBalance || 0}, প্রয়োজনীয় পরিশোধ: ৳${requiredCashBankAmount})। ব্যাংক ব্যালেন্স নেগেটিভ হওয়া অনুমোদিত নয়।`);
           }
         }
 
@@ -625,6 +1509,8 @@ export async function executePurchaseTransaction(
         const paymentAccountCode = getPaymentAccount(paymentMethod, 'PURCHASE');
 
         const accounts = await dbInstance.accounts.toArray();
+        await ensureAdvanceAccounts(accounts, dbInstance);
+
         const invAccName = accounts.find((a: any) => a.code === inventoryAssetCode)?.nameBn || getInventoryAccountDetails(freshItem.category).nameBn;
         const journalLines: JournalLine[] = [
           {
@@ -634,21 +1520,40 @@ export async function executePurchaseTransaction(
             debit: grandTotal,
             credit: 0,
             memo: `ক্রয় চালান ${invoiceNumber} (পরিবহন ব্যয়${validDiscount > 0 ? ` ও মূল্যছাড় ৳${validDiscount}` : ''} সমন্বিত মূল্যায়ন)`
-          },
-          {
+          }
+        ];
+
+        if (paymentMethod === 'CREDIT') {
+          journalLines.push({
             accountId: paymentAccountCode,
             accountCode: paymentAccountCode,
-            accountName:
-              paymentMethod === 'CASH'
-                ? 'নগদ টাকা (Cash on Hand)'
-                : paymentMethod === 'BANK'
-                ? 'ব্যাংক হিসাব (Bank Accounts)'
-                : 'সরবরাহকারীর দেনা (Accounts Payable)',
+            accountName: 'সরবরাহকারীর দেনা (Accounts Payable)',
             debit: 0,
             credit: grandTotal,
             memo: `${supplier.name} থেকে ক্রয়`
+          });
+        } else {
+          if (requiredCashBankAmount > 0) {
+            journalLines.push({
+              accountId: paymentAccountCode,
+              accountCode: paymentAccountCode,
+              accountName: paymentMethod === 'CASH' ? 'নগদ টাকা (Cash on Hand)' : 'ব্যাংক হিসাব (Bank Accounts)',
+              debit: 0,
+              credit: requiredCashBankAmount,
+              memo: `${supplier.name} কে ${paymentMethod === 'CASH' ? 'নগদে' : 'ব্যাংকে'} পরিশোধ`
+            });
           }
-        ];
+          if (appliedAdvanceAmount > 0) {
+            journalLines.push({
+              accountId: CANONICAL_ACCOUNTS.ACCOUNTS_PAYABLE,
+              accountCode: CANONICAL_ACCOUNTS.ACCOUNTS_PAYABLE,
+              accountName: 'সরবরাহকারীর দেনা (Accounts Payable)',
+              debit: 0,
+              credit: appliedAdvanceAmount,
+              memo: `ক্রয় চালান ${invoiceNumber} (অগ্রিম সমন্বয় প্রদেয়)`
+            });
+          }
+        }
 
         const voucherNumber = generateTransactionNumber('PRV');
         const journalEntry = await postJournalEntry(
@@ -673,7 +1578,74 @@ export async function executePurchaseTransaction(
         // 1. Safe insert journal entry
         await safeInsert(dbInstance.journalEntries, journalEntry, { idPrefix: 'j' });
 
+        // Advance Application Journal Entry (if advance applied)
+        // Debit Accounts Payable (2010), Credit Supplier Advance (1070)
+        let advanceJournalEntry: JournalEntry | undefined;
+        if (appliedAdvanceAmount > 0 && targetAdvance) {
+          const advVoucherNumber = await generateDisplayNumber('JRN', dateStr);
+          const advanceJournalLines: JournalLine[] = [
+            {
+              accountId: CANONICAL_ACCOUNTS.ACCOUNTS_PAYABLE,
+              accountCode: CANONICAL_ACCOUNTS.ACCOUNTS_PAYABLE,
+              accountName: 'সরবরাহকারীর দেনা (Accounts Payable)',
+              debit: appliedAdvanceAmount,
+              credit: 0,
+              memo: `অগ্রিম সমন্বয়: ক্রয় চালান ${invoiceNumber} এ সরবরাহকারী অগ্রিম সমন্বয়`
+            },
+            {
+              accountId: CANONICAL_ACCOUNTS.SUPPLIER_ADVANCES,
+              accountCode: CANONICAL_ACCOUNTS.SUPPLIER_ADVANCES,
+              accountName: 'সরবরাহকারী অগ্রিম (Supplier Advance)',
+              debit: 0,
+              credit: appliedAdvanceAmount,
+              memo: `অগ্রিম সমন্বয়: ক্রয় চালান ${invoiceNumber} এ সরবরাহকারী অগ্রিম সমন্বয়`
+            }
+          ];
+
+          advanceJournalEntry = await postJournalEntry(
+            {
+              id: generateUniqueId('j_adv_app'),
+              voucherNumber: advVoucherNumber,
+              voucherType: 'JOURNAL',
+              date: dateStr,
+              narration: `অগ্রিম সমন্বয় (Advance Application): ক্রয় চালান ${invoiceNumber} এ সরবরাহকারী অগ্রিম সমন্বয়`,
+              reference: invoiceNumber,
+              lines: advanceJournalLines,
+              createdBy: currentUserId,
+              createdAt: new Date().toISOString()
+            },
+            { accounts, skipDbPut: true, dbInstance }
+          );
+          await safeInsert(dbInstance.journalEntries, advanceJournalEntry, { idPrefix: 'j' });
+
+          const currentUnapplied = Number(targetAdvance.remainingBalance ?? targetAdvance.remainingUnappliedBalance ?? 0);
+          const newRemaining = Math.max(0, Math.round((currentUnapplied - appliedAdvanceAmount) * 100) / 100);
+          await dbInstance.advancePayments.update(targetAdvance.id, {
+            remainingBalance: newRemaining,
+            remainingUnappliedBalance: newRemaining,
+            appliedInvoices: [
+              ...(targetAdvance.appliedInvoices || []),
+              {
+                invoiceId: purchaseId,
+                invoiceNumber,
+                invoiceType: 'PURCHASE',
+                appliedAmount: appliedAdvanceAmount,
+                journalEntryId: advanceJournalEntry.id,
+                date: dateStr
+              }
+            ],
+            synced: false
+          });
+        }
+
         // 2. Insert purchase invoice
+        const effectiveDue = paymentMethod === 'CREDIT'
+          ? Math.max(0, Math.round((grandTotal - appliedAdvanceAmount) * 100) / 100)
+          : 0;
+        const effectivePaid = paymentMethod === 'CREDIT'
+          ? 0
+          : requiredCashBankAmount;
+
         const purchaseRecord: Purchase = {
           id: purchaseId,
           invoiceNumber,
@@ -695,12 +1667,14 @@ export async function executePurchaseTransaction(
           discount: validDiscount,
           grandTotal,
           totalAmount: grandTotal,
-          paidAmount: paymentMethod === 'CREDIT' ? 0 : grandTotal,
-          dueAmount: paymentMethod === 'CREDIT' ? grandTotal : 0,
+          paidAmount: effectivePaid,
+          dueAmount: effectiveDue,
+          advancePaymentId: targetAdvance?.id,
+          advanceAppliedAmount: appliedAdvanceAmount > 0 ? appliedAdvanceAmount : undefined,
           paymentMethod,
           bankAccountId,
           journalEntryId: journalEntry.id,
-          status: paymentMethod === 'CREDIT' ? 'DUE' : 'PAID',
+          status: effectiveDue <= 0 ? 'PAID' : (effectiveDue < grandTotal ? 'PARTIAL' : 'DUE'),
           createdAt: new Date().toISOString(),
           ...(idempotencyKey ? { idempotencyKey } : {}),
           synced: false
@@ -725,8 +1699,6 @@ export async function executePurchaseTransaction(
         });
 
         // 4. Record StockMovement for PURCHASE
-        // Consistency: totalValue = actual inventory cost added (grandTotal).
-        // unitCost = totalValue / quantity. Therefore: unitCost × quantity = totalValue.
         const actualInventoryCostAdded = grandTotal;
         const movementTotalValue = actualInventoryCostAdded;
         const movementUnitCost = quantity > 0 ? (movementTotalValue / quantity) : 0;
@@ -753,19 +1725,19 @@ export async function executePurchaseTransaction(
           const freshSupplier = await dbInstance.parties.get(supplier.id);
           if (freshSupplier) {
             await dbInstance.parties.update(supplier.id, {
-              balance: Math.round(((freshSupplier.balance || 0) + grandTotal) * 100) / 100
+              balance: Math.round(((freshSupplier.balance || 0) + effectiveDue) * 100) / 100
             });
           }
         }
 
         // 6. Update Operational Cash / Bank balance consistently with GL
-        if (paymentMethod === 'CASH' && cashAcc) {
+        if (paymentMethod === 'CASH' && cashAcc && requiredCashBankAmount > 0) {
           await dbInstance.cashBankAccounts.update(cashAcc.id, {
-            currentBalance: Math.round((cashAcc.currentBalance - grandTotal) * 100) / 100
+            currentBalance: Math.round((cashAcc.currentBalance - requiredCashBankAmount) * 100) / 100
           });
-        } else if (paymentMethod === 'BANK' && bankAcc) {
+        } else if (paymentMethod === 'BANK' && bankAcc && requiredCashBankAmount > 0) {
           await dbInstance.cashBankAccounts.update(bankAcc.id, {
-            currentBalance: Math.round((bankAcc.currentBalance - grandTotal) * 100) / 100
+            currentBalance: Math.round((bankAcc.currentBalance - requiredCashBankAmount) * 100) / 100
           });
         }
 
@@ -779,10 +1751,15 @@ export async function executePurchaseTransaction(
           module: 'COMMERCE',
           recordId: invoiceNumber,
           status: 'SUCCESS',
-          details: `ক্রয় চালান ${invoiceNumber} সম্পন্ন (৳${grandTotal})`
+          details: `ক্রয় চালান ${invoiceNumber} সম্পন্ন (৳${grandTotal}${appliedAdvanceAmount > 0 ? `, অগ্রিম সমন্বয়: ৳${appliedAdvanceAmount}` : ''})`
         });
 
-        return { purchase: purchaseRecord, journalEntryId: journalEntry.id, stockMovement };
+        return {
+          purchase: purchaseRecord,
+          journalEntryId: journalEntry.id,
+          stockMovement,
+          ...(advanceJournalEntry ? { advanceJournalEntryId: advanceJournalEntry.id } : {})
+        };
       }
     );
   } finally {

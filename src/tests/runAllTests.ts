@@ -1,21 +1,24 @@
+import 'fake-indexeddb/auto';
 import { runRegressionTests } from './regressionTests';
 import { runCashFlowAccountingTests } from './testCashFlowAccounting';
 import { runReconciliationTests } from './testReconciliationChecks';
+import { runAdvancePaymentTests } from './testAdvancePayments';
 
 async function main() {
   console.log('====================================================');
   console.log('RUNNING REGRESSION TEST SUITE');
-  console.log('Including separate verification of Profit Allocation, Profit Payment, Cash Flow & Reconciliation');
+  console.log('Including separate verification of Profit Allocation, Profit Payment, Cash Flow, Reconciliation & Advance Payments');
   console.log('====================================================');
 
   const result1 = await runRegressionTests();
   const result2 = await runCashFlowAccountingTests();
   const result3 = await runReconciliationTests();
+  const result4 = await runAdvancePaymentTests();
 
-  const total = result1.total + result2.total + result3.total;
-  const passed = result1.passed + result2.passed + result3.passed;
-  const failed = result1.failed + result2.failed + result3.failed;
-  const failures = [...result1.failures, ...result2.failures, ...result3.failures];
+  const total = result1.total + result2.total + result3.total + result4.total;
+  const passed = result1.passed + result2.passed + result3.passed + result4.passed;
+  const failed = result1.failed + result2.failed + result3.failed + result4.failed;
+  const failures = [...result1.failures, ...result2.failures, ...result3.failures, ...result4.failures];
   const success = failed === 0;
 
   console.log('\n====================================================');

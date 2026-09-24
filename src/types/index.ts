@@ -435,6 +435,8 @@ export interface Purchase {
   bankAccountId?: string;
   paidAmount: number;
   dueAmount?: number;
+  advancePaymentId?: string;
+  advanceAppliedAmount?: number;
   journalEntryId?: string;
   status?: 'PAID' | 'DUE' | 'PARTIAL' | string;
   createdAt?: string;
@@ -474,6 +476,8 @@ export interface Sale {
   bankAccountId?: string;
   paidAmount: number;
   dueAmount?: number;
+  advancePaymentId?: string;
+  advanceAppliedAmount?: number;
   totalCogs?: number;
   journalEntryId?: string;
   status?: 'PAID' | 'DUE' | 'PARTIAL' | string;
@@ -564,6 +568,42 @@ export interface PaymentRecord {
   customerId?: string;
   supplierId?: string;
   partyName?: string;
+}
+
+export type AdvanceDirection = 'RECEIVED' | 'PAID';
+
+export interface AdvancePayment {
+  id: string;
+  advanceNumber?: string;
+  displayNumber?: string;
+  party: Party | string;
+  partyId: string;
+  partyName?: string;
+  amount: number;
+  direction: 'RECEIVED' | 'PAID'; // RECEIVED from customer / PAID to supplier
+  remainingBalance: number;
+  remainingUnappliedBalance: number; // remaining unapplied balance
+  paymentMethod: 'CASH' | 'BANK';
+  cashBankAccountId?: string;
+  bankAccountId?: string;
+  date: string;
+  narration?: string;
+  note?: string;
+  journalEntryId?: string;
+  appliedInvoices?: Array<{
+    invoiceId: string;
+    invoiceNumber?: string;
+    invoiceType: 'SALE' | 'PURCHASE';
+    appliedAmount: number;
+    journalEntryId?: string;
+    date: string;
+  }>;
+  status?: 'ACTIVE' | 'EXHAUSTED' | 'CANCELLED';
+  notes?: string;
+  createdBy?: string;
+  idempotencyKey?: string;
+  createdAt?: string;
+  synced?: boolean;
 }
 
 export interface CashBankAccount {

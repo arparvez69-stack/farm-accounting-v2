@@ -68,7 +68,7 @@ export function generateTransactionNumber(prefix: string): string {
  * Resets to 0001 at the start of each new calendar year.
  */
 export async function generateDisplayNumber(
-  docType: 'SAL' | 'PUR' | 'CN' | 'DN',
+  docType: 'SAL' | 'PUR' | 'CN' | 'DN' | 'ADV' | 'RCT' | 'PMT' | 'JRN' | string,
   dateStr?: string,
   dbInstance: any = db
 ): Promise<string> {
@@ -86,6 +86,10 @@ export async function generateDisplayNumber(
       records = await dbInstance.salesReturns.toArray();
     } else if (docType === 'DN' && dbInstance.purchaseReturns) {
       records = await dbInstance.purchaseReturns.toArray();
+    } else if (docType === 'ADV' && dbInstance.advancePayments) {
+      records = await dbInstance.advancePayments.toArray();
+    } else if (dbInstance.journalEntries) {
+      records = await dbInstance.journalEntries.toArray();
     }
     let legacyCountInYear = 0;
     for (const r of records) {

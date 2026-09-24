@@ -34,10 +34,25 @@ import {
   executePaymentTransaction,
   executeInventoryItemCreationTransaction,
   executeSalesReturnTransaction,
-  executePurchaseReturnTransaction
+  executePurchaseReturnTransaction,
+  executeAdvancePaymentTransaction,
+  getPartyAvailableAdvance
 } from '../services/transactionService';
 import { generateTransactionNumber, generateUniqueId, safeInsert } from '../utils/idGenerator';
-import { InventoryItem, Party, PaymentRecord, Purchase, Sale, UserRole, CashBankAccount, SalesReturn, PurchaseReturn, ReturnRefundMethod } from '../types';
+import {
+  InventoryItem,
+  Party,
+  PaymentRecord,
+  Purchase,
+  Sale,
+  UserRole,
+  CashBankAccount,
+  SalesReturn,
+  PurchaseReturn,
+  ReturnRefundMethod,
+  AdvancePayment,
+  AdvanceDirection
+} from '../types';
 import { HIGH_AMOUNT_CONFIRMATION_THRESHOLD } from '../constants/validation';
 import { notifyUndoableAction } from '../services/undoService';
 import { triggerSuccessAnimation } from './ui/SuccessAnimation';
@@ -704,6 +719,41 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
   const [cashBankAccounts, setCashBankAccounts] = useState<CashBankAccount[]>([]);
   const [isSubmittingPayment, setIsSubmittingPayment] = useState(false);
 
+  // Advance Feature States
+  const [advancePayments, setAdvancePayments] = useState<AdvancePayment[]>([]);
+  const [showAdvanceModal, setShowAdvanceModal] = useState<boolean>(false);
+  const [advPartyId, setAdvPartyId] = useState<string>('');
+  const [advDirection, setAdvDirection] = useState<AdvanceDirection>('RECEIVED');
+  const [advAmount, setAdvAmount] = useState<string>('');
+  const [advPaymentMethod, setAdvPaymentMethod] = useState<'CASH' | 'BANK'>('CASH');
+  const [advBankAccountId, setAdvBankAccountId] = useState<string>('');
+  const [advCashBankAccountId, setAdvCashBankAccountId] = useState<string>('');
+  const [advDate, setAdvDate] = useState<string>(() => new Date().toISOString().split('T')[0]);
+  const [advNarration, setAdvNarration] = useState<string>('');
+  const [isSubmittingAdvance, setIsSubmittingAdvance] = useState<boolean>(false);
+
+  // Advance Application during Sale/Purchase
+  const [saleAdvanceApplied, setSaleAdvanceApplied] = useState<string>('');
+  const [purchAdvanceApplied, setPurchAdvanceApplied] = useState<string>('');
+
+  // Memoized options for advance modal parties
+  const advancePartyOptions = React.useMemo<SearchableOption[]>(() => {
+    return parties
+      .filter((p) => {
+        if (advDirection === 'RECEIVED') {
+          return p.type === 'CUSTOMER' || (p.type as string) === 'BOTH';
+        } else {
+          return p.type === 'SUPPLIER' || (p.type as string) === 'BOTH';
+        }
+      })
+      .map((p) => ({
+        value: p.id,
+        label: p.name,
+        code: p.phone || undefined,
+        secondaryLabel: p.type === 'CUSTOMER' ? 'ক্রেতা' : p.type === 'SUPPLIER' ? 'সরবরাহকারী' : 'উভয়'
+      }));
+  }, [parties, advDirection]);
+
   // Add Item Modal
   const [showAddItem, setShowAddItem] = useState(false);
   const [itemNameBn, setItemNameBn] = useState('');
@@ -775,6 +825,54 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
   const [returnDate, setReturnDate] = useState<string>(() => new Date().toISOString().split('T')[0]);
   const [isSubmittingReturn, setIsSubmittingReturn] = useState<boolean>(false);
 
+  // Available customer advance for the selected sale customer
+  const availableCustomerAdvance = React.useMemo(() => {
+    if (!saleCustomerId) return 0;
+    return advancePayments
+      .filter(
+        (a) =>
+          (a.partyId === saleCustomerId || (a.party as any)?.id === saleCustomerId) &&
+          a.direction === 'RECEIVED' &&
+          Number(a.remainingBalance ?? a.remainingUnappliedBalance ?? 0) > 0
+      )
+      .reduce((sum, a) => sum + Number(a.remainingBalance ?? a.remainingUnappliedBalance ?? 0), 0);
+  }, [saleCustomerId, advancePayments]);
+
+  // Available supplier advance for the selected purchase supplier
+  const availableSupplierAdvance = React.useMemo(() => {
+    if (!purchSupplierId) return 0;
+    return advancePayments
+      .filter(
+        (a) =>
+          (a.partyId === purchSupplierId || (a.party as any)?.id === purchSupplierId) &&
+          a.direction === 'PAID' &&
+          Number(a.remainingBalance ?? a.remainingUnappliedBalance ?? 0) > 0
+      )
+      .reduce((sum, a) => sum + Number(a.remainingBalance ?? a.remainingUnappliedBalance ?? 0), 0);
+  }, [purchSupplierId, advancePayments]);
+
+  // Current advance balance for active selected party in party statement
+  const partyAdvanceBalance = React.useMemo(() => {
+    if (!activeParty) return 0;
+    const dir: AdvanceDirection = activeParty.type === 'CUSTOMER' ? 'RECEIVED' : 'PAID';
+    return advancePayments
+      .filter(
+        (a) =>
+          (a.partyId === activeParty.id || (a.party as any)?.id === activeParty.id) &&
+          a.direction === dir &&
+          Number(a.remainingBalance ?? a.remainingUnappliedBalance ?? 0) > 0
+      )
+      .reduce((sum, a) => sum + Number(a.remainingBalance ?? a.remainingUnappliedBalance ?? 0), 0);
+  }, [activeParty, advancePayments]);
+
+  // All advance records for active selected party
+  const partyAdvanceRecords = React.useMemo(() => {
+    if (!activeParty) return [];
+    return advancePayments.filter(
+      (a) => a.partyId === activeParty.id || (a.party as any)?.id === activeParty.id
+    );
+  }, [activeParty, advancePayments]);
+
   useEffect(() => {
     loadCommerceData();
   }, [tab]);
@@ -809,6 +907,9 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
 
       const pReturns = db.purchaseReturns ? await db.purchaseReturns.orderBy('date').reverse().toArray() : [];
       setPurchaseReturns(pReturns);
+
+      const advList = db.advancePayments ? await db.advancePayments.orderBy('date').reverse().toArray() : [];
+      setAdvancePayments(advList);
 
       if (tab === 'sales' || tab === 'parties') {
         const sList = await db.sales.orderBy('date').reverse().toArray();
@@ -948,6 +1049,7 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
     const price = parseFloat(saleUnitPrice) || item.sellingPrice || 0;
     const subtotal = Math.round(qty * price * 100) / 100;
     const discountAmount = Math.min(subtotal, Math.max(0, calcSaleDiscountAmount(subtotal, saleDiscount, saleDiscountType)));
+    const advanceApplied = parseFloat(saleAdvanceApplied) || 0;
 
     try {
       const res = await executeSaleTransaction({
@@ -957,6 +1059,7 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
         unitPrice: price,
         discount: discountAmount,
         paymentMethod: salePaymentMethod,
+        advanceAppliedAmount: advanceApplied > 0 ? advanceApplied : undefined,
         currentUserId,
         date: saleDate
       });
@@ -966,6 +1069,9 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
       setSaleUnitPrice('');
       setSaleDiscount('');
       setSaleDiscountType('FIXED');
+      setSaleAdvanceApplied('');
+      setSaleCustomerId('');
+      setSaleItemId('');
       setSaleDate(new Date().toISOString().split('T')[0]);
       setMsg({
         type: 'success',
@@ -1026,6 +1132,22 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
       return;
     }
 
+    const advanceApplied = parseFloat(saleAdvanceApplied) || 0;
+    if (advanceApplied > availableCustomerAdvance) {
+      setMsg({
+        type: 'error',
+        text: `অগ্রিম সমন্বয় (৳${advanceApplied}) উপলব্ধ অগ্রিম ব্যালেন্সের (৳${availableCustomerAdvance}) চেয়ে বেশি হতে পারে না।`
+      });
+      return;
+    }
+    if (advanceApplied > totalAmount) {
+      setMsg({
+        type: 'error',
+        text: `অগ্রিম সমন্বয় (৳${advanceApplied}) চালানের মোট মূল্যের (৳${totalAmount}) চেয়ে বেশি হতে পারে না।`
+      });
+      return;
+    }
+
     if (totalAmount > HIGH_AMOUNT_CONFIRMATION_THRESHOLD) {
       setConfirmHighAmountCommerce({ amount: totalAmount, type: 'SALE' });
       return;
@@ -1045,6 +1167,7 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
     const transport = parseFloat(purchTransportCost) || 0;
     const itemsTotal = Math.round(qty * price * 100) / 100;
     const discountAmount = Math.min(itemsTotal + transport, Math.max(0, calcPurchDiscountAmount(itemsTotal, purchDiscount, purchDiscountType)));
+    const advanceApplied = parseFloat(purchAdvanceApplied) || 0;
 
     try {
       const res = await executePurchaseTransaction({
@@ -1055,6 +1178,7 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
         transportCost: transport,
         discount: discountAmount,
         paymentMethod: purchPaymentMethod,
+        advanceAppliedAmount: advanceApplied > 0 ? advanceApplied : undefined,
         currentUserId,
         date: purchDate
       });
@@ -1065,6 +1189,9 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
       setPurchTransportCost('0');
       setPurchDiscount('');
       setPurchDiscountType('FIXED');
+      setPurchAdvanceApplied('');
+      setPurchSupplierId('');
+      setPurchItemId('');
       setPurchDate(new Date().toISOString().split('T')[0]);
       setMsg({
         type: 'success',
@@ -1126,12 +1253,107 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
       return;
     }
 
+    const advanceApplied = parseFloat(purchAdvanceApplied) || 0;
+    if (advanceApplied > availableSupplierAdvance) {
+      setMsg({
+        type: 'error',
+        text: `অগ্রিম সমন্বয় (৳${advanceApplied}) উপলব্ধ অগ্রিম ব্যালেন্সের (৳${availableSupplierAdvance}) চেয়ে বেশি হতে পারে না।`
+      });
+      return;
+    }
+    if (advanceApplied > grandTotal) {
+      setMsg({
+        type: 'error',
+        text: `অগ্রিম সমন্বয় (৳${advanceApplied}) চালানের মোট মূল্যের (৳${grandTotal}) চেয়ে বেশি হতে পারে না।`
+      });
+      return;
+    }
+
     if (grandTotal > HIGH_AMOUNT_CONFIRMATION_THRESHOLD) {
       setConfirmHighAmountCommerce({ amount: grandTotal, type: 'PURCHASE' });
       return;
     }
 
     await executeSavePurchase();
+  };
+
+  // HANDLE ADVANCE RECEIPT / PAYMENT SUBMIT
+  const handleAdvanceSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!advPartyId) {
+      setMsg({ type: 'error', text: 'অনুগ্রহ করে পক্ষ (Party) নির্বাচন করুন।' });
+      return;
+    }
+    const targetParty = parties.find((p) => p.id === advPartyId);
+    if (!targetParty) {
+      setMsg({ type: 'error', text: 'নির্বাচিত পক্ষ পাওয়া যায়নি।' });
+      return;
+    }
+    const amt = parseFloat(advAmount);
+    if (isNaN(amt) || amt <= 0) {
+      setMsg({ type: 'error', text: 'অগ্রিমের পরিমাণ অবশ্যই ০ এর বেশি হতে হবে।' });
+      return;
+    }
+
+    const todayStr = new Date().toISOString().split('T')[0];
+    if (advDate > todayStr) {
+      setMsg({
+        type: 'error',
+        text: `অগ্রিমের তারিখ ভবিষ্যতের হতে পারে না (${todayStr} বা তার পূর্বের তারিখ নির্বাচন করুন)।`
+      });
+      return;
+    }
+
+    if (advPaymentMethod === 'BANK' && !advBankAccountId) {
+      const hasBank = cashBankAccounts.some((b) => b.accountType === 'BANK' || b.accountType === 'MOBILE_BANKING');
+      if (hasBank) {
+        setMsg({ type: 'error', text: 'ব্যাংক হিসাব নির্বাচন করুন।' });
+        return;
+      }
+    }
+
+    setIsSubmittingAdvance(true);
+    try {
+      const res = await executeAdvancePaymentTransaction({
+        partyId: targetParty.id,
+        party: targetParty,
+        amount: amt,
+        direction: advDirection,
+        paymentMethod: advPaymentMethod,
+        bankAccountId:
+          advPaymentMethod === 'BANK'
+            ? advBankAccountId || cashBankAccounts.find((b) => b.accountType === 'BANK' || b.accountType === 'MOBILE_BANKING')?.id
+            : undefined,
+        cashBankAccountId:
+          advPaymentMethod === 'CASH'
+            ? advCashBankAccountId || cashBankAccounts.find((b) => b.accountType === 'CASH')?.id
+            : undefined,
+        date: advDate,
+        narration: advNarration.trim() || undefined,
+        currentUserId: currentUserId || 'system'
+      });
+
+      setShowAdvanceModal(false);
+      setAdvAmount('');
+      setAdvNarration('');
+      setAdvPartyId('');
+      setMsg({
+        type: 'success',
+        text: `${advDirection === 'RECEIVED' ? 'গ্রাহক অগ্রিম গ্রহণ' : 'সরবরাহকারী অগ্রিম প্রদান'} ${res.advancePayment.displayNumber || res.advancePayment.advanceNumber} (৳${amt.toLocaleString('en-IN')}) সফলভাবে সম্পন্ন ও জাবেদায় পোস্ট হয়েছে!`
+      });
+      triggerSuccessAnimation(
+        advDirection === 'RECEIVED' ? 'গ্রাহক অগ্রিম গ্রহণ সম্পন্ন হয়েছে!' : 'সরবরাহকারী অগ্রিম প্রদান সম্পন্ন হয়েছে!',
+        `৳${amt.toLocaleString('en-IN')}`
+      );
+      window.dispatchEvent(new CustomEvent('goted_data_changed'));
+      window.dispatchEvent(new CustomEvent('accounting_entry_posted'));
+      await loadCommerceData();
+    } catch (err: any) {
+      console.error(err);
+      setMsg({ type: 'error', text: err.message || 'অগ্রিম লেনদেন সম্পন্ন করতে ত্রুটি হয়েছে।' });
+    } finally {
+      setIsSubmittingAdvance(false);
+    }
   };
 
   const openPaymentModal = (parentType: 'SALE' | 'PURCHASE', item: Sale | Purchase) => {
@@ -2072,13 +2294,30 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
             </div>
 
             {role === 'OWNER' && (
-              <button
-                onClick={() => setShowNewSale(!showNewSale)}
-                className="px-3.5 py-2 rounded-xl bg-amber-700 hover:bg-amber-800 text-white text-[13px] font-bold shadow-xs transition-all cursor-pointer min-h-[40px] flex items-center gap-1.5"
-              >
-                <PlusCircle className="w-4 h-4" />
-                <span>+ নতুন বিক্রয় চালান</span>
-              </button>
+              <div className="flex items-center gap-2 flex-wrap">
+                <button
+                  type="button"
+                  id="btn-open-advance-action-sales"
+                  onClick={() => {
+                    setAdvPartyId(saleCustomerId || '');
+                    setAdvDirection('RECEIVED');
+                    setAdvAmount('');
+                    setAdvNarration('');
+                    setShowAdvanceModal(true);
+                  }}
+                  className="px-3.5 py-2 rounded-xl bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 text-[13px] font-bold shadow-2xs transition-all cursor-pointer min-h-[40px] flex items-center gap-1.5"
+                >
+                  <CreditCard className="w-4 h-4 text-amber-700" />
+                  <span>অগ্রিম গ্রহণ (Advance)</span>
+                </button>
+                <button
+                  onClick={() => setShowNewSale(!showNewSale)}
+                  className="px-3.5 py-2 rounded-xl bg-amber-700 hover:bg-amber-800 text-white text-[13px] font-bold shadow-xs transition-all cursor-pointer min-h-[40px] flex items-center gap-1.5"
+                >
+                  <PlusCircle className="w-4 h-4" />
+                  <span>+ নতুন বিক্রয় চালান</span>
+                </button>
+              </div>
             )}
           </div>
 
@@ -2207,6 +2446,69 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                       <span className="text-rose-700">ছাড় ({saleDiscountType === 'PERCENT' ? `${saleDiscount}%` : 'নির্দিষ্ট'}): <strong className="font-mono">-৳{disc.toLocaleString('en-IN')}</strong></span>
                     )}
                     <span className="text-amber-900 font-semibold">চালানের নেট মোট: <strong className="text-amber-950 font-mono text-[14px]">৳{net.toLocaleString('en-IN')}</strong></span>
+                  </div>
+                );
+              })()}
+
+              {/* Customer Advance Application (Requirement 2) */}
+              {availableCustomerAdvance > 0 && (() => {
+                const sQty = parseFloat(saleQty) || 0;
+                const sPrice = parseFloat(saleUnitPrice) || 0;
+                const sub = Math.round(sQty * sPrice * 100) / 100;
+                const disc = Math.min(sub, Math.max(0, calcSaleDiscountAmount(sub, saleDiscount, saleDiscountType)));
+                const net = Math.max(0, Math.round((sub - disc) * 100) / 100);
+                const appliedNum = parseFloat(saleAdvanceApplied) || 0;
+                const maxApplicable = Math.min(availableCustomerAdvance, net);
+
+                return (
+                  <div className="bg-emerald-50/90 border border-emerald-300 rounded-xl p-3 space-y-2 text-xs sm:text-sm shadow-2xs">
+                    <div className="flex items-center justify-between flex-wrap gap-2">
+                      <div className="flex items-center gap-2 font-bold text-emerald-950">
+                        <CreditCard className="w-4 h-4 text-emerald-700 shrink-0" />
+                        <span>
+                          এই গ্রাহকের অব্যবহৃত অগ্রিম ব্যালেন্স জমা আছে: <strong className="font-mono text-emerald-900 text-base">৳{fmt(availableCustomerAdvance)}</strong>
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        id="btn-apply-max-sale-advance"
+                        onClick={() => {
+                          setSaleAdvanceApplied(maxApplicable > 0 ? maxApplicable.toString() : '');
+                        }}
+                        className="px-2.5 py-1 rounded-md bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-bold transition-all cursor-pointer shadow-2xs"
+                      >
+                        সম্পূর্ণ সমন্বয় করুন (Apply Max: ৳{fmt(maxApplicable)})
+                      </button>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 items-center pt-1">
+                      <div>
+                        <label className="block text-[12px] font-semibold text-emerald-950 mb-1">
+                          চালানে সমন্বয় করার অগ্রিম পরিমাণ (৳):
+                        </label>
+                        <input
+                          type="number"
+                          id="input-sale-advance-applied"
+                          min="0"
+                          max={maxApplicable}
+                          step="any"
+                          placeholder="৳ অগ্রিম সমন্বয়"
+                          value={saleAdvanceApplied}
+                          onChange={(e) => setSaleAdvanceApplied(e.target.value)}
+                          className="w-full bg-white border border-emerald-300 rounded-lg p-2 text-sm font-mono font-bold text-gray-900 focus:ring-2 focus:ring-emerald-500"
+                        />
+                      </div>
+                      <div className="text-xs text-emerald-900 space-y-1 bg-white/80 p-2.5 rounded-lg border border-emerald-200">
+                        <div className="flex justify-between">
+                          <span>সমন্বয় পরবর্তী প্রদেয়/বাকি:</span>
+                          <span className="font-mono font-bold text-gray-900">৳{fmt(Math.max(0, net - appliedNum))}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span>পরবর্তী অবশিষ্ট অগ্রিম:</span>
+                          <span className="font-mono font-bold text-emerald-800">৳{fmt(Math.max(0, availableCustomerAdvance - appliedNum))}</span>
+                        </div>
+                      </div>
+                    </div>
                   </div>
                 );
               })()}
@@ -2455,13 +2757,30 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
             </div>
 
             {role === 'OWNER' && (
-              <button
-                onClick={() => setShowNewPurchase(!showNewPurchase)}
-                className="px-3.5 py-2 rounded-xl bg-amber-700 hover:bg-amber-800 text-white text-[13px] font-bold shadow-xs transition-all cursor-pointer min-h-[40px] flex items-center gap-1.5"
-              >
-                <PlusCircle className="w-4 h-4" />
-                <span>+ নতুন ক্রয় চালান</span>
-              </button>
+              <div className="flex items-center gap-2 flex-wrap">
+                <button
+                  type="button"
+                  id="btn-open-advance-action-purchases"
+                  onClick={() => {
+                    setAdvPartyId(purchSupplierId || '');
+                    setAdvDirection('PAID');
+                    setAdvAmount('');
+                    setAdvNarration('');
+                    setShowAdvanceModal(true);
+                  }}
+                  className="px-3.5 py-2 rounded-xl bg-sky-50 hover:bg-sky-100 text-sky-900 border border-sky-300 text-[13px] font-bold shadow-2xs transition-all cursor-pointer min-h-[40px] flex items-center gap-1.5"
+                >
+                  <CreditCard className="w-4 h-4 text-sky-700" />
+                  <span>অগ্রিম প্রদান (Advance)</span>
+                </button>
+                <button
+                  onClick={() => setShowNewPurchase(!showNewPurchase)}
+                  className="px-3.5 py-2 rounded-xl bg-amber-700 hover:bg-amber-800 text-white text-[13px] font-bold shadow-xs transition-all cursor-pointer min-h-[40px] flex items-center gap-1.5"
+                >
+                  <PlusCircle className="w-4 h-4" />
+                  <span>+ নতুন ক্রয় চালান</span>
+                </button>
+              </div>
             )}
           </div>
 
@@ -2604,6 +2923,70 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                       <span className="text-rose-700">ছাড় ({purchDiscountType === 'PERCENT' ? `${purchDiscount}%` : 'নির্দিষ্ট'}): <strong className="font-mono">-৳{disc.toLocaleString('en-IN')}</strong></span>
                     )}
                     <span className="text-amber-900 font-semibold">ক্রয়ের নেট সর্বমোট: <strong className="text-amber-950 font-mono text-[14px]">৳{grand.toLocaleString('en-IN')}</strong></span>
+                  </div>
+                );
+              })()}
+
+              {/* Supplier Advance Application (Requirement 2) */}
+              {availableSupplierAdvance > 0 && (() => {
+                const pQty = parseFloat(purchQty) || 0;
+                const pPrice = parseFloat(purchUnitPrice) || 0;
+                const pTrans = parseFloat(purchTransportCost) || 0;
+                const itemsTotal = Math.round(pQty * pPrice * 100) / 100;
+                const disc = Math.min(itemsTotal + pTrans, Math.max(0, calcPurchDiscountAmount(itemsTotal, purchDiscount, purchDiscountType)));
+                const grand = Math.max(0, Math.round((itemsTotal + pTrans - disc) * 100) / 100);
+                const appliedNum = parseFloat(purchAdvanceApplied) || 0;
+                const maxApplicable = Math.min(availableSupplierAdvance, grand);
+
+                return (
+                  <div className="bg-sky-50/90 border border-sky-300 rounded-xl p-3 space-y-2 text-xs sm:text-sm shadow-2xs">
+                    <div className="flex items-center justify-between flex-wrap gap-2">
+                      <div className="flex items-center gap-2 font-bold text-sky-950">
+                        <CreditCard className="w-4 h-4 text-sky-700 shrink-0" />
+                        <span>
+                          এই সরবরাহকারীকে পূর্বে প্রদত্ত অগ্রিম জমা আছে: <strong className="font-mono text-sky-900 text-base">৳{fmt(availableSupplierAdvance)}</strong>
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        id="btn-apply-max-purch-advance"
+                        onClick={() => {
+                          setPurchAdvanceApplied(maxApplicable > 0 ? maxApplicable.toString() : '');
+                        }}
+                        className="px-2.5 py-1 rounded-md bg-sky-700 hover:bg-sky-800 text-white text-xs font-bold transition-all cursor-pointer shadow-2xs"
+                      >
+                        সম্পূর্ণ সমন্বয় করুন (Apply Max: ৳{fmt(maxApplicable)})
+                      </button>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 items-center pt-1">
+                      <div>
+                        <label className="block text-[12px] font-semibold text-sky-950 mb-1">
+                          চালানে সমন্বয় করার অগ্রিম পরিমাণ (৳):
+                        </label>
+                        <input
+                          type="number"
+                          id="input-purch-advance-applied"
+                          min="0"
+                          max={maxApplicable}
+                          step="any"
+                          placeholder="৳ অগ্রিম সমন্বয়"
+                          value={purchAdvanceApplied}
+                          onChange={(e) => setPurchAdvanceApplied(e.target.value)}
+                          className="w-full bg-white border border-sky-300 rounded-lg p-2 text-sm font-mono font-bold text-gray-900 focus:ring-2 focus:ring-sky-500"
+                        />
+                      </div>
+                      <div className="text-xs text-sky-900 space-y-1 bg-white/80 p-2.5 rounded-lg border border-sky-200">
+                        <div className="flex justify-between">
+                          <span>সমন্বয় পরবর্তী প্রদেয়/বাকি:</span>
+                          <span className="font-mono font-bold text-gray-900">৳{fmt(Math.max(0, grand - appliedNum))}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span>পরবর্তী অবশিষ্ট অগ্রিম:</span>
+                          <span className="font-mono font-bold text-sky-800">৳{fmt(Math.max(0, availableSupplierAdvance - appliedNum))}</span>
+                        </div>
+                      </div>
+                    </div>
                   </div>
                 );
               })()}
@@ -2885,8 +3268,31 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                 </div>
               </div>
 
-              <div className="text-xs text-gray-500">
-                পক্ষ কোড: <span className="font-mono text-gray-700 font-semibold">{activeParty?.id}</span>
+              <div className="flex items-center gap-2 flex-wrap">
+                {role === 'OWNER' && activeParty && (
+                  <button
+                    type="button"
+                    id="btn-party-statement-advance"
+                    onClick={() => {
+                      setAdvPartyId(activeParty.id);
+                      setAdvDirection(activeParty.type === 'CUSTOMER' ? 'RECEIVED' : 'PAID');
+                      setAdvAmount('');
+                      setAdvNarration('');
+                      setShowAdvanceModal(true);
+                    }}
+                    className="px-3 py-1.5 rounded-xl bg-amber-700 hover:bg-amber-800 text-white font-bold text-xs sm:text-[13px] flex items-center gap-1.5 shadow-xs transition-all cursor-pointer min-h-[38px]"
+                  >
+                    <CreditCard className="w-3.5 h-3.5" />
+                    <span>
+                      {activeParty.type === 'CUSTOMER'
+                        ? '+ অগ্রিম গ্রহণ (Advance)'
+                        : '+ অগ্রিম প্রদান (Advance)'}
+                    </span>
+                  </button>
+                )}
+                <div className="text-xs text-gray-500">
+                  পক্ষ কোড: <span className="font-mono text-gray-700 font-semibold">{activeParty?.id}</span>
+                </div>
               </div>
             </div>
 
@@ -2909,8 +3315,8 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                   </p>
                 </div>
 
-                {/* Summary Metrics */}
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 sm:gap-3 text-center">
+                {/* Summary Metrics (Requirement 3: Party Advance Balance) */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 sm:gap-3 text-center">
                   <div className="bg-white/90 backdrop-blur-xs p-2.5 sm:p-3 rounded-xl border border-amber-100 shadow-2xs">
                     <div className="text-[11px] sm:text-xs text-gray-500 font-semibold">মোট চালান</div>
                     <div className="text-base sm:text-lg font-bold text-gray-900 font-mono mt-0.5">
@@ -2923,15 +3329,75 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                       ৳{fmt(partySummary.totalInvoiced)}
                     </div>
                   </div>
-                  <div className="bg-white/90 backdrop-blur-xs p-2.5 sm:p-3 rounded-xl border border-amber-100 shadow-2xs col-span-2 sm:col-span-1">
+                  <div className="bg-white/90 backdrop-blur-xs p-2.5 sm:p-3 rounded-xl border border-amber-100 shadow-2xs">
                     <div className="text-[11px] sm:text-xs text-gray-500 font-semibold">মোট পরিশোধিত</div>
                     <div className="text-base sm:text-lg font-bold text-emerald-700 font-mono mt-0.5">
                       ৳{fmt(partySummary.totalPaid)}
                     </div>
                   </div>
+                  <div
+                    id="party-advance-balance-metric"
+                    className={`p-2.5 sm:p-3 rounded-xl border shadow-2xs ${
+                      partyAdvanceBalance > 0
+                        ? 'bg-emerald-50 border-emerald-300 text-emerald-950 ring-1 ring-emerald-300'
+                        : 'bg-white/90 border-amber-100'
+                    }`}
+                  >
+                    <div className="text-[11px] sm:text-xs text-gray-600 font-semibold">
+                      {activeParty?.type === 'CUSTOMER' ? 'জমা অগ্রিম ব্যালেন্স' : 'প্রদত্ত অগ্রিম ব্যালেন্স'}
+                    </div>
+                    <div
+                      className={`text-base sm:text-lg font-bold font-mono mt-0.5 ${
+                        partyAdvanceBalance > 0 ? 'text-emerald-700' : 'text-gray-800'
+                      }`}
+                    >
+                      ৳{fmt(partyAdvanceBalance)}
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
+
+            {/* Party Advance Highlight Banner (Requirement 3) */}
+            {partyAdvanceBalance > 0 && (
+              <div id="party-advance-balance-banner" className="p-3.5 bg-emerald-50 border border-emerald-300 rounded-xl flex items-center justify-between gap-3 flex-wrap">
+                <div className="flex items-center gap-2.5 text-emerald-950 text-xs sm:text-sm">
+                  <CreditCard className="w-5 h-5 text-emerald-700 shrink-0" />
+                  <div>
+                    <span className="font-bold">
+                      {activeParty?.type === 'CUSTOMER'
+                        ? 'গ্রাহক অগ্রিম স্থিতি (Customer Advance Balance): '
+                        : 'সরবরাহকারী অগ্রিম স্থিতি (Supplier Advance Balance): '}
+                    </span>
+                    <strong className="font-mono text-emerald-900 text-base">৳{fmt(partyAdvanceBalance)}</strong>
+                    <span className="text-emerald-800 text-xs ml-2">
+                      ({activeParty?.type === 'CUSTOMER'
+                        ? 'পরবর্তী বিক্রয় চালানে সমন্বয়যোগ্য'
+                        : 'পরবর্তী ক্রয় চালানে সমন্বয়যোগ্য'})
+                    </span>
+                  </div>
+                </div>
+                {role === 'OWNER' && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (activeParty?.type === 'CUSTOMER') {
+                        setTab('sales');
+                        setSaleCustomerId(activeParty.id);
+                        setShowNewSale(true);
+                      } else if (activeParty?.type === 'SUPPLIER') {
+                        setTab('purchases');
+                        setPurchSupplierId(activeParty.id);
+                        setShowNewPurchase(true);
+                      }
+                    }}
+                    className="px-3 py-1.5 rounded-lg bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-bold transition-all shadow-2xs cursor-pointer"
+                  >
+                    চালানে সমন্বয় করুন →
+                  </button>
+                )}
+              </div>
+            )}
 
             {/* Chronological Statement List (Requirement 1) */}
             <div className="space-y-3">
@@ -3145,6 +3611,95 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                   </div>
                 </div>
               )}
+
+              {/* Advance Payments & Receipts Table for this Party (Requirement 3) */}
+              {(() => {
+                const partyAdvances = advancePayments.filter(
+                  (a) => a.partyId === activeParty?.id && a.status !== 'CANCELLED'
+                );
+                if (partyAdvances.length === 0) return null;
+                return (
+                  <div className="space-y-3 pt-2">
+                    <div className="flex items-center justify-between flex-wrap gap-2">
+                      <h4 className="font-bold text-gray-900 text-sm sm:text-base flex items-center gap-2">
+                        <CreditCard className="w-4 h-4 text-emerald-700" />
+                        <span>অগ্রিম গ্রহণ ও প্রদানের বিবরণী (Advance Transactions)</span>
+                      </h4>
+                      <span className="text-xs text-gray-500 font-mono">
+                        মোট {partyAdvances.length}টি অগ্রিম এন্ট্রি
+                      </span>
+                    </div>
+                    <div className="border border-emerald-200 rounded-2xl overflow-hidden shadow-2xs bg-white">
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-left text-xs sm:text-[13px]">
+                          <thead className="bg-emerald-50/70 border-b border-emerald-200 text-emerald-950 font-bold uppercase text-[11px]">
+                            <tr>
+                              <th className="p-3">তারিখ</th>
+                              <th className="p-3">অগ্রিম নং</th>
+                              <th className="p-3">ধরণ</th>
+                              <th className="p-3">উৎস/মাধ্যম</th>
+                              <th className="p-3 text-right">মূল অগ্রিম</th>
+                              <th className="p-3 text-right">চালানে সমন্বিত</th>
+                              <th className="p-3 text-right">অবশিষ্ট অগ্রিম</th>
+                              <th className="p-3 text-center">স্থিতি</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-gray-100">
+                            {partyAdvances.map((adv) => (
+                              <tr key={adv.id} className="hover:bg-emerald-50/30 transition-colors">
+                                <td className="p-3 font-mono text-gray-700 whitespace-nowrap">{adv.date}</td>
+                                <td className="p-3 font-bold font-mono text-emerald-950 whitespace-nowrap">
+                                  {adv.displayNumber || adv.advanceNumber}
+                                </td>
+                                <td className="p-3 whitespace-nowrap">
+                                  <span
+                                    className={`px-2 py-0.5 rounded-full text-[11px] font-semibold ${
+                                      adv.direction === 'RECEIVED'
+                                        ? 'bg-sky-50 text-sky-800 border border-sky-200'
+                                        : 'bg-amber-50 text-amber-800 border border-amber-200'
+                                    }`}
+                                  >
+                                    {adv.direction === 'RECEIVED' ? 'অগ্রিম গ্রহণ (দায়)' : 'অগ্রিম প্রদান (সম্পদ)'}
+                                  </span>
+                                </td>
+                                <td className="p-3 text-gray-700 whitespace-nowrap">
+                                  {adv.paymentMethod === 'CASH' ? 'নগদ (Cash)' : 'ব্যাংক (Bank)'}
+                                </td>
+                                <td className="p-3 text-right font-mono font-bold text-gray-900 whitespace-nowrap">
+                                  ৳{fmt(adv.amount)}
+                                </td>
+                                <td className="p-3 text-right font-mono text-gray-600 whitespace-nowrap">
+                                  ৳{fmt(adv.appliedAmount || 0)}
+                                </td>
+                                <td className="p-3 text-right font-mono font-bold text-emerald-700 whitespace-nowrap">
+                                  ৳{fmt(adv.remainingAmount)}
+                                </td>
+                                <td className="p-3 text-center whitespace-nowrap">
+                                  <span
+                                    className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${
+                                      adv.status === 'FULLY_APPLIED'
+                                        ? 'bg-gray-100 text-gray-600'
+                                        : adv.status === 'PARTIALLY_APPLIED'
+                                        ? 'bg-amber-100 text-amber-800'
+                                        : 'bg-emerald-100 text-emerald-800'
+                                    }`}
+                                  >
+                                    {adv.status === 'FULLY_APPLIED'
+                                      ? 'সম্পূর্ণ সমন্বিত'
+                                      : adv.status === 'PARTIALLY_APPLIED'
+                                      ? 'আংশিক সমন্বিত'
+                                      : 'অব্যবহৃত'}
+                                  </span>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
             </div>
           </div>
         ) : (
@@ -3160,13 +3715,30 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
               </div>
 
               {role === 'OWNER' && (
-                <button
-                  onClick={() => setShowAddParty(!showAddParty)}
-                  className="px-3.5 py-2 rounded-xl bg-amber-700 hover:bg-amber-800 text-white text-[13px] font-bold shadow-xs transition-all cursor-pointer min-h-[40px] flex items-center gap-1.5"
-                >
-                  <PlusCircle className="w-4 h-4" />
-                  <span>+ নতুন ব্যক্তি/প্রতিষ্ঠান</span>
-                </button>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <button
+                    type="button"
+                    id="btn-open-advance-action-parties"
+                    onClick={() => {
+                      setAdvPartyId('');
+                      setAdvDirection('RECEIVED');
+                      setAdvAmount('');
+                      setAdvNarration('');
+                      setShowAdvanceModal(true);
+                    }}
+                    className="px-3.5 py-2 rounded-xl bg-sky-50 hover:bg-sky-100 text-sky-900 border border-sky-300 text-[13px] font-bold shadow-2xs transition-all cursor-pointer min-h-[40px] flex items-center gap-1.5"
+                  >
+                    <CreditCard className="w-4 h-4 text-sky-700" />
+                    <span>অগ্রিম গ্রহণ/প্রদান (Advance Received/Paid)</span>
+                  </button>
+                  <button
+                    onClick={() => setShowAddParty(!showAddParty)}
+                    className="px-3.5 py-2 rounded-xl bg-amber-700 hover:bg-amber-800 text-white text-[13px] font-bold shadow-xs transition-all cursor-pointer min-h-[40px] flex items-center gap-1.5"
+                  >
+                    <PlusCircle className="w-4 h-4" />
+                    <span>+ নতুন ব্যক্তি/প্রতিষ্ঠান</span>
+                  </button>
+                </div>
               )}
             </div>
 
@@ -3253,6 +3825,17 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                       {fmt(p.balance)}
                     </span>
                   </div>
+                  {(() => {
+                    const pAdv = advancePayments
+                      .filter((a) => a.partyId === p.id && a.status !== 'CANCELLED')
+                      .reduce((sum, a) => sum + (Number(a.remainingAmount) || 0), 0);
+                    return pAdv > 0 ? (
+                      <div className="flex items-center justify-between font-mono text-xs text-emerald-800 bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-200">
+                        <span className="font-sans font-semibold">অগ্রিম ব্যালেন্স:</span>
+                        <span className="font-bold text-emerald-700">৳{fmt(pAdv)}</span>
+                      </div>
+                    ) : null;
+                  })()}
                   <div className="pt-1.5 border-t border-gray-100 flex items-center justify-between text-xs text-amber-800 font-semibold group-hover:text-amber-900">
                     <span>স্টেটমেন্ট ও চালান হিসাব দেখুন</span>
                     <ChevronRight className="w-4 h-4 transform group-hover:translate-x-1 transition-transform text-amber-700" />
@@ -3756,7 +4339,251 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
         </div>
       )}
 
-      {/* ===================== RECEIPT MODAL (VIEW / DOWNLOAD / SHARE) ===================== */}
+      {/* ===================== MODAL: ADVANCE RECEIVED / PAID (Requirement 1) ===================== */}
+      {showAdvanceModal && (
+        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4 backdrop-blur-xs">
+          <div className="bg-white rounded-2xl max-w-lg w-full p-5 sm:p-6 shadow-xl border border-gray-200 space-y-4 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between border-b border-gray-100 pb-3">
+              <div className="flex items-center gap-2">
+                <div className="p-2 rounded-xl bg-amber-100 text-amber-800">
+                  <CreditCard className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-gray-900">
+                    অগ্রিম গ্রহণ / প্রদান (Advance Received / Paid)
+                  </h3>
+                  <p className="text-xs text-gray-500 mt-0.5">
+                    চালান তৈরির পূর্বেই অগ্রিম গ্রহণ বা পরিশোধ লিপিবদ্ধ করুন
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                id="btn-close-advance-modal"
+                onClick={() => setShowAdvanceModal(false)}
+                className="text-gray-400 hover:text-gray-600 text-lg font-bold p-1 cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            <form onSubmit={handleAdvanceSubmit} className="space-y-3.5">
+              {/* Party Selection */}
+              <div>
+                <label className="block text-xs font-semibold text-gray-700 mb-1">
+                  পক্ষ (Party) নির্বাচন করুন <span className="text-red-500">*</span>
+                </label>
+                <select
+                  id="select-advance-party"
+                  required
+                  value={advPartyId}
+                  onChange={(e) => {
+                    const pId = e.target.value;
+                    setAdvPartyId(pId);
+                    const selected = parties.find((p) => p.id === pId);
+                    if (selected) {
+                      setAdvDirection(selected.type === 'CUSTOMER' ? 'RECEIVED' : 'PAID');
+                    }
+                  }}
+                  className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-sm text-gray-900 focus:outline-hidden focus:ring-1 focus:ring-amber-500"
+                >
+                  <option value="">-- পক্ষ (Party) নির্বাচন করুন --</option>
+                  <optgroup label="গ্রাহকবৃন্দ (Customers)">
+                    {parties
+                      .filter((p) => p.type === 'CUSTOMER')
+                      .map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.name} {p.phone ? `(${p.phone})` : ''} - ব্যালেন্স: ৳{fmt(p.balance)}
+                        </option>
+                      ))}
+                  </optgroup>
+                  <optgroup label="সরবরাহকারীগণ (Suppliers)">
+                    {parties
+                      .filter((p) => p.type === 'SUPPLIER')
+                      .map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.name} {p.phone ? `(${p.phone})` : ''} - ব্যালেন্স: ৳{fmt(p.balance)}
+                        </option>
+                      ))}
+                  </optgroup>
+                </select>
+              </div>
+
+              {/* Advance Direction */}
+              <div>
+                <label className="block text-xs font-semibold text-gray-700 mb-1">
+                  অগ্রিমের ধরণ (Direction) <span className="text-red-500">*</span>
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    id="btn-adv-direction-received"
+                    onClick={() => setAdvDirection('RECEIVED')}
+                    className={`py-2 px-3 rounded-xl border text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
+                      advDirection === 'RECEIVED'
+                        ? 'bg-sky-600 text-white border-sky-600 shadow-2xs'
+                        : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+                    }`}
+                  >
+                    <span>অগ্রিম গ্রহণ (Received)</span>
+                  </button>
+                  <button
+                    type="button"
+                    id="btn-adv-direction-paid"
+                    onClick={() => setAdvDirection('PAID')}
+                    className={`py-2 px-3 rounded-xl border text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
+                      advDirection === 'PAID'
+                        ? 'bg-amber-700 text-white border-amber-700 shadow-2xs'
+                        : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+                    }`}
+                  >
+                    <span>অগ্রিম প্রদান (Paid)</span>
+                  </button>
+                </div>
+                <p className="text-[11px] text-gray-500 mt-1">
+                  {advDirection === 'RECEIVED'
+                    ? 'গ্রাহক থেকে অগ্রিম গ্রহণ (Liability: 2040 Customer Advance)'
+                    : 'সরবরাহকারীকে অগ্রিম প্রদান (Asset: 1070 Supplier Advance)'}
+                </p>
+              </div>
+
+              {/* Amount */}
+              <div>
+                <label className="block text-xs font-semibold text-gray-700 mb-1">
+                  অগ্রিমের পরিমাণ (৳) <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="number"
+                  step="any"
+                  min="1"
+                  required
+                  id="input-advance-amount"
+                  placeholder="যেমন: 10000"
+                  value={advAmount}
+                  onChange={(e) => setAdvAmount(e.target.value)}
+                  className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-base font-mono font-bold text-gray-900 focus:outline-hidden focus:ring-1 focus:ring-amber-500"
+                />
+              </div>
+
+              {/* Payment Method */}
+              <div>
+                <label className="block text-xs font-semibold text-gray-700 mb-1">
+                  অর্থের মাধ্যম <span className="text-red-500">*</span>
+                </label>
+                <select
+                  id="select-advance-payment-method"
+                  value={advPaymentMethod}
+                  onChange={(e) => setAdvPaymentMethod(e.target.value as 'CASH' | 'BANK')}
+                  className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-sm text-gray-900 focus:outline-hidden focus:ring-1 focus:ring-amber-500"
+                >
+                  <option value="CASH">নগদ (Cash on Hand - 1010)</option>
+                  <option value="BANK">ব্যাংক / মোবাইল ব্যাংকিং (Bank Account - 1030)</option>
+                </select>
+              </div>
+
+              {/* Bank Account Selection if BANK */}
+              {advPaymentMethod === 'BANK' && (
+                <div>
+                  <label className="block text-xs font-semibold text-gray-700 mb-1">
+                    ব্যাংক হিসাব নির্বাচন করুন <span className="text-red-500">*</span>
+                  </label>
+                  <select
+                    id="select-advance-bank-account"
+                    required
+                    value={advBankAccountId}
+                    onChange={(e) => setAdvBankAccountId(e.target.value)}
+                    className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-sm text-gray-900 focus:outline-hidden focus:ring-1 focus:ring-amber-500"
+                  >
+                    <option value="">-- ব্যাংক হিসাব নির্বাচন করুন --</option>
+                    {cashBankAccounts
+                      .filter((b) => b.accountType === 'BANK' || b.accountType === 'MOBILE_BANKING')
+                      .map((b) => (
+                        <option key={b.id} value={b.id}>
+                          {b.name} {b.accountNumber ? `(${b.accountNumber})` : ''} - ব্যালেন্স: ৳{fmt(b.currentBalance)}
+                        </option>
+                      ))}
+                  </select>
+                </div>
+              )}
+
+              {/* Date */}
+              <div>
+                <label className="block text-xs font-semibold text-gray-700 mb-1">
+                  তারিখ <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="date"
+                  required
+                  id="input-advance-date"
+                  value={advDate}
+                  max={new Date().toISOString().split('T')[0]}
+                  onChange={(e) => setAdvDate(e.target.value)}
+                  className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-sm text-gray-900 focus:outline-hidden focus:ring-1 focus:ring-amber-500"
+                />
+              </div>
+
+              {/* Narration */}
+              <div>
+                <label className="block text-xs font-semibold text-gray-700 mb-1">
+                  মন্তব্য / নোট (ঐচ্ছিক)
+                </label>
+                <input
+                  type="text"
+                  id="input-advance-narration"
+                  placeholder="যেমন: পরবর্তী চালানের জন্য অগ্রিম প্রাপ্তি/প্রদান"
+                  value={advNarration}
+                  onChange={(e) => setAdvNarration(e.target.value)}
+                  className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-sm text-gray-900 focus:outline-hidden focus:ring-1 focus:ring-amber-500"
+                />
+              </div>
+
+              {/* Accounting Preview */}
+              {parseFloat(advAmount) > 0 && (
+                <div className="p-3 bg-gray-50 border border-gray-200 rounded-xl space-y-1 text-xs font-mono">
+                  <div className="font-sans font-semibold text-gray-600 text-[11px]">জাবেদা পূর্বরূপ (Double Entry):</div>
+                  {advDirection === 'RECEIVED' ? (
+                    <>
+                      <div className="text-emerald-700">Dr {advPaymentMethod === 'CASH' ? 'নগদ তহবিল (1010 Cash)' : 'ব্যাংক হিসাব (1030 Bank)'}: ৳{fmt(parseFloat(advAmount))}</div>
+                      <div className="text-sky-800 ml-4">Cr গ্রাহক অগ্রিম (2040 Customer Advance): ৳{fmt(parseFloat(advAmount))}</div>
+                    </>
+                  ) : (
+                    <>
+                      <div className="text-sky-800">Dr সরবরাহকারী অগ্রিম (1070 Supplier Advance): ৳{fmt(parseFloat(advAmount))}</div>
+                      <div className="text-rose-700 ml-4">Cr {advPaymentMethod === 'CASH' ? 'নগদ তহবিল (1010 Cash)' : 'ব্যাংক হিসাব (1030 Bank)'}: ৳{fmt(parseFloat(advAmount))}</div>
+                    </>
+                  )}
+                </div>
+              )}
+
+              <div className="flex justify-end gap-2.5 pt-2 border-t border-gray-100">
+                <button
+                  type="button"
+                  id="btn-cancel-advance"
+                  onClick={() => setShowAdvanceModal(false)}
+                  className="px-4 py-2 rounded-lg bg-gray-200 hover:bg-gray-300 text-gray-800 text-xs font-bold cursor-pointer min-h-[40px]"
+                >
+                  বাতিল
+                </button>
+                <button
+                  type="submit"
+                  id="btn-confirm-advance"
+                  disabled={isSubmittingAdvance || !advPartyId || !advAmount || parseFloat(advAmount) <= 0}
+                  className="px-4 py-2 rounded-lg bg-amber-700 hover:bg-amber-800 disabled:bg-gray-400 disabled:cursor-not-allowed text-white text-xs font-bold cursor-pointer min-h-[40px] shadow-xs flex items-center gap-1.5"
+                >
+                  <CreditCard className="w-4 h-4" />
+                  <span>
+                    {isSubmittingAdvance
+                      ? 'সংরক্ষণ হচ্ছে...'
+                      : advDirection === 'RECEIVED'
+                      ? 'অগ্রিম গ্রহণ সংরক্ষণ করুন'
+                      : 'অগ্রিম প্রদান সংরক্ষণ করুন'}
+                  </span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
       {receiptModal && (() => {
         const isSale = receiptModal.type === 'SALE';
         const rec = receiptModal.record;
