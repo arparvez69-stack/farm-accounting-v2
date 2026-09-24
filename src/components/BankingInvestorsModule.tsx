@@ -18,7 +18,11 @@ import {
   History,
   X,
   Plus,
-  ArrowUpRight
+  ArrowUpRight,
+  ArrowLeft,
+  Search,
+  CheckSquare,
+  Square
 } from 'lucide-react';
 import { db } from '../db/indexedDb';
 import {
@@ -35,6 +39,13 @@ import {
 import { generateAmortizationSchedule } from '../accounting/amortizationService';
 import { AmortizationScheduleItem, CashBankAccount, Investor, Loan, UserRole, JournalEntry } from '../types';
 import { generateTransactionNumber, generateUniqueId, safeInsert } from '../utils/idGenerator';
+import {
+  BankReconcileTransaction,
+  calculateBankReconciliationMetrics,
+  getStoredBankReconciliation,
+  loadBankTransactionsForAccount,
+  saveStoredBankReconciliation
+} from '../accounting/bankReconciliationService';
 
 interface Props {
   role: UserRole;
@@ -140,6 +151,79 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
   const [capitalReturnNotes, setCapitalReturnNotes] = useState('');
   const [submittingCapitalReturn, setSubmittingCapitalReturn] = useState(false);
 
+  // Manual Bank & Cash Reconciliation State (Read / Tracking Only)
+  const [selectedReconcileAccount, setSelectedReconcileAccount] = useState<CashBankAccount | null>(null);
+  const [reconcileTransactions, setReconcileTransactions] = useState<BankReconcileTransaction[]>([]);
+  const [reconcileLoading, setReconcileLoading] = useState(false);
+  const [statementBalanceInput, setStatementBalanceInput] = useState('');
+  const [clearedTxIds, setClearedTxIds] = useState<Set<string>>(new Set());
+  const [statementDate, setStatementDate] = useState(new Date().toISOString().split('T')[0]);
+  const [reconcileNotes, setReconcileNotes] = useState('');
+  const [reconcileFilter, setReconcileFilter] = useState<'ALL' | 'CLEARED' | 'UNCLEARED'>('ALL');
+  const [reconcileSearch, setReconcileSearch] = useState('');
+
+  const handleOpenReconciliation = async (acc: CashBankAccount) => {
+    setSelectedReconcileAccount(acc);
+    setReconcileLoading(true);
+    setReconcileSearch('');
+    setReconcileFilter('ALL');
+    try {
+      const stored = getStoredBankReconciliation(acc.id);
+      setStatementBalanceInput(stored.statementBalance || '');
+      setClearedTxIds(new Set(stored.clearedTxIds || []));
+      setStatementDate(stored.statementDate || new Date().toISOString().split('T')[0]);
+      setReconcileNotes(stored.notes || '');
+
+      const res = await loadBankTransactionsForAccount(acc.id);
+      setReconcileTransactions(res.transactions);
+    } catch (err: any) {
+      console.error(err);
+      setMsg({ type: 'error', text: 'হিসাব মিলকরণের লেনদেন লোড করতে ত্রুটি হয়েছে।' });
+    } finally {
+      setReconcileLoading(false);
+    }
+  };
+
+  const handleToggleCleared = (txId: string) => {
+    if (!selectedReconcileAccount) return;
+    const next = new Set(clearedTxIds);
+    if (next.has(txId)) {
+      next.delete(txId);
+    } else {
+      next.add(txId);
+    }
+    setClearedTxIds(next);
+    saveStoredBankReconciliation(selectedReconcileAccount.id, {
+      clearedTxIds: Array.from(next),
+      statementBalance: statementBalanceInput,
+      statementDate,
+      notes: reconcileNotes
+    });
+  };
+
+  const handleStatementBalanceChange = (val: string) => {
+    if (!selectedReconcileAccount) return;
+    setStatementBalanceInput(val);
+    saveStoredBankReconciliation(selectedReconcileAccount.id, {
+      statementBalance: val,
+      clearedTxIds: Array.from(clearedTxIds),
+      statementDate,
+      notes: reconcileNotes
+    });
+  };
+
+  const handleMarkAllCleared = (markAll: boolean) => {
+    if (!selectedReconcileAccount) return;
+    const next = markAll ? new Set(reconcileTransactions.map((t) => t.id)) : new Set<string>();
+    setClearedTxIds(next);
+    saveStoredBankReconciliation(selectedReconcileAccount.id, {
+      clearedTxIds: Array.from(next),
+      statementBalance: statementBalanceInput,
+      statementDate,
+      notes: reconcileNotes
+    });
+  };
+
   useEffect(() => {
     loadFinanceData();
   }, [tab]);
@@ -149,6 +233,10 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
     try {
       const accList = await db.cashBankAccounts.toArray();
       setAccounts(accList);
+      if (selectedReconcileAccount) {
+        const fresh = accList.find((a) => a.id === selectedReconcileAccount.id);
+        if (fresh) setSelectedReconcileAccount(fresh);
+      }
 
       if (tab === 'loans') {
         const loanList = await db.loans.toArray();
@@ -771,143 +859,504 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
 
       {/* ===================== TAB 1: CASH & BANK ACCOUNTS ===================== */}
       {tab === 'accounts' && (
-        <div className="bg-white border border-gray-200 rounded-2xl p-4 sm:p-5 shadow-xs space-y-4">
-          <div className="flex items-center justify-between border-b border-gray-100 pb-3 flex-wrap gap-2">
-            <div>
-              <h3 className="text-[16px] font-bold text-gray-900 flex items-center gap-2">
-                <Wallet className="w-5 h-5 text-[#1E5128]" />
-                <span>নগদ ড্রয়ার ও ব্যাংক অ্যাকাউন্টসমূহ ({accounts.length})</span>
-              </h3>
-              <p className="text-[13px] text-gray-600 mt-0.5">খামারের নগদ টাকা ও বিভিন্ন ব্যাংকের চলতি/সঞ্চয়ী হিসাব</p>
-            </div>
-
-            {role === 'OWNER' && (
-              <button
-                onClick={() => setShowAddAccount(!showAddAccount)}
-                className="px-3.5 py-2 rounded-xl bg-[#1E5128] hover:bg-[#173F1F] text-white text-[13px] font-bold shadow-xs transition-all cursor-pointer min-h-[40px] flex items-center gap-1.5"
-              >
-                <PlusCircle className="w-4 h-4" />
-                <span>+ নতুন ব্যাংক একাউন্ট</span>
-              </button>
-            )}
-          </div>
-
-          {showAddAccount && (
-            <form onSubmit={handleAddAccount} className="p-4 bg-[#F8FAFC] border border-gray-300 rounded-xl space-y-3">
-              <div className="font-bold text-[#1E5128] text-[15px]">নতুন ব্যাংক/তহবিল হিসাব যোগ করুন</div>
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
-                <div>
-                  <label className="block text-[13px] font-medium text-gray-700 mb-1">হিসাবের নাম</label>
-                  <input
-                    type="text"
-                    required
-                    placeholder="যেমন: ইসলামী ব্যাংক চলতি হিসাব"
-                    value={accName}
-                    onChange={(e) => setAccName(e.target.value)}
-                    className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900"
-                  />
-                </div>
-                <div>
-                  <label className="block text-[13px] font-medium text-gray-700 mb-1">হিসাবের ধরন</label>
-                  <select
-                    value={accType}
-                    onChange={(e) => setAccType(e.target.value as any)}
-                    className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900"
-                  >
-                    <option value="BANK">ব্যাংক হিসাব (Bank - 1030)</option>
-                    <option value="MOBILE_BANKING">মোবাইল ব্যাংকিং (bKash/Nagad - 1030)</option>
-                    <option value="CASH">নগদ তহবিল (Petty Cash - 1020)</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-[13px] font-medium text-gray-700 mb-1">হিসাব নম্বর</label>
-                  <input
-                    type="text"
-                    placeholder="A/C Number"
-                    value={accNumber}
-                    onChange={(e) => setAccNumber(e.target.value)}
-                    className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900"
-                  />
-                </div>
-              </div>
-
-              {accType === 'BANK' && (
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                  <div>
-                    <label className="block text-[13px] font-medium text-gray-700 mb-1">ব্যাংকের নাম</label>
-                    <input
-                      type="text"
-                      value={bankName}
-                      onChange={(e) => setBankName(e.target.value)}
-                      className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-[13px] font-medium text-gray-700 mb-1">শাখা (Branch)</label>
-                    <input
-                      type="text"
-                      value={branch}
-                      onChange={(e) => setBranch(e.target.value)}
-                      placeholder="শাখার নাম"
-                      className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900"
-                    />
-                  </div>
-                </div>
-              )}
-
-              <div className="flex justify-end gap-2.5 pt-1">
+        selectedReconcileAccount ? (
+          <div className="bg-white border border-gray-200 rounded-2xl p-4 sm:p-5 shadow-xs space-y-5">
+            {/* Top Navigation & Header */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-gray-100 pb-4">
+              <div className="flex items-center gap-3 flex-wrap">
                 <button
                   type="button"
-                  onClick={() => setShowAddAccount(false)}
-                  className="px-4 py-2 rounded-lg bg-gray-200 text-gray-800 text-[13px] font-semibold cursor-pointer min-h-[40px]"
+                  id="btn-back-to-accounts"
+                  onClick={() => setSelectedReconcileAccount(null)}
+                  className="px-3 py-1.5 rounded-lg border border-gray-300 hover:bg-gray-100 text-gray-700 text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer"
                 >
-                  বাতিল
+                  <ArrowLeft className="w-4 h-4" />
+                  <span>সকল অ্যাকাউন্টে ফিরুন</span>
                 </button>
-                <button
-                  type="submit"
-                  className="px-4 py-2 rounded-lg bg-[#1E5128] text-white text-[13px] font-bold cursor-pointer min-h-[40px]"
-                >
-                  সংরক্ষণ করুন
-                </button>
+                <div>
+                  <h3 className="text-[17px] font-bold text-gray-900 flex items-center gap-2">
+                    {selectedReconcileAccount.accountType === 'CASH' ? (
+                      <Wallet className="w-5 h-5 text-[#1E5128]" />
+                    ) : (
+                      <Landmark className="w-5 h-5 text-[#1E5128]" />
+                    )}
+                    <span>হিসাব মিলকরণ (Reconcile): {selectedReconcileAccount.name}</span>
+                  </h3>
+                  <p className="text-[12px] text-gray-500 mt-0.5">
+                    {selectedReconcileAccount.bankName ? `${selectedReconcileAccount.bankName} (হিসাব: ${selectedReconcileAccount.accountNumber || 'N/A'})` : 'ক্যাশ ড্রয়ার / নগদ তহবিল'} | কোড: {selectedReconcileAccount.accountType === 'CASH' ? '1010' : '1030'}
+                  </p>
+                </div>
               </div>
-            </form>
-          )}
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
-            {accounts.map((a) => (
-              <div
-                key={a.id}
-                className="p-4 rounded-xl bg-[#F8FAFC] border border-gray-200 space-y-2 shadow-xs"
-              >
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2.5">
-                    <div className="p-2.5 rounded-xl bg-white border border-gray-200 text-[#1E5128] shadow-xs">
-                      {a.accountType === 'CASH' ? <Wallet className="w-5 h-5" /> : <Landmark className="w-5 h-5" />}
-                    </div>
-                    <div>
-                      <div className="flex items-baseline gap-1.5">
-                        <h4 className="font-bold text-gray-900 text-[15px] leading-tight">{a.name}</h4>
-                        <span className="text-xs text-gray-400 font-mono font-normal">
-                          ({a.accountType === 'CASH' ? '1010' : '1030'})
-                        </span>
+              {/* Account Switcher */}
+              <div className="flex items-center gap-2">
+                <label className="text-xs font-semibold text-gray-500 whitespace-nowrap">হিসাব পরিবর্তন:</label>
+                <select
+                  value={selectedReconcileAccount.id}
+                  onChange={(e) => {
+                    const acc = accounts.find((a) => a.id === e.target.value);
+                    if (acc) handleOpenReconciliation(acc);
+                  }}
+                  className="bg-white border border-gray-300 rounded-lg py-1.5 px-2.5 text-xs font-medium text-gray-800 focus:outline-none focus:border-emerald-600"
+                >
+                  {accounts.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.name} ({fmt(a.currentBalance)})
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            {/* THREE FIGURES (Requirement 2) */}
+            {(() => {
+              const metrics = calculateBankReconciliationMetrics(
+                selectedReconcileAccount,
+                reconcileTransactions,
+                statementBalanceInput,
+                clearedTxIds
+              );
+
+              return (
+                <div className="space-y-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
+                    {/* Figure 1: Book Balance (from existing app data) */}
+                    <div className="p-4 rounded-xl bg-[#F8FAFC] border border-gray-200 shadow-2xs">
+                      <div className="flex items-center justify-between text-xs font-semibold text-gray-500 mb-1">
+                        <span>১. খাতাপত্রের স্থিতি (Book Balance)</span>
+                        <span className="font-mono text-[11px] bg-gray-200/80 text-gray-700 px-1.5 py-0.5 rounded">সফটওয়্যার</span>
                       </div>
-                      <p className="text-[12px] text-gray-500 mt-0.5">
-                        {a.bankName ? `${a.bankName} (${a.accountNumber || 'N/A'})` : (a.accountType === 'CASH' ? 'নগদ ক্যাশ তহবিল' : 'ব্যাংক হিসাব')}
+                      <div className="text-2xl font-bold font-mono text-gray-900">
+                        {fmt(metrics.bookBalance)}
+                      </div>
+                      <p className="text-[11px] text-gray-500 mt-1">
+                        বিদ্যমান অ্যাপ লেজারের হিসাবকৃত মোট ব্যালেন্স
+                      </p>
+                    </div>
+
+                    {/* Figure 2: Manually-entered Statement Balance */}
+                    <div className="p-4 rounded-xl bg-emerald-50/50 border-2 border-emerald-200 shadow-2xs">
+                      <div className="flex items-center justify-between text-xs font-semibold text-emerald-800 mb-1">
+                        <span>২. ব্যাংক স্টেটমেন্ট স্থিতি (Statement Balance)</span>
+                        <span className="font-mono text-[11px] bg-emerald-100 text-emerald-800 px-1.5 py-0.5 rounded font-bold">ম্যানুয়াল এন্ট্রি</span>
+                      </div>
+                      <div className="relative mt-1">
+                        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-emerald-700 font-mono font-bold text-base">৳</span>
+                        <input
+                          type="number"
+                          step="0.01"
+                          id="input-statement-balance"
+                          value={statementBalanceInput}
+                          onChange={(e) => handleStatementBalanceChange(e.target.value)}
+                          placeholder="পাসবইয়ের স্থিতি লিখুন"
+                          className="w-full pl-8 pr-3 py-1.5 bg-white border border-emerald-400 focus:border-emerald-600 rounded-lg text-lg font-bold font-mono text-gray-900 focus:outline-none"
+                        />
+                      </div>
+                      <p className="text-[11px] text-emerald-700 mt-1">
+                        পাসবই / অনলাইন স্টেটমেন্ট থেকে টাইপ করুন (স্বয়ংক্রিয়ভাবে সংরক্ষিত)
+                      </p>
+                    </div>
+
+                    {/* Figure 3: Difference between Book and Statement Balance */}
+                    <div className={`p-4 rounded-xl border shadow-2xs ${
+                      metrics.hasStatementEntered
+                        ? metrics.isBalanced
+                          ? 'bg-emerald-50/60 border-emerald-300'
+                          : 'bg-rose-50/60 border-rose-300'
+                        : 'bg-gray-50 border-gray-200'
+                    }`}>
+                      <div className="flex items-center justify-between text-xs font-semibold mb-1">
+                        <span className={metrics.hasStatementEntered ? (metrics.isBalanced ? 'text-emerald-800' : 'text-rose-800') : 'text-gray-500'}>
+                          ৩. পার্থক্য (Difference)
+                        </span>
+                        {metrics.hasStatementEntered && (
+                          <span className={`text-[11px] px-2 py-0.5 rounded-full font-bold ${
+                            metrics.isBalanced
+                              ? 'bg-emerald-200/80 text-emerald-900 border border-emerald-300'
+                              : 'bg-rose-200/80 text-rose-900 border border-rose-300'
+                          }`}>
+                            {metrics.isBalanced ? '✓ সম্পূর্ণ মিলেছে' : '⚠ অমিল'}
+                          </span>
+                        )}
+                      </div>
+                      <div className={`text-2xl font-bold font-mono ${
+                        metrics.hasStatementEntered
+                          ? metrics.isBalanced
+                            ? 'text-emerald-700'
+                            : 'text-rose-600'
+                          : 'text-gray-400'
+                      }`}>
+                        {metrics.hasStatementEntered
+                          ? `${metrics.difference >= 0 ? '+' : ''}${fmt(metrics.difference)}`
+                          : '—'}
+                      </div>
+                      <p className="text-[11px] text-gray-500 mt-1">
+                        {metrics.hasStatementEntered
+                          ? metrics.isBalanced
+                            ? 'স্টেটমেন্ট ও বইয়ের স্থিতির মাঝে কোনো অমিল নেই'
+                            : `স্টেটমেন্ট স্থিতি - বই স্থিতি = ${fmt(metrics.difference)}`
+                          : 'পার্থক্য দেখতে স্টেটমেন্ট স্থিতি টাইপ করুন'}
                       </p>
                     </div>
                   </div>
+
+                  {/* Summary bar & batch selection */}
+                  <div className="p-3 bg-gray-50 rounded-xl border border-gray-200 flex flex-wrap items-center justify-between gap-3 text-xs">
+                    <div className="flex items-center gap-4 flex-wrap">
+                      <div className="flex items-center gap-1.5 font-medium text-gray-700">
+                        <span className="font-semibold">মোট লেনদেন:</span>
+                        <span className="font-mono bg-white px-2 py-0.5 rounded border border-gray-200 font-bold">{reconcileTransactions.length} টি</span>
+                      </div>
+                      <div className="flex items-center gap-1.5 font-medium text-emerald-800">
+                        <span className="font-semibold">মিলিত (Cleared):</span>
+                        <span className="font-mono bg-emerald-100 text-emerald-900 px-2 py-0.5 rounded border border-emerald-300 font-bold">{metrics.clearedCount} টি ({fmt(metrics.clearedNet)})</span>
+                      </div>
+                      <div className="flex items-center gap-1.5 font-medium text-amber-800">
+                        <span className="font-semibold">অমিলিত (Uncleared):</span>
+                        <span className="font-mono bg-amber-100 text-amber-900 px-2 py-0.5 rounded border border-amber-300 font-bold">{metrics.unclearedCount} টি ({fmt(metrics.unclearedNet)})</span>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        id="btn-mark-all-cleared"
+                        onClick={() => handleMarkAllCleared(true)}
+                        className="px-2.5 py-1.5 rounded-lg bg-white hover:bg-emerald-50 text-emerald-800 border border-emerald-300 text-xs font-semibold cursor-pointer shadow-2xs transition-colors"
+                      >
+                        সবগুলো চিহ্নিত করুন
+                      </button>
+                      <button
+                        type="button"
+                        id="btn-unmark-all-cleared"
+                        onClick={() => handleMarkAllCleared(false)}
+                        className="px-2.5 py-1.5 rounded-lg bg-white hover:bg-gray-100 text-gray-700 border border-gray-300 text-xs font-semibold cursor-pointer shadow-2xs transition-colors"
+                      >
+                        সব টিক মুছুন
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Search & Filter Controls */}
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 pt-1">
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        id="btn-filter-all"
+                        onClick={() => setReconcileFilter('ALL')}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-bold cursor-pointer transition-colors ${
+                          reconcileFilter === 'ALL'
+                            ? 'bg-[#1E5128] text-white shadow-2xs'
+                            : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                        }`}
+                      >
+                        সব লেনদেন ({reconcileTransactions.length})
+                      </button>
+                      <button
+                        type="button"
+                        id="btn-filter-cleared"
+                        onClick={() => setReconcileFilter('CLEARED')}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-bold cursor-pointer transition-colors ${
+                          reconcileFilter === 'CLEARED'
+                            ? 'bg-emerald-700 text-white shadow-2xs'
+                            : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                        }`}
+                      >
+                        মিলিত ({metrics.clearedCount})
+                      </button>
+                      <button
+                        type="button"
+                        id="btn-filter-uncleared"
+                        onClick={() => setReconcileFilter('UNCLEARED')}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-bold cursor-pointer transition-colors ${
+                          reconcileFilter === 'UNCLEARED'
+                            ? 'bg-amber-700 text-white shadow-2xs'
+                            : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                        }`}
+                      >
+                        অমিলিত ({metrics.unclearedCount})
+                      </button>
+                    </div>
+
+                    <div className="relative w-full sm:w-72">
+                      <Search className="w-3.5 h-3.5 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                      <input
+                        type="text"
+                        id="input-reconcile-search"
+                        value={reconcileSearch}
+                        onChange={(e) => setReconcileSearch(e.target.value)}
+                        placeholder="ভাউচার, তারিখ বা বিবরণ খুঁজুন..."
+                        className="w-full pl-8 pr-3 py-1.5 bg-gray-50 border border-gray-200 rounded-lg text-xs text-gray-900 focus:bg-white focus:outline-none focus:border-emerald-600"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Transaction Table (Requirement 1) */}
+                  {reconcileLoading ? (
+                    <div className="py-12 text-center text-sm text-gray-500">
+                      লেনদেন লোড হচ্ছে...
+                    </div>
+                  ) : (() => {
+                    const q = reconcileSearch.toLowerCase().trim();
+                    const filtered = reconcileTransactions.filter((tx) => {
+                      if (reconcileFilter === 'CLEARED' && !clearedTxIds.has(tx.id)) return false;
+                      if (reconcileFilter === 'UNCLEARED' && clearedTxIds.has(tx.id)) return false;
+                      if (!q) return true;
+                      return (
+                        (tx.voucherNumber && tx.voucherNumber.toLowerCase().includes(q)) ||
+                        (tx.narration && tx.narration.toLowerCase().includes(q)) ||
+                        (tx.memo && tx.memo.toLowerCase().includes(q)) ||
+                        (tx.date && tx.date.includes(q)) ||
+                        (tx.amount && tx.amount.toString().includes(q))
+                      );
+                    });
+
+                    if (filtered.length === 0) {
+                      return (
+                        <div className="p-8 text-center text-gray-500 bg-gray-50 rounded-xl border border-gray-200 text-xs">
+                          {reconcileTransactions.length === 0
+                            ? 'এই অ্যাকাউন্টের জন্য কোনো লেনদেন পাওয়া যায়নি।'
+                            : 'অনুসন্ধানের সাথে মিলে এমন কোনো লেনদেন নেই।'}
+                        </div>
+                      );
+                    }
+
+                    return (
+                      <div className="overflow-x-auto border border-gray-200 rounded-xl">
+                        <table className="w-full text-left text-xs">
+                          <thead className="bg-[#F8FAFC] text-gray-700 font-semibold border-b border-gray-200 select-none">
+                            <tr>
+                              <th className="py-2.5 px-3 w-36 text-center">মিলিত (Cleared)</th>
+                              <th className="py-2.5 px-3">তারিখ</th>
+                              <th className="py-2.5 px-3">ভাউচার নম্বর</th>
+                              <th className="py-2.5 px-3">বিবরণ / নোট</th>
+                              <th className="py-2.5 px-3 text-right">জমা (Deposit / Dr)</th>
+                              <th className="py-2.5 px-3 text-right">উত্তোলন (Withdrawal / Cr)</th>
+                              <th className="py-2.5 px-3 text-right">রানিং ব্যালেন্স</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-gray-100">
+                            {filtered.map((tx) => {
+                              const isCleared = clearedTxIds.has(tx.id);
+                              return (
+                                <tr
+                                  key={tx.id}
+                                  className={`transition-colors ${
+                                    isCleared ? 'bg-emerald-50/40 hover:bg-emerald-50/70' : 'hover:bg-gray-50/80'
+                                  }`}
+                                >
+                                  {/* Requirement 1: "মিলিত (Cleared)" checkbox per transaction, persisted */}
+                                  <td className="py-2 px-3 text-center">
+                                    <label className="inline-flex items-center gap-1.5 cursor-pointer select-none">
+                                      <input
+                                        type="checkbox"
+                                        id={`checkbox-cleared-${tx.id}`}
+                                        checked={isCleared}
+                                        onChange={() => handleToggleCleared(tx.id)}
+                                        className="w-4 h-4 rounded text-emerald-600 focus:ring-emerald-500 border-gray-300 cursor-pointer"
+                                      />
+                                      <span className={`text-[11px] font-semibold ${isCleared ? 'text-emerald-800' : 'text-gray-500'}`}>
+                                        মিলিত
+                                      </span>
+                                    </label>
+                                  </td>
+                                  <td className="py-2 px-3 font-mono text-gray-700 whitespace-nowrap">
+                                    {tx.date}
+                                  </td>
+                                  <td className="py-2 px-3 font-mono font-medium text-gray-900 whitespace-nowrap">
+                                    <span className="bg-gray-100 text-gray-800 px-1.5 py-0.5 rounded text-[11px]">
+                                      {tx.voucherNumber || tx.journalEntryId}
+                                    </span>
+                                  </td>
+                                  <td className="py-2 px-3 text-gray-800 max-w-xs truncate" title={tx.narration || tx.memo || ''}>
+                                    {tx.narration || tx.memo || '—'}
+                                  </td>
+                                  <td className="py-2 px-3 text-right font-mono font-semibold text-emerald-700 whitespace-nowrap">
+                                    {tx.debit > 0 ? fmt(tx.debit) : '—'}
+                                  </td>
+                                  <td className="py-2 px-3 text-right font-mono font-semibold text-rose-700 whitespace-nowrap">
+                                    {tx.credit > 0 ? fmt(tx.credit) : '—'}
+                                  </td>
+                                  <td className="py-2 px-3 text-right font-mono font-bold text-gray-900 whitespace-nowrap">
+                                    {fmt(tx.runningBalance ?? 0)}
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    );
+                  })()}
+                </div>
+              );
+            })()}
+          </div>
+        ) : (
+          <div className="bg-white border border-gray-200 rounded-2xl p-4 sm:p-5 shadow-xs space-y-4">
+            <div className="flex items-center justify-between border-b border-gray-100 pb-3 flex-wrap gap-2">
+              <div>
+                <h3 className="text-[16px] font-bold text-gray-900 flex items-center gap-2">
+                  <Wallet className="w-5 h-5 text-[#1E5128]" />
+                  <span>নগদ ড্রয়ার ও ব্যাংক অ্যাকাউন্টসমূহ ({accounts.length})</span>
+                </h3>
+                <p className="text-[13px] text-gray-600 mt-0.5">খামারের নগদ টাকা ও বিভিন্ন ব্যাংকের চলতি/সঞ্চয়ী হিসাব</p>
+              </div>
+
+              <div className="flex items-center gap-2">
+                {accounts.length > 0 && (
+                  <button
+                    type="button"
+                    id="btn-open-reconciliation-first"
+                    onClick={() => handleOpenReconciliation(accounts[0])}
+                    className="px-3.5 py-2 rounded-xl bg-white hover:bg-gray-50 border border-gray-300 text-gray-700 text-[13px] font-bold shadow-xs transition-all cursor-pointer min-h-[40px] flex items-center gap-1.5"
+                  >
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                    <span>মিলকরণ (Reconcile)</span>
+                  </button>
+                )}
+                {role === 'OWNER' && (
+                  <button
+                    onClick={() => setShowAddAccount(!showAddAccount)}
+                    className="px-3.5 py-2 rounded-xl bg-[#1E5128] hover:bg-[#173F1F] text-white text-[13px] font-bold shadow-xs transition-all cursor-pointer min-h-[40px] flex items-center gap-1.5"
+                  >
+                    <PlusCircle className="w-4 h-4" />
+                    <span>+ নতুন ব্যাংক একাউন্ট</span>
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {showAddAccount && (
+              <form onSubmit={handleAddAccount} className="p-4 bg-[#F8FAFC] border border-gray-300 rounded-xl space-y-3">
+                <div className="font-bold text-[#1E5128] text-[15px]">নতুন ব্যাংক/তহবিল হিসাব যোগ করুন</div>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                  <div>
+                    <label className="block text-[13px] font-medium text-gray-700 mb-1">হিসাবের নাম</label>
+                    <input
+                      type="text"
+                      required
+                      placeholder="যেমন: ইসলামী ব্যাংক চলতি হিসাব"
+                      value={accName}
+                      onChange={(e) => setAccName(e.target.value)}
+                      className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[13px] font-medium text-gray-700 mb-1">হিসাবের ধরন</label>
+                    <select
+                      value={accType}
+                      onChange={(e) => setAccType(e.target.value as any)}
+                      className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900"
+                    >
+                      <option value="BANK">ব্যাংক হিসাব (Bank - 1030)</option>
+                      <option value="MOBILE_BANKING">মোবাইল ব্যাংকিং (bKash/Nagad - 1030)</option>
+                      <option value="CASH">নগদ তহবিল (Petty Cash - 1020)</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-[13px] font-medium text-gray-700 mb-1">হিসাব নম্বর</label>
+                    <input
+                      type="text"
+                      placeholder="A/C Number"
+                      value={accNumber}
+                      onChange={(e) => setAccNumber(e.target.value)}
+                      className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900"
+                    />
+                  </div>
                 </div>
 
-                <div className="pt-2.5 border-t border-gray-200 flex items-center justify-between font-mono">
-                  <span className="text-gray-600 text-[13px]">বর্তমান স্থিতি:</span>
-                  <span className={`text-[17px] font-bold ${a.currentBalance < 0 ? 'text-red-600' : 'text-[#15803D]'}`}>
-                    {fmt(a.currentBalance)}
-                  </span>
+                {accType === 'BANK' && (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                    <div>
+                      <label className="block text-[13px] font-medium text-gray-700 mb-1">ব্যাংকের নাম</label>
+                      <input
+                        type="text"
+                        value={bankName}
+                        onChange={(e) => setBankName(e.target.value)}
+                        className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[13px] font-medium text-gray-700 mb-1">শাখা (Branch)</label>
+                      <input
+                        type="text"
+                        value={branch}
+                        onChange={(e) => setBranch(e.target.value)}
+                        placeholder="শাখার নাম"
+                        className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900"
+                      />
+                    </div>
+                  </div>
+                )}
+
+                <div className="flex justify-end gap-2.5 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => setShowAddAccount(false)}
+                    className="px-4 py-2 rounded-lg bg-gray-200 text-gray-800 text-[13px] font-semibold cursor-pointer min-h-[40px]"
+                  >
+                    বাতিল
+                  </button>
+                  <button
+                    type="submit"
+                    className="px-4 py-2 rounded-lg bg-[#1E5128] text-white text-[13px] font-bold cursor-pointer min-h-[40px]"
+                  >
+                    সংরক্ষণ করুন
+                  </button>
                 </div>
-              </div>
-            ))}
+              </form>
+            )}
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
+              {accounts.map((a) => (
+                <div
+                  key={a.id}
+                  className="p-4 rounded-xl bg-[#F8FAFC] border border-gray-200 space-y-2.5 shadow-xs"
+                >
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2.5">
+                      <div className="p-2.5 rounded-xl bg-white border border-gray-200 text-[#1E5128] shadow-xs">
+                        {a.accountType === 'CASH' ? <Wallet className="w-5 h-5" /> : <Landmark className="w-5 h-5" />}
+                      </div>
+                      <div>
+                        <div className="flex items-baseline gap-1.5">
+                          <h4 className="font-bold text-gray-900 text-[15px] leading-tight">{a.name}</h4>
+                          <span className="text-xs text-gray-400 font-mono font-normal">
+                            ({a.accountType === 'CASH' ? '1010' : '1030'})
+                          </span>
+                        </div>
+                        <p className="text-[12px] text-gray-500 mt-0.5">
+                          {a.bankName ? `${a.bankName} (${a.accountNumber || 'N/A'})` : (a.accountType === 'CASH' ? 'নগদ ক্যাশ তহবিল' : 'ব্যাংক হিসাব')}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="pt-2.5 border-t border-gray-200 flex items-center justify-between font-mono">
+                    <span className="text-gray-600 text-[13px]">বর্তমান স্থিতি:</span>
+                    <span className={`text-[17px] font-bold ${a.currentBalance < 0 ? 'text-red-600' : 'text-[#15803D]'}`}>
+                      {fmt(a.currentBalance)}
+                    </span>
+                  </div>
+
+                  {/* Requirement 1: Reconcile action button for each account */}
+                  <div className="pt-1 border-t border-gray-100">
+                    <button
+                      type="button"
+                      id={`btn-reconcile-${a.id}`}
+                      onClick={() => handleOpenReconciliation(a)}
+                      className="w-full py-1.5 px-3 bg-white hover:bg-emerald-50 text-emerald-800 hover:text-emerald-950 border border-emerald-300 hover:border-emerald-500 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 transition-all shadow-2xs cursor-pointer min-h-[36px]"
+                    >
+                      <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                      <span>মিলকরণ (Reconcile)</span>
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
-        </div>
+        )
       )}
 
       {/* ===================== TAB 2: CONTRA TRANSFERS ===================== */}
