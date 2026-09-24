@@ -185,7 +185,7 @@ export async function runTaskF7DurablePersistenceRequirementTests(): Promise<Ass
   const localAnimalPost = await db.animals.get(testAnimalId);
   assert(localAnimalPost !== undefined, 'Local animal was NOT deleted on sync failure');
   assert(localAnimalPost?.synced === false, 'Local animal remains synced: false for future retry');
-  assert(localAnimalPost?.tag === 'F7-COW-01' && localAnimalPost?.purchasePrice === 85000, 'Local animal fields are completely intact and uncorrupted');
+  assert(localAnimalPost?.tag === 'F7-COW-01' && (localAnimalPost as any)?.purchasePrice === 85000, 'Local animal fields are completely intact and uncorrupted');
 
   const localJournalPost = await db.journalEntries.get(testJournalId);
   assert(localJournalPost !== undefined, 'Local journal entry was NOT deleted on sync failure');

@@ -8,8 +8,8 @@
       "gender": "MALE",
       "status": "ACTIVE",
       "synced": false,
-      "updatedAt": "2026-09-24T11:16:53.973Z",
-      "syncedAt": "2026-09-24T11:16:53.981Z",
+      "updatedAt": "2026-09-24T11:21:49.143Z",
+      "syncedAt": "2026-09-24T11:21:49.247Z",
       "syncedBy": "atikurrahman00021@gmail.com"
     },
     "f7-test-cow-persistence": {
@@ -22,9 +22,9 @@
       "species": "CATTLE",
       "gender": "FEMALE",
       "synced": false,
-      "updatedAt": "2026-09-24T11:16:53.939Z",
+      "updatedAt": "2026-09-24T11:21:49.087Z",
       "version": 1,
-      "syncedAt": "2026-09-24T11:16:54.053Z",
+      "syncedAt": "2026-09-24T11:21:49.804Z",
       "syncedBy": "atikurrahman00021@gmail.com"
     },
     "animal_new_1790248518325": {
@@ -109,6 +109,56 @@
       "updatedAt": "2026-09-24T15:00:00Z",
       "syncedAt": "2026-09-24T11:16:53.845Z",
       "syncedBy": "atikurrahman00021@gmail.com"
+    },
+    "animal_new_1790248920571": {
+      "id": "animal_new_1790248920571",
+      "tagNumber": "COW-001",
+      "name": "Dairy Cow Alpha",
+      "category": "CATTLE",
+      "species": "COW",
+      "status": "ACTIVE",
+      "version": 1,
+      "createdAt": "2026-09-24T11:22:00.571Z",
+      "updatedAt": "2026-09-24T11:22:00.571Z",
+      "syncedAt": "2026-09-24T11:22:00.856Z",
+      "syncedBy": "atikurrahman00021@gmail.com"
+    },
+    "animal_ver_1790248922881": {
+      "id": "animal_ver_1790248922881",
+      "tagNumber": "COW-002",
+      "name": "Dairy Cow Beta Local v3",
+      "category": "CATTLE",
+      "species": "COW",
+      "status": "ACTIVE",
+      "version": 3,
+      "updatedAt": "2026-09-24T14:00:00Z",
+      "syncedAt": "2026-09-24T11:22:04.752Z",
+      "syncedBy": "atikurrahman00021@gmail.com"
+    },
+    "animal_sync_conflict_1790248930748": {
+      "id": "animal_sync_conflict_1790248930748",
+      "tagNumber": "COW-999",
+      "name": "Cloud Animal 15:00",
+      "category": "CATTLE",
+      "species": "COW",
+      "status": "ACTIVE",
+      "updatedAt": "2026-09-24T15:00:00Z",
+      "syncedAt": "2026-09-24T11:22:10.807Z",
+      "syncedBy": "atikurrahman00021@gmail.com"
+    },
+    "f8-data-preservation-cow": {
+      "id": "f8-data-preservation-cow",
+      "tag": "F8-COW-DATA-SAFE",
+      "species": "CATTLE",
+      "breed": "Sahiwal",
+      "gender": "FEMALE",
+      "status": "ACTIVE",
+      "purchasePrice": 95000,
+      "currentWeightKg": 450,
+      "updatedAt": "2026-09-24T11:24:10.909Z",
+      "version": 1,
+      "syncedAt": "2026-09-24T11:24:10.992Z",
+      "syncedBy": "atikurrahman00021@gmail.com"
     }
   },
   "journalEntries": {
@@ -136,9 +186,9 @@
         }
       ],
       "synced": false,
-      "updatedAt": "2026-09-24T11:16:53.939Z",
+      "updatedAt": "2026-09-24T11:21:49.087Z",
       "version": 1,
-      "syncedAt": "2026-09-24T11:16:54.128Z",
+      "syncedAt": "2026-09-24T11:21:49.973Z",
       "syncedBy": "atikurrahman00021@gmail.com"
     },
     "jnl_1790248527951": {
@@ -633,6 +683,30 @@
       "isReversed": true,
       "reversalReason": "Wrong party ledger selected",
       "reversalVoucherNumber": "REV-1790248613716"
+    },
+    "jnl_1790248930074": {
+      "id": "jnl_1790248930074",
+      "voucherNumber": "JV-1790248930074",
+      "date": "2026-09-20",
+      "totalDebit": 5000,
+      "totalCredit": 5000,
+      "lines": [
+        {
+          "accountCode": "6150",
+          "debit": 5000,
+          "credit": 0
+        },
+        {
+          "accountCode": "1010",
+          "debit": 0,
+          "credit": 5000
+        }
+      ],
+      "syncedAt": "2026-09-24T11:22:10.683Z",
+      "syncedBy": "atikurrahman00021@gmail.com",
+      "isReversed": true,
+      "reversalReason": "Wrong party ledger selected",
+      "reversalVoucherNumber": "REV-1790248930680"
     }
   },
   "purchases": {
@@ -644,9 +718,9 @@
       "totalAmount": 15000,
       "paidAmount": 15000,
       "synced": false,
-      "updatedAt": "2026-09-24T11:16:53.939Z",
+      "updatedAt": "2026-09-24T11:21:49.087Z",
       "version": 1,
-      "syncedAt": "2026-09-24T11:16:54.196Z",
+      "syncedAt": "2026-09-24T11:21:50.070Z",
       "syncedBy": "atikurrahman00021@gmail.com"
     },
     "pur_2963f48f-f88c-46dc-a25a-dc6f68d63700": {
@@ -753,9 +827,9 @@
       "paymentMethod": "CASH",
       "direction": "CUSTOMER_ADVANCE",
       "synced": false,
-      "updatedAt": "2026-09-24T11:16:53.939Z",
+      "updatedAt": "2026-09-24T11:21:49.087Z",
       "version": 1,
-      "syncedAt": "2026-09-24T11:16:54.275Z",
+      "syncedAt": "2026-09-24T11:21:50.155Z",
       "syncedBy": "atikurrahman00021@gmail.com"
     },
     "adv-cust-101": {
@@ -979,6 +1053,14 @@
       "updatedAt": "2026-09-24T18:00:00Z",
       "syncedAt": "2026-09-24T11:16:53.048Z",
       "syncedBy": "atikurrahman00021@gmail.com"
+    },
+    "reminder_1790248926512": {
+      "id": "reminder_1790248926512",
+      "title": "Vaccination Alert",
+      "name": "Reminder Advanced Cloud 18:00",
+      "updatedAt": "2026-09-24T18:00:00Z",
+      "syncedAt": "2026-09-24T11:22:10.009Z",
+      "syncedBy": "atikurrahman00021@gmail.com"
     }
   },
   "sales": {
@@ -1170,6 +1252,21 @@
       ],
       "syncedAt": "2026-09-24T11:16:53.466Z",
       "syncedBy": "atikurrahman00021@gmail.com"
+    },
+    "sale_1790248930314": {
+      "id": "sale_1790248930314",
+      "invoiceNumber": "INV-1790248930314",
+      "date": "2026-09-20",
+      "totalAmount": 10000,
+      "items": [
+        {
+          "name": "Milk",
+          "quantity": 100,
+          "price": 100
+        }
+      ],
+      "syncedAt": "2026-09-24T11:22:10.427Z",
+      "syncedBy": "atikurrahman00021@gmail.com"
     }
   },
   "payments": {
@@ -1200,6 +1297,14 @@
       "amount": 4500,
       "date": "2026-09-20",
       "syncedAt": "2026-09-24T11:16:53.647Z",
+      "syncedBy": "atikurrahman00021@gmail.com"
+    },
+    "pay_1790248930501": {
+      "id": "pay_1790248930501",
+      "paymentNumber": "PAY-1790248930501",
+      "amount": 4500,
+      "date": "2026-09-20",
+      "syncedAt": "2026-09-24T11:22:10.614Z",
       "syncedBy": "atikurrahman00021@gmail.com"
     }
   },

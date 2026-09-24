@@ -478,7 +478,7 @@ export async function runTaskF6VersionConflictProtectionTests(): Promise<Asserti
     // Verify local IndexedDB was updated to cloud's newer state and marked synced: true
     const localAfterSync = await db.animals.get(conflictAnimalId);
     assert(
-      localAfterSync?.name === 'Cloud Animal 15:00' && localAfterSync?.synced === true,
+      (localAfterSync as any)?.name === 'Cloud Animal 15:00' && localAfterSync?.synced === true,
       'When cloud data wins, local IndexedDB record safely updated to cloud state and marked synced: true'
     );
 

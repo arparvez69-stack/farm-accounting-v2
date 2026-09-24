@@ -154,13 +154,149 @@ try {
   console.warn('[The Goated Farm] Admin Firestore init note:', err.message);
 }
 
-// Session tokens for persistent owner access
-const SESSION_SECRET = process.env.SESSION_SECRET || 'the-goated-farm-session-secret-salt-2025';
+// ==========================================
+// Hardened Owner Session-Token Authentication (F8)
+// ==========================================
 
+const INSECURE_DEFAULT_SECRETS = [
+  'the-goated-farm-session-secret-salt-2025',
+  'the-goated-farm-session-secret',
+  'change-this-to-a-secure-secret-key',
+  'session-secret',
+  'secret',
+  'password',
+  'default',
+  '12345678901234567890123456789012',
+  'abcdefghijklmnopqrstuvwxyz123456'
+];
+
+/**
+ * Validates whether a given session secret meets strict cryptographic strength:
+ * - Must be non-empty string
+ * - Length >= 32 characters (256 bits minimum)
+ * - Must not match or contain known insecure default strings
+ * - Must have adequate character entropy (at least 8 distinct characters)
+ */
+export function isStrongSessionSecret(secret: string | undefined | null): boolean {
+  if (!secret || typeof secret !== 'string') return false;
+  const trimmed = secret.trim();
+  if (trimmed.length < 32) return false;
+
+  const lower = trimmed.toLowerCase();
+  for (const insecure of INSECURE_DEFAULT_SECRETS) {
+    if (lower === insecure || lower.includes(insecure)) {
+      return false;
+    }
+  }
+
+  const uniqueChars = new Set(trimmed);
+  if (uniqueChars.size < 8) return false;
+
+  return true;
+}
+
+// Scoped test override mechanism
+let testSecretOverride: string | null | undefined = undefined;
+
+export function setSessionSecretForTest(secret: string | null | undefined): void {
+  testSecretOverride = secret;
+}
+
+export function getSessionSecretForTest(): string | null | undefined {
+  return testSecretOverride;
+}
+
+/**
+ * Resolves the active session secret.
+ * In production: strictly requires process.env.SESSION_SECRET to be a validated strong secret.
+ * In non-production: reads process.env.SESSION_SECRET or a secured durable secret file in data/.session_secret.
+ * Returns null if no valid strong secret is configured.
+ */
+export function resolveSessionSecret(): string | null {
+  if (testSecretOverride !== undefined) {
+    if (testSecretOverride === null || !isStrongSessionSecret(testSecretOverride)) {
+      return null;
+    }
+    return testSecretOverride;
+  }
+
+  const envSecret = process.env.SESSION_SECRET?.trim();
+  if (isStrongSessionSecret(envSecret)) {
+    return envSecret!;
+  }
+
+  // Requirement 1: NEVER use a hardcoded or fallback secret in production!
+  if (process.env.NODE_ENV === 'production') {
+    return null;
+  }
+
+  // For non-production development environments, read or generate a durable random 256-bit secret in data/.session_secret
+  try {
+    const durableSecretPath = path.join(process.cwd(), 'data', '.session_secret');
+    if (fs.existsSync(durableSecretPath)) {
+      const stored = fs.readFileSync(durableSecretPath, 'utf8').trim();
+      if (isStrongSessionSecret(stored)) return stored;
+    }
+    const dataDir = path.dirname(durableSecretPath);
+    if (!fs.existsSync(dataDir)) {
+      fs.mkdirSync(dataDir, { recursive: true });
+    }
+    const generated = crypto.randomBytes(32).toString('hex');
+    fs.writeFileSync(durableSecretPath, generated, { mode: 0o600, encoding: 'utf8' });
+    return generated;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Refuse to start secure owner-session authentication if a strong secret is not configured.
+ */
+export function assertStrongSecretConfigured(): void {
+  const secret = resolveSessionSecret();
+  if (!secret) {
+    throw new Error(
+      'FATAL: Refusing to start secure owner-session authentication: A strong SESSION_SECRET (minimum 32 characters, high entropy, no defaults) is not configured.'
+    );
+  }
+}
+
+// Requirement 1 & 2: In production, immediately fail server startup if strong secret is not configured
+if (process.env.NODE_ENV === 'production') {
+  assertStrongSecretConfigured();
+}
+
+/**
+ * Creates a cryptographically unpredictable session token for an approved owner.
+ * Contains:
+ * - email: normalized owner email
+ * - jti: 256-bit cryptographically secure random identifier (unpredictability)
+ * - iat: issue timestamp
+ * - exp: expiration timestamp (30 days)
+ * Signed with HMAC-SHA256 using the configured strong secret.
+ */
 export function createSessionToken(email: string): string {
-  const payload = Buffer.from(JSON.stringify({ email: email.toLowerCase(), exp: Date.now() + 30 * 24 * 60 * 60 * 1000 })).toString('base64url');
-  const signature = crypto.createHmac('sha256', SESSION_SECRET).update(payload).digest('base64url');
-  return `${payload}.${signature}`;
+  const secret = resolveSessionSecret();
+  if (!secret) {
+    throw new Error('Refusing to issue owner session token: strong SESSION_SECRET is not configured or fails security policy.');
+  }
+
+  const normalizedEmail = email.toLowerCase().trim();
+  const approvedEmails = getApprovedOwnerEmails();
+  if (approvedEmails.length > 0 && !approvedEmails.includes(normalizedEmail)) {
+    throw new Error(`Refusing to issue owner session token: ${email} is not in approved owner allow-list.`);
+  }
+
+  const payloadObj = {
+    email: normalizedEmail,
+    jti: crypto.randomBytes(32).toString('base64url'),
+    iat: Date.now(),
+    exp: Date.now() + 30 * 24 * 60 * 60 * 1000
+  };
+
+  const payloadB64 = Buffer.from(JSON.stringify(payloadObj)).toString('base64url');
+  const signature = crypto.createHmac('sha256', secret).update(payloadB64).digest('base64url');
+  return `${payloadB64}.${signature}`;
 }
 
 // Chart of accounts cache for sync validation
@@ -427,23 +563,57 @@ export function checkClosedPeriodViolation(
   return { isClosed: false };
 }
 
-function verifySessionToken(token: string): { email: string } | null {
+export function verifySessionToken(token: string): { email: string } | null {
   try {
+    const secret = resolveSessionSecret();
+    if (!secret) {
+      return null;
+    }
+    if (!token || typeof token !== 'string') return null;
+
     const parts = token.split('.');
     if (parts.length !== 2) return null;
     const [payloadB64, signature] = parts;
-    const expectedSig = crypto.createHmac('sha256', SESSION_SECRET).update(payloadB64).digest('base64url');
-    if (signature !== expectedSig) return null;
-    const payload = JSON.parse(Buffer.from(payloadB64, 'base64url').toString('utf8'));
-    if (payload.exp && Date.now() > payload.exp) return null;
-    const approvedEmails = getApprovedOwnerEmails();
-    if (payload.email && (approvedEmails.length === 0 || approvedEmails.includes(payload.email.toLowerCase()))) {
-      return { email: payload.email.toLowerCase() };
+    if (!payloadB64 || !signature) return null;
+
+    // Cryptographic signature check with timing-safe comparison to prevent timing attacks
+    const expectedSig = crypto.createHmac('sha256', secret).update(payloadB64).digest('base64url');
+    const sigBuf = Buffer.from(signature);
+    const expBuf = Buffer.from(expectedSig);
+    if (sigBuf.length !== expBuf.length || !crypto.timingSafeEqual(sigBuf, expBuf)) {
+      return null;
     }
+
+    const payload = JSON.parse(Buffer.from(payloadB64, 'base64url').toString('utf8'));
+    if (!payload || typeof payload !== 'object') return null;
+
+    // 1. Expiration check (Requirement 4)
+    if (!payload.exp || typeof payload.exp !== 'number' || Date.now() > payload.exp) {
+      return null;
+    }
+
+    // 2. Issuance timestamp validation (clock skew tolerance <= 60s)
+    if (payload.iat && typeof payload.iat === 'number' && payload.iat > Date.now() + 60000) {
+      return null;
+    }
+
+    // 3. Unpredictable token nonce check (Requirement 3)
+    if (!payload.jti || typeof payload.jti !== 'string' || payload.jti.length < 16) {
+      return null;
+    }
+
+    // 4. Owner email validation and allow-list checking (Requirement 5)
+    if (!payload.email || typeof payload.email !== 'string') return null;
+    const normalizedEmail = payload.email.toLowerCase().trim();
+    const approvedEmails = getApprovedOwnerEmails();
+    if (approvedEmails.length > 0 && !approvedEmails.includes(normalizedEmail)) {
+      return null;
+    }
+
+    return { email: normalizedEmail };
   } catch {
     return null;
   }
-  return null;
 }
 
 /**
