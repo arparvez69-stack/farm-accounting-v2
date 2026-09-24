@@ -1,10 +1,11 @@
 import 'fake-indexeddb/auto';
 import { AgroDatabase } from '../db/indexedDb';
-import { createFullJsonBackup, restoreFromJsonBackup } from '../services/exportService';
+import { createFullJsonBackup, restoreFromJsonBackup, safeTableToArray } from '../services/exportService';
 
 export async function runFullJsonBackupCoverageTests() {
   console.log('\n========================================================');
-  console.log('STARTING COMPLETE JSON BACKUP COVERAGE VERIFICATION');
+  console.log('TASK F5 TEST SUITE: COMPLETE JSON BACKUP PREVENTS FALSE-SUCCESS');
+  console.log('Validating Full Dexie Table Coverage, Clear Failure On Read Error & Zero-Record Validity');
   console.log('========================================================');
 
   let passed = 0;
@@ -245,7 +246,18 @@ export async function runFullJsonBackupCoverageTests() {
     );
   }
 
-  console.log('\n--- TEST 4: Verify Exact Record & Field Preservation (Zero Mutation) ---');
+  console.log('\n--- TEST 4: Zero-Record Tables Are Still Valid When Successfully Read ---');
+  // Check empty tables like 'ponds', 'plots', 'loans', etc. which have 0 records in testDb
+  const zeroRecordTables = ['ponds', 'plots', 'loans', 'investors', 'bankTransfers', 'auditLogs'];
+  for (const zeroTable of zeroRecordTables) {
+    const dbCount = await (testDb as any)[zeroTable].count();
+    assert(dbCount === 0, `Table "${zeroTable}" in test DB has 0 records`);
+    const tableData = await safeTableToArray(testDb, zeroTable);
+    assert(Array.isArray(tableData) && tableData.length === 0, `safeTableToArray on 0-record table "${zeroTable}" returns empty array []`);
+    assert(Array.isArray(backupData[zeroTable]) && backupData[zeroTable].length === 0, `0-record table "${zeroTable}" is valid and present in backup as []`);
+  }
+
+  console.log('\n--- TEST 5: Verify Exact Record & Field Preservation (Zero Mutation) ---');
   // Check salesReturns record preservation
   const srInDb = await testDb.salesReturns.get('sr_test_001');
   const srInBackup = backupData.salesReturns.find((r: any) => r.id === 'sr_test_001');
@@ -276,8 +288,8 @@ export async function runFullJsonBackupCoverageTests() {
   assert(pmtInBackup?.idempotencyKey === 'idemp_pmt_001', 'payments idempotencyKey preserved exactly');
   assert(pmtInBackup?.journalEntryId === 'je_pmt_001', 'payments journalEntryId preserved exactly');
 
-  console.log('\n--- TEST 5: Verify Clear Failure When a Persistent Table Cannot Be Read ---');
-  // Scenario A: When a table's toArray throws an error
+  console.log('\n--- TEST 6: Verify Clear Failure When a Persistent Table Cannot Be Read ---');
+  // Scenario A: When a table's toArray throws an error on salesReturns
   const brokenDb = new AgroDatabase();
   (brokenDb as any).name = `AgroBrokenTestDb_${Date.now()}`;
   await brokenDb.open();
@@ -300,7 +312,53 @@ export async function runFullJsonBackupCoverageTests() {
     `Failure message identifies the failing table "salesReturns" (actual: "${failureErrorMessageA}")`
   );
 
-  // Scenario B: When a persistent table is completely missing on the DB
+  // Scenario B: When a table's toArray throws an error on accounts
+  const brokenDbAccounts = new AgroDatabase();
+  (brokenDbAccounts as any).name = `AgroBrokenAccounts_${Date.now()}`;
+  await brokenDbAccounts.open();
+  (brokenDbAccounts.accounts as any).toArray = async () => {
+    throw new Error('Database locked or read error on accounts table');
+  };
+
+  let failureCaughtAccounts = false;
+  let failureErrorMessageAccounts = '';
+  try {
+    await createFullJsonBackup(brokenDbAccounts);
+  } catch (err: any) {
+    failureCaughtAccounts = true;
+    failureErrorMessageAccounts = err.message;
+  }
+
+  assert(failureCaughtAccounts, 'createFullJsonBackup failed when "accounts" table threw a read error');
+  assert(
+    failureErrorMessageAccounts.includes('accounts'),
+    `Failure message identifies the failing table "accounts" (actual: "${failureErrorMessageAccounts}")`
+  );
+
+  // Scenario C: When a table's toArray throws an error on advancePayments
+  const brokenDbAdv = new AgroDatabase();
+  (brokenDbAdv as any).name = `AgroBrokenAdv_${Date.now()}`;
+  await brokenDbAdv.open();
+  (brokenDbAdv.advancePayments as any).toArray = async () => {
+    throw new Error('Corrupted block on advancePayments table');
+  };
+
+  let failureCaughtAdv = false;
+  let failureErrorMessageAdv = '';
+  try {
+    await createFullJsonBackup(brokenDbAdv);
+  } catch (err: any) {
+    failureCaughtAdv = true;
+    failureErrorMessageAdv = err.message;
+  }
+
+  assert(failureCaughtAdv, 'createFullJsonBackup failed when "advancePayments" table threw a read error');
+  assert(
+    failureErrorMessageAdv.includes('advancePayments'),
+    `Failure message identifies the failing table "advancePayments" (actual: "${failureErrorMessageAdv}")`
+  );
+
+  // Scenario D: When a persistent table is completely missing on the DB
   const incompleteDb: any = {
     tables: [{ name: 'accounts', toArray: async () => [] }]
   };
@@ -318,7 +376,7 @@ export async function runFullJsonBackupCoverageTests() {
     `Failure message identifies the missing table "systemConfig" (actual: "${failureErrorMessageB}")`
   );
 
-  console.log('\n--- TEST 6: Round-Trip Restore Verification ---');
+  console.log('\n--- TEST 7: Round-Trip Restore Verification ---');
   const restoreDbName = `AgroRestoreTestDb_${Date.now()}`;
   const restoreDb = new AgroDatabase();
   (restoreDb as any).name = restoreDbName;

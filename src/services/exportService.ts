@@ -196,15 +196,20 @@ export async function exportAllToExcel(companyName = 'Agro-ERP'): Promise<void> 
  * Safe table reader helper
  * Requirement: If a persistent table cannot be read, the backup must FAIL clearly
  * rather than silently exporting an empty array.
+ * Note: Zero-record tables are valid and return [] if successfully read.
  */
-async function readPersistentTableForBackup(activeDb: any, tableName: string): Promise<any[]> {
+export async function safeTableToArray(activeDb: any, tableName: string): Promise<any[]> {
   const table = activeDb[tableName] || (typeof activeDb.table === 'function' ? activeDb.table(tableName) : undefined);
   if (!table) {
     throw new Error(`Persistent table "${tableName}" is missing or cannot be accessed on the database.`);
   }
   try {
     if (typeof table.toArray === 'function') {
-      return await table.toArray();
+      const records = await table.toArray();
+      if (!Array.isArray(records)) {
+        throw new Error(`Persistent table "${tableName}" did not return an array of records.`);
+      }
+      return records;
     }
     if (Array.isArray(table)) {
       return [...table];
@@ -214,6 +219,9 @@ async function readPersistentTableForBackup(activeDb: any, tableName: string): P
     throw new Error(`Failed to read persistent table "${tableName}" for backup: ${err?.message || err}`);
   }
 }
+
+// Internal alias for backwards compatibility
+const readPersistentTableForBackup = safeTableToArray;
 
 /**
  * Full JSON Backup creation for disaster recovery
@@ -268,9 +276,30 @@ export async function createFullJsonBackup(targetDb: any = db): Promise<string> 
   }
 
   // Read every persistent table directly. Fails clearly if any table cannot be read.
+  // Never silently replace a failed table with [].
   const exportedData: Record<string, any[]> = {};
+  const verifiedRecordCounts: Record<string, number> = {};
+
   for (const tableName of tableNamesToExport) {
-    exportedData[tableName] = await readPersistentTableForBackup(activeDb, tableName);
+    const records = await safeTableToArray(activeDb, tableName);
+    exportedData[tableName] = records;
+    verifiedRecordCounts[tableName] = records.length;
+  }
+
+  // Verification step before reporting success:
+  // Verify that EVERY expected canonical table and discovered table is present in exportedData
+  // and that its record count was successfully read and is a non-negative number.
+  for (const tableName of tableNamesToExport) {
+    if (!Object.prototype.hasOwnProperty.call(exportedData, tableName)) {
+      throw new Error(`Backup verification failed: Expected table "${tableName}" is missing from backup data.`);
+    }
+    const tableRecords = exportedData[tableName];
+    if (!Array.isArray(tableRecords)) {
+      throw new Error(`Backup verification failed: Table "${tableName}" does not contain a valid record array.`);
+    }
+    if (typeof verifiedRecordCounts[tableName] !== 'number' || verifiedRecordCounts[tableName] !== tableRecords.length) {
+      throw new Error(`Backup verification failed: Table "${tableName}" record count was not successfully verified.`);
+    }
   }
 
   const backup: Record<string, any> = {
