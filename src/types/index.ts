@@ -413,6 +413,15 @@ export interface PurchaseItem {
   unitPrice?: number;
   total?: number;
   lineTotal?: number;
+  vatRatePercent?: number;
+  vatAmount?: number;
+}
+
+export interface PurchaseLineInput {
+  item: InventoryItem;
+  quantity: number;
+  unitPrice: number;
+  vatRatePercent?: number;
 }
 
 export interface Purchase {
@@ -454,6 +463,15 @@ export interface SaleItem {
   total?: number;
   lineTotal?: number;
   cogsAmount?: number;
+  vatRatePercent?: number;
+  vatAmount?: number;
+}
+
+export interface SaleLineInput {
+  item: InventoryItem;
+  quantity: number;
+  unitPrice: number;
+  vatRatePercent?: number;
 }
 
 export interface Sale {
@@ -581,8 +599,10 @@ export interface AdvancePayment {
   partyName?: string;
   amount: number;
   direction: 'RECEIVED' | 'PAID'; // RECEIVED from customer / PAID to supplier
-  remainingBalance: number;
-  remainingUnappliedBalance: number; // remaining unapplied balance
+  remainingBalance?: number;
+  remainingUnappliedBalance?: number; // remaining unapplied balance
+  appliedAmount?: number;
+  remainingAmount?: number;
   paymentMethod: 'CASH' | 'BANK';
   cashBankAccountId?: string;
   bankAccountId?: string;
@@ -598,7 +618,7 @@ export interface AdvancePayment {
     journalEntryId?: string;
     date: string;
   }>;
-  status?: 'ACTIVE' | 'EXHAUSTED' | 'CANCELLED';
+  status?: 'ACTIVE' | 'EXHAUSTED' | 'CANCELLED' | 'FULLY_APPLIED' | 'PARTIALLY_APPLIED';
   notes?: string;
   createdBy?: string;
   idempotencyKey?: string;

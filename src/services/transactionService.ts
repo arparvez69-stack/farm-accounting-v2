@@ -46,7 +46,9 @@ import {
   PurchaseReturnItem,
   ReturnRefundMethod,
   AdvancePayment,
-  AdvanceDirection
+  AdvanceDirection,
+  SaleLineInput,
+  PurchaseLineInput
 } from '../types';
 import { generateAmortizationSchedule } from '../accounting/amortizationService';
 
@@ -55,6 +57,66 @@ const activeSalesReturnLocks = new Set<string>();
 const activePurchaseLocks = new Set<string>();
 const activePurchaseReturnLocks = new Set<string>();
 const activeAdvanceLocks = new Set<string>();
+
+let _inMemoryVatRegistered: boolean | null = null;
+
+export function setVatRegisteredSetting(val: boolean): void {
+  _inMemoryVatRegistered = val;
+  if (typeof localStorage !== 'undefined') {
+    try {
+      localStorage.setItem('goted_vat_registered', val ? 'true' : 'false');
+    } catch {
+      // ignore
+    }
+  }
+}
+
+export function isVatRegisteredSetting(override?: boolean): boolean {
+  if (override !== undefined) return Boolean(override);
+  if (typeof localStorage !== 'undefined') {
+    try {
+      const val = localStorage.getItem('goted_vat_registered');
+      if (val !== null) return val === 'true';
+    } catch {
+      // ignore
+    }
+  }
+  if (typeof (globalThis as any).localStorage !== 'undefined') {
+    try {
+      const val = (globalThis as any).localStorage.getItem('goted_vat_registered');
+      if (val !== null) return val === 'true';
+    } catch {
+      // ignore
+    }
+  }
+  return _inMemoryVatRegistered === true;
+}
+
+/**
+ * Ensure canonical Tax & VAT Payable account (2030) exists in account list and database
+ */
+async function ensureVatAccount(accounts: Account[], dbInstance?: any): Promise<void> {
+  if (!accounts.some((a) => a.code === CANONICAL_ACCOUNTS.TAX_VAT_PAYABLE)) {
+    const acc2030: Account = {
+      id: 'acc_2030',
+      code: CANONICAL_ACCOUNTS.TAX_VAT_PAYABLE,
+      nameBn: 'কর ও ভ্যাট প্রদেয় (Tax & VAT Payable)',
+      nameEn: 'Tax & VAT Payable',
+      accountClass: 'LIABILITY',
+      normalBalance: 'CREDIT',
+      isSystem: true,
+      description: 'ভ্যাট ও কর সংক্রান্ত দায় হিসাব (Output VAT & Input VAT)'
+    };
+    accounts.push(acc2030);
+    if (dbInstance && dbInstance.accounts) {
+      try {
+        await dbInstance.accounts.put(acc2030);
+      } catch {
+        // ignore
+      }
+    }
+  }
+}
 
 /**
  * Ensure canonical advance accounts (2040 and 1070) exist in account list and database
@@ -717,9 +779,11 @@ export async function executeSaleTransaction(
     idempotencyKey?: string;
     invoiceNumber?: string;
     customer: Party;
-    item: InventoryItem;
-    quantity: number;
-    unitPrice: number;
+    item?: InventoryItem;
+    quantity?: number;
+    unitPrice?: number;
+    vatRatePercent?: number;
+    items?: SaleLineInput[];
     discount?: number;
     paymentMethod: 'CASH' | 'BANK' | 'CREDIT';
     bankAccountId?: string;
@@ -731,6 +795,7 @@ export async function executeSaleTransaction(
     advanceAmount?: number;
     advanceAppliedAmount?: number;
     applyAdvanceAmount?: number;
+    isVatRegistered?: boolean;
   },
   dbInstance: any = db
 ): Promise<{ sale: Sale; journalEntryId: string; advanceJournalEntryId?: string }> {
@@ -739,6 +804,8 @@ export async function executeSaleTransaction(
     item,
     quantity,
     unitPrice,
+    vatRatePercent,
+    items: paramItems,
     discount = 0,
     paymentMethod,
     bankAccountId,
@@ -747,8 +814,23 @@ export async function executeSaleTransaction(
     idempotencyKey,
     id: paramId,
     saleId: paramSaleId,
-    invoiceNumber: paramInvoiceNumber
+    invoiceNumber: paramInvoiceNumber,
+    isVatRegistered
   } = params;
+
+  const lineInputs: SaleLineInput[] = paramItems && paramItems.length > 0
+    ? paramItems
+    : item && quantity !== undefined && unitPrice !== undefined
+    ? [{ item, quantity, unitPrice, vatRatePercent }]
+    : [];
+
+  if (lineInputs.length === 0) {
+    throw new Error('বিক্রয় পণ্যের বিবরণ দেওয়া হয়নি (No items provided in sale transaction).');
+  }
+
+  const primaryItem = lineInputs[0].item;
+  const primaryQty = lineInputs[0].quantity;
+  const primaryPrice = lineInputs[0].unitPrice;
 
   const targetSaleId = paramSaleId || paramId;
   const lockKey = idempotencyKey
@@ -757,7 +839,7 @@ export async function executeSaleTransaction(
     ? `sale_id_${targetSaleId}`
     : paramInvoiceNumber
     ? `sale_inv_${paramInvoiceNumber}`
-    : `sale_${customer?.id || ''}_${item?.id || ''}_${quantity}_${unitPrice}_${paymentMethod}_${date || ''}`;
+    : `sale_${customer?.id || ''}_${primaryItem?.id || ''}_${primaryQty}_${primaryPrice}_${paymentMethod}_${date || ''}`;
 
   if (activeSaleLocks.has(lockKey)) {
     throw new Error('এই বিক্রয় লেনদেনটি বর্তমানে প্রক্রিয়াধীন রয়েছে। ডুপ্লিকেট পোস্টিং প্রতিরোধ করা হয়েছে (Duplicate sale prevented)।');
@@ -821,28 +903,80 @@ export async function executeSaleTransaction(
           }
         }
 
-        // Re-fetch fresh item state inside transaction
-        const freshItem = await dbInstance.inventoryItems.get(item.id);
-        if (!freshItem) {
-          throw new Error(`Item ${item.id} not found.`);
+        const isVatActive = isVatRegisteredSetting(isVatRegistered);
+
+        interface ProcessedSaleLine {
+          freshItem: InventoryItem;
+          quantity: number;
+          unitPrice: number;
+          subtotal: number;
+          vatRatePercent: number;
+          vatAmount: number;
+          cogsAmount: number;
+          revenueCode: string;
+          cogsCode: string;
+          inventoryAssetCode: string;
         }
 
-        if (freshItem.currentStock < quantity) {
-          throw new Error(
-            `Insufficient stock for "${freshItem.nameBn}". Requested: ${quantity} ${freshItem.unit}, Available: ${freshItem.currentStock} ${freshItem.unit}.`
-          );
+        const processedLines: ProcessedSaleLine[] = [];
+        let totalSubtotal = 0;
+        let totalVat = 0;
+        let totalCogs = 0;
+
+        for (const line of lineInputs) {
+          if (!line.item || !line.item.id) {
+            throw new Error('বিক্রয় পণ্যের বিবরণ সঠিক নয় (Item missing in sale line).');
+          }
+          const freshItem = await dbInstance.inventoryItems.get(line.item.id);
+          if (!freshItem) {
+            throw new Error(`Item ${line.item.id} not found.`);
+          }
+          if (freshItem.currentStock < line.quantity) {
+            throw new Error(
+              `Insufficient stock for "${freshItem.nameBn}". Requested: ${line.quantity} ${freshItem.unit}, Available: ${freshItem.currentStock} ${freshItem.unit}.`
+            );
+          }
+
+          const lineSubtotal = Math.round(line.quantity * line.unitPrice * 100) / 100;
+          const lineVatRate = isVatActive && line.vatRatePercent && line.vatRatePercent > 0 ? Number(line.vatRatePercent) : 0;
+          const lineVat = lineVatRate > 0 ? Math.round(lineSubtotal * (lineVatRate / 100) * 100) / 100 : 0;
+          const lineCogs = Math.round(line.quantity * (freshItem.avgCostPrice || 0) * 100) / 100;
+
+          const { revenueCode, cogsCode } = getRevenueAndCogsAccounts(freshItem);
+          const inventoryAssetCode = getInventoryAssetAccount(freshItem.category);
+
+          processedLines.push({
+            freshItem,
+            quantity: line.quantity,
+            unitPrice: line.unitPrice,
+            subtotal: lineSubtotal,
+            vatRatePercent: lineVatRate,
+            vatAmount: lineVat,
+            cogsAmount: lineCogs,
+            revenueCode,
+            cogsCode,
+            inventoryAssetCode
+          });
+
+          totalSubtotal += lineSubtotal;
+          totalVat += lineVat;
+          totalCogs += lineCogs;
         }
 
-        const subtotal = Math.round(quantity * unitPrice * 100) / 100;
-        const validDiscount = Math.min(subtotal, Math.max(0, Math.round((discount || 0) * 100) / 100));
-        const totalAmount = Math.max(0, Math.round((subtotal - validDiscount) * 100) / 100);
-        const totalCogs = Math.round(quantity * (freshItem.avgCostPrice || 0) * 100) / 100;
+        totalSubtotal = Math.round(totalSubtotal * 100) / 100;
+        totalVat = Math.round(totalVat * 100) / 100;
+        totalCogs = Math.round(totalCogs * 100) / 100;
+
+        const subtotal = totalSubtotal;
+        const validDiscount = Math.min(totalSubtotal, Math.max(0, Math.round((discount || 0) * 100) / 100));
+        const netRevenue = Math.max(0, Math.round((totalSubtotal - validDiscount) * 100) / 100);
+        const totalAmount = Math.max(0, Math.round((netRevenue + totalVat) * 100) / 100);
 
         if (totalAmount <= 0) {
           throw new Error('Sale total amount must be strictly greater than 0.');
         }
 
-        // 4. Duplicate prevention for identical rapid retry/resubmission (same customer, item, quantity, unit price, date, payment method)
+        // 4. Duplicate prevention for identical rapid retry/resubmission
         const now = Date.now();
         const existingSales = await dbInstance.sales
           .filter((s: any) => s.customerId === customer.id && s.date === dateStr && s.paymentMethod === paymentMethod)
@@ -850,7 +984,7 @@ export async function executeSaleTransaction(
 
         const isDuplicateRecent = existingSales.some((s: any) => {
           const hasMatchingItem = (s.items || []).some(
-            (it: any) => it.itemId === item.id && Math.abs(it.quantity - quantity) < 0.0001 && Math.abs((it.unitPrice || 0) - unitPrice) < 0.01
+            (it: any) => it.itemId === primaryItem.id && Math.abs(it.quantity - primaryQty) < 0.0001 && Math.abs((it.unitPrice || 0) - primaryPrice) < 0.01
           );
           if (!hasMatchingItem) return false;
           if (Math.abs((s.totalAmount || 0) - totalAmount) > 0.01) return false;
@@ -938,8 +1072,6 @@ export async function executeSaleTransaction(
         // Cash sale -> 1010 Cash
         // Bank sale -> 1030 Bank
         const paymentAccountCode = getPaymentAccount(paymentMethod, 'SALE');
-        const { revenueCode, cogsCode } = getRevenueAndCogsAccounts(freshItem);
-        const inventoryAssetCode = getInventoryAssetAccount(freshItem.category);
 
         const requiredCashBankAmount = Math.max(0, Math.round((totalAmount - appliedAdvanceAmount) * 100) / 100);
 
@@ -976,6 +1108,7 @@ export async function executeSaleTransaction(
 
         const accounts = await dbInstance.accounts.toArray();
         await ensureAdvanceAccounts(accounts, dbInstance);
+        await ensureVatAccount(accounts, dbInstance);
 
         const journalLines: JournalLine[] = [];
         if (paymentMethod === 'CREDIT') {
@@ -1010,36 +1143,73 @@ export async function executeSaleTransaction(
           }
         }
 
-        journalLines.push({
-          accountId: revenueCode,
-          accountCode: revenueCode,
-          accountName: 'পণ্য বিক্রয় রাজস্ব (Sales Revenue)',
-          debit: 0,
-          credit: totalAmount,
-          memo: `${freshItem.nameBn} বিক্রয়${validDiscount > 0 ? ` (মূল্যছাড়: ৳${validDiscount})` : ''}`
-        });
+        // Post revenue lines (pro-rating discount if any)
+        let allocatedRevenue = 0;
+        for (let i = 0; i < processedLines.length; i++) {
+          const line = processedLines[i];
+          let lineNetRevenue: number;
+          if (i === processedLines.length - 1) {
+            lineNetRevenue = Math.max(0, Math.round((netRevenue - allocatedRevenue) * 100) / 100);
+          } else {
+            lineNetRevenue = totalSubtotal > 0
+              ? Math.round((line.subtotal - (validDiscount * (line.subtotal / totalSubtotal))) * 100) / 100
+              : 0;
+            allocatedRevenue += lineNetRevenue;
+          }
+
+          journalLines.push({
+            accountId: line.revenueCode,
+            accountCode: line.revenueCode,
+            accountName: accounts.find((a: any) => a.code === line.revenueCode)?.nameBn || 'পণ্য বিক্রয় রাজস্ব (Sales Revenue)',
+            debit: 0,
+            credit: lineNetRevenue,
+            memo: `${line.freshItem.nameBn} বিক্রয়${validDiscount > 0 ? ` (মূল্যছাড়: ৳${validDiscount})` : ''}`
+          });
+        }
+
+        // Output VAT lines (Requirement 3: "Post the VAT portion of each line as its own journal line (Credit Output VAT for a sale, Debit Input VAT for a purchase), separate from that line's revenue/COGS or inventory posting. Debit must equal Credit on the whole voucher including VAT lines.")
+        if (isVatActive) {
+          for (const line of processedLines) {
+            if (line.vatAmount > 0) {
+              journalLines.push({
+                accountId: CANONICAL_ACCOUNTS.TAX_VAT_PAYABLE,
+                accountCode: CANONICAL_ACCOUNTS.TAX_VAT_PAYABLE,
+                accountName: accounts.find((a: any) => a.code === CANONICAL_ACCOUNTS.TAX_VAT_PAYABLE)?.nameBn || 'কর ও ভ্যাট প্রদেয় (Tax & VAT Payable)',
+                debit: 0,
+                credit: line.vatAmount,
+                memo: `আউটপুট ভ্যাট (Output VAT): ${line.freshItem.nameBn} (${line.vatRatePercent}%)`
+              });
+            }
+          }
+        }
 
         // COGS & Inventory Asset movement
-        if (totalCogs > 0) {
-          journalLines.push(
-            {
-              accountId: cogsCode,
-              accountCode: cogsCode,
-              accountName: 'বিক্রিত পণ্যের উৎপাদন ব্যয় (COGS)',
-              debit: totalCogs,
-              credit: 0,
-              memo: 'COGS স্বীকৃতি'
-            },
-            {
-              accountId: inventoryAssetCode,
-              accountCode: inventoryAssetCode,
-              accountName: accounts.find((a) => a.code === inventoryAssetCode)?.nameBn || getInventoryAccountDetails(freshItem.category).nameBn,
-              debit: 0,
-              credit: totalCogs,
-              memo: 'মজুদ হ্রাস'
-            }
-          );
+        for (const line of processedLines) {
+          if (line.cogsAmount > 0) {
+            journalLines.push(
+              {
+                accountId: line.cogsCode,
+                accountCode: line.cogsCode,
+                accountName: 'বিক্রিত পণ্যের উৎপাদন ব্যয় (COGS)',
+                debit: line.cogsAmount,
+                credit: 0,
+                memo: `COGS স্বীকৃতি: ${line.freshItem.nameBn}`
+              },
+              {
+                accountId: line.inventoryAssetCode,
+                accountCode: line.inventoryAssetCode,
+                accountName: accounts.find((a: any) => a.code === line.inventoryAssetCode)?.nameBn || getInventoryAccountDetails(line.freshItem.category).nameBn,
+                debit: 0,
+                credit: line.cogsAmount,
+                memo: `মজুদ হ্রাস: ${line.freshItem.nameBn}`
+              }
+            );
+          }
         }
+
+        const narrationSummary = processedLines.length === 1
+          ? `${customer.name} কে ${processedLines[0].quantity} ${processedLines[0].freshItem.unit} ${processedLines[0].freshItem.nameBn} বিক্রয়`
+          : `${customer.name} কে ${processedLines.length}টি পণ্য বিক্রয়`;
 
         const voucherNumber = generateTransactionNumber('SLV');
         const journalEntry = await postJournalEntry(
@@ -1048,7 +1218,7 @@ export async function executeSaleTransaction(
             voucherNumber,
             voucherType: 'SALES',
             date: dateStr,
-            narration: `বিক্রয় চালান: ${customer.name} কে ${quantity} ${freshItem.unit} ${freshItem.nameBn} বিক্রয়${validDiscount > 0 ? ` (ছাড়: ৳${validDiscount})` : ''}`,
+            narration: `বিক্রয় চালান: ${narrationSummary}${validDiscount > 0 ? ` (ছাড়: ৳${validDiscount})` : ''}`,
             reference: invoiceNumber,
             lines: journalLines,
             createdBy: currentUserId,
@@ -1138,19 +1308,20 @@ export async function executeSaleTransaction(
           date: dateStr,
           customerId: customer.id,
           customerName: customer.name,
-          items: [
-            {
-              itemId: freshItem.id,
-              itemName: freshItem.nameBn,
-              quantity,
-              unitPrice,
-              lineTotal: subtotal,
-              cogsAmount: totalCogs
-            }
-          ],
-          subtotal: subtotal,
+          items: processedLines.map((l) => ({
+            itemId: l.freshItem.id,
+            itemName: l.freshItem.nameBn,
+            quantity: l.quantity,
+            unitPrice: l.unitPrice,
+            lineTotal: l.subtotal,
+            cogsAmount: l.cogsAmount,
+            ...(isVatActive ? { vatRatePercent: l.vatRatePercent, vatAmount: l.vatAmount } : {})
+          })),
+          subtotal: totalSubtotal,
           discount: validDiscount,
-          vatTax: 0,
+          taxVat: totalVat,
+          vat: totalVat,
+          vatTax: totalVat,
           totalAmount,
           grandTotal: totalAmount,
           paidAmount: effectivePaid,
@@ -1172,29 +1343,30 @@ export async function executeSaleTransaction(
           await safeInsert(dbInstance.sales, saleRecord, { idPrefix: 'sal' });
         }
 
-        // 3. Deduct Inventory Stock
-        await dbInstance.inventoryItems.update(freshItem.id, {
-          currentStock: Math.round((freshItem.currentStock - quantity) * 100) / 100,
-          synced: false
-        });
+        // 3. Deduct Inventory Stock & Record StockMovements for each line
+        for (const line of processedLines) {
+          await dbInstance.inventoryItems.update(line.freshItem.id, {
+            currentStock: Math.round((line.freshItem.currentStock - line.quantity) * 100) / 100,
+            synced: false
+          });
 
-        // 4. Record StockMovement for SALE
-        const stockMovement: StockMovement = {
-          id: generateUniqueId('sm_sal'),
-          date: dateStr,
-          itemId: freshItem.id,
-          movementType: 'SALE',
-          quantity,
-          unitCost: freshItem.avgCostPrice || unitPrice,
-          totalValue: totalCogs || Math.round(quantity * (freshItem.avgCostPrice || unitPrice) * 100) / 100,
-          referenceId: invoiceNumber,
-          notes: `বিক্রয় চালান ${invoiceNumber}: ${customer.name} কে ${quantity} ${freshItem.unit} ${freshItem.nameBn} বিক্রয়`,
-          synced: false
-        };
-        if (idempotencyKey) {
-          (stockMovement as any).idempotencyKey = idempotencyKey;
+          const stockMovement: StockMovement = {
+            id: generateUniqueId('sm_sal'),
+            date: dateStr,
+            itemId: line.freshItem.id,
+            movementType: 'SALE',
+            quantity: line.quantity,
+            unitCost: line.freshItem.avgCostPrice || line.unitPrice,
+            totalValue: line.cogsAmount || Math.round(line.quantity * (line.freshItem.avgCostPrice || line.unitPrice) * 100) / 100,
+            referenceId: invoiceNumber,
+            notes: `বিক্রয় চালান ${invoiceNumber}: ${customer.name} কে ${line.quantity} ${line.freshItem.unit} ${line.freshItem.nameBn} বিক্রয়`,
+            synced: false
+          };
+          if (idempotencyKey) {
+            (stockMovement as any).idempotencyKey = idempotencyKey;
+          }
+          await safeInsert(dbInstance.stockMovements, stockMovement, { idPrefix: 'sm' });
         }
-        await safeInsert(dbInstance.stockMovements, stockMovement, { idPrefix: 'sm' });
 
         // 5. Update Customer AR balance if credit sale
         if (paymentMethod === 'CREDIT') {
@@ -1252,9 +1424,11 @@ export async function executePurchaseTransaction(
     idempotencyKey?: string;
     invoiceNumber?: string;
     supplier: Party;
-    item: InventoryItem;
-    quantity: number;
-    unitPrice: number;
+    item?: InventoryItem;
+    quantity?: number;
+    unitPrice?: number;
+    vatRatePercent?: number;
+    items?: PurchaseLineInput[];
     transportCost?: number;
     discount?: number;
     paymentMethod: 'CASH' | 'BANK' | 'CREDIT';
@@ -1267,6 +1441,7 @@ export async function executePurchaseTransaction(
     advanceAmount?: number;
     advanceAppliedAmount?: number;
     applyAdvanceAmount?: number;
+    isVatRegistered?: boolean;
   },
   dbInstance: any = db
 ): Promise<{ purchase: Purchase; journalEntryId: string; stockMovement: StockMovement; advanceJournalEntryId?: string }> {
@@ -1275,6 +1450,8 @@ export async function executePurchaseTransaction(
     item,
     quantity,
     unitPrice,
+    vatRatePercent,
+    items: paramItems,
     transportCost = 0,
     discount = 0,
     paymentMethod,
@@ -1284,8 +1461,23 @@ export async function executePurchaseTransaction(
     idempotencyKey,
     id: paramId,
     purchaseId: paramPurchaseId,
-    invoiceNumber: paramInvoiceNumber
+    invoiceNumber: paramInvoiceNumber,
+    isVatRegistered
   } = params;
+
+  const lineInputs: PurchaseLineInput[] = paramItems && paramItems.length > 0
+    ? paramItems
+    : item && quantity !== undefined && unitPrice !== undefined
+    ? [{ item, quantity, unitPrice, vatRatePercent }]
+    : [];
+
+  if (lineInputs.length === 0) {
+    throw new Error('ক্রয় পণ্যের বিবরণ দেওয়া হয়নি (No items provided in purchase transaction).');
+  }
+
+  const primaryItem = lineInputs[0].item;
+  const primaryQty = lineInputs[0].quantity;
+  const primaryPrice = lineInputs[0].unitPrice;
 
   const targetPurchaseId = paramPurchaseId || paramId;
   const lockKey = idempotencyKey
@@ -1294,7 +1486,7 @@ export async function executePurchaseTransaction(
     ? `pur_id_${targetPurchaseId}`
     : paramInvoiceNumber
     ? `pur_inv_${paramInvoiceNumber}`
-    : `pur_${supplier?.id || ''}_${item?.id || ''}_${quantity}_${unitPrice}_${paymentMethod}_${date || ''}`;
+    : `pur_${supplier?.id || ''}_${primaryItem?.id || ''}_${primaryQty}_${primaryPrice}_${paymentMethod}_${date || ''}`;
 
   if (activePurchaseLocks.has(lockKey)) {
     throw new Error('এই ক্রয় লেনদেনটি বর্তমানে প্রক্রিয়াধীন রয়েছে। ডুপ্লিকেট পোস্টিং প্রতিরোধ করা হয়েছে (Duplicate purchase prevented)।');
@@ -1358,17 +1550,74 @@ export async function executePurchaseTransaction(
           }
         }
 
-        const freshItem = await dbInstance.inventoryItems.get(item.id);
-        if (!freshItem) {
-          throw new Error(`Item ${item.id} not found.`);
+        const isVatActive = isVatRegisteredSetting(isVatRegistered);
+
+        interface ProcessedPurchaseLine {
+          freshItem: InventoryItem;
+          quantity: number;
+          unitPrice: number;
+          subtotal: number;
+          vatRatePercent: number;
+          vatAmount: number;
+          netCost: number;
+          inventoryAssetCode: string;
         }
 
-        const itemsTotal = Math.round(quantity * unitPrice * 100) / 100;
+        const processedLines: ProcessedPurchaseLine[] = [];
+        let itemsTotal = 0;
+        let totalVat = 0;
+
+        for (const line of lineInputs) {
+          if (!line.item || !line.item.id) {
+            throw new Error('ক্রয় পণ্যের বিবরণ সঠিক নয় (Item missing in purchase line).');
+          }
+          const freshItem = await dbInstance.inventoryItems.get(line.item.id);
+          if (!freshItem) {
+            throw new Error(`Item ${line.item.id} not found.`);
+          }
+          const lineSubtotal = Math.round(line.quantity * line.unitPrice * 100) / 100;
+          const lineVatRate = isVatActive && line.vatRatePercent && line.vatRatePercent > 0 ? Number(line.vatRatePercent) : 0;
+          const lineVat = lineVatRate > 0 ? Math.round(lineSubtotal * (lineVatRate / 100) * 100) / 100 : 0;
+          const inventoryAssetCode = getInventoryAssetAccount(freshItem.category);
+
+          processedLines.push({
+            freshItem,
+            quantity: line.quantity,
+            unitPrice: line.unitPrice,
+            subtotal: lineSubtotal,
+            vatRatePercent: lineVatRate,
+            vatAmount: lineVat,
+            netCost: lineSubtotal,
+            inventoryAssetCode
+          });
+
+          itemsTotal += lineSubtotal;
+          totalVat += lineVat;
+        }
+
+        itemsTotal = Math.round(itemsTotal * 100) / 100;
+        totalVat = Math.round(totalVat * 100) / 100;
+
         const validDiscount = Math.min(itemsTotal + transportCost, Math.max(0, Math.round((discount || 0) * 100) / 100));
-        const grandTotal = Math.max(0, Math.round((itemsTotal + transportCost - validDiscount) * 100) / 100);
+        const netInventoryTotal = Math.max(0, Math.round((itemsTotal + transportCost - validDiscount) * 100) / 100);
+        const grandTotal = Math.max(0, Math.round((netInventoryTotal + totalVat) * 100) / 100);
 
         if (grandTotal <= 0) {
           throw new Error('Purchase total amount must be strictly greater than 0.');
+        }
+
+        // Allocate net inventory cost across lines
+        let allocatedCost = 0;
+        for (let i = 0; i < processedLines.length; i++) {
+          const line = processedLines[i];
+          if (i === processedLines.length - 1) {
+            line.netCost = Math.max(0, Math.round((netInventoryTotal - allocatedCost) * 100) / 100);
+          } else {
+            line.netCost = itemsTotal > 0
+              ? Math.round(((line.subtotal / itemsTotal) * netInventoryTotal) * 100) / 100
+              : 0;
+            allocatedCost += line.netCost;
+          }
         }
 
         // 4. Duplicate prevention for identical rapid retry/resubmission (same supplier, item, quantity, unit price, date, payment method)
@@ -1379,7 +1628,7 @@ export async function executePurchaseTransaction(
 
         const isDuplicateRecent = existingPurchases.some((p: any) => {
           const hasMatchingItem = (p.items || []).some(
-            (it: any) => it.itemId === item.id && Math.abs(it.quantity - quantity) < 0.0001 && Math.abs((it.unitPrice || 0) - unitPrice) < 0.01
+            (it: any) => it.itemId === primaryItem.id && Math.abs(it.quantity - primaryQty) < 0.0001 && Math.abs((it.unitPrice || 0) - primaryPrice) < 0.01
           );
           if (!hasMatchingItem) return false;
           if (Math.abs((p.grandTotal || 0) - grandTotal) > 0.01) return false;
@@ -1501,28 +1750,44 @@ export async function executePurchaseTransaction(
         const invoiceNumber = paramInvoiceNumber || generateTransactionNumber('PUR');
         const displayNumber = await generateDisplayNumber('PUR', dateStr);
 
-        // Canonical account mappings:
-        // Feed Purchase -> 1051 Feed Inventory!
-        // Other inventory -> 1052, 1053, 1055 (NEVER 1050)
-        // Cash -> 1010, Bank -> 1030, Credit -> 2010 AP
-        const inventoryAssetCode = getInventoryAssetAccount(freshItem.category);
         const paymentAccountCode = getPaymentAccount(paymentMethod, 'PURCHASE');
 
         const accounts = await dbInstance.accounts.toArray();
         await ensureAdvanceAccounts(accounts, dbInstance);
+        await ensureVatAccount(accounts, dbInstance);
 
-        const invAccName = accounts.find((a: any) => a.code === inventoryAssetCode)?.nameBn || getInventoryAccountDetails(freshItem.category).nameBn;
-        const journalLines: JournalLine[] = [
-          {
-            accountId: inventoryAssetCode,
-            accountCode: inventoryAssetCode,
+        const journalLines: JournalLine[] = [];
+
+        // 1. Debit inventory asset for each line (net cost)
+        for (const line of processedLines) {
+          const invAccName = accounts.find((a: any) => a.code === line.inventoryAssetCode)?.nameBn || getInventoryAccountDetails(line.freshItem.category).nameBn;
+          journalLines.push({
+            accountId: line.inventoryAssetCode,
+            accountCode: line.inventoryAssetCode,
             accountName: invAccName,
-            debit: grandTotal,
+            debit: line.netCost,
             credit: 0,
-            memo: `ক্রয় চালান ${invoiceNumber} (পরিবহন ব্যয়${validDiscount > 0 ? ` ও মূল্যছাড় ৳${validDiscount}` : ''} সমন্বিত মূল্যায়ন)`
-          }
-        ];
+            memo: `ক্রয় চালান ${invoiceNumber}: ${line.freshItem.nameBn} (পরিবহন ব্যয়${validDiscount > 0 ? ` ও মূল্যছাড় ৳${validDiscount}` : ''} সমন্বিত মূল্যায়ন)`
+          });
+        }
 
+        // 2. Debit Input VAT for each line item (Requirement 3: "Post the VAT portion of each line as its own journal line (Credit Output VAT for a sale, Debit Input VAT for a purchase), separate from that line's revenue/COGS or inventory posting. Debit must equal Credit on the whole voucher including VAT lines.")
+        if (isVatActive) {
+          for (const line of processedLines) {
+            if (line.vatAmount > 0) {
+              journalLines.push({
+                accountId: CANONICAL_ACCOUNTS.TAX_VAT_PAYABLE,
+                accountCode: CANONICAL_ACCOUNTS.TAX_VAT_PAYABLE,
+                accountName: accounts.find((a: any) => a.code === CANONICAL_ACCOUNTS.TAX_VAT_PAYABLE)?.nameBn || 'কর ও ভ্যাট প্রদেয় (Tax & VAT Payable)',
+                debit: line.vatAmount,
+                credit: 0,
+                memo: `ইনপুট ভ্যাট (Input VAT): ${line.freshItem.nameBn} (${line.vatRatePercent}%)`
+              });
+            }
+          }
+        }
+
+        // 3. Credit Accounts Payable / Cash / Bank
         if (paymentMethod === 'CREDIT') {
           journalLines.push({
             accountId: paymentAccountCode,
@@ -1555,6 +1820,10 @@ export async function executePurchaseTransaction(
           }
         }
 
+        const narrationSummary = processedLines.length === 1
+          ? `${supplier.name} এর নিকট থেকে ${processedLines[0].quantity} ${processedLines[0].freshItem.unit} ${processedLines[0].freshItem.nameBn} ক্রয়`
+          : `${supplier.name} এর নিকট থেকে ${processedLines.length}টি উপকরণ ক্রয়`;
+
         const voucherNumber = generateTransactionNumber('PRV');
         const journalEntry = await postJournalEntry(
           {
@@ -1562,7 +1831,7 @@ export async function executePurchaseTransaction(
             voucherNumber,
             voucherType: 'PURCHASE',
             date: dateStr,
-            narration: `ক্রয় চালান: ${supplier.name} এর নিকট থেকে ${quantity} ${freshItem.unit} ${freshItem.nameBn} ক্রয়${validDiscount > 0 ? ` (ছাড়: ৳${validDiscount})` : ''}`,
+            narration: `ক্রয় চালান: ${narrationSummary}${validDiscount > 0 ? ` (ছাড়: ৳${validDiscount})` : ''}`,
             reference: invoiceNumber,
             lines: journalLines,
             createdBy: currentUserId,
@@ -1653,18 +1922,20 @@ export async function executePurchaseTransaction(
           date: dateStr,
           supplierId: supplier.id,
           supplierName: supplier.name,
-          items: [
-            {
-              itemId: freshItem.id,
-              itemName: freshItem.nameBn,
-              quantity,
-              unitPrice,
-              lineTotal: itemsTotal
-            }
-          ],
+          items: processedLines.map((l) => ({
+            itemId: l.freshItem.id,
+            itemName: l.freshItem.nameBn,
+            quantity: l.quantity,
+            unitPrice: l.unitPrice,
+            lineTotal: l.subtotal,
+            ...(isVatActive ? { vatRatePercent: l.vatRatePercent, vatAmount: l.vatAmount } : {})
+          })),
           subtotal: itemsTotal,
           transportCost,
           discount: validDiscount,
+          taxVat: totalVat,
+          vat: totalVat,
+          vatTax: totalVat,
           grandTotal,
           totalAmount: grandTotal,
           paidAmount: effectivePaid,
@@ -1686,39 +1957,42 @@ export async function executePurchaseTransaction(
           await safeInsert(dbInstance.purchases, purchaseRecord, { idPrefix: 'pur' });
         }
 
-        // 3. Update stock and weighted average cost price
-        const newStock = Math.round((freshItem.currentStock + quantity) * 100) / 100;
-        const prevTotalCost = (freshItem.currentStock || 0) * (freshItem.avgCostPrice || 0);
-        const newAvgCost = newStock > 0 ? Math.round(((prevTotalCost + grandTotal) / newStock) * 100) / 100 : unitPrice;
+        // 3. Update stock and weighted average cost price & Record StockMovements for each line
+        let firstStockMovement: StockMovement | undefined;
+        for (const line of processedLines) {
+          const newStock = Math.round((line.freshItem.currentStock + line.quantity) * 100) / 100;
+          const prevTotalCost = (line.freshItem.currentStock || 0) * (line.freshItem.avgCostPrice || 0);
+          const newAvgCost = newStock > 0 ? Math.round(((prevTotalCost + line.netCost) / newStock) * 100) / 100 : line.unitPrice;
 
-        await dbInstance.inventoryItems.update(freshItem.id, {
-          currentStock: newStock,
-          avgCostPrice: newAvgCost,
-          lastRestockAmount: quantity,
-          synced: false
-        });
+          await dbInstance.inventoryItems.update(line.freshItem.id, {
+            currentStock: newStock,
+            avgCostPrice: newAvgCost,
+            lastRestockAmount: line.quantity,
+            synced: false
+          });
 
-        // 4. Record StockMovement for PURCHASE
-        const actualInventoryCostAdded = grandTotal;
-        const movementTotalValue = actualInventoryCostAdded;
-        const movementUnitCost = quantity > 0 ? (movementTotalValue / quantity) : 0;
-
-        const stockMovement: StockMovement = {
-          id: generateUniqueId('sm_pur'),
-          date: dateStr,
-          itemId: freshItem.id,
-          movementType: 'PURCHASE',
-          quantity,
-          unitCost: movementUnitCost,
-          totalValue: movementTotalValue,
-          referenceId: invoiceNumber,
-          notes: `ক্রয় চালান ${invoiceNumber}: ${supplier.name} থেকে ${quantity} ${freshItem.unit} ${freshItem.nameBn} ক্রয়`,
-          synced: false
-        };
-        if (idempotencyKey) {
-          (stockMovement as any).idempotencyKey = idempotencyKey;
+          // 4. Record StockMovement for PURCHASE
+          const movementUnitCost = line.quantity > 0 ? Math.round((line.netCost / line.quantity) * 100) / 100 : 0;
+          const stockMovement: StockMovement = {
+            id: generateUniqueId('sm_pur'),
+            date: dateStr,
+            itemId: line.freshItem.id,
+            movementType: 'PURCHASE',
+            quantity: line.quantity,
+            unitCost: movementUnitCost,
+            totalValue: line.netCost,
+            referenceId: invoiceNumber,
+            notes: `ক্রয় চালান ${invoiceNumber}: ${supplier.name} থেকে ${line.quantity} ${line.freshItem.unit} ${line.freshItem.nameBn} ক্রয়${transportCost > 0 ? ' (পরিবহন সমন্বিত)' : ''}`,
+            synced: false
+          };
+          if (idempotencyKey) {
+            (stockMovement as any).idempotencyKey = idempotencyKey;
+          }
+          await safeInsert(dbInstance.stockMovements, stockMovement, { idPrefix: 'sm' });
+          if (!firstStockMovement) {
+            firstStockMovement = stockMovement;
+          }
         }
-        await safeInsert(dbInstance.stockMovements, stockMovement, { idPrefix: 'sm' });
 
         // 5. Update Supplier AP balance if credit purchase
         if (paymentMethod === 'CREDIT') {
@@ -1757,7 +2031,7 @@ export async function executePurchaseTransaction(
         return {
           purchase: purchaseRecord,
           journalEntryId: journalEntry.id,
-          stockMovement,
+          stockMovement: firstStockMovement,
           ...(advanceJournalEntry ? { advanceJournalEntryId: advanceJournalEntry.id } : {})
         };
       }

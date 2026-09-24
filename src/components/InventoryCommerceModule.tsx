@@ -767,6 +767,11 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
   const [editingThresholdItem, setEditingThresholdItem] = useState<InventoryItem | null>(null);
   const [newThresholdValue, setNewThresholdValue] = useState('');
 
+  // VAT/TIN Registered Business State (stored in local settings, off by default)
+  const [isVatRegistered, setIsVatRegistered] = useState<boolean>(() => {
+    return localStorage.getItem('goted_vat_registered') === 'true';
+  });
+
   // New Sale Form
   const [showNewSale, setShowNewSale] = useState(false);
   const [saleDate, setSaleDate] = useState<string>(() => new Date().toISOString().split('T')[0]);
@@ -776,6 +781,7 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
   const [saleUnitPrice, setSaleUnitPrice] = useState('');
   const [saleDiscount, setSaleDiscount] = useState('');
   const [saleDiscountType, setSaleDiscountType] = useState<'FIXED' | 'PERCENT'>('FIXED');
+  const [saleVatRate, setSaleVatRate] = useState('0');
   const [salePaymentMethod, setSalePaymentMethod] = useState<'CASH' | 'BANK' | 'CREDIT'>('CASH');
 
   // New Purchase Form
@@ -788,6 +794,7 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
   const [purchTransportCost, setPurchTransportCost] = useState('0');
   const [purchDiscount, setPurchDiscount] = useState('');
   const [purchDiscountType, setPurchDiscountType] = useState<'FIXED' | 'PERCENT'>('FIXED');
+  const [purchVatRate, setPurchVatRate] = useState('0');
   const [purchPaymentMethod, setPurchPaymentMethod] = useState<'CASH' | 'BANK' | 'CREDIT'>('CASH');
 
   // Add Party Modal
@@ -881,8 +888,15 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
     const handleDataChanged = () => {
       loadCommerceData();
     };
+    const handleSettingsChanged = () => {
+      setIsVatRegistered(localStorage.getItem('goted_vat_registered') === 'true');
+    };
     window.addEventListener('goted_data_changed', handleDataChanged);
-    return () => window.removeEventListener('goted_data_changed', handleDataChanged);
+    window.addEventListener('goted_settings_changed', handleSettingsChanged);
+    return () => {
+      window.removeEventListener('goted_data_changed', handleDataChanged);
+      window.removeEventListener('goted_settings_changed', handleSettingsChanged);
+    };
   }, []);
 
   const loadCommerceData = async () => {
@@ -1047,6 +1061,7 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
 
     const qty = parseFloat(saleQty) || 0;
     const price = parseFloat(saleUnitPrice) || item.sellingPrice || 0;
+    const vatRate = isVatRegistered ? (parseFloat(saleVatRate) || 0) : 0;
     const subtotal = Math.round(qty * price * 100) / 100;
     const discountAmount = Math.min(subtotal, Math.max(0, calcSaleDiscountAmount(subtotal, saleDiscount, saleDiscountType)));
     const advanceApplied = parseFloat(saleAdvanceApplied) || 0;
@@ -1058,6 +1073,8 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
         quantity: qty,
         unitPrice: price,
         discount: discountAmount,
+        vatRatePercent: vatRate,
+        isVatRegistered,
         paymentMethod: salePaymentMethod,
         advanceAppliedAmount: advanceApplied > 0 ? advanceApplied : undefined,
         currentUserId,
@@ -1069,6 +1086,7 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
       setSaleUnitPrice('');
       setSaleDiscount('');
       setSaleDiscountType('FIXED');
+      setSaleVatRate('0');
       setSaleAdvanceApplied('');
       setSaleCustomerId('');
       setSaleItemId('');
@@ -1125,7 +1143,10 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
 
     const subtotal = Math.round(qty * price * 100) / 100;
     const discountAmount = Math.min(subtotal, Math.max(0, calcSaleDiscountAmount(subtotal, saleDiscount, saleDiscountType)));
-    const totalAmount = Math.max(0, Math.round((subtotal - discountAmount) * 100) / 100);
+    const netBeforeVat = Math.max(0, Math.round((subtotal - discountAmount) * 100) / 100);
+    const vatRate = isVatRegistered ? (parseFloat(saleVatRate) || 0) : 0;
+    const vatAmount = vatRate > 0 ? Math.round(netBeforeVat * (vatRate / 100) * 100) / 100 : 0;
+    const totalAmount = Math.max(0, Math.round((netBeforeVat + vatAmount) * 100) / 100);
 
     if (totalAmount <= 0) {
       setMsg({ type: 'error', text: 'মূল্যছাড়ের পর চালানের সর্বমোট মূল্য ০ এর বেশি হতে হবে।' });
@@ -1165,6 +1186,7 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
     const qty = parseFloat(purchQty) || 0;
     const price = parseFloat(purchUnitPrice) || item.avgCostPrice || 0;
     const transport = parseFloat(purchTransportCost) || 0;
+    const vatRate = isVatRegistered ? (parseFloat(purchVatRate) || 0) : 0;
     const itemsTotal = Math.round(qty * price * 100) / 100;
     const discountAmount = Math.min(itemsTotal + transport, Math.max(0, calcPurchDiscountAmount(itemsTotal, purchDiscount, purchDiscountType)));
     const advanceApplied = parseFloat(purchAdvanceApplied) || 0;
@@ -1177,6 +1199,8 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
         unitPrice: price,
         transportCost: transport,
         discount: discountAmount,
+        vatRatePercent: vatRate,
+        isVatRegistered,
         paymentMethod: purchPaymentMethod,
         advanceAppliedAmount: advanceApplied > 0 ? advanceApplied : undefined,
         currentUserId,
@@ -1189,6 +1213,7 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
       setPurchTransportCost('0');
       setPurchDiscount('');
       setPurchDiscountType('FIXED');
+      setPurchVatRate('0');
       setPurchAdvanceApplied('');
       setPurchSupplierId('');
       setPurchItemId('');
@@ -1246,7 +1271,10 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
 
     const itemsTotal = Math.round(qty * price * 100) / 100;
     const discountAmount = Math.min(itemsTotal + transport, Math.max(0, calcPurchDiscountAmount(itemsTotal, purchDiscount, purchDiscountType)));
-    const grandTotal = Math.max(0, Math.round((itemsTotal + transport - discountAmount) * 100) / 100);
+    const netBeforeVat = Math.max(0, Math.round((itemsTotal + transport - discountAmount) * 100) / 100);
+    const vatRate = isVatRegistered ? (parseFloat(purchVatRate) || 0) : 0;
+    const vatAmount = vatRate > 0 ? Math.round(netBeforeVat * (vatRate / 100) * 100) / 100 : 0;
+    const grandTotal = Math.max(0, Math.round((netBeforeVat + vatAmount) * 100) / 100);
 
     if (grandTotal <= 0) {
       setMsg({ type: 'error', text: 'মূল্যছাড়ের পর চালানের সর্বমোট মূল্য ০ এর বেশি হতে হবে।' });
@@ -2390,7 +2418,7 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+              <div className={`grid grid-cols-1 ${isVatRegistered ? 'sm:grid-cols-4' : 'sm:grid-cols-3'} gap-2.5`}>
                 <div>
                   <label className="block text-[13px] font-medium text-gray-700 mb-1">পরিমাণ</label>
                   <input
@@ -2430,6 +2458,48 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                     </select>
                   </div>
                 </div>
+                {isVatRegistered && (
+                  <div>
+                    <label className="block text-[13px] font-medium text-gray-700 mb-1">ভ্যাট হার (%) / VAT Rate</label>
+                    <div className="relative">
+                      <input
+                        type="number"
+                        id="sale-vat-rate"
+                        name="vatRate"
+                        min="0"
+                        max="100"
+                        step="any"
+                        list="sale-vat-presets"
+                        value={saleVatRate}
+                        onChange={(e) => setSaleVatRate(e.target.value)}
+                        placeholder="0"
+                        className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900 pr-7 font-mono"
+                      />
+                      <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 text-xs pointer-events-none">%</span>
+                      <datalist id="sale-vat-presets">
+                        <option value="0">০% (অব্যাহতিপ্রাপ্ত / Exempt)</option>
+                        <option value="5">৫% (হ্রাসকৃত / Reduced)</option>
+                        <option value="7.5">৭.৫% (সেবা / Services)</option>
+                        <option value="10">১০% (মধ্যম / Intermediate)</option>
+                        <option value="15">১৫% (আদর্শ হার / Standard)</option>
+                      </datalist>
+                    </div>
+                    {(() => {
+                      const sQty = parseFloat(saleQty) || 0;
+                      const sPrice = parseFloat(saleUnitPrice) || 0;
+                      const sub = Math.round(sQty * sPrice * 100) / 100;
+                      const disc = Math.min(sub, Math.max(0, calcSaleDiscountAmount(sub, saleDiscount, saleDiscountType)));
+                      const net = Math.max(0, Math.round((sub - disc) * 100) / 100);
+                      const vatRate = parseFloat(saleVatRate) || 0;
+                      const lineVat = vatRate > 0 ? Math.round(net * (vatRate / 100) * 100) / 100 : 0;
+                      return (
+                        <div className="text-[11px] text-emerald-700 mt-1 font-sans font-medium flex items-center justify-between">
+                          <span>ভ্যাট পরিমাণ: ৳{lineVat.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
+                        </div>
+                      );
+                    })()}
+                  </div>
+                )}
               </div>
 
               {/* Dynamic Sale Preview Summary */}
@@ -2439,13 +2509,22 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                 const sub = Math.round(sQty * sPrice * 100) / 100;
                 const disc = Math.min(sub, Math.max(0, calcSaleDiscountAmount(sub, saleDiscount, saleDiscountType)));
                 const net = Math.max(0, Math.round((sub - disc) * 100) / 100);
+                const vatRate = isVatRegistered ? (parseFloat(saleVatRate) || 0) : 0;
+                const vatAmt = vatRate > 0 ? Math.round(net * (vatRate / 100) * 100) / 100 : 0;
+                const total = Math.max(0, Math.round((net + vatAmt) * 100) / 100);
                 return (
                   <div className="bg-amber-50 border border-amber-200 rounded-lg p-2.5 flex flex-wrap items-center justify-between gap-2 text-[13px]">
                     <span className="text-gray-700">উপমোট: <strong className="text-gray-900 font-mono">৳{sub.toLocaleString('en-IN')}</strong></span>
                     {disc > 0 && (
                       <span className="text-rose-700">ছাড় ({saleDiscountType === 'PERCENT' ? `${saleDiscount}%` : 'নির্দিষ্ট'}): <strong className="font-mono">-৳{disc.toLocaleString('en-IN')}</strong></span>
                     )}
-                    <span className="text-amber-900 font-semibold">চালানের নেট মোট: <strong className="text-amber-950 font-mono text-[14px]">৳{net.toLocaleString('en-IN')}</strong></span>
+                    {isVatRegistered && (
+                      <span className="text-emerald-800">ভ্যাট ({vatRate}%): <strong className="font-mono">{vatAmt > 0 ? `+৳${vatAmt.toLocaleString('en-IN')}` : '৳0'}</strong></span>
+                    )}
+                    <span className="text-amber-900 font-semibold">
+                      {isVatRegistered ? 'চালানের সর্বমোট (ভ্যাটসহ): ' : 'চালানের সর্বমোট: '}
+                      <strong className="text-amber-950 font-mono text-[14px]">৳{total.toLocaleString('en-IN')}</strong>
+                    </span>
                   </div>
                 );
               })()}
@@ -2457,8 +2536,11 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                 const sub = Math.round(sQty * sPrice * 100) / 100;
                 const disc = Math.min(sub, Math.max(0, calcSaleDiscountAmount(sub, saleDiscount, saleDiscountType)));
                 const net = Math.max(0, Math.round((sub - disc) * 100) / 100);
+                const vatRate = isVatRegistered ? (parseFloat(saleVatRate) || 0) : 0;
+                const vatAmt = vatRate > 0 ? Math.round(net * (vatRate / 100) * 100) / 100 : 0;
+                const total = Math.max(0, Math.round((net + vatAmt) * 100) / 100);
                 const appliedNum = parseFloat(saleAdvanceApplied) || 0;
-                const maxApplicable = Math.min(availableCustomerAdvance, net);
+                const maxApplicable = Math.min(availableCustomerAdvance, total);
 
                 return (
                   <div className="bg-emerald-50/90 border border-emerald-300 rounded-xl p-3 space-y-2 text-xs sm:text-sm shadow-2xs">
@@ -2579,6 +2661,11 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                                 <div key={idx} className="flex items-center justify-between gap-2 py-0.5 text-gray-700 text-[13px]">
                                   <div>
                                     <span>{i.itemName} ({i.quantity} × {fmt(i.unitPrice || 0)})</span>
+                                    {Boolean(i.vatRatePercent && i.vatRatePercent > 0) && (
+                                      <span className="ml-1 text-[11px] text-emerald-700 font-medium">
+                                        ({i.vatRatePercent}% ভ্যাট)
+                                      </span>
+                                    )}
                                     {returnedQty > 0 && (
                                       <span className="ml-1.5 text-[11px] font-semibold text-amber-800 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200">
                                         ফেরত: {returnedQty} | অবশিষ্ট: {remainingReturnable}
@@ -2611,6 +2698,11 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                             {Boolean(s.discount && s.discount > 0) && (
                               <div className="text-[11px] text-rose-600 font-sans font-medium">
                                 ছাড়: ৳{fmt(s.discount)}
+                              </div>
+                            )}
+                            {Boolean((s.taxVat || s.vat || s.vatTax) && Number(s.taxVat || s.vat || s.vatTax) > 0) && (
+                              <div className="text-[11px] text-emerald-700 font-sans font-medium">
+                                ভ্যাট: ৳{fmt(Number(s.taxVat || s.vat || s.vatTax))}
                               </div>
                             )}
                             {(s.paymentMethod === 'CREDIT' || paid > 0 || due > 0) && (
@@ -2853,7 +2945,7 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-4 gap-2.5">
+              <div className={`grid grid-cols-1 ${isVatRegistered ? 'sm:grid-cols-5' : 'sm:grid-cols-4'} gap-2.5`}>
                 <div>
                   <label className="block text-[13px] font-medium text-gray-700 mb-1">পরিমাণ</label>
                   <input
@@ -2903,6 +2995,49 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                     </select>
                   </div>
                 </div>
+                {isVatRegistered && (
+                  <div>
+                    <label className="block text-[13px] font-medium text-gray-700 mb-1">ভ্যাট হার (%) / VAT Rate</label>
+                    <div className="relative">
+                      <input
+                        type="number"
+                        id="purch-vat-rate"
+                        name="purchVatRate"
+                        min="0"
+                        max="100"
+                        step="any"
+                        list="purch-vat-presets"
+                        value={purchVatRate}
+                        onChange={(e) => setPurchVatRate(e.target.value)}
+                        placeholder="0"
+                        className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900 pr-7 font-mono"
+                      />
+                      <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 text-xs pointer-events-none">%</span>
+                      <datalist id="purch-vat-presets">
+                        <option value="0">০% (অব্যাহতিপ্রাপ্ত / Exempt)</option>
+                        <option value="5">৫% (হ্রাসকৃত / Reduced)</option>
+                        <option value="7.5">৭.৫% (সেবা / Services)</option>
+                        <option value="10">১০% (মধ্যম / Intermediate)</option>
+                        <option value="15">১৫% (আদর্শ হার / Standard)</option>
+                      </datalist>
+                    </div>
+                    {(() => {
+                      const pQty = parseFloat(purchQty) || 0;
+                      const pPrice = parseFloat(purchUnitPrice) || 0;
+                      const pTrans = parseFloat(purchTransportCost) || 0;
+                      const itemsTotal = Math.round(pQty * pPrice * 100) / 100;
+                      const disc = Math.min(itemsTotal + pTrans, Math.max(0, calcPurchDiscountAmount(itemsTotal, purchDiscount, purchDiscountType)));
+                      const net = Math.max(0, Math.round((itemsTotal + pTrans - disc) * 100) / 100);
+                      const vatRate = parseFloat(purchVatRate) || 0;
+                      const lineVat = vatRate > 0 ? Math.round(net * (vatRate / 100) * 100) / 100 : 0;
+                      return (
+                        <div className="text-[11px] text-emerald-700 mt-1 font-sans font-medium flex items-center justify-between">
+                          <span>ভ্যাট পরিমাণ: ৳{lineVat.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
+                        </div>
+                      );
+                    })()}
+                  </div>
+                )}
               </div>
 
               {/* Dynamic Purchase Preview Summary */}
@@ -2912,7 +3047,10 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                 const pTrans = parseFloat(purchTransportCost) || 0;
                 const itemsTotal = Math.round(pQty * pPrice * 100) / 100;
                 const disc = Math.min(itemsTotal + pTrans, Math.max(0, calcPurchDiscountAmount(itemsTotal, purchDiscount, purchDiscountType)));
-                const grand = Math.max(0, Math.round((itemsTotal + pTrans - disc) * 100) / 100);
+                const net = Math.max(0, Math.round((itemsTotal + pTrans - disc) * 100) / 100);
+                const vatRate = isVatRegistered ? (parseFloat(purchVatRate) || 0) : 0;
+                const vatAmt = vatRate > 0 ? Math.round(net * (vatRate / 100) * 100) / 100 : 0;
+                const grand = Math.max(0, Math.round((net + vatAmt) * 100) / 100);
                 return (
                   <div className="bg-amber-50 border border-amber-200 rounded-lg p-2.5 flex flex-wrap items-center justify-between gap-2 text-[13px]">
                     <span className="text-gray-700">পণ্যের মোট: <strong className="text-gray-900 font-mono">৳{itemsTotal.toLocaleString('en-IN')}</strong></span>
@@ -2922,7 +3060,13 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                     {disc > 0 && (
                       <span className="text-rose-700">ছাড় ({purchDiscountType === 'PERCENT' ? `${purchDiscount}%` : 'নির্দিষ্ট'}): <strong className="font-mono">-৳{disc.toLocaleString('en-IN')}</strong></span>
                     )}
-                    <span className="text-amber-900 font-semibold">ক্রয়ের নেট সর্বমোট: <strong className="text-amber-950 font-mono text-[14px]">৳{grand.toLocaleString('en-IN')}</strong></span>
+                    {isVatRegistered && (
+                      <span className="text-emerald-800">ভ্যাট ({vatRate}%): <strong className="font-mono">{vatAmt > 0 ? `+৳${vatAmt.toLocaleString('en-IN')}` : '৳0'}</strong></span>
+                    )}
+                    <span className="text-amber-900 font-semibold">
+                      {isVatRegistered ? 'ক্রয়ের সর্বমোট (ভ্যাটসহ): ' : 'ক্রয়ের নেট সর্বমোট: '}
+                      <strong className="text-amber-950 font-mono text-[14px]">৳{grand.toLocaleString('en-IN')}</strong>
+                    </span>
                   </div>
                 );
               })()}
@@ -2934,7 +3078,10 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                 const pTrans = parseFloat(purchTransportCost) || 0;
                 const itemsTotal = Math.round(pQty * pPrice * 100) / 100;
                 const disc = Math.min(itemsTotal + pTrans, Math.max(0, calcPurchDiscountAmount(itemsTotal, purchDiscount, purchDiscountType)));
-                const grand = Math.max(0, Math.round((itemsTotal + pTrans - disc) * 100) / 100);
+                const net = Math.max(0, Math.round((itemsTotal + pTrans - disc) * 100) / 100);
+                const vatRate = isVatRegistered ? (parseFloat(purchVatRate) || 0) : 0;
+                const vatAmt = vatRate > 0 ? Math.round(net * (vatRate / 100) * 100) / 100 : 0;
+                const grand = Math.max(0, Math.round((net + vatAmt) * 100) / 100);
                 const appliedNum = parseFloat(purchAdvanceApplied) || 0;
                 const maxApplicable = Math.min(availableSupplierAdvance, grand);
 
@@ -3058,6 +3205,11 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                                 <div key={idx} className="flex items-center justify-between gap-2 py-0.5 text-gray-700 text-[13px]">
                                   <div>
                                     <span>{i.itemName} ({i.quantity} × {fmt(i.unitPrice || 0)})</span>
+                                    {Boolean(i.vatRatePercent && i.vatRatePercent > 0) && (
+                                      <span className="ml-1 text-[11px] text-emerald-700 font-medium">
+                                        ({i.vatRatePercent}% ভ্যাট)
+                                      </span>
+                                    )}
                                     {returnedQty > 0 && (
                                       <span className="ml-1.5 text-[11px] font-semibold text-sky-800 bg-sky-50 px-1.5 py-0.5 rounded border border-sky-200">
                                         ফেরত: {returnedQty} | অবশিষ্ট: {remainingReturnable}
@@ -3091,6 +3243,11 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                             {Boolean(p.discount && p.discount > 0) && (
                               <div className="text-[11px] text-emerald-700 font-sans font-medium">
                                 ছাড়: ৳{fmt(p.discount)}
+                              </div>
+                            )}
+                            {Boolean((p.taxVat || p.vat || p.vatTax) && Number(p.taxVat || p.vat || p.vatTax) > 0) && (
+                              <div className="text-[11px] text-emerald-700 font-sans font-medium">
+                                ভ্যাট: ৳{fmt(Number(p.taxVat || p.vat || p.vatTax))}
                               </div>
                             )}
                             {(p.paymentMethod === 'CREDIT' || paid > 0 || due > 0) && (
@@ -3645,54 +3802,65 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-gray-100">
-                            {partyAdvances.map((adv) => (
-                              <tr key={adv.id} className="hover:bg-emerald-50/30 transition-colors">
-                                <td className="p-3 font-mono text-gray-700 whitespace-nowrap">{adv.date}</td>
-                                <td className="p-3 font-bold font-mono text-emerald-950 whitespace-nowrap">
-                                  {adv.displayNumber || adv.advanceNumber}
-                                </td>
-                                <td className="p-3 whitespace-nowrap">
-                                  <span
-                                    className={`px-2 py-0.5 rounded-full text-[11px] font-semibold ${
-                                      adv.direction === 'RECEIVED'
-                                        ? 'bg-sky-50 text-sky-800 border border-sky-200'
-                                        : 'bg-amber-50 text-amber-800 border border-amber-200'
-                                    }`}
-                                  >
-                                    {adv.direction === 'RECEIVED' ? 'অগ্রিম গ্রহণ (দায়)' : 'অগ্রিম প্রদান (সম্পদ)'}
-                                  </span>
-                                </td>
-                                <td className="p-3 text-gray-700 whitespace-nowrap">
-                                  {adv.paymentMethod === 'CASH' ? 'নগদ (Cash)' : 'ব্যাংক (Bank)'}
-                                </td>
-                                <td className="p-3 text-right font-mono font-bold text-gray-900 whitespace-nowrap">
-                                  ৳{fmt(adv.amount)}
-                                </td>
-                                <td className="p-3 text-right font-mono text-gray-600 whitespace-nowrap">
-                                  ৳{fmt(adv.appliedAmount || 0)}
-                                </td>
-                                <td className="p-3 text-right font-mono font-bold text-emerald-700 whitespace-nowrap">
-                                  ৳{fmt(adv.remainingAmount)}
-                                </td>
-                                <td className="p-3 text-center whitespace-nowrap">
-                                  <span
-                                    className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${
-                                      adv.status === 'FULLY_APPLIED'
-                                        ? 'bg-gray-100 text-gray-600'
-                                        : adv.status === 'PARTIALLY_APPLIED'
-                                        ? 'bg-amber-100 text-amber-800'
-                                        : 'bg-emerald-100 text-emerald-800'
-                                    }`}
-                                  >
-                                    {adv.status === 'FULLY_APPLIED'
-                                      ? 'সম্পূর্ণ সমন্বিত'
-                                      : adv.status === 'PARTIALLY_APPLIED'
-                                      ? 'আংশিক সমন্বিত'
-                                      : 'অব্যবহৃত'}
-                                  </span>
-                                </td>
-                              </tr>
-                            ))}
+                            {partyAdvances.map((adv) => {
+                              const remaining = adv.remainingAmount !== undefined
+                                ? adv.remainingAmount
+                                : (adv.remainingBalance ?? adv.remainingUnappliedBalance ?? 0);
+                              const applied = adv.appliedAmount !== undefined
+                                ? adv.appliedAmount
+                                : Math.max(0, adv.amount - remaining);
+                              const isFully = adv.status === 'FULLY_APPLIED' || adv.status === 'EXHAUSTED' || remaining <= 0;
+                              const isPartial = adv.status === 'PARTIALLY_APPLIED' || (remaining > 0 && remaining < adv.amount);
+
+                              return (
+                                <tr key={adv.id} className="hover:bg-emerald-50/30 transition-colors">
+                                  <td className="p-3 font-mono text-gray-700 whitespace-nowrap">{adv.date}</td>
+                                  <td className="p-3 font-bold font-mono text-emerald-950 whitespace-nowrap">
+                                    {adv.displayNumber || adv.advanceNumber}
+                                  </td>
+                                  <td className="p-3 whitespace-nowrap">
+                                    <span
+                                      className={`px-2 py-0.5 rounded-full text-[11px] font-semibold ${
+                                        adv.direction === 'RECEIVED'
+                                          ? 'bg-sky-50 text-sky-800 border border-sky-200'
+                                          : 'bg-amber-50 text-amber-800 border border-amber-200'
+                                      }`}
+                                    >
+                                      {adv.direction === 'RECEIVED' ? 'অগ্রিম গ্রহণ (দায়)' : 'অগ্রিম প্রদান (সম্পদ)'}
+                                    </span>
+                                  </td>
+                                  <td className="p-3 text-gray-700 whitespace-nowrap">
+                                    {adv.paymentMethod === 'CASH' ? 'নগদ (Cash)' : 'ব্যাংক (Bank)'}
+                                  </td>
+                                  <td className="p-3 text-right font-mono font-bold text-gray-900 whitespace-nowrap">
+                                    ৳{fmt(adv.amount)}
+                                  </td>
+                                  <td className="p-3 text-right font-mono text-gray-600 whitespace-nowrap">
+                                    ৳{fmt(applied)}
+                                  </td>
+                                  <td className="p-3 text-right font-mono font-bold text-emerald-700 whitespace-nowrap">
+                                    ৳{fmt(remaining)}
+                                  </td>
+                                  <td className="p-3 text-center whitespace-nowrap">
+                                    <span
+                                      className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${
+                                        isFully
+                                          ? 'bg-gray-100 text-gray-600'
+                                          : isPartial
+                                          ? 'bg-amber-100 text-amber-800'
+                                          : 'bg-emerald-100 text-emerald-800'
+                                      }`}
+                                    >
+                                      {isFully
+                                        ? 'সম্পূর্ণ সমন্বিত'
+                                        : isPartial
+                                        ? 'আংশিক সমন্বিত'
+                                        : 'অব্যবহৃত'}
+                                    </span>
+                                  </td>
+                                </tr>
+                              );
+                            })}
                           </tbody>
                         </table>
                       </div>
@@ -3828,7 +3996,7 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                   {(() => {
                     const pAdv = advancePayments
                       .filter((a) => a.partyId === p.id && a.status !== 'CANCELLED')
-                      .reduce((sum, a) => sum + (Number(a.remainingAmount) || 0), 0);
+                      .reduce((sum, a) => sum + (Number(a.remainingAmount ?? a.remainingBalance ?? a.remainingUnappliedBalance) || 0), 0);
                     return pAdv > 0 ? (
                       <div className="flex items-center justify-between font-mono text-xs text-emerald-800 bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-200">
                         <span className="font-sans font-semibold">অগ্রিম ব্যালেন্স:</span>
