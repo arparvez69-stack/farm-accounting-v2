@@ -28,9 +28,9 @@ export const LoginScreen: React.FC<Props> = ({ onLoginSuccess }) => {
   const { lang, setLanguage, t } = useLanguage();
   const [email, setEmail] = useState(() => {
     try {
-      return localStorage.getItem('goted_last_email') || 'brandingdeshi@gmail.com';
+      return localStorage.getItem('goted_last_email') || '';
     } catch {
-      return 'brandingdeshi@gmail.com';
+      return '';
     }
   });
   const [pin, setPin] = useState('');

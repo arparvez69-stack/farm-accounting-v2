@@ -30,7 +30,7 @@ export function getRawEmailsEnv(): string {
     process.env.OWNER_EMAILS?.trim() ||
     process.env.EMAIL?.trim() ||
     process.env.email?.trim() ||
-    'atikurrahman00021@gmail.com, arparvez69@gmail.com, arparvez4@gmail.com, lubaiyatasnum111@gmail.com, arparvez111@gmail.com, brandingdeshi@gmail.com'
+    ''
   );
 }
 
@@ -48,32 +48,63 @@ export function getRawPinEnv(): string {
   );
 }
 
-// Single-tenant owner allow-list parsed from environment variable APPROVED_OWNER_EMAILS (or aliases)
+const ALLOW_LIST_FILE = path.resolve(process.cwd(), 'data', 'owner_allow_list.json');
+
+let testApprovedOwnerEmailsOverride: string[] | null | undefined = undefined;
+
+export function setApprovedOwnerEmailsForTest(emails: string[] | null | undefined): void {
+  testApprovedOwnerEmailsOverride = emails;
+}
+
+// Single authoritative owner allow-list parsed from environment variable APPROVED_OWNER_EMAILS (or data/owner_allow_list.json)
 export function getApprovedOwnerEmails(): string[] {
+  if (testApprovedOwnerEmailsOverride !== undefined) {
+    return testApprovedOwnerEmailsOverride
+      ? Array.from(new Set(testApprovedOwnerEmailsOverride.map((e) => e.trim().toLowerCase()).filter(Boolean)))
+      : [];
+  }
+
   const envEmails = getRawEmailsEnv();
   const list = new Set<string>();
-
-  list.add('atikurrahman00021@gmail.com');
-  list.add('arparvez69@gmail.com');
-  list.add('arparvez4@gmail.com');
-  list.add('lubaiyatasnum111@gmail.com');
-  list.add('arparvez111@gmail.com');
-  list.add('brandingdeshi@gmail.com');
 
   if (envEmails) {
     envEmails
       .split(/[,;\s]+/)
       .map((e) => e.trim().toLowerCase())
-      .filter(Boolean)
+      .filter((e) => e.length > 0 && e.includes('@'))
       .forEach((e) => list.add(e));
+  } else if (fs.existsSync(ALLOW_LIST_FILE)) {
+    try {
+      const raw = fs.readFileSync(ALLOW_LIST_FILE, 'utf8');
+      const parsed = JSON.parse(raw);
+      const emails = Array.isArray(parsed.authorizedOwners)
+        ? parsed.authorizedOwners
+        : Array.isArray(parsed.emails)
+        ? parsed.emails
+        : [];
+      emails
+        .map((e: any) => (typeof e === 'string' ? e.trim().toLowerCase() : ''))
+        .filter((e: string) => e.length > 0 && e.includes('@'))
+        .forEach((e: string) => list.add(e));
+    } catch (err: any) {
+      console.warn('[The Goated Farm] Failed to read data/owner_allow_list.json:', err.message);
+    }
   }
 
   return Array.from(list);
 }
 
+// Single authoritative check: returns true only if email is in the authoritative owner allow-list
+export function isOwnerEmail(email: string | null | undefined): boolean {
+  if (!email || typeof email !== 'string') return false;
+  const normalized = email.trim().toLowerCase();
+  const approved = getApprovedOwnerEmails();
+  return approved.length > 0 && approved.includes(normalized);
+}
+
 // Checks if required authentication secrets are configured
 export function isSetupComplete(): boolean {
-  return true;
+  return getApprovedOwnerEmails().length > 0;
 }
 
 // In-memory record of access events for dashboard & audit
@@ -282,8 +313,7 @@ export function createSessionToken(email: string): string {
   }
 
   const normalizedEmail = email.toLowerCase().trim();
-  const approvedEmails = getApprovedOwnerEmails();
-  if (approvedEmails.length > 0 && !approvedEmails.includes(normalizedEmail)) {
+  if (!isOwnerEmail(normalizedEmail)) {
     throw new Error(`Refusing to issue owner session token: ${email} is not in approved owner allow-list.`);
   }
 
@@ -602,11 +632,10 @@ export function verifySessionToken(token: string): { email: string } | null {
       return null;
     }
 
-    // 4. Owner email validation and allow-list checking (Requirement 5)
+    // 4. Owner email validation and allow-list checking (Requirement 5 & F9)
     if (!payload.email || typeof payload.email !== 'string') return null;
     const normalizedEmail = payload.email.toLowerCase().trim();
-    const approvedEmails = getApprovedOwnerEmails();
-    if (approvedEmails.length > 0 && !approvedEmails.includes(normalizedEmail)) {
+    if (!isOwnerEmail(normalizedEmail)) {
       return null;
     }
 
@@ -627,13 +656,11 @@ async function authenticateOwnerRequest(req: express.Request): Promise<{ email: 
   const token = authHeader.split('Bearer ')[1]?.trim();
   if (!token) return null;
 
-  const approvedEmails = getApprovedOwnerEmails();
-
   // 1. Verify standard Firebase ID Token using Firebase Admin SDK
   if (adminInitialized) {
     try {
       const decoded = await getAuth().verifyIdToken(token);
-      if (decoded && decoded.email && (approvedEmails.length === 0 || approvedEmails.includes(decoded.email.toLowerCase()))) {
+      if (decoded && decoded.email && isOwnerEmail(decoded.email)) {
         return { email: decoded.email.toLowerCase(), uid: decoded.uid };
       }
     } catch {
@@ -643,7 +670,7 @@ async function authenticateOwnerRequest(req: express.Request): Promise<{ email: 
 
   // 2. Also verify owner session token
   const session = verifySessionToken(token);
-  if (session && (approvedEmails.length === 0 || approvedEmails.includes(session.email.toLowerCase()))) {
+  if (session && isOwnerEmail(session.email)) {
     return {
       email: session.email.toLowerCase(),
       uid: `goted_owner_${session.email.replace(/[^a-zA-Z0-9]/g, '_')}`
@@ -657,26 +684,20 @@ async function authenticateOwnerRequest(req: express.Request): Promise<{ email: 
 // Sync Authorized Emails to Firestore
 // Stored in Firestore document: system/authorizedEmails
 // Written ONLY by Admin SDK for firestore.rules evaluation
+// Enforces the EXACT same authoritative owner allow-list as the server
 // ==========================================
-async function syncAuthorizedEmails(): Promise<void> {
+export async function syncAuthorizedEmails(): Promise<void> {
   const emails = getApprovedOwnerEmails();
   if (!adminDb || emails.length === 0) return;
 
   try {
     const docRef = adminDb.doc('system/authorizedEmails');
-    const snap = await docRef.get();
-    let mergedEmails = emails;
-    if (snap.exists) {
-      const data = snap.data();
-      if (Array.isArray(data?.emails)) {
-        mergedEmails = Array.from(new Set([...data.emails, ...emails]));
-      }
-    }
+    // Set authoritative list directly without preserving obsolete or revoked emails
     await docRef.set({
-      emails: mergedEmails,
+      emails: emails,
       updatedAt: new Date().toISOString()
-    }, { merge: true });
-    console.log(`[The Goated Farm] Synced system/authorizedEmails in Firestore via Admin SDK (${mergedEmails.length} owners)`);
+    });
+    console.log(`[The Goated Farm] Synced system/authorizedEmails in Firestore via Admin SDK (${emails.length} owners)`);
   } catch (err: any) {
     console.warn('[The Goated Farm] Note on syncing system/authorizedEmails in Firestore:', err.message);
   }
@@ -684,21 +705,15 @@ async function syncAuthorizedEmails(): Promise<void> {
 
 async function ensureEmailAuthorized(email: string): Promise<void> {
   const normalized = email.toLowerCase().trim();
+  if (!isOwnerEmail(normalized)) return;
   if (!adminDb) return;
   try {
     const docRef = adminDb.doc('system/authorizedEmails');
-    const snap = await docRef.get();
-    let emails = [normalized];
-    if (snap.exists) {
-      const data = snap.data();
-      if (Array.isArray(data?.emails)) {
-        emails = Array.from(new Set([...data.emails, normalized]));
-      }
-    }
+    const emails = getApprovedOwnerEmails();
     await docRef.set({
       emails: emails,
       updatedAt: new Date().toISOString()
-    }, { merge: true });
+    });
     console.log(`[The Goated Farm] Registered verified owner ${normalized} in system/authorizedEmails`);
   } catch (err: any) {
     console.warn('[The Goated Farm] Note on ensuring email in system/authorizedEmails:', err.message);
@@ -786,8 +801,7 @@ async function getStoredHash(email: string): Promise<string | null> {
   }
 
   if (!cachedAuthSecrets[email]) {
-    const approvedEmails = getApprovedOwnerEmails();
-    if (approvedEmails.includes(email)) {
+    if (isOwnerEmail(email)) {
       const initialPin = getRawPinEnv();
       if (initialPin) {
         const defaultHash = await bcrypt.hash(initialPin.trim(), 12);
@@ -955,8 +969,7 @@ app.post('/api/verify-login-code', async (req, res) => {
     // 1. Rate Limiting Check
     const now = Date.now();
     const rateLimit = failedLoginAttempts.get(email);
-    const approvedEmails = getApprovedOwnerEmails();
-    const isEmailApproved = approvedEmails.includes(email);
+    const isEmailApproved = isOwnerEmail(email);
 
     if (rateLimit?.lockedUntil) {
       if (now < rateLimit.lockedUntil) {
@@ -1021,7 +1034,7 @@ app.post('/api/verify-login-code', async (req, res) => {
 
     // Ensure verified owner is registered in Firestore system/authorizedEmails
     await ensureEmailAuthorized(email);
-    const updatedApproved = Array.from(new Set([...approvedEmails, email]));
+    const updatedApproved = getApprovedOwnerEmails();
 
     // Deterministic UID for this user email
     const uid = 'goted_user_' + crypto.createHash('sha256').update(email).digest('hex').slice(0, 20);
@@ -1070,8 +1083,7 @@ app.post('/api/change-pin', async (req, res) => {
     }
 
     const email = rawEmail.trim().toLowerCase();
-    const approvedEmails = getApprovedOwnerEmails();
-    if (approvedEmails.length > 0 && !approvedEmails.includes(email)) {
+    if (!isOwnerEmail(email)) {
       return res.status(403).json({ error: 'অননুমোদিত ইমেইল ঠিকানা (Unauthorized email)।' });
     }
 
@@ -1115,8 +1127,7 @@ app.post('/api/request-pin-reset', async (req, res) => {
     }
 
     const email = rawEmail.trim().toLowerCase();
-    const approvedEmails = getApprovedOwnerEmails();
-    if (approvedEmails.length > 0 && !approvedEmails.includes(email)) {
+    if (!isOwnerEmail(email)) {
       return res.status(400).json({ error: 'এই ইমেইলটি অনুমোদিত মালিকের তালিকায় নেই (Unauthorized email)।' });
     }
 
@@ -1157,8 +1168,7 @@ app.post('/api/confirm-pin-reset', async (req, res) => {
     const code = rawCode.toString().trim();
     const newPin = rawNewPin.toString().trim();
 
-    const approvedEmails = getApprovedOwnerEmails();
-    if (approvedEmails.length > 0 && !approvedEmails.includes(email)) {
+    if (!isOwnerEmail(email)) {
       return res.status(400).json({ error: 'অননুমোদিত ইমেইল ঠিকানা।' });
     }
 
