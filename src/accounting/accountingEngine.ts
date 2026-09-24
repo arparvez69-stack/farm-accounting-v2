@@ -1713,11 +1713,42 @@ export async function generateTrialBalance(
   const rawAccounts = await targetDb.accounts.toArray();
   let entries = await targetDb.journalEntries.toArray();
 
-  if (dateRange?.startDate || dateRange?.endDate) {
+  const normalizeToDateString = (val: any): string | null => {
+    if (!val) return null;
+    if (typeof val === 'string') {
+      const trimmed = val.trim();
+      if (!trimmed) return null;
+      const match = trimmed.match(/^(\d{4}-\d{2}-\d{2})/);
+      if (match) return match[1];
+      const parsed = new Date(trimmed);
+      if (!isNaN(parsed.getTime())) {
+        return parsed.toISOString().slice(0, 10);
+      }
+      return null;
+    }
+    if (val instanceof Date && !isNaN(val.getTime())) {
+      return val.toISOString().slice(0, 10);
+    }
+    if (typeof val === 'number') {
+      const parsed = new Date(val);
+      if (!isNaN(parsed.getTime())) {
+        return parsed.toISOString().slice(0, 10);
+      }
+    }
+    return null;
+  };
+
+  const rawStart = dateRange?.startDate || (dateRange as any)?.fromDate || (dateRange as any)?.from || (dateRange as any)?.start;
+  const rawEnd = dateRange?.endDate || (dateRange as any)?.toDate || (dateRange as any)?.to || (dateRange as any)?.end;
+  const cleanStartDate = normalizeToDateString(rawStart);
+  const cleanEndDate = normalizeToDateString(rawEnd);
+
+  if (cleanStartDate || cleanEndDate) {
     entries = entries.filter((e) => {
-      if (!e.date) return false;
-      if (dateRange.startDate && e.date < dateRange.startDate) return false;
-      if (dateRange.endDate && e.date > dateRange.endDate) return false;
+      const entryDate = normalizeToDateString(e.date);
+      if (!entryDate) return false;
+      if (cleanStartDate && entryDate < cleanStartDate) return false;
+      if (cleanEndDate && entryDate > cleanEndDate) return false;
       return true;
     });
   }
