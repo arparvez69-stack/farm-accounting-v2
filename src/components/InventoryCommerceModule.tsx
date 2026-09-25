@@ -4373,7 +4373,7 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                 <button
                   type="button"
                   onClick={() => setSelectedParty(null)}
-                  className="px-3 py-2 rounded-xl bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200 transition-colors cursor-pointer flex items-center gap-1.5 text-xs sm:text-sm font-bold min-h-[40px]"
+                  className="px-3 py-2 rounded-xl bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200 transition-colors cursor-pointer flex items-center gap-1.5 text-xs sm:text-sm font-bold min-h-[44px]"
                 >
                   <ArrowLeft className="w-4 h-4" />
                   <span>তালিকায় ফিরুন</span>
@@ -4419,7 +4419,7 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                       setAdvNarration('');
                       setShowAdvanceModal(true);
                     }}
-                    className="px-3 py-1.5 rounded-xl bg-amber-700 hover:bg-amber-800 text-white font-bold text-xs sm:text-[13px] flex items-center gap-1.5 shadow-xs transition-all cursor-pointer min-h-[38px]"
+                    className="px-3 py-1.5 rounded-xl bg-amber-700 hover:bg-amber-800 text-white font-bold text-xs sm:text-[13px] flex items-center gap-1.5 shadow-xs transition-all cursor-pointer min-h-[44px] sm:min-h-[38px]"
                   >
                     <CreditCard className="w-3.5 h-3.5" />
                     <span>

@@ -851,7 +851,7 @@ export const AnimalDetailView: React.FC<AnimalDetailViewProps> = ({
           <button
             type="button"
             onClick={onBack}
-            className="p-2.5 rounded-xl bg-gray-100 hover:bg-gray-200 text-gray-700 transition-all cursor-pointer flex items-center gap-1.5 font-semibold text-[13px] self-start"
+            className="p-2.5 rounded-xl bg-gray-100 hover:bg-gray-200 text-gray-700 transition-all cursor-pointer flex items-center gap-1.5 font-semibold text-[13px] self-start min-h-[44px]"
             title="গবাদিপশুর তালিকায় ফিরে যান"
           >
             <ArrowLeft className="w-4 h-4" />
@@ -865,7 +865,7 @@ export const AnimalDetailView: React.FC<AnimalDetailViewProps> = ({
               id="btn-export-animal-pdf"
               onClick={handleExportPdf}
               disabled={isExportingPdf}
-              className="px-3.5 py-2 rounded-xl bg-white hover:bg-gray-50 border border-gray-300 text-gray-800 text-[13px] font-bold shadow-xs transition-all cursor-pointer flex items-center gap-1.5 min-h-[38px] disabled:opacity-50"
+              className="px-3.5 py-2 rounded-xl bg-white hover:bg-gray-50 border border-gray-300 text-gray-800 text-[13px] font-bold shadow-xs transition-all cursor-pointer flex items-center gap-1.5 min-h-[44px] sm:min-h-[38px] disabled:opacity-50"
               title="পশুর সম্পূর্ণ জীবনবৃত্তান্ত ও রিপোর্ট পিডিএফ ডাউনলোড করুন"
             >
               <FileDown className="w-4 h-4 text-[#1E5128]" />
@@ -877,7 +877,7 @@ export const AnimalDetailView: React.FC<AnimalDetailViewProps> = ({
                 type="button"
                 id="btn-edit-animal-detail"
                 onClick={() => onEditAnimal(animal)}
-                className="px-3.5 py-2 rounded-xl bg-white hover:bg-gray-50 border border-gray-300 text-gray-800 text-[13px] font-bold shadow-xs transition-all cursor-pointer flex items-center gap-1.5 min-h-[38px]"
+                className="px-3.5 py-2 rounded-xl bg-white hover:bg-gray-50 border border-gray-300 text-gray-800 text-[13px] font-bold shadow-xs transition-all cursor-pointer flex items-center gap-1.5 min-h-[44px] sm:min-h-[38px]"
               >
                 <Edit3 className="w-4 h-4 text-[#1E5128]" />
                 <span>তথ্য ও ছবি সম্পাদনা</span>
@@ -887,7 +887,7 @@ export const AnimalDetailView: React.FC<AnimalDetailViewProps> = ({
             <button
               type="button"
               onClick={() => onAddEvent(animal)}
-              className="px-3.5 py-2 rounded-xl bg-[#1E5128] hover:bg-[#173F1F] text-white text-[13px] font-bold shadow-xs transition-all cursor-pointer flex items-center gap-1.5 min-h-[38px]"
+              className="px-3.5 py-2 rounded-xl bg-[#1E5128] hover:bg-[#173F1F] text-white text-[13px] font-bold shadow-xs transition-all cursor-pointer flex items-center gap-1.5 min-h-[44px] sm:min-h-[38px]"
             >
               <PlusCircle className="w-4 h-4" />
               <span>+ কার্যক্রম যোগ করুন</span>
@@ -896,7 +896,7 @@ export const AnimalDetailView: React.FC<AnimalDetailViewProps> = ({
             <button
               type="button"
               onClick={() => onUpdateStatus(animal)}
-              className="px-3.5 py-2 rounded-xl bg-amber-50 hover:bg-amber-100 border border-amber-300 text-amber-900 text-[13px] font-bold shadow-xs transition-all cursor-pointer flex items-center gap-1.5 min-h-[38px]"
+              className="px-3.5 py-2 rounded-xl bg-amber-50 hover:bg-amber-100 border border-amber-300 text-amber-900 text-[13px] font-bold shadow-xs transition-all cursor-pointer flex items-center gap-1.5 min-h-[44px] sm:min-h-[38px]"
             >
               <Tag className="w-4 h-4 text-amber-700" />
               <span>পশু বিক্রি/অপসারণ</span>

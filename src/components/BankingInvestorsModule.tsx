@@ -3326,7 +3326,7 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
               <button
                 type="button"
                 onClick={() => setSelectedInvestor(null)}
-                className="p-1.5 rounded-xl text-gray-400 hover:text-gray-700 hover:bg-gray-100 cursor-pointer"
+                className="p-1.5 rounded-xl text-gray-400 hover:text-gray-700 hover:bg-gray-100 cursor-pointer min-h-[44px] min-w-[44px] flex items-center justify-center"
               >
                 <X className="w-5 h-5" />
               </button>
@@ -3432,7 +3432,7 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
               <button
                 type="button"
                 onClick={() => setSelectedInvestor(null)}
-                className="px-4 py-2 rounded-lg bg-gray-200 hover:bg-gray-300 text-gray-800 text-xs font-semibold cursor-pointer"
+                className="px-4 py-2 rounded-lg bg-gray-200 hover:bg-gray-300 text-gray-800 text-xs font-semibold cursor-pointer min-h-[44px] flex items-center justify-center"
               >
                 বন্ধ করুন
               </button>
