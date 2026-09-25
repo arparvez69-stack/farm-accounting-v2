@@ -1486,8 +1486,58 @@ export const AccountingModule: React.FC<Props> = ({
                 </div>
               </div>
 
-              {/* Lines Table */}
-              <div className="overflow-x-auto rounded-xl border border-gray-200 dark:border-slate-800">
+              {/* Lines Mobile Cards View (Optimized for iPhone 13 mini & small screens) */}
+              <div className="sm:hidden space-y-2.5">
+                <div className="text-xs font-bold text-gray-500 dark:text-slate-400 uppercase tracking-wider">
+                  ভাউচার লাইনসমূহ ({selectedJournal.lines.length}টি)
+                </div>
+                {selectedJournal.lines.map((l, idx) => (
+                  <div
+                    key={idx}
+                    className="p-3 rounded-xl border border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-2xs space-y-2"
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <span className="font-mono font-bold text-blue-700 dark:text-blue-400 text-xs mr-1.5">
+                          {l.accountCode}
+                        </span>
+                        <span className="font-semibold text-gray-900 dark:text-slate-100 text-sm">
+                          {l.accountName}
+                        </span>
+                      </div>
+                      <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${
+                        l.debit > 0
+                          ? 'bg-emerald-50 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800'
+                          : 'bg-indigo-50 text-indigo-800 dark:bg-indigo-950/60 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800'
+                      }`}>
+                        {l.debit > 0 ? 'ডেবিট' : 'ক্রেডিট'}
+                      </span>
+                    </div>
+                    {l.memo && (
+                      <div className="text-xs text-gray-500 dark:text-slate-400 bg-gray-50 dark:bg-slate-800/60 p-2 rounded-lg">
+                        {l.memo}
+                      </div>
+                    )}
+                    <div className="flex justify-between items-center pt-1 border-t border-gray-100 dark:border-slate-800 text-xs font-mono">
+                      <span className="text-gray-500 dark:text-slate-400 font-sans">টাকার পরিমাণ:</span>
+                      <span className={`font-bold text-sm ${l.debit > 0 ? 'text-emerald-700 dark:text-emerald-400' : 'text-indigo-700 dark:text-indigo-400'}`}>
+                        {fmt(l.debit > 0 ? l.debit : l.credit)}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+                <div className="p-3 rounded-xl bg-gray-100 dark:bg-slate-800 text-xs font-bold flex justify-between items-center">
+                  <span>সর্বমোট (Total):</span>
+                  <div className="flex items-center gap-2 font-mono">
+                    <span className="text-emerald-700 dark:text-emerald-400">Dr {fmt(selectedJournal.totalDebit)}</span>
+                    <span className="text-gray-400">|</span>
+                    <span className="text-indigo-700 dark:text-indigo-400">Cr {fmt(selectedJournal.totalCredit)}</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Desktop Lines Table */}
+              <div className="hidden sm:block overflow-x-auto rounded-xl border border-gray-200 dark:border-slate-800">
                 <table className="w-full min-w-[440px] text-left text-xs sm:text-[13px]">
                   <thead className="bg-gray-100 dark:bg-slate-800 text-gray-700 dark:text-slate-300 font-bold border-b border-gray-200 dark:border-slate-700">
                     <tr>

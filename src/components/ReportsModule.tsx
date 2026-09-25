@@ -2462,8 +2462,62 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
                 </div>
               </div>
 
-              {/* Detailed Breakdown Table */}
-              <div className="overflow-x-auto rounded-xl border border-gray-200">
+              {/* Detailed Breakdown - Mobile Cards View (Optimized for iPhone 13 mini) */}
+              <div className="md:hidden space-y-3">
+                {loanPrincipalBreakdownList.map((item) => (
+                  <div
+                    key={`mob-loan-breakdown-${item.loanId}`}
+                    className="p-3.5 rounded-xl border border-gray-200 bg-white shadow-2xs space-y-2.5"
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <div className="font-bold text-gray-900 text-sm">{item.lenderName}</div>
+                        <div className="text-[11px] text-gray-400 font-mono mt-0.5">{item.loanNumber}</div>
+                      </div>
+                      <span className={`inline-flex px-2 py-0.5 rounded-full text-[10px] font-bold shrink-0 ${
+                        item.status === 'PAID_OFF'
+                          ? 'bg-gray-100 text-gray-600'
+                          : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                      }`}>
+                        {item.status === 'PAID_OFF' ? 'পরিশোধিত' : 'চলমান'}
+                      </span>
+                    </div>
+
+                    <div className="flex items-center gap-2 text-xs text-gray-600 flex-wrap">
+                      <span className="px-2 py-0.5 rounded bg-gray-100 text-[11px] font-medium">
+                        {item.loanType === 'BANK' ? 'ব্যাংক' : item.loanType === 'NGO' ? 'এনজিও' : 'ব্যক্তিগত'}
+                      </span>
+                      <span>মেয়াদ: <strong className="font-mono text-gray-800">{item.termMonths} মাস</strong></span>
+                      <span>•</span>
+                      <span>সুদের হার: <strong className="font-mono text-gray-800">{item.interestRate}% বার্ষিক</strong></span>
+                    </div>
+
+                    <div className="grid grid-cols-3 gap-2 pt-2 border-t border-gray-100 font-mono text-xs">
+                      <div>
+                        <span className="font-sans text-[10px] text-gray-500 block">মোট বকেয়া</span>
+                        <span className="font-bold text-gray-900 text-xs sm:text-sm">৳{fmt(item.outstandingPrincipal)}</span>
+                      </div>
+                      <div className="p-1.5 rounded-lg bg-amber-50/70 border border-amber-200/60">
+                        <span className="font-sans text-[10px] text-amber-800 block font-medium">চলতি (≤১২মাস)</span>
+                        <span className="font-bold text-amber-900 text-xs sm:text-sm">৳{fmt(item.currentPrincipal)}</span>
+                        {item.scheduleItemsIn12Months > 0 && (
+                          <div className="text-[9px] text-amber-700 font-normal font-sans">({item.scheduleItemsIn12Months}টি কিস্তি)</div>
+                        )}
+                      </div>
+                      <div className="p-1.5 rounded-lg bg-blue-50/70 border border-blue-200/60">
+                        <span className="font-sans text-[10px] text-blue-800 block font-medium">দীর্ঘমেয়াদী (&gt;১২মাস)</span>
+                        <span className="font-bold text-blue-900 text-xs sm:text-sm">৳{fmt(item.longTermPrincipal)}</span>
+                        {item.scheduleItemsAfter12Months > 0 && (
+                          <div className="text-[9px] text-blue-700 font-normal font-sans">({item.scheduleItemsAfter12Months}টি কিস্তি)</div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Detailed Breakdown Desktop Table */}
+              <div className="hidden md:block overflow-x-auto rounded-xl border border-gray-200">
                 <table className="w-full text-left border-collapse text-xs">
                   <thead>
                     <tr className="bg-gray-100 text-gray-700 font-semibold border-b border-gray-200">
@@ -2820,7 +2874,61 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
 
             return (
               <div className="space-y-3">
-                <div className="overflow-x-auto rounded-xl border border-gray-200">
+                {/* Mobile General Ledger Cards View (Optimized for iPhone 13 mini) */}
+                <div className="md:hidden space-y-2.5">
+                  {visibleRows.map((entry, idx) => (
+                    <div
+                      key={`mob-gl-${entry.journalEntryId || idx}`}
+                      className={`p-3.5 rounded-xl border bg-white shadow-2xs space-y-2 ${
+                        entry.isOpeningBalance
+                          ? 'border-amber-400 bg-amber-50/50'
+                          : 'border-gray-200'
+                      }`}
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div>
+                          <div className="font-semibold text-teal-700 font-mono text-xs">
+                            {entry.isOpeningBalance
+                              ? 'OPENING BALANCE'
+                              : (entry.voucherNumber || (entry.journalId && entry.journalId.slice(0, 8)) || 'VOUCHER')}
+                          </div>
+                          <div className="text-[11px] text-gray-400 font-mono mt-0.5">{entry.date}</div>
+                        </div>
+                        <span
+                          className={`inline-flex px-2 py-0.5 rounded-full text-xs font-mono font-bold ${
+                            entry.runningBalance >= 0
+                              ? 'bg-gray-100 text-gray-800'
+                              : 'bg-rose-100 text-rose-700'
+                          }`}
+                        >
+                          জের: ৳{fmt(entry.runningBalance)}
+                        </span>
+                      </div>
+
+                      <div className="text-xs text-gray-700 font-sans leading-relaxed">
+                        {entry.narration}
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-2 pt-2 border-t border-gray-100 font-mono text-xs">
+                        <div>
+                          <span className="font-sans text-[10px] text-gray-500 block">ডেবিট:</span>
+                          <span className="font-bold text-[#15803D]">
+                            {entry.debit > 0 ? `+ ৳${fmt(entry.debit)}` : '—'}
+                          </span>
+                        </div>
+                        <div className="text-right">
+                          <span className="font-sans text-[10px] text-gray-500 block">ক্রেডিট:</span>
+                          <span className="font-bold text-blue-700">
+                            {entry.credit > 0 ? `- ৳${fmt(entry.credit)}` : '—'}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Desktop Full Table View */}
+                <div className="hidden md:block overflow-x-auto rounded-xl border border-gray-200">
                   <table className="w-full text-left text-[13px] text-gray-800">
                     <thead className="bg-[#F8FAFC] text-gray-600 font-semibold border-b border-gray-200">
                       <tr>
@@ -3062,8 +3170,102 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
             </div>
           </div>
 
-          {/* Main Profitability Summary Table */}
-          <div className="overflow-x-auto border border-gray-200 rounded-xl shadow-2xs">
+          {/* Mobile Animal Profitability Cards View (Optimized for iPhone 13 mini) */}
+          <div className="md:hidden space-y-3">
+            {sortedAnimalRows.length > 0 ? (
+              sortedAnimalRows.map((row) => {
+                const isProfitable = row.netProfit >= 0;
+
+                return (
+                  <div
+                    key={`mob-animal-prof-${row.id}`}
+                    className={`p-3.5 rounded-xl border bg-white shadow-2xs space-y-2.5 transition-all ${
+                      isProfitable ? 'border-emerald-200' : 'border-gray-200'
+                    }`}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="font-mono font-bold text-gray-900 text-sm">{row.id}</span>
+                          {row.tag && (
+                            <span className="px-2 py-0.5 rounded bg-gray-100 text-gray-700 text-[11px] font-mono border border-gray-200">
+                              {row.tag}
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-xs text-gray-500 mt-0.5">
+                          {row.species === 'CATTLE' ? 'গরু' : row.species === 'GOAT' ? 'ছাগল' : row.species}
+                          {row.breed ? ` • ${row.breed}` : ''}
+                        </div>
+                      </div>
+
+                      {row.status === 'ACTIVE' ? (
+                        <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-50 text-emerald-800 border border-emerald-200 inline-flex items-center gap-1 shrink-0">
+                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-600" />
+                          <span>সক্রিয়</span>
+                        </span>
+                      ) : row.status === 'SOLD' ? (
+                        <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-blue-50 text-blue-800 border border-blue-200 inline-flex items-center gap-1 shrink-0">
+                          <span className="w-1.5 h-1.5 rounded-full bg-blue-600" />
+                          <span>বিক্রিত</span>
+                        </span>
+                      ) : (
+                        <span className="px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-gray-100 text-gray-700 border border-gray-200 shrink-0">
+                          {row.status}
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="flex items-center justify-between text-xs text-gray-600 pt-1">
+                      <span>প্রতিপালন কাল: <strong className="font-mono text-gray-900">{row.daysHeld} দিন</strong></span>
+                      <span className="text-[11px] text-gray-400 font-mono">{row.purchaseDate || 'ক্রয় তারিখ নেই'}</span>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2 pt-2 border-t border-gray-100 font-mono text-xs">
+                      <div>
+                        <span className="font-sans text-[10px] text-gray-500 block">সর্বমোট ব্যয়:</span>
+                        <span className="font-bold text-gray-900 text-sm">৳{fmt(row.totalCost)}</span>
+                        <div className="text-[10px] text-gray-400 font-sans mt-0.5">
+                          ক্রয় ৳{fmt(row.purchaseCost)}
+                        </div>
+                      </div>
+
+                      <div className="text-right">
+                        <span className="font-sans text-[10px] text-gray-500 block">সর্বমোট রাজস্ব:</span>
+                        <span className="font-bold text-gray-900 text-sm">৳{fmt(row.totalRevenue)}</span>
+                        <div className="text-[10px] text-gray-400 font-sans mt-0.5 truncate">
+                          {row.status === 'SOLD' ? `বিক্রয়: ৳${fmt(row.saleRevenue)}` : row.milkLiters > 0 ? `দুধ: ${row.milkLiters} লি.` : 'অবিক্রিত'}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center justify-between pt-2 border-t border-gray-100 bg-gray-50/70 -mx-3.5 -mb-3.5 p-3 rounded-b-xl">
+                      <div>
+                        <span className="text-[10px] text-gray-500 block">দৈনিক খরচ</span>
+                        <span className="font-mono font-bold text-gray-800 text-xs">৳{fmt(row.costPerDay)}/দিন</span>
+                      </div>
+                      <div className="text-right">
+                        <span className="text-[10px] text-gray-500 block">নিট লাভ / ক্ষতি</span>
+                        <span className={`font-mono font-bold text-sm ${isProfitable ? 'text-[#15803D]' : 'text-rose-700'}`}>
+                          {isProfitable ? '+' : ''}৳{fmt(row.netProfit)}
+                        </span>
+                        <span className="text-[10px] text-gray-500 block font-sans">
+                          {isProfitable ? '(লাভ)' : row.status === 'ACTIVE' ? '(চলতি ব্যয়)' : '(ক্ষতি)'}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })
+            ) : (
+              <div className="py-8 text-center text-gray-500 bg-gray-50 rounded-xl border border-dashed border-gray-200">
+                কোনো পশুর তথ্য পাওয়া যায়নি।
+              </div>
+            )}
+          </div>
+
+          {/* Main Profitability Summary Desktop Table */}
+          <div className="hidden md:block overflow-x-auto border border-gray-200 rounded-xl shadow-2xs">
             <table className="w-full text-left border-collapse text-[13px]">
               <thead>
                 <tr className="bg-gray-100 border-b border-gray-200 text-gray-700 font-bold">
@@ -3427,8 +3629,95 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
             </div>
           </div>
 
-          {/* Profitability Table */}
-          <div className="overflow-x-auto rounded-xl border border-gray-200">
+          {/* Mobile Fisheries Profitability Cards View (Optimized for iPhone 13 mini) */}
+          <div className="md:hidden space-y-3">
+            {sortedPondRows.length > 0 ? (
+              sortedPondRows.map((row) => {
+                const isProfitable = row.netProfit >= 0;
+
+                return (
+                  <div
+                    key={`mob-pond-prof-${row.id}`}
+                    className={`p-3.5 rounded-xl border bg-white shadow-2xs space-y-2.5 transition-all ${
+                      isProfitable ? 'border-cyan-200' : 'border-gray-200'
+                    }`}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="font-mono font-bold text-gray-900 text-sm">{row.id}</span>
+                          <span className="px-2 py-0.5 rounded bg-blue-50 text-blue-700 text-[11px] font-semibold border border-blue-200">
+                            {row.species}
+                          </span>
+                        </div>
+                        <div className="text-xs text-gray-600 mt-0.5">
+                          {row.pondName}
+                          {row.fingerlingQty > 0 ? ` • ${Number(row.fingerlingQty || 0).toLocaleString()}টি পোনা` : ''}
+                        </div>
+                      </div>
+
+                      <span
+                        className={`px-2 py-0.5 rounded text-[11px] font-bold font-mono shrink-0 ${
+                          row.profitMargin >= 0
+                            ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
+                            : 'bg-rose-50 text-rose-800 border border-rose-200'
+                        }`}
+                      >
+                        মার্জিন: {row.profitMargin >= 0 ? '+' : ''}{row.profitMargin.toFixed(1)}%
+                      </span>
+                    </div>
+
+                    <div className="flex items-center justify-between text-xs text-gray-600 pt-1 border-t border-gray-100 flex-wrap gap-1">
+                      <div>
+                        <span>আহরণ: <strong className="font-mono text-gray-900">{row.harvestDate || 'নেই'}</strong></span>
+                        {row.stockingDate && <span className="text-[11px] text-gray-400 font-mono ml-1.5">(মজুত: {row.stockingDate})</span>}
+                      </div>
+                      <div className="font-semibold text-gray-800 font-mono">
+                        ওজন: {Number(row.harvestWeightKg || 0).toLocaleString()} কেজি
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2 pt-2 border-t border-gray-100 font-mono text-xs">
+                      <div>
+                        <span className="font-sans text-[10px] text-gray-500 block">সর্বমোট ব্যয়:</span>
+                        <span className="font-bold text-amber-900 text-sm">৳{fmt(row.totalCost)}</span>
+                        <div className="text-[10px] text-gray-400 font-sans mt-0.5">
+                          পোনা ৳{fmt(row.fingerlingCost)} | খাদ্য+অন্যান্য ৳{fmt(row.feedCost + row.otherCost)}
+                        </div>
+                      </div>
+
+                      <div className="text-right">
+                        <span className="font-sans text-[10px] text-gray-500 block">সর্বমোট রাজস্ব:</span>
+                        <span className="font-bold text-cyan-900 text-sm">৳{fmt(row.totalRevenue)}</span>
+                        <div className="text-[10px] text-gray-400 font-sans mt-0.5">
+                          মাছ বিক্রয় আয়
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center justify-between pt-2 border-t border-gray-100 bg-gray-50/70 -mx-3.5 -mb-3.5 p-3 rounded-b-xl">
+                      <span className="text-xs text-gray-600 font-medium">নিট ফলাফল:</span>
+                      <div className="text-right">
+                        <span className={`font-mono font-bold text-base ${isProfitable ? 'text-[#15803D]' : 'text-rose-700'}`}>
+                          {isProfitable ? '+' : ''}৳{fmt(row.netProfit)}
+                        </span>
+                        <span className="text-[10px] text-gray-500 block font-sans">
+                          {isProfitable ? '(লাভ)' : '(ক্ষতি)'}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })
+            ) : (
+              <div className="py-8 text-center text-gray-500 bg-gray-50 rounded-xl border border-dashed border-gray-200">
+                কোনো মাছের ব্যাচ তথ্য পাওয়া যায়নি।
+              </div>
+            )}
+          </div>
+
+          {/* Profitability Desktop Table */}
+          <div className="hidden md:block overflow-x-auto rounded-xl border border-gray-200">
             <table className="w-full text-left text-xs border-collapse">
               <thead>
                 <tr className="bg-gray-100 text-gray-700 font-bold border-b border-gray-200">
@@ -3791,8 +4080,94 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
             </div>
           </div>
 
-          {/* Profitability Table */}
-          <div className="overflow-x-auto rounded-xl border border-gray-200">
+          {/* Mobile Crops Profitability Cards View (Optimized for iPhone 13 mini) */}
+          <div className="md:hidden space-y-3">
+            {sortedCropRows.length > 0 ? (
+              sortedCropRows.map((row) => {
+                const isProfitable = row.netProfit >= 0;
+
+                return (
+                  <div
+                    key={`mob-crop-prof-${row.id}`}
+                    className={`p-3.5 rounded-xl border bg-white shadow-2xs space-y-2.5 transition-all ${
+                      isProfitable ? 'border-emerald-200' : 'border-gray-200'
+                    }`}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="font-bold text-gray-900 text-sm">{row.cropName}</span>
+                          <span className="px-2 py-0.5 rounded bg-emerald-50 text-emerald-800 text-[11px] font-semibold border border-emerald-200">
+                            {row.cropCategory}
+                          </span>
+                        </div>
+                        <div className="text-xs text-gray-600 mt-0.5">
+                          জমি: {row.plotName}
+                        </div>
+                      </div>
+
+                      <span
+                        className={`px-2 py-0.5 rounded text-[11px] font-bold font-mono shrink-0 ${
+                          row.profitMargin >= 0
+                            ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
+                            : 'bg-rose-50 text-rose-800 border border-rose-200'
+                        }`}
+                      >
+                        মার্জিন: {row.profitMargin >= 0 ? '+' : ''}{row.profitMargin.toFixed(1)}%
+                      </span>
+                    </div>
+
+                    <div className="flex items-center justify-between text-xs text-gray-600 pt-1 border-t border-gray-100 flex-wrap gap-1">
+                      <div>
+                        <span>আহরণ: <strong className="font-mono text-gray-900">{row.actualHarvestDate || 'নেই'}</strong></span>
+                        {row.plantingDate && <span className="text-[11px] text-gray-400 font-mono ml-1.5">(রোপণ: {row.plantingDate})</span>}
+                      </div>
+                      <div className="font-semibold text-gray-800 font-mono">
+                        ফলন: {Number(row.harvestYieldKg || 0).toLocaleString()} কেজি
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2 pt-2 border-t border-gray-100 font-mono text-xs">
+                      <div>
+                        <span className="font-sans text-[10px] text-gray-500 block">সর্বমোট ব্যয়:</span>
+                        <span className="font-bold text-amber-900 text-sm">৳{fmt(row.totalCost)}</span>
+                        <div className="text-[10px] text-gray-400 font-sans mt-0.5">
+                          বীজ+সার ৳{fmt(row.seedCost + row.fertilizerCost)} | সেচ+শ্রমিক ৳{fmt(row.irrigationCost + row.labourCost)}
+                        </div>
+                      </div>
+
+                      <div className="text-right">
+                        <span className="font-sans text-[10px] text-gray-500 block">সর্বমোট রাজস্ব:</span>
+                        <span className="font-bold text-emerald-900 text-sm">৳{fmt(row.totalRevenue)}</span>
+                        <div className="text-[10px] text-gray-400 font-sans mt-0.5">
+                          ফসল বিক্রয় আয়
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center justify-between pt-2 border-t border-gray-100 bg-gray-50/70 -mx-3.5 -mb-3.5 p-3 rounded-b-xl">
+                      <span className="text-xs text-gray-600 font-medium">নিট ফলাফল:</span>
+                      <div className="text-right">
+                        <span className={`font-mono font-bold text-base ${isProfitable ? 'text-[#15803D]' : 'text-rose-700'}`}>
+                          {isProfitable ? '+' : ''}৳{fmt(row.netProfit)}
+                        </span>
+                        <span className="text-[10px] text-gray-500 block font-sans">
+                          {isProfitable ? '(লাভ)' : '(ক্ষতি)'}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })
+            ) : (
+              <div className="py-8 text-center text-gray-500 bg-gray-50 rounded-xl border border-dashed border-gray-200">
+                কোনো ফসলের তথ্য পাওয়া যায়নি।
+              </div>
+            )}
+          </div>
+
+          {/* Profitability Desktop Table */}
+          <div className="hidden md:block overflow-x-auto rounded-xl border border-gray-200">
             <table className="w-full text-left text-xs border-collapse">
               <thead>
                 <tr className="bg-gray-100 text-gray-700 font-bold border-b border-gray-200">
@@ -4273,8 +4648,70 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
                     </div>
                   </div>
 
-                  {/* Bucket Items Table (Oldest/Most Overdue at Top) */}
-                  <div className="overflow-x-auto">
+                  {/* Bucket Items - Mobile Card View (Optimized for iPhone 13 mini) */}
+                  <div className="md:hidden space-y-2.5">
+                    {bucket.items.length === 0 ? (
+                      <div className="p-4 text-center text-gray-400 text-xs italic bg-gray-50 rounded-xl">
+                        এই বাকেটে কোনো বকেয়া চালান নেই।
+                      </div>
+                    ) : (
+                      bucket.items.map((item) => (
+                        <div
+                          key={`mob-aging-${item.id}`}
+                          className="p-3 rounded-xl border border-gray-200 bg-white shadow-2xs space-y-2"
+                        >
+                          <div className="flex items-start justify-between gap-2">
+                            <div>
+                              <div className="font-mono font-bold text-sky-800 text-xs sm:text-sm">
+                                {item.invoiceNumber}
+                              </div>
+                              <div className="font-semibold text-gray-900 text-sm mt-0.5">
+                                {item.partyName}
+                              </div>
+                            </div>
+                            <StatusBadge
+                              status={bucket.status}
+                              label={
+                                item.daysOverdue > 30
+                                  ? 'জরুরি তাগাদা'
+                                  : item.daysOverdue >= 15
+                                  ? 'মনোযোগ প্রয়োজন'
+                                  : item.daysOverdue >= 8
+                                  ? 'বকেয়া'
+                                  : 'নতুন চালান'
+                              }
+                            />
+                          </div>
+
+                          <div className="flex items-center justify-between text-xs text-gray-500 pt-1 border-t border-gray-100 font-mono">
+                            <span>তারিখ: {item.date}</span>
+                            <span className="inline-flex items-center gap-1 font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded">
+                              <Clock className="w-3 h-3 text-amber-600" />
+                              <span>{item.daysOverdue} দিন অতিক্রান্ত</span>
+                            </span>
+                          </div>
+
+                          <div className="grid grid-cols-3 gap-1.5 pt-2 border-t border-gray-100 font-mono text-xs">
+                            <div>
+                              <span className="font-sans text-[10px] text-gray-500 block">মোট মূল্য</span>
+                              <span className="font-semibold text-gray-800">৳{fmt(item.totalAmount)}</span>
+                            </div>
+                            <div>
+                              <span className="font-sans text-[10px] text-gray-500 block">পরিশোধিত</span>
+                              <span className="font-semibold text-emerald-700">৳{fmt(item.paidAmount)}</span>
+                            </div>
+                            <div className="text-right">
+                              <span className="font-sans text-[10px] text-gray-500 block">বকেয়া (Due)</span>
+                              <span className="font-bold text-red-600 text-sm">৳{fmt(item.dueAmount)}</span>
+                            </div>
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+
+                  {/* Bucket Items Desktop Table (Oldest/Most Overdue at Top) */}
+                  <div className="hidden md:block overflow-x-auto">
                     <table className="w-full text-left border-collapse text-[13px]">
                       <thead>
                         <tr className="bg-gray-50/80 text-gray-600 font-semibold border-b border-gray-200">

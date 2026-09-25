@@ -1122,8 +1122,66 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
                     }
 
                     return (
-                      <div className="overflow-x-auto border border-gray-200 rounded-xl">
-                        <table className="w-full min-w-[550px] text-left text-xs">
+                      <>
+                        {/* Mobile Bank Transactions Card View (Optimized for iPhone 13 mini) */}
+                        <div className="md:hidden space-y-2.5">
+                          {filtered.map((tx) => {
+                            const isCleared = clearedTxIds.has(tx.id);
+                            return (
+                              <div
+                                key={`mob-tx-${tx.id}`}
+                                className={`p-3.5 rounded-xl border transition-colors shadow-2xs space-y-2 ${
+                                  isCleared ? 'bg-emerald-50/40 border-emerald-300' : 'bg-white border-gray-200'
+                                }`}
+                              >
+                                <div className="flex items-start justify-between gap-2">
+                                  <label className="inline-flex items-center gap-2 cursor-pointer select-none min-h-[36px]">
+                                    <input
+                                      type="checkbox"
+                                      id={`mob-checkbox-cleared-${tx.id}`}
+                                      checked={isCleared}
+                                      onChange={() => handleToggleCleared(tx.id)}
+                                      className="w-5 h-5 rounded text-emerald-600 focus:ring-emerald-500 border-gray-300 cursor-pointer"
+                                    />
+                                    <span className={`text-xs font-bold ${isCleared ? 'text-emerald-800' : 'text-gray-600'}`}>
+                                      {isCleared ? '✓ স্টেটমেন্টে মিলিত' : 'অমিলিত'}
+                                    </span>
+                                  </label>
+
+                                  <div className="text-right">
+                                    <span className="bg-gray-100 text-gray-800 font-mono px-2 py-0.5 rounded text-xs font-semibold">
+                                      {tx.voucherNumber || tx.journalEntryId}
+                                    </span>
+                                    <div className="text-[11px] text-gray-400 font-mono mt-0.5">{tx.date}</div>
+                                  </div>
+                                </div>
+
+                                <div className="text-xs text-gray-800 leading-snug">
+                                  {tx.narration || tx.memo || 'কোনো বিবরণ নেই'}
+                                </div>
+
+                                <div className="grid grid-cols-2 gap-2 pt-2 border-t border-gray-100 text-xs font-mono">
+                                  <div>
+                                    <span className="font-sans text-gray-500 block text-[10px]">লেনদেন পরিমাণ:</span>
+                                    {tx.debit > 0 ? (
+                                      <span className="font-bold text-emerald-700 text-sm">+ ৳{fmt(tx.debit)} (জমা)</span>
+                                    ) : (
+                                      <span className="font-bold text-rose-700 text-sm">- ৳{fmt(tx.credit)} (উত্তোলন)</span>
+                                    )}
+                                  </div>
+                                  <div className="text-right">
+                                    <span className="font-sans text-gray-500 block text-[10px]">রানিং ব্যালেন্স:</span>
+                                    <span className="font-bold text-gray-900 text-sm">৳{fmt(tx.runningBalance ?? 0)}</span>
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+
+                        {/* Desktop Table View */}
+                        <div className="hidden md:block overflow-x-auto border border-gray-200 rounded-xl">
+                          <table className="w-full min-w-[550px] text-left text-xs">
                           <thead className="bg-[#F8FAFC] text-gray-700 font-semibold border-b border-gray-200 select-none">
                             <tr>
                               <th className="py-2.5 px-3 w-36 text-center">মিলিত (Cleared)</th>
@@ -1186,6 +1244,7 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
                           </tbody>
                         </table>
                       </div>
+                      </>
                     );
                   })()}
                 </div>
@@ -1651,7 +1710,92 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
             </form>
           )}
 
-          <div className="overflow-x-auto rounded-xl border border-gray-200">
+          {/* Mobile Loans Card View (Optimized for iPhone 13 mini) */}
+          <div className="md:hidden space-y-3">
+            {loans.length === 0 ? (
+              <div className="p-8 text-center text-gray-500 text-[14px] bg-gray-50 rounded-2xl border border-dashed border-gray-200">
+                বর্তমানে কোনো সক্রিয় ব্যাংক বা মহাজনি ঋণ নেই।
+              </div>
+            ) : (
+              loans.map((l) => {
+                const paidCount = l.schedule ? l.schedule.filter((s) => s.isPaid).length : 0;
+                const totalCount = l.schedule?.length || l.termMonths || l.tenureMonths || 12;
+
+                return (
+                  <div
+                    key={`mob-loan-${l.id}`}
+                    className="p-4 rounded-2xl border border-gray-200 bg-white shadow-xs space-y-3"
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <div className="font-bold text-[#1E5128] font-mono text-base">{l.loanNumber || l.id}</div>
+                        <div className="font-bold text-gray-900 text-sm mt-0.5">{l.lenderName}</div>
+                      </div>
+                      <div className="flex items-center gap-1.5 shrink-0 flex-wrap justify-end">
+                        <span className="text-[11px] px-2 py-0.5 rounded-full bg-gray-100 text-gray-700 font-medium">
+                          {l.term === 'SHORT_TERM' ? 'স্বল্পমেয়াদী' : 'দীর্ঘমেয়াদী'}
+                        </span>
+                        <span
+                          className={`px-2.5 py-0.5 rounded-full text-xs font-semibold ${
+                            l.status === 'PAID_OFF'
+                              ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                              : 'bg-blue-50 text-blue-700 border border-blue-200'
+                          }`}
+                        >
+                          {l.status === 'PAID_OFF' ? 'পরিশোধিত' : 'চলমান'}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2 py-2 border-y border-gray-100 text-xs font-mono">
+                      <div>
+                        <span className="font-sans text-gray-500 block text-[11px]">মূল ঋণ (Principal):</span>
+                        <span className="font-bold text-gray-900 text-sm">৳{fmt(l.principalAmount)}</span>
+                      </div>
+                      <div className="text-right">
+                        <span className="font-sans text-gray-500 block text-[11px]">বকেয়া স্থিতি:</span>
+                        <span className="font-bold text-amber-700 text-sm">
+                          ৳{fmt(l.remainingBalance ?? l.remainingPrincipal ?? 0)}
+                        </span>
+                      </div>
+                      <div>
+                        <span className="font-sans text-gray-500 block text-[11px]">সুদের হার:</span>
+                        <span className="text-gray-700">{l.annualInterestRatePercent ?? l.interestRate ?? 0}% বার্ষিক</span>
+                      </div>
+                      <div className="text-right">
+                        <span className="font-sans text-gray-500 block text-[11px]">মেয়াদকাল:</span>
+                        <span className="text-gray-700">{l.termMonths ?? l.tenureMonths ?? 12} মাস</span>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2 pt-1 flex-wrap">
+                      <button
+                        type="button"
+                        onClick={() => setSelectedLoan(l)}
+                        className="flex-1 min-h-[44px] px-3 py-2 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 text-xs font-bold transition-all cursor-pointer inline-flex items-center justify-center gap-1.5 shadow-xs"
+                      >
+                        <Eye className="w-4 h-4" />
+                        <span>কিস্তির সূচি ({paidCount}/{totalCount})</span>
+                      </button>
+                      {role === 'OWNER' && l.status !== 'PAID_OFF' && (
+                        <button
+                          type="button"
+                          onClick={() => handleOpenRepaymentModal(l)}
+                          className="flex-1 min-h-[44px] px-3 py-2 rounded-xl bg-[#1E5128] hover:bg-[#173F1F] text-white text-xs font-bold transition-all cursor-pointer inline-flex items-center justify-center gap-1.5 shadow-xs"
+                        >
+                          <CreditCard className="w-4 h-4" />
+                          <span>পরিশোধ</span>
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
+
+          {/* Desktop Full Table View */}
+          <div className="hidden md:block overflow-x-auto rounded-xl border border-gray-200">
             <table className="w-full min-w-[680px] text-left text-[14px] text-gray-800">
               <thead className="bg-[#F8FAFC] text-gray-600 font-semibold border-b border-gray-200 text-[13px]">
                 <tr>
@@ -2720,8 +2864,77 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
                 মালিকের কোনো মূলধন জমা বা উত্তোলনের রেকর্ড পাওয়া যায়নি। উপরের বাটন ব্যবহার করে নতুন লেনদেন যোগ করুন।
               </div>
             ) : (
-              <div className="overflow-x-auto rounded-xl border border-gray-200">
-                <table className="w-full min-w-[500px] text-left text-xs text-gray-800 border-collapse">
+              <>
+                {/* Mobile Owner Entries Card View (Optimized for iPhone 13 mini) */}
+                <div className="md:hidden space-y-2.5">
+                  {ownerEntries.map((entry) => {
+                    const isCapital = entry.lines?.some((l) => l.accountCode === '3010');
+                    const amount = isCapital
+                      ? entry.lines?.find((l) => l.accountCode === '3010')?.credit || 0
+                      : entry.lines?.find((l) => l.accountCode === '3040')?.debit || 0;
+                    const cashBankLine = entry.lines?.find((l) => l.accountCode === '1010' || l.accountCode === '1030');
+                    const accountLabel = cashBankLine?.accountName || 'তহবিল/ব্যাংক';
+
+                    return (
+                      <div
+                        key={`mob-owner-${entry.id}`}
+                        className={`p-3.5 rounded-xl border shadow-2xs space-y-2 bg-white ${
+                          isCapital ? 'border-emerald-200' : 'border-rose-200'
+                        }`}
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <div>
+                            <span className="font-mono font-bold text-gray-900 text-sm">
+                              {entry.voucherNumber}
+                            </span>
+                            <div className="text-xs text-gray-400 font-mono mt-0.5">{entry.date}</div>
+                          </div>
+                          <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold ${
+                            isCapital
+                              ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                              : 'bg-rose-100 text-rose-800 border border-rose-300'
+                          }`}>
+                            {isCapital ? (
+                              <>
+                                <ArrowDownCircle className="w-3.5 h-3.5 text-emerald-600" />
+                                <span>মূলধন জমা</span>
+                              </>
+                            ) : (
+                              <>
+                                <ArrowUpCircle className="w-3.5 h-3.5 text-rose-600" />
+                                <span>ব্যক্তিগত উত্তোলন</span>
+                              </>
+                            )}
+                          </span>
+                        </div>
+
+                        <div className="text-xs text-gray-700 font-medium">
+                          উৎস/মাধ্যম: <span className="font-bold text-gray-900">{accountLabel}</span>
+                          {cashBankLine?.accountCode && (
+                            <span className="text-[11px] text-gray-400 font-mono ml-1">({cashBankLine.accountCode})</span>
+                          )}
+                        </div>
+
+                        {entry.narration && (
+                          <div className="text-xs text-gray-600 bg-gray-50 p-2 rounded-lg leading-snug">
+                            {entry.narration}
+                          </div>
+                        )}
+
+                        <div className="flex justify-between items-center pt-1.5 border-t border-gray-100 text-xs">
+                          <span className="text-gray-500 font-sans">লেনদেন অংক:</span>
+                          <span className={`font-mono font-bold text-base ${isCapital ? 'text-emerald-700' : 'text-rose-700'}`}>
+                            {isCapital ? `+ ৳${fmt(amount)}` : `- ৳${fmt(amount)}`}
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* Desktop Full Table View */}
+                <div className="hidden md:block overflow-x-auto rounded-xl border border-gray-200">
+                  <table className="w-full min-w-[500px] text-left text-xs text-gray-800 border-collapse">
                   <thead className="bg-[#F8FAFC] text-gray-700 font-semibold border-b border-gray-200">
                     <tr>
                       <th className="p-2.5">তারিখ</th>
@@ -2776,6 +2989,7 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
                   </tbody>
                 </table>
               </div>
+            </>
             )}
           </div>
         </div>
@@ -2869,8 +3083,8 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
                 </span>
               </div>
 
-              {/* Schedule Table */}
-              <div className="overflow-x-auto overflow-y-auto flex-1 rounded-xl border border-gray-200">
+              {/* Schedule Section Content */}
+              <div className="overflow-y-auto flex-1 min-h-0">
                 {(() => {
                   const effectiveSchedule =
                     selectedLoan.schedule && selectedLoan.schedule.length > 0
@@ -2883,79 +3097,146 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
                         );
 
                   return (
-                    <table className="w-full text-left text-xs text-gray-800 border-collapse">
-                      <thead className="bg-[#F8FAFC] text-gray-700 font-semibold border-b border-gray-200 sticky top-0 z-10">
-                        <tr>
-                          <th className="p-2.5 text-center">কিস্তি #</th>
-                          <th className="p-2.5">পরিশোধ তারিখ</th>
-                          <th className="p-2.5 text-right">আসল (Principal)</th>
-                          <th className="p-2.5 text-right">সুদ (Interest)</th>
-                          <th className="p-2.5 text-right">মোট কিস্তি (EMI)</th>
-                          <th className="p-2.5 text-right">অবশিষ্ট ঋণ</th>
-                          <th className="p-2.5 text-center">অবস্থা (Status)</th>
-                          {role === 'OWNER' && <th className="p-2.5 text-center">অ্যাকশন</th>}
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-gray-100">
+                    <>
+                      {/* Mobile Schedule Cards View (Optimized for iPhone 13 mini) */}
+                      <div className="sm:hidden space-y-2.5 pr-0.5">
                         {effectiveSchedule.map((item) => (
-                          <tr
-                            key={item.installmentNumber}
-                            className={`transition-colors ${
-                              item.isPaid ? 'bg-emerald-50/40 hover:bg-emerald-50/70' : 'hover:bg-gray-50'
+                          <div
+                            key={`mob-sched-${item.installmentNumber}`}
+                            className={`p-3 rounded-xl border transition-colors shadow-2xs space-y-2 ${
+                              item.isPaid ? 'bg-emerald-50/40 border-emerald-300' : 'bg-white border-gray-200'
                             }`}
                           >
-                            <td className="p-2.5 font-bold font-mono text-center text-gray-900">
-                              #{item.installmentNumber}
-                            </td>
-                            <td className="p-2.5 font-mono text-gray-700 whitespace-nowrap">
-                              {item.date}
-                            </td>
-                            <td className="p-2.5 text-right font-mono font-medium text-gray-900">
-                              {fmt(item.principalPortion)}
-                            </td>
-                            <td className="p-2.5 text-right font-mono text-amber-700">
-                              {fmt(item.interestPortion)}
-                            </td>
-                            <td className="p-2.5 text-right font-mono font-bold text-[#1E5128]">
-                              {fmt(item.totalPayment)}
-                            </td>
-                            <td className="p-2.5 text-right font-mono text-gray-600">
-                              {fmt(item.remainingBalance)}
-                            </td>
-                            <td className="p-2.5 text-center whitespace-nowrap">
+                            <div className="flex items-center justify-between gap-2">
+                              <div className="flex items-center gap-1.5">
+                                <span className="font-mono font-bold text-xs bg-gray-100 text-gray-800 px-2 py-0.5 rounded">
+                                  #{item.installmentNumber}
+                                </span>
+                                <span className="text-xs font-mono text-gray-600">{item.date}</span>
+                              </div>
                               {item.isPaid ? (
-                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-100 text-emerald-800 border border-emerald-300">
-                                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-100 text-emerald-800 border border-emerald-300">
+                                  <CheckCircle2 className="w-3 h-3 text-emerald-600" />
                                   <span>পরিশোধিত</span>
-                                  {item.paidDate && (
-                                    <span className="text-[10px] text-emerald-600">({item.paidDate})</span>
-                                  )}
                                 </span>
                               ) : (
-                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-amber-50 text-amber-800 border border-amber-200">
-                                  <Clock className="w-3.5 h-3.5 text-amber-600" />
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-amber-50 text-amber-800 border border-amber-200">
+                                  <Clock className="w-3 h-3 text-amber-600" />
                                   <span>বকেয়া</span>
                                 </span>
                               )}
-                            </td>
-                            {role === 'OWNER' && (
-                              <td className="p-2.5 text-center">
-                                {item.isPaid ? (
-                                  <span className="text-[11px] text-emerald-700 font-semibold">সম্পন্ন</span>
-                                ) : (
-                                  <button
-                                    onClick={() => handleOpenRepaymentModal(selectedLoan, item)}
-                                    className="px-2 py-1 rounded bg-[#1E5128] hover:bg-[#173F1F] text-white text-[11px] font-semibold cursor-pointer"
-                                  >
-                                    পরিশোধ
-                                  </button>
-                                )}
-                              </td>
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-1.5 pt-1.5 border-t border-gray-100 text-xs font-mono">
+                              <div>
+                                <span className="font-sans text-gray-500 block text-[10px]">আসল (Principal):</span>
+                                <span className="font-semibold text-gray-900">৳{fmt(item.principalPortion)}</span>
+                              </div>
+                              <div className="text-right">
+                                <span className="font-sans text-gray-500 block text-[10px]">সুদ (Interest):</span>
+                                <span className="font-semibold text-amber-700">৳{fmt(item.interestPortion)}</span>
+                              </div>
+                              <div>
+                                <span className="font-sans text-gray-500 block text-[10px]">মোট কিস্তি (EMI):</span>
+                                <span className="font-bold text-[#1E5128] text-sm">৳{fmt(item.totalPayment)}</span>
+                              </div>
+                              <div className="text-right">
+                                <span className="font-sans text-gray-500 block text-[10px]">অবশিষ্ট ঋণ:</span>
+                                <span className="font-semibold text-gray-600">৳{fmt(item.remainingBalance)}</span>
+                              </div>
+                            </div>
+
+                            {role === 'OWNER' && !item.isPaid && (
+                              <button
+                                type="button"
+                                onClick={() => handleOpenRepaymentModal(selectedLoan, item)}
+                                className="w-full py-2 px-3 rounded-lg bg-[#1E5128] hover:bg-[#173F1F] text-white text-xs font-bold transition-all cursor-pointer min-h-[38px] flex items-center justify-center gap-1 shadow-2xs mt-1"
+                              >
+                                <CreditCard className="w-3.5 h-3.5" />
+                                <span>এই কিস্তিটি পরিশোধ করুন (৳{fmt(item.totalPayment)})</span>
+                              </button>
                             )}
-                          </tr>
+                          </div>
                         ))}
-                      </tbody>
-                    </table>
+                      </div>
+
+                      {/* Desktop Schedule Table */}
+                      <div className="hidden sm:block overflow-x-auto overflow-y-auto flex-1 rounded-xl border border-gray-200">
+                        <table className="w-full text-left text-xs text-gray-800 border-collapse">
+                          <thead className="bg-[#F8FAFC] text-gray-700 font-semibold border-b border-gray-200 sticky top-0 z-10">
+                            <tr>
+                              <th className="p-2.5 text-center">কিস্তি #</th>
+                              <th className="p-2.5">পরিশোধ তারিখ</th>
+                              <th className="p-2.5 text-right">আসল (Principal)</th>
+                              <th className="p-2.5 text-right">সুদ (Interest)</th>
+                              <th className="p-2.5 text-right">মোট কিস্তি (EMI)</th>
+                              <th className="p-2.5 text-right">অবশিষ্ট ঋণ</th>
+                              <th className="p-2.5 text-center">অবস্থা (Status)</th>
+                              {role === 'OWNER' && <th className="p-2.5 text-center">অ্যাকশন</th>}
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-gray-100">
+                            {effectiveSchedule.map((item) => (
+                              <tr
+                                key={item.installmentNumber}
+                                className={`transition-colors ${
+                                  item.isPaid ? 'bg-emerald-50/40 hover:bg-emerald-50/70' : 'hover:bg-gray-50'
+                                }`}
+                              >
+                                <td className="p-2.5 font-bold font-mono text-center text-gray-900">
+                                  #{item.installmentNumber}
+                                </td>
+                                <td className="p-2.5 font-mono text-gray-700 whitespace-nowrap">
+                                  {item.date}
+                                </td>
+                                <td className="p-2.5 text-right font-mono font-medium text-gray-900">
+                                  {fmt(item.principalPortion)}
+                                </td>
+                                <td className="p-2.5 text-right font-mono text-amber-700">
+                                  {fmt(item.interestPortion)}
+                                </td>
+                                <td className="p-2.5 text-right font-mono font-bold text-[#1E5128]">
+                                  {fmt(item.totalPayment)}
+                                </td>
+                                <td className="p-2.5 text-right font-mono text-gray-600">
+                                  {fmt(item.remainingBalance)}
+                                </td>
+                                <td className="p-2.5 text-center whitespace-nowrap">
+                                  {item.isPaid ? (
+                                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-100 text-emerald-800 border border-emerald-300">
+                                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                                      <span>পরিশোধিত</span>
+                                      {item.paidDate && (
+                                        <span className="text-[10px] text-emerald-600">({item.paidDate})</span>
+                                      )}
+                                    </span>
+                                  ) : (
+                                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-amber-50 text-amber-800 border border-amber-200">
+                                      <Clock className="w-3.5 h-3.5 text-amber-600" />
+                                      <span>বকেয়া</span>
+                                    </span>
+                                  )}
+                                </td>
+                                {role === 'OWNER' && (
+                                  <td className="p-2.5 text-center">
+                                    {item.isPaid ? (
+                                      <span className="text-[11px] text-emerald-700 font-semibold">সম্পন্ন</span>
+                                    ) : (
+                                      <button
+                                        onClick={() => handleOpenRepaymentModal(selectedLoan, item)}
+                                        className="px-2 py-1 rounded bg-[#1E5128] hover:bg-[#173F1F] text-white text-[11px] font-semibold cursor-pointer"
+                                      >
+                                        পরিশোধ
+                                      </button>
+                                    )}
+                                  </td>
+                                )}
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </>
                   );
                 })()}
               </div>

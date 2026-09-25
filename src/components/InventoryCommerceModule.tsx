@@ -2408,80 +2408,156 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
               })}
             </div>
           ) : (
-            <div className="overflow-x-auto rounded-xl border border-gray-200">
-              <table className="w-full min-w-[650px] text-left text-[14px] text-gray-800">
-                <thead className="bg-[#F8FAFC] text-gray-600 font-semibold border-b border-gray-200 text-[13px]">
-                  <tr>
-                    <th className="p-3">পণ্যের নাম</th>
-                    <th className="p-3">ক্যাটাগরি</th>
-                    <th className="p-3">বর্তমান স্টক</th>
-                    <th className="p-3">গড় ক্রয়মূল্য</th>
-                    <th className="p-3">বিক্রয় মূল্য</th>
-                    <th className="p-3 text-right">মোট মজুদ মূল্য (৳)</th>
-                    <th className="p-3">সতর্কতার সীমা</th>
-                    <th className="p-3">অবস্থা</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-100">
-                  {items.map((it, idx) => {
-                    const val = it.currentStock * it.avgCostPrice;
-                    const lastRestock = it.lastRestockAmount && it.lastRestockAmount > 0 ? it.lastRestockAmount : (it.currentStock || 100);
-                    const defaultThreshold = Math.round(lastRestock * 0.20 * 100) / 100;
-                    const effectiveThreshold = (it.lowStockThreshold != null && it.lowStockThreshold >= 0)
-                      ? it.lowStockThreshold
-                      : (it.reorderLevel && it.reorderLevel > 0 ? it.reorderLevel : defaultThreshold);
-                    const isLow = it.currentStock <= effectiveThreshold;
+            <>
+              {/* Mobile Inventory Table/List View (Optimized for iPhone 13 mini) */}
+              <div className="md:hidden space-y-3">
+                {items.map((it, idx) => {
+                  const val = it.currentStock * it.avgCostPrice;
+                  const lastRestock = it.lastRestockAmount && it.lastRestockAmount > 0 ? it.lastRestockAmount : (it.currentStock || 100);
+                  const defaultThreshold = Math.round(lastRestock * 0.20 * 100) / 100;
+                  const effectiveThreshold = (it.lowStockThreshold != null && it.lowStockThreshold >= 0)
+                    ? it.lowStockThreshold
+                    : (it.reorderLevel && it.reorderLevel > 0 ? it.reorderLevel : defaultThreshold);
+                  const isLow = it.currentStock <= effectiveThreshold;
 
-                    return (
-                      <tr
-                        key={it.id}
-                        style={{ animationDelay: `${Math.min(idx * 25, 250)}ms` }}
-                        className="hover:bg-gray-50/80 animate-fade-slide-up"
-                      >
-                        <td className="p-3 font-medium text-gray-900">
-                          <div>{it.nameBn}</div>
-                          <div className="text-[11px] text-gray-400 font-mono">{it.code}</div>
-                        </td>
-                        <td className="p-3 text-gray-600 text-[13px]">
-                          <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold bg-emerald-50 text-emerald-800 border border-emerald-200">
-                            {getInventoryCategoryBadge(it.category).label} ({getInventoryAssetAccount(it.category)})
-                          </span>
-                        </td>
-                        <td className="p-3 font-bold text-gray-900">{it.currentStock} {it.unit}</td>
-                        <td className="p-3 text-gray-700">{fmt(it.avgCostPrice)}</td>
-                        <td className="p-3 text-[#15803D] font-semibold">{it.sellingPrice > 0 ? fmt(it.sellingPrice) : '-'}</td>
-                        <td className="p-3 text-right font-bold text-amber-900">{fmt(val)}</td>
-                        <td className="p-3 text-gray-700">
-                          <div className="flex items-center gap-1.5">
-                            <span className="font-semibold">{effectiveThreshold} {it.unit}</span>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setEditingThresholdItem(it);
-                                setNewThresholdValue(effectiveThreshold.toString());
-                              }}
-                              className="text-gray-400 hover:text-amber-700 text-xs font-semibold p-1 hover:bg-gray-100 rounded transition-colors"
-                              title="সতর্কতার সীমা পরিবর্তন করুন"
-                            >
-                              ✏️
-                            </button>
-                          </div>
-                        </td>
-                        <td className="p-3">
-                          {isLow ? (
-                            <span className="px-2.5 py-1 rounded-full text-xs font-semibold bg-amber-50 text-amber-800 border border-amber-200">
-                              মজুদ কম!
+                  return (
+                    <div
+                      key={`mob-inv-tbl-${it.id}`}
+                      className="p-3.5 rounded-xl border border-gray-200 bg-white shadow-xs space-y-2.5 animate-fade-slide-up"
+                      style={{ animationDelay: `${Math.min(idx * 25, 250)}ms` }}
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div>
+                          <div className="font-bold text-gray-900 text-sm leading-snug">{it.nameBn}</div>
+                          <div className="flex items-center gap-1.5 mt-0.5">
+                            <span className="text-[11px] text-gray-400 font-mono">{it.code}</span>
+                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-800 border border-emerald-200 font-medium">
+                              {getInventoryCategoryBadge(it.category).label}
                             </span>
-                          ) : (
-                            <span className="text-xs font-medium text-gray-500">পর্যাপ্ত</span>
-                          )}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
+                          </div>
+                        </div>
+                        <span className={`px-2 py-0.5 rounded-full text-xs font-semibold shrink-0 ${
+                          isLow
+                            ? 'bg-amber-50 text-amber-800 border border-amber-200'
+                            : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                        }`}>
+                          {isLow ? 'মজুদ কম!' : 'পর্যাপ্ত'}
+                        </span>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-2 pt-2 border-t border-gray-100 text-xs font-mono">
+                        <div>
+                          <span className="font-sans text-gray-500 block text-[11px]">বর্তমান স্টক:</span>
+                          <span className="font-bold text-gray-900 text-sm">{it.currentStock} {it.unit}</span>
+                        </div>
+                        <div className="text-right">
+                          <span className="font-sans text-gray-500 block text-[11px]">মোট মজুদ মূল্য:</span>
+                          <span className="font-bold text-amber-900 text-sm">৳{fmt(val)}</span>
+                        </div>
+                        <div>
+                          <span className="font-sans text-gray-500 block text-[11px]">গড় ক্রয়মূল্য:</span>
+                          <span className="text-gray-700">৳{fmt(it.avgCostPrice)}</span>
+                        </div>
+                        <div className="text-right">
+                          <span className="font-sans text-gray-500 block text-[11px]">বিক্রয় মূল্য:</span>
+                          <span className="text-[#15803D] font-semibold">{it.sellingPrice > 0 ? `৳${fmt(it.sellingPrice)}` : '—'}</span>
+                        </div>
+                      </div>
+
+                      <div className="flex justify-between items-center text-xs pt-1.5 border-t border-gray-100 font-sans">
+                        <span className="text-gray-500 text-[11px]">সতর্কতার সীমা: {effectiveThreshold} {it.unit}</span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setEditingThresholdItem(it);
+                            setNewThresholdValue(effectiveThreshold.toString());
+                          }}
+                          className="text-amber-800 hover:text-amber-900 font-semibold p-1 hover:bg-amber-50 rounded transition-colors text-xs inline-flex items-center gap-1"
+                        >
+                          <span>✏️ সীমা পরিবর্তন</span>
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Desktop Full Table View */}
+              <div className="hidden md:block overflow-x-auto rounded-xl border border-gray-200">
+                <table className="w-full min-w-[650px] text-left text-[14px] text-gray-800">
+                  <thead className="bg-[#F8FAFC] text-gray-600 font-semibold border-b border-gray-200 text-[13px]">
+                    <tr>
+                      <th className="p-3">পণ্যের নাম</th>
+                      <th className="p-3">ক্যাটাগরি</th>
+                      <th className="p-3">বর্তমান স্টক</th>
+                      <th className="p-3">গড় ক্রয়মূল্য</th>
+                      <th className="p-3">বিক্রয় মূল্য</th>
+                      <th className="p-3 text-right">মোট মজুদ মূল্য (৳)</th>
+                      <th className="p-3">সতর্কতার সীমা</th>
+                      <th className="p-3">অবস্থা</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {items.map((it, idx) => {
+                      const val = it.currentStock * it.avgCostPrice;
+                      const lastRestock = it.lastRestockAmount && it.lastRestockAmount > 0 ? it.lastRestockAmount : (it.currentStock || 100);
+                      const defaultThreshold = Math.round(lastRestock * 0.20 * 100) / 100;
+                      const effectiveThreshold = (it.lowStockThreshold != null && it.lowStockThreshold >= 0)
+                        ? it.lowStockThreshold
+                        : (it.reorderLevel && it.reorderLevel > 0 ? it.reorderLevel : defaultThreshold);
+                      const isLow = it.currentStock <= effectiveThreshold;
+
+                      return (
+                        <tr
+                          key={it.id}
+                          style={{ animationDelay: `${Math.min(idx * 25, 250)}ms` }}
+                          className="hover:bg-gray-50/80 animate-fade-slide-up"
+                        >
+                          <td className="p-3 font-medium text-gray-900">
+                            <div>{it.nameBn}</div>
+                            <div className="text-[11px] text-gray-400 font-mono">{it.code}</div>
+                          </td>
+                          <td className="p-3 text-gray-600 text-[13px]">
+                            <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold bg-emerald-50 text-emerald-800 border border-emerald-200">
+                              {getInventoryCategoryBadge(it.category).label} ({getInventoryAssetAccount(it.category)})
+                            </span>
+                          </td>
+                          <td className="p-3 font-bold text-gray-900">{it.currentStock} {it.unit}</td>
+                          <td className="p-3 text-gray-700">{fmt(it.avgCostPrice)}</td>
+                          <td className="p-3 text-[#15803D] font-semibold">{it.sellingPrice > 0 ? fmt(it.sellingPrice) : '-'}</td>
+                          <td className="p-3 text-right font-bold text-amber-900">{fmt(val)}</td>
+                          <td className="p-3 text-gray-700">
+                            <div className="flex items-center gap-1.5">
+                              <span className="font-semibold">{effectiveThreshold} {it.unit}</span>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setEditingThresholdItem(it);
+                                  setNewThresholdValue(effectiveThreshold.toString());
+                                }}
+                                className="text-gray-400 hover:text-amber-700 text-xs font-semibold p-1 hover:bg-gray-100 rounded transition-colors"
+                                title="সতর্কতার সীমা পরিবর্তন করুন"
+                              >
+                                ✏️
+                              </button>
+                            </div>
+                          </td>
+                          <td className="p-3">
+                            {isLow ? (
+                              <span className="px-2.5 py-1 rounded-full text-xs font-semibold bg-amber-50 text-amber-800 border border-amber-200">
+                                মজুদ কম!
+                              </span>
+                            ) : (
+                              <span className="text-xs font-medium text-gray-500">পর্যাপ্ত</span>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </>
           )}
 
           {/* Edit Threshold Modal */}
@@ -2953,7 +3029,146 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
             </form>
           )}
 
-          <div className="overflow-x-auto rounded-xl border border-gray-200">
+          {/* Mobile Card View (Optimized for iPhone 13 mini & small viewports) */}
+          <div className="md:hidden space-y-3">
+            {sales.length === 0 ? (
+              <div className="p-8 text-center text-gray-500 text-[14px] bg-gray-50 rounded-2xl border border-dashed border-gray-200">
+                এখনো কোনো বিক্রয় চালান ইস্যু করা হয়নি।
+              </div>
+            ) : (
+              sales.map((s) => {
+                const sPayments = payments.filter((pmt) => pmt.parentId === s.id);
+                const sReturns = salesReturns.filter((ret) => ret.saleId === s.id);
+                const total = Number(s.grandTotal || s.totalAmount || 0);
+                const paid = Number(s.paidAmount || 0);
+                const due = Number(s.dueAmount !== undefined ? s.dueAmount : Math.max(0, total - paid));
+                const hasDue = due > 0;
+                const hasReturnableItems = (s.items || []).some((i) => {
+                  const retQty = getItemReturnedQtyForSale(s.id, i.itemId);
+                  return (Number(i.quantity) || 0) - retQty > 0.0001;
+                });
+                const sItems = (s.items && Array.isArray(s.items) && s.items.length > 0)
+                  ? s.items
+                  : [{
+                      itemId: (s as any).itemId || '',
+                      itemName: (s as any).itemName || 'আইটেম',
+                      quantity: (s as any).quantity || 1,
+                      unitPrice: (s as any).unitPrice || total,
+                      unit: (s as any).unit || 'একক',
+                      total: total
+                    }];
+
+                return (
+                  <div key={`mob-sale-${s.id}`} className="p-4 rounded-2xl bg-white border border-gray-200 shadow-xs space-y-3">
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <div className="font-bold text-amber-900 font-mono text-[15px]">{s.displayNumber || s.invoiceNumber}</div>
+                        <div className="text-xs text-gray-500 font-sans mt-0.5">
+                          <span>{s.date}</span> · <span className="font-semibold text-gray-900">{s.customerName}</span>
+                        </div>
+                      </div>
+                      <span className={`px-2.5 py-1 rounded-full text-xs font-semibold shrink-0 ${
+                        due <= 0 || s.status === 'PAID'
+                          ? 'bg-[#F0FDF4] text-[#15803D] border border-[#BBF7D0]'
+                          : (paid > 0 ? 'bg-blue-50 text-blue-800 border border-blue-200' : 'bg-amber-50 text-amber-800 border border-amber-200')
+                      }`}>
+                        {due <= 0 || s.status === 'PAID' ? 'পরিশোধিত' : (paid > 0 ? `আংশিক (৳${fmt(due)})` : `বাকি (৳${fmt(due)})`)}
+                      </span>
+                    </div>
+
+                    <div className="bg-[#F8FAFC] rounded-xl p-3 space-y-1.5 text-xs text-gray-700 border border-gray-100">
+                      <div className="text-[11px] font-bold text-gray-500 uppercase tracking-wider">পণ্যসমূহ ({sItems.length}টি)</div>
+                      {sItems.map((i, idx) => {
+                        const returnedQty = getItemReturnedQtyForSale(s.id, i.itemId);
+                        const remainingReturnable = Math.max(0, Math.round(((Number(i.quantity) || 0) - returnedQty) * 1000) / 1000);
+                        return (
+                          <div key={idx} className="flex items-center justify-between gap-2 py-0.5 border-b border-gray-100 last:border-0">
+                            <div className="flex-1 truncate">
+                              <span className="font-semibold text-gray-900">{i.itemName}</span>
+                              <span className="text-gray-500 font-mono ml-1">({i.quantity} × {fmt(i.unitPrice || 0)})</span>
+                              {returnedQty > 0 && (
+                                <span className="ml-1.5 text-[10px] text-amber-800 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200">
+                                  ফেরত: {returnedQty}
+                                </span>
+                              )}
+                            </div>
+                            {role === 'OWNER' && remainingReturnable > 0 && (
+                              <button
+                                type="button"
+                                onClick={() => openReturnModal('SALE', s, i.itemId)}
+                                className="px-2 py-1 rounded-md bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-300 text-[11px] font-bold cursor-pointer shrink-0"
+                              >
+                                ফেরত
+                              </button>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    <div className="grid grid-cols-3 gap-2 py-2 border-y border-gray-100 text-center font-mono">
+                      <div>
+                        <div className="text-[11px] text-gray-500 font-sans">মোট মূল্য</div>
+                        <div className="text-sm font-bold text-gray-900">{fmt(total)}</div>
+                      </div>
+                      <div>
+                        <div className="text-[11px] text-gray-500 font-sans">পরিশোধিত</div>
+                        <div className="text-sm font-semibold text-emerald-700">{fmt(paid)}</div>
+                      </div>
+                      <div>
+                        <div className="text-[11px] text-gray-500 font-sans">বকেয়া</div>
+                        <div className={`text-sm font-bold ${due > 0 ? 'text-amber-700' : 'text-gray-400'}`}>{fmt(due)}</div>
+                      </div>
+                    </div>
+
+                    {sReturns.length > 0 && (
+                      <div className="text-xs text-amber-800 bg-amber-50 px-2.5 py-1.5 rounded-lg border border-amber-200 font-mono flex items-center justify-between">
+                        <span>{sReturns.length}টি ফেরত সমন্বিত</span>
+                        <span className="font-bold">৳{fmt(sReturns.reduce((sum, r) => sum + (r.totalRefundAmount || 0), 0))}</span>
+                      </div>
+                    )}
+
+                    <div className="flex items-center gap-2 pt-1 flex-wrap">
+                      <button
+                        type="button"
+                        id={`btn-view-receipt-sale-${s.id}`}
+                        onClick={() => setReceiptModal({ type: 'SALE', record: s })}
+                        className="flex-1 min-h-[44px] px-3 py-2 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 text-xs font-bold transition-all cursor-pointer inline-flex items-center justify-center gap-1.5 shadow-xs"
+                      >
+                        <Receipt className="w-4 h-4 text-emerald-700" />
+                        <span>রশিদ</span>
+                      </button>
+                      {hasDue && (
+                        <button
+                          type="button"
+                          id={`btn-add-installment-sale-${s.id}`}
+                          onClick={() => openPaymentModal('SALE', s)}
+                          className="flex-1 min-h-[44px] px-3 py-2 rounded-xl bg-amber-700 hover:bg-amber-800 text-white text-xs font-bold transition-all cursor-pointer inline-flex items-center justify-center gap-1.5 shadow-xs"
+                        >
+                          <PlusCircle className="w-4 h-4" />
+                          <span>কিস্তি যোগ</span>
+                        </button>
+                      )}
+                      {role === 'OWNER' && hasReturnableItems && (
+                        <button
+                          type="button"
+                          id={`btn-return-sale-${s.id}`}
+                          onClick={() => openReturnModal('SALE', s)}
+                          className="min-h-[44px] px-3 py-2 rounded-xl bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 text-xs font-bold transition-all cursor-pointer inline-flex items-center justify-center gap-1 shadow-xs"
+                        >
+                          <RotateCcw className="w-4 h-4 text-amber-700" />
+                          <span>ফেরত</span>
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
+
+          {/* Desktop Table View (Hidden on mobile) */}
+          <div className="hidden md:block overflow-x-auto rounded-xl border border-gray-200">
             <table className="w-full min-w-[650px] text-left text-[14px] text-gray-800">
               <thead className="bg-[#F8FAFC] text-gray-600 font-semibold border-b border-gray-200 text-[13px]">
                 <tr>
@@ -3592,7 +3807,153 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
             </form>
           )}
 
-          <div className="overflow-x-auto rounded-xl border border-gray-200">
+          {/* Mobile Card View (Optimized for iPhone 13 mini & small viewports) */}
+          <div className="md:hidden space-y-3">
+            {purchases.length === 0 ? (
+              <div className="p-8 text-center text-gray-500 text-[14px] bg-gray-50 rounded-2xl border border-dashed border-gray-200">
+                এখনো কোনো ক্রয় চালান রেকর্ড করা হয়নি।
+              </div>
+            ) : (
+              purchases.map((p) => {
+                const pPayments = payments.filter((pmt) => pmt.parentId === p.id);
+                const pReturns = purchaseReturns.filter((ret) => ret.purchaseId === p.id);
+                const total = Number(p.grandTotal || p.totalAmount || 0);
+                const paid = Number(p.paidAmount || 0);
+                const due = Number(p.dueAmount !== undefined ? p.dueAmount : Math.max(0, total - paid));
+                const hasDue = due > 0;
+                const hasReturnableItems = (p.items || []).some((i) => {
+                  const retQty = getItemReturnedQtyForPurchase(p.id, i.itemId);
+                  return (Number(i.quantity) || 0) - retQty > 0.0001;
+                });
+                const pItems = (p.items && Array.isArray(p.items) && p.items.length > 0)
+                  ? p.items
+                  : [{
+                      itemId: (p as any).itemId || '',
+                      itemName: (p as any).itemName || 'আইটেম',
+                      quantity: (p as any).quantity || 1,
+                      unitPrice: (p as any).unitPrice || total,
+                      unit: (p as any).unit || 'একক',
+                      total: total
+                    }];
+
+                return (
+                  <div key={`mob-purch-${p.id}`} className="p-4 rounded-2xl bg-white border border-gray-200 shadow-xs space-y-3">
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <div className="font-bold text-sky-900 font-mono text-[15px]">{p.displayNumber || p.invoiceNumber}</div>
+                        <div className="text-xs text-gray-500 font-sans mt-0.5">
+                          <span>{p.date}</span> · <span className="font-semibold text-gray-900">{p.supplierName}</span>
+                        </div>
+                      </div>
+                      <span className={`px-2.5 py-1 rounded-full text-xs font-semibold shrink-0 ${
+                        due <= 0 || p.status === 'PAID'
+                          ? 'bg-[#F0FDF4] text-[#15803D] border border-[#BBF7D0]'
+                          : (paid > 0 ? 'bg-blue-50 text-blue-800 border border-blue-200' : 'bg-amber-50 text-amber-800 border border-amber-200')
+                      }`}>
+                        {due <= 0 || p.status === 'PAID' ? 'পরিশোধিত' : (paid > 0 ? `আংশিক (৳${fmt(due)})` : `বাকি (৳${fmt(due)})`)}
+                      </span>
+                    </div>
+
+                    <div className="bg-[#F8FAFC] rounded-xl p-3 space-y-1.5 text-xs text-gray-700 border border-gray-100">
+                      <div className="text-[11px] font-bold text-gray-500 uppercase tracking-wider">ক্রয়কৃত পণ্য ({pItems.length}টি)</div>
+                      {pItems.map((i, idx) => {
+                        const returnedQty = getItemReturnedQtyForPurchase(p.id, i.itemId);
+                        const remainingReturnable = Math.max(0, Math.round(((Number(i.quantity) || 0) - returnedQty) * 1000) / 1000);
+                        return (
+                          <div key={idx} className="flex items-center justify-between gap-2 py-0.5 border-b border-gray-100 last:border-0">
+                            <div className="flex-1 truncate">
+                              <span className="font-semibold text-gray-900">{i.itemName}</span>
+                              <span className="text-gray-500 font-mono ml-1">({i.quantity} × {fmt(i.unitPrice || 0)})</span>
+                              {returnedQty > 0 && (
+                                <span className="ml-1.5 text-[10px] text-sky-800 bg-sky-50 px-1.5 py-0.5 rounded border border-sky-200">
+                                  ফেরত: {returnedQty}
+                                </span>
+                              )}
+                            </div>
+                            {role === 'OWNER' && remainingReturnable > 0 && (
+                              <button
+                                type="button"
+                                onClick={() => openReturnModal('PURCHASE', p, i.itemId)}
+                                className="px-2 py-1 rounded-md bg-sky-50 hover:bg-sky-100 text-sky-800 border border-sky-300 text-[11px] font-bold cursor-pointer shrink-0"
+                              >
+                                ফেরত
+                              </button>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    <div className="grid grid-cols-3 gap-2 py-2 border-y border-gray-100 text-center font-mono">
+                      <div>
+                        <div className="text-[11px] text-gray-500 font-sans">মোট মূল্য</div>
+                        <div className="text-sm font-bold text-gray-900">{fmt(total)}</div>
+                      </div>
+                      <div>
+                        <div className="text-[11px] text-gray-500 font-sans">পরিশোধিত</div>
+                        <div className="text-sm font-semibold text-emerald-700">{fmt(paid)}</div>
+                      </div>
+                      <div>
+                        <div className="text-[11px] text-gray-500 font-sans">বকেয়া</div>
+                        <div className={`text-sm font-bold ${due > 0 ? 'text-amber-700' : 'text-gray-400'}`}>{fmt(due)}</div>
+                      </div>
+                    </div>
+
+                    {p.transportCost > 0 && (
+                      <div className="text-xs text-amber-800 bg-amber-50 px-2.5 py-1 rounded-lg border border-amber-200 font-mono flex items-center justify-between">
+                        <span>পরিবহন খরচ:</span>
+                        <span className="font-bold">৳{fmt(p.transportCost)}</span>
+                      </div>
+                    )}
+
+                    {pReturns.length > 0 && (
+                      <div className="text-xs text-sky-800 bg-sky-50 px-2.5 py-1.5 rounded-lg border border-sky-200 font-mono flex items-center justify-between">
+                        <span>{pReturns.length}টি ফেরত সমন্বিত</span>
+                        <span className="font-bold">৳{fmt(pReturns.reduce((sum, r) => sum + (r.totalRefundAmount || 0), 0))}</span>
+                      </div>
+                    )}
+
+                    <div className="flex items-center gap-2 pt-1 flex-wrap">
+                      <button
+                        type="button"
+                        id={`btn-view-receipt-purchase-${p.id}`}
+                        onClick={() => setReceiptModal({ type: 'PURCHASE', record: p })}
+                        className="flex-1 min-h-[44px] px-3 py-2 rounded-xl bg-sky-50 hover:bg-sky-100 text-sky-800 border border-sky-300 text-xs font-bold transition-all cursor-pointer inline-flex items-center justify-center gap-1.5 shadow-xs"
+                      >
+                        <Receipt className="w-4 h-4 text-sky-700" />
+                        <span>রশিদ</span>
+                      </button>
+                      {hasDue && (
+                        <button
+                          type="button"
+                          id={`btn-add-installment-purchase-${p.id}`}
+                          onClick={() => openPaymentModal('PURCHASE', p)}
+                          className="flex-1 min-h-[44px] px-3 py-2 rounded-xl bg-amber-700 hover:bg-amber-800 text-white text-xs font-bold transition-all cursor-pointer inline-flex items-center justify-center gap-1.5 shadow-xs"
+                        >
+                          <PlusCircle className="w-4 h-4" />
+                          <span>কিস্তি যোগ</span>
+                        </button>
+                      )}
+                      {role === 'OWNER' && hasReturnableItems && (
+                        <button
+                          type="button"
+                          id={`btn-return-purchase-${p.id}`}
+                          onClick={() => openReturnModal('PURCHASE', p)}
+                          className="min-h-[44px] px-3 py-2 rounded-xl bg-sky-50 hover:bg-sky-100 text-sky-900 border border-sky-300 text-xs font-bold transition-all cursor-pointer inline-flex items-center justify-center gap-1 shadow-xs"
+                        >
+                          <RotateCcw className="w-4 h-4 text-sky-700" />
+                          <span>ফেরত</span>
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
+
+          {/* Desktop Table View (Hidden on mobile) */}
+          <div className="hidden md:block overflow-x-auto rounded-xl border border-gray-200">
             <table className="w-full min-w-[650px] text-left text-[14px] text-gray-800">
               <thead className="bg-[#F8FAFC] text-gray-600 font-semibold border-b border-gray-200 text-[13px]">
                 <tr>
@@ -4024,9 +4385,110 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                   </div>
                 </div>
               ) : (
-                <div className="border border-gray-200 rounded-2xl overflow-hidden shadow-2xs bg-white">
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-left text-xs sm:text-[13px]">
+                <>
+                  {/* Mobile Invoices Card View (Optimized for iPhone 13 mini) */}
+                  <div className="md:hidden space-y-3">
+                    {partyInvoices.map((inv) => (
+                      <div
+                        key={`mob-inv-${inv.id}`}
+                        className="p-4 rounded-2xl border border-gray-200 bg-white shadow-xs space-y-3"
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <div>
+                            <div className="font-bold text-amber-900 font-mono text-[15px]">{inv.displayNumber}</div>
+                            <div className="text-xs text-gray-500 font-mono mt-0.5">{inv.date}</div>
+                          </div>
+                          <div className="flex items-center gap-1.5 shrink-0 flex-wrap justify-end">
+                            <span
+                              className={`px-2 py-0.5 rounded-full text-[11px] font-semibold ${
+                                inv.type === 'SALE'
+                                  ? 'bg-amber-50 text-amber-800 border border-amber-200'
+                                  : 'bg-sky-50 text-sky-700 border border-sky-200'
+                              }`}
+                            >
+                              {inv.type === 'SALE' ? 'বিক্রয়' : 'ক্রয়'}
+                            </span>
+                            <span
+                              className={`px-2 py-0.5 rounded-full text-[11px] font-semibold ${
+                                inv.status === 'PAID'
+                                  ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                                  : inv.status === 'PARTIAL'
+                                  ? 'bg-amber-50 text-amber-700 border border-amber-200'
+                                  : 'bg-red-50 text-red-700 border border-red-200'
+                              }`}
+                            >
+                              {inv.status === 'PAID' ? 'পরিশোধিত' : inv.status === 'PARTIAL' ? 'আংশিক' : 'বকেয়া'}
+                            </span>
+                          </div>
+                        </div>
+
+                        {inv.items && inv.items.length > 0 && (
+                          <div className="bg-[#F8FAFC] rounded-xl p-2.5 text-xs text-gray-700 border border-gray-100 space-y-1">
+                            <div className="text-[11px] font-bold text-gray-500 uppercase">পণ্যসমূহ ({inv.items.length}টি):</div>
+                            {inv.items.slice(0, 3).map((item, iIdx) => (
+                              <div key={iIdx} className="flex justify-between items-center text-xs">
+                                <span className="font-medium text-gray-900 truncate">{item.itemName}</span>
+                                <span className="text-gray-500 font-mono ml-1">{item.quantity} {item.unit}</span>
+                              </div>
+                            ))}
+                            {inv.items.length > 3 && (
+                              <div className="text-[11px] text-gray-400 italic text-right">+ আরও {inv.items.length - 3}টি আইটেম</div>
+                            )}
+                          </div>
+                        )}
+
+                        <div className="grid grid-cols-3 gap-2 py-2 border-y border-gray-100 text-center font-mono">
+                          <div>
+                            <div className="text-[11px] font-sans text-gray-500">মোট মূল্য</div>
+                            <div className="text-sm font-bold text-gray-900">৳{fmt(inv.totalAmount)}</div>
+                          </div>
+                          <div>
+                            <div className="text-[11px] font-sans text-gray-500">পরিশোধ</div>
+                            <div className="text-sm font-semibold text-emerald-700">৳{fmt(inv.paidAmount)}</div>
+                          </div>
+                          <div>
+                            <div className="text-[11px] font-sans text-gray-500">বকেয়া</div>
+                            <div className={`text-sm font-bold ${inv.dueAmount > 0 ? 'text-red-700' : 'text-gray-400'}`}>
+                              ৳{fmt(inv.dueAmount)}
+                            </div>
+                          </div>
+                        </div>
+
+                        {inv.returns && inv.returns.length > 0 && (
+                          <div className="text-xs text-amber-900 bg-amber-50 px-2.5 py-1.5 rounded-lg border border-amber-200 font-mono flex items-center justify-between">
+                            <span>{inv.returns.length}টি ফেরত সমন্বিত</span>
+                            <span className="font-bold">৳{fmt(inv.returns.reduce((sum: number, r: any) => sum + (r.totalRefundAmount || 0), 0))}</span>
+                          </div>
+                        )}
+
+                        <div className="flex items-center gap-2 pt-1 flex-wrap">
+                          <button
+                            type="button"
+                            onClick={() => setReceiptModal({ type: inv.type, record: inv.rawRecord })}
+                            className="flex-1 min-h-[44px] px-3 py-2 rounded-xl bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 text-xs font-bold transition-all cursor-pointer inline-flex items-center justify-center gap-1.5 shadow-xs"
+                          >
+                            <Receipt className="w-4 h-4 text-amber-700" />
+                            <span>রশিদ</span>
+                          </button>
+                          {inv.dueAmount > 0 && (
+                            <button
+                              type="button"
+                              onClick={() => openPaymentModal(inv.type, inv.rawRecord)}
+                              className="flex-1 min-h-[44px] px-3 py-2 rounded-xl bg-amber-700 hover:bg-amber-800 text-white text-xs font-bold transition-all cursor-pointer inline-flex items-center justify-center gap-1.5 shadow-xs"
+                            >
+                              <PlusCircle className="w-4 h-4" />
+                              <span>কিস্তি যোগ</span>
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Desktop Full Invoices Table */}
+                  <div className="hidden md:block border border-gray-200 rounded-2xl overflow-hidden shadow-2xs bg-white">
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left text-xs sm:text-[13px]">
                       <thead className="bg-gray-50/90 border-b border-gray-200 text-gray-600 font-bold uppercase text-[11px] tracking-wider">
                         <tr>
                           <th className="p-3">তারিখ</th>
@@ -4214,7 +4676,8 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                     </table>
                   </div>
                 </div>
-              )}
+              </>
+            )}
 
               {/* Advance Payments & Receipts Table for this Party (Requirement 3) */}
               {(() => {
@@ -4233,7 +4696,77 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                         মোট {partyAdvances.length}টি অগ্রিম এন্ট্রি
                       </span>
                     </div>
-                    <div className="border border-emerald-200 rounded-2xl overflow-hidden shadow-2xs bg-white">
+                    {/* Mobile Party Advances Cards View (Optimized for iPhone 13 mini) */}
+                    <div className="md:hidden space-y-2.5">
+                      {partyAdvances.map((adv) => {
+                        const remaining = adv.remainingAmount !== undefined
+                          ? adv.remainingAmount
+                          : (adv.remainingBalance ?? adv.remainingUnappliedBalance ?? 0);
+                        const applied = adv.appliedAmount !== undefined
+                          ? adv.appliedAmount
+                          : Math.max(0, adv.amount - remaining);
+                        const isFully = adv.status === 'FULLY_APPLIED' || adv.status === 'EXHAUSTED' || remaining <= 0;
+                        const isPartial = adv.status === 'PARTIALLY_APPLIED' || (remaining > 0 && remaining < adv.amount);
+
+                        return (
+                          <div
+                            key={`mob-adv-${adv.id}`}
+                            className="p-3.5 rounded-xl border border-emerald-200 bg-white shadow-2xs space-y-2"
+                          >
+                            <div className="flex items-start justify-between gap-2">
+                              <div>
+                                <div className="font-bold text-emerald-950 font-mono text-sm">
+                                  {adv.displayNumber || adv.advanceNumber}
+                                </div>
+                                <div className="text-[11px] text-gray-500 font-mono mt-0.5">
+                                  {adv.date} · {adv.paymentMethod === 'CASH' ? 'নগদ' : 'ব্যাংক'}
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-1.5 flex-wrap justify-end">
+                                <span
+                                  className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${
+                                    adv.direction === 'RECEIVED'
+                                      ? 'bg-sky-50 text-sky-800 border border-sky-200'
+                                      : 'bg-amber-50 text-amber-800 border border-amber-200'
+                                  }`}
+                                >
+                                  {adv.direction === 'RECEIVED' ? 'অগ্রিম গ্রহণ' : 'অগ্রিম প্রদান'}
+                                </span>
+                                <span
+                                  className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${
+                                    isFully
+                                      ? 'bg-gray-100 text-gray-600'
+                                      : isPartial
+                                      ? 'bg-amber-100 text-amber-800'
+                                      : 'bg-emerald-100 text-emerald-800'
+                                  }`}
+                                >
+                                  {isFully ? 'সমন্বিত' : isPartial ? 'আংশিক' : 'অব্যবহৃত'}
+                                </span>
+                              </div>
+                            </div>
+
+                            <div className="grid grid-cols-3 gap-2 py-1.5 border-t border-emerald-100 text-center font-mono text-xs">
+                              <div>
+                                <span className="font-sans text-gray-500 block text-[10px]">মূল অগ্রিম</span>
+                                <span className="font-bold text-gray-900">৳{fmt(adv.amount)}</span>
+                              </div>
+                              <div>
+                                <span className="font-sans text-gray-500 block text-[10px]">সমন্বিত</span>
+                                <span className="text-gray-700">৳{fmt(applied)}</span>
+                              </div>
+                              <div>
+                                <span className="font-sans text-gray-500 block text-[10px]">অবশিষ্ট</span>
+                                <span className="font-bold text-emerald-700">৳{fmt(remaining)}</span>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    {/* Desktop Full Advances Table */}
+                    <div className="hidden md:block border border-emerald-200 rounded-2xl overflow-hidden shadow-2xs bg-white">
                       <div className="overflow-x-auto">
                         <table className="w-full text-left text-xs sm:text-[13px]">
                           <thead className="bg-emerald-50/70 border-b border-emerald-200 text-emerald-950 font-bold uppercase text-[11px]">
