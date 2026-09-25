@@ -6792,7 +6792,7 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
                                   </div>
                                 </div>
 
-                                <div className="max-h-64 overflow-y-auto border border-gray-200 rounded-lg bg-white">
+                                <div className="max-h-64 overflow-x-auto overflow-y-auto border border-gray-200 rounded-lg bg-white">
                                   <table className="w-full text-left text-xs">
                                     <thead className="sticky top-0 bg-gray-100 text-gray-700 font-semibold border-b border-gray-200">
                                       <tr>

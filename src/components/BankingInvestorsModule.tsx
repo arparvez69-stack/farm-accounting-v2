@@ -2235,8 +2235,8 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
 
           {/* Modal 1: Profit Allocation */}
           {allocatingInvestor && (
-            <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 z-50">
-              <div className="bg-white rounded-2xl max-w-lg w-full p-5 sm:p-6 shadow-2xl border border-emerald-100 space-y-4">
+            <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 z-50 overflow-y-auto">
+              <div className="bg-white rounded-2xl max-w-lg w-full p-4 sm:p-6 shadow-2xl border border-emerald-100 space-y-4 max-h-[90vh] overflow-y-auto my-auto">
                 <div className="flex items-center justify-between border-b pb-3">
                   <div>
                     <h3 className="font-bold text-gray-900 text-lg flex items-center gap-2">
@@ -2372,8 +2372,8 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
 
           {/* Modal 2: Profit Payment */}
           {payingInvestor && (
-            <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 z-50">
-              <div className="bg-white rounded-2xl max-w-lg w-full p-5 sm:p-6 shadow-2xl border border-blue-100 space-y-4">
+            <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 z-50 overflow-y-auto">
+              <div className="bg-white rounded-2xl max-w-lg w-full p-4 sm:p-6 shadow-2xl border border-blue-100 space-y-4 max-h-[90vh] overflow-y-auto my-auto">
                 <div className="flex items-center justify-between border-b pb-3">
                   <div>
                     <h3 className="font-bold text-gray-900 text-lg flex items-center gap-2">
@@ -2492,8 +2492,8 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
 
           {/* Modal 3: Capital Return (Dr 3020 Investor Capital, Cr 1010/1030 Cash/Bank) */}
           {returningCapitalInvestor && (
-            <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 z-50">
-              <div className="bg-white rounded-2xl max-w-lg w-full p-5 sm:p-6 shadow-2xl border border-rose-200 space-y-4">
+            <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 z-50 overflow-y-auto">
+              <div className="bg-white rounded-2xl max-w-lg w-full p-4 sm:p-6 shadow-2xl border border-rose-200 space-y-4 max-h-[90vh] overflow-y-auto my-auto">
                 <div className="flex items-center justify-between border-b pb-3">
                   <div>
                     <h3 className="font-bold text-gray-900 text-lg flex items-center gap-2">
@@ -3443,10 +3443,10 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
 
       {/* ===================== LOG REPAYMENT MODAL ===================== */}
       {showRepaymentModal && repaymentLoan && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 bg-black/50 backdrop-blur-xs">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/50 backdrop-blur-xs overflow-y-auto">
           <form
             onSubmit={handleExecuteRepayment}
-            className="bg-white rounded-2xl max-w-md w-full p-5 sm:p-6 shadow-2xl border border-gray-200 space-y-4"
+            className="bg-white rounded-2xl max-w-md w-full p-4 sm:p-6 shadow-2xl border border-gray-200 space-y-4 max-h-[90vh] overflow-y-auto my-auto"
           >
             <div className="flex items-center justify-between border-b border-gray-100 pb-3">
               <div>
