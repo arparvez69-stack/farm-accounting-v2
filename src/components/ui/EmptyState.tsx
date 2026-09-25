@@ -72,7 +72,7 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
       return icon;
     }
     const IconComponent = icon as React.ComponentType<{ className?: string }>;
-    return <IconComponent className={compact ? 'w-6 h-6' : 'w-8 h-8'} />;
+    return <IconComponent className={compact ? 'w-5 h-5 text-gray-500 dark:text-slate-400' : 'w-6 h-6 text-gray-600 dark:text-slate-300'} />;
   };
 
   const renderActionIcon = (actionIcon: EmptyStateAction['icon']) => {
@@ -81,29 +81,20 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
       return actionIcon;
     }
     const IconComponent = actionIcon as React.ComponentType<{ className?: string }>;
-    return <IconComponent className="w-4 h-4" />;
+    return <IconComponent className="w-4 h-4 shrink-0" />;
   };
 
   return (
     <div
       id={id}
-      className={`flex flex-col items-center justify-center text-center rounded-2xl border border-dashed border-gray-200 dark:border-slate-700/80 bg-gray-50/50 dark:bg-slate-900/30 ${
-        compact ? 'p-6' : 'p-8 sm:p-12'
+      className={`flex flex-col items-center justify-center text-center rounded-2xl border border-dashed border-gray-200 dark:border-slate-800 bg-gray-50/60 dark:bg-slate-900/40 ${
+        compact ? 'p-4 sm:p-5' : 'p-6 sm:p-7'
       } ${className}`}
     >
-      {illustration ? (
-        <div className="w-full flex justify-center items-center mb-4">
-          <img
-            src={illustration}
-            alt={illustrationAlt}
-            loading="lazy"
-            className="w-[45%] max-w-[200px] min-w-[120px] h-auto object-contain pointer-events-none drop-shadow-xs"
-          />
-        </div>
-      ) : icon ? (
+      {icon ? (
         <div
-          className={`rounded-2xl bg-white dark:bg-slate-800 border border-gray-200/80 dark:border-slate-700 shadow-xs text-gray-400 dark:text-gray-500 flex items-center justify-center mb-3.5 ${
-            compact ? 'w-12 h-12' : 'w-14 h-14'
+          className={`rounded-xl bg-white dark:bg-slate-800 border border-gray-200/90 dark:border-slate-700/80 shadow-2xs flex items-center justify-center mb-3 shrink-0 ${
+            compact ? 'w-10 h-10' : 'w-12 h-12'
           }`}
         >
           {renderIcon()}
@@ -111,8 +102,8 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
       ) : null}
 
       <h3
-        className={`font-semibold text-gray-900 dark:text-gray-100 ${
-          compact ? 'text-sm' : 'text-base'
+        className={`font-bold text-gray-900 dark:text-slate-100 ${
+          compact ? 'text-xs sm:text-sm' : 'text-sm sm:text-base'
         }`}
       >
         {heading}
@@ -120,8 +111,8 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
 
       {message && (
         <p
-          className={`text-gray-500 dark:text-gray-400 mt-1 max-w-sm mx-auto leading-relaxed ${
-            compact ? 'text-xs' : 'text-sm'
+          className={`text-gray-500 dark:text-slate-400 mt-1 max-w-md mx-auto leading-relaxed ${
+            compact ? 'text-[11px] sm:text-xs' : 'text-xs sm:text-sm'
           }`}
         >
           {message}
@@ -129,7 +120,7 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
       )}
 
       {(action || actionButton) && (
-        <div className="mt-4">
+        <div className="mt-3.5">
           {actionButton ? (
             actionButton
           ) : action ? (
@@ -137,7 +128,7 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
               type="button"
               onClick={action.onClick}
               disabled={action.disabled}
-              className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-xl bg-[#1E5128] hover:bg-[#173F1F] active:scale-98 text-white text-sm font-semibold shadow-xs transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+              className="inline-flex items-center justify-center gap-1.5 px-4 py-2 rounded-xl bg-[#1E5128] hover:bg-[#173F1F] active:scale-98 text-white text-xs sm:text-sm font-semibold shadow-xs transition-all cursor-pointer min-h-[44px] disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {renderActionIcon(action.icon)}
               <span>{action.label}</span>

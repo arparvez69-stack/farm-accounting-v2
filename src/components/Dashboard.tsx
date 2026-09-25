@@ -1169,8 +1169,7 @@ export const Dashboard: React.FC<Props> = ({ role, onNavigate, regressionTestRes
         {reminders.length === 0 ? (
           <EmptyState
             id="empty-reminders-state"
-            illustration="/illustrations/Checking_boxes-amico.svg"
-            illustrationAlt="Checking boxes illustration"
+            icon={CheckCircle2}
             heading={lang === 'en' ? 'All Tasks Completed!' : 'সব কাজ সম্পন্ন!'}
             message={
               lang === 'en'
@@ -1182,6 +1181,7 @@ export const Dashboard: React.FC<Props> = ({ role, onNavigate, regressionTestRes
               onClick: () => onNavigate('operations'),
               icon: Calendar,
             }}
+            compact
           />
         ) : (
           <div className="space-y-2">
@@ -1329,9 +1329,22 @@ export const Dashboard: React.FC<Props> = ({ role, onNavigate, regressionTestRes
             ))}
           </div>
         ) : recentTransactions.length === 0 ? (
-          <div className="p-8 text-center text-gray-500 dark:text-slate-400 text-[14px]">
-            {t('dashboard.noTx')}
-          </div>
+          <EmptyState
+            id="empty-recent-transactions-state"
+            icon={FileText}
+            heading={lang === 'en' ? 'No Recent Transactions' : 'কোনো সাম্প্রতিক লেনদেন নেই'}
+            message={
+              lang === 'en'
+                ? 'No financial vouchers or journal entries have been recorded yet.'
+                : 'ফার্মের কোনো ভাউচার বা হিসাবরক্ষণ এন্ট্রি এখনও লিপিবদ্ধ করা হয়নি।'
+            }
+            action={{
+              label: lang === 'en' ? 'Open Accounting' : 'হিসাবরক্ষণ দেখুন',
+              onClick: () => onNavigate('accounting'),
+              icon: PlusCircle,
+            }}
+            compact
+          />
         ) : (
           <div className="space-y-2.5">
             {recentTransactions.map((tx) => (

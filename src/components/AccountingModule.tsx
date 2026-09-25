@@ -44,7 +44,7 @@ import { Account, ClosedPeriod, JournalEntry, JournalLine, RecurringExpenseTempl
 import { generateTransactionNumber, generateUniqueId, safeInsert } from '../utils/idGenerator';
 import { HIGH_AMOUNT_CONFIRMATION_THRESHOLD } from '../constants/validation';
 import { notifyUndoableAction } from '../services/undoService';
-import { StatusBadge, Card, SearchableSelect, SearchableOption } from './ui';
+import { StatusBadge, Card, SearchableSelect, SearchableOption, EmptyState } from './ui';
 import { synchronizePendingData } from '../firebase/firebaseClient';
 import { registerUnsavedChecker } from '../services/navigationService';
 
@@ -1669,9 +1669,21 @@ export const AccountingModule: React.FC<Props> = ({
               ))}
             </div>
           ) : journals.length === 0 ? (
-            <div className="p-8 text-center text-gray-500 text-[14px]">
-              কোনো জাবেদা রেকর্ড নেই। "+ নতুন ভাউচার" বাটনে ক্লিক করে হিসাব শুরু করুন।
-            </div>
+            <EmptyState
+              id="empty-daybook-journals"
+              icon={BookOpen}
+              heading="কোনো জাবেদা রেকর্ড নেই"
+              message="দৈনন্দিন আয়-ব্যয়, ক্রয়-বিক্রয় বা সমন্বয় দাখিলা লিপিবদ্ধ করতে নতুন ভাউচার তৈরি করুন।"
+              action={{
+                label: '+ নতুন ভাউচার তৈরি করুন',
+                onClick: () => {
+                  resetVoucherForm();
+                  setSubTab('vouchers');
+                },
+                icon: PlusCircle
+              }}
+              compact
+            />
           ) : (
             (() => {
               const q = searchQuery.toLowerCase().trim();
@@ -1699,9 +1711,13 @@ export const AccountingModule: React.FC<Props> = ({
 
               if (filtered.length === 0) {
                 return (
-                  <div className="p-8 text-center text-gray-500 text-[14px] bg-gray-50 rounded-xl border border-dashed border-gray-300">
-                    "{searchQuery}" এর সাথে মিলে এমন কোনো জাবেদা রেকর্ড পাওয়া যায়নি।
-                  </div>
+                  <EmptyState
+                    id="empty-daybook-search"
+                    icon={Search}
+                    heading="কোনো জাবেদা মেলেনি"
+                    message={`"${searchQuery}" এর সাথে মিলে এমন কোনো জাবেদা রেকর্ড পাওয়া যায়নি। অনুসন্ধান ফিল্টার বা শব্দ পরিবর্তন করুন।`}
+                    compact
+                  />
                 );
               }
 
@@ -2002,13 +2018,21 @@ export const AccountingModule: React.FC<Props> = ({
                     ))}
                   </div>
                 ) : ledgerEntries.length === 0 ? (
-                  <div className="p-8 text-center text-gray-500 text-[14px] bg-gray-50 rounded-xl border border-dashed border-gray-300">
-                    এই হিসাবে এখনো কোনো লেনদেন সংঘটিত হয়নি।
-                  </div>
+                  <EmptyState
+                    id="empty-ledger-entries"
+                    icon={BookOpen}
+                    heading="খতিয়ানে কোনো লেনদেন নেই"
+                    message="এই হিসাবে নির্বাচিত সময়সীমার মধ্যে কোনো লেনদেন সংঘটিত হয়নি।"
+                    compact
+                  />
                 ) : filtered.length === 0 ? (
-                  <div className="p-8 text-center text-gray-500 text-[14px] bg-gray-50 rounded-xl border border-dashed border-gray-300">
-                    "{ledgerSearchQuery}" এর সাথে মিলে এমন কোনো খতিয়ান লেনদেন পাওয়া যায়নি।
-                  </div>
+                  <EmptyState
+                    id="empty-ledger-search"
+                    icon={Search}
+                    heading="কোনো খতিয়ান লেনদেন মেলেনি"
+                    message={`"${ledgerSearchQuery}" এর সাথে মিলে এমন কোনো খতিয়ান লেনদেন পাওয়া যায়নি। অনুসন্ধান ফিল্টার পরিবর্তন করুন।`}
+                    compact
+                  />
                 ) : (
                   <div className="space-y-3">
                     {visibleRows.map((row, idx) => (
@@ -2429,20 +2453,18 @@ export const AccountingModule: React.FC<Props> = ({
 
           {/* Templates List */}
           {recurringTemplates.length === 0 ? (
-            <div className="text-center py-12 px-4 border border-dashed border-gray-300 rounded-2xl bg-gray-50/50">
-              <Clock className="w-12 h-12 text-gray-400 mx-auto mb-3 opacity-60" />
-              <h4 className="text-base font-bold text-gray-800">কোন পুনরাবৃত্ত খরচ টেমপ্লেট তৈরি করা হয়নি</h4>
-              <p className="text-sm text-gray-500 max-w-md mx-auto mt-1 mb-4">
-                দোকান ভাড়া, গোডাউন ভাড়া, খামার বিদ্যুৎ বিল বা কর্মচারীর বেতনের মত নিয়মিত খরচের টেমপ্লেট সংরক্ষণ করুন। প্রতি মাসের নির্ধারিত তারিখে অ্যাপ লোড হলে তা স্বয়ংক্রিয়ভাবে হিসাবভুক্ত হবে।
-              </p>
-              <button
-                type="button"
-                onClick={handleOpenCreateRecurring}
-                className="px-4 py-2 rounded-xl bg-blue-700 text-white text-[13px] font-bold shadow-xs hover:bg-blue-800 cursor-pointer"
-              >
-                প্রথম পুনরাবৃত্ত খরচ যোগ করুন
-              </button>
-            </div>
+            <EmptyState
+              id="empty-recurring-templates"
+              icon={Clock}
+              heading="কোনো পুনরাবৃত্ত খরচ টেমপ্লেট নেই"
+              message="দোকান বা গোডাউন ভাড়া, খামার বিদ্যুৎ বিল বা কর্মচারীর বেতনের মত নিয়মিত খরচের টেমপ্লেট সংরক্ষণ করুন। প্রতি মাসের নির্ধারিত তারিখে তা স্বয়ংক্রিয়ভাবে হিসাবভুক্ত হবে।"
+              action={{
+                label: 'প্রথম পুনরাবৃত্ত খরচ যোগ করুন',
+                onClick: handleOpenCreateRecurring,
+                icon: PlusCircle
+              }}
+              compact
+            />
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {recurringTemplates.map((template) => {

@@ -46,6 +46,7 @@ import {
   loadBankTransactionsForAccount,
   saveStoredBankReconciliation
 } from '../accounting/bankReconciliationService';
+import { EmptyState } from './ui';
 
 interface Props {
   role: UserRole;
@@ -1102,11 +1103,17 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
 
                     if (filtered.length === 0) {
                       return (
-                        <div className="p-8 text-center text-gray-500 bg-gray-50 rounded-xl border border-gray-200 text-xs">
-                          {reconcileTransactions.length === 0
-                            ? 'এই অ্যাকাউন্টের জন্য কোনো লেনদেন পাওয়া যায়নি।'
-                            : 'অনুসন্ধানের সাথে মিলে এমন কোনো লেনদেন নেই।'}
-                        </div>
+                        <EmptyState
+                          id="empty-reconcile-tx"
+                          icon={reconcileTransactions.length === 0 ? CreditCard : Search}
+                          heading={reconcileTransactions.length === 0 ? 'কোনো ব্যাংক লেনদেন নেই' : 'কোনো লেনদেন মেলেনি'}
+                          message={
+                            reconcileTransactions.length === 0
+                              ? 'নির্বাচিত ব্যাংক অ্যাকাউন্টের জন্য কোনো অমীমাংসিত বা রেকর্ডকৃত লেনদেন পাওয়া যায়নি।'
+                              : 'অনুসন্ধানের সাথে মিলে এমন কোনো ব্যাংক লেনদেন পাওয়া যায়নি।'
+                          }
+                          compact
+                        />
                       );
                     }
 
@@ -1702,9 +1709,22 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
           {/* Mobile Loans Card View (Optimized for iPhone 13 mini) */}
           <div className="md:hidden space-y-3">
             {loans.length === 0 ? (
-              <div className="p-8 text-center text-gray-500 text-[14px] bg-gray-50 rounded-2xl border border-dashed border-gray-200">
-                বর্তমানে কোনো সক্রিয় ব্যাংক বা মহাজনি ঋণ নেই।
-              </div>
+              <EmptyState
+                id="empty-loans-list-mobile"
+                icon={Landmark}
+                heading="কোনো সক্রিয় ঋণ নেই"
+                message="খামারের কোনো স্বল্পমেয়াদী বা দীর্ঘমেয়াদী ব্যাংক বা মহাজনি ঋণ দায় নেই।"
+                action={
+                  role === 'OWNER'
+                    ? {
+                        label: '+ নতুন ঋণ গ্রহণ এন্ট্রি',
+                        onClick: () => setShowNewLoan(true),
+                        icon: PlusCircle
+                      }
+                    : undefined
+                }
+                compact
+              />
             ) : (
               loans.map((l) => {
                 const paidCount = l.schedule ? l.schedule.filter((s) => s.isPaid).length : 0;
@@ -1802,8 +1822,23 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
               <tbody className="divide-y divide-gray-100">
                 {loans.length === 0 ? (
                   <tr>
-                    <td colSpan={9} className="p-8 text-center text-gray-500 text-[14px]">
-                      বর্তমানে কোনো সক্রিয় ব্যাংক বা মহাজনি ঋণ নেই।
+                    <td colSpan={9} className="p-4">
+                      <EmptyState
+                        id="empty-loans-list-desktop"
+                        icon={Landmark}
+                        heading="কোনো সক্রিয় ঋণ নেই"
+                        message="খামারের কোনো স্বল্পমেয়াদী বা দীর্ঘমেয়াদী ব্যাংক বা মহাজনি ঋণ দায় নেই।"
+                        action={
+                          role === 'OWNER'
+                            ? {
+                                label: '+ নতুন ঋণ গ্রহণ এন্ট্রি',
+                                onClick: () => setShowNewLoan(true),
+                                icon: PlusCircle
+                              }
+                            : undefined
+                        }
+                        compact
+                      />
                     </td>
                   </tr>
                 ) : (
@@ -2038,6 +2073,27 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
               ) * 100
             ) / 100;
             const farmWorkingPartnerRatio = Math.max(0, Math.round((100 - totalActiveInvestorRatio) * 100) / 100);
+
+            if (investors.length === 0) {
+              return (
+                <EmptyState
+                  id="empty-investors-list"
+                  icon={Users}
+                  heading="কোনো অংশীদারী বিনিয়োগকারী নেই"
+                  message="ফার্মের স্লিপিং বা ক্যাপিটাল পার্টনারদের মূলধন, চুক্তিভিত্তিক লাভ বণ্টন অনুপাত ও লভ্যাংশ পরিশোধ পরিচালনা করতে নতুন বিনিয়োগকারী যোগ করুন।"
+                  action={
+                    role === 'OWNER'
+                      ? {
+                          label: '+ নতুন বিনিয়োগকারী',
+                          onClick: () => setShowNewInvestor(true),
+                          icon: PlusCircle
+                        }
+                      : undefined
+                  }
+                  compact
+                />
+              );
+            }
 
             return (
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
@@ -2849,9 +2905,13 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
             </div>
 
             {ownerEntries.length === 0 ? (
-              <div className="text-center py-8 bg-gray-50 rounded-xl border border-dashed border-gray-300 text-gray-500 text-xs">
-                মালিকের কোনো মূলধন জমা বা উত্তোলনের রেকর্ড পাওয়া যায়নি। উপরের বাটন ব্যবহার করে নতুন লেনদেন যোগ করুন।
-              </div>
+              <EmptyState
+                id="empty-owner-entries"
+                icon={History}
+                heading="কোনো মূলধন লেনদেন নেই"
+                message="মালিকের নিজস্ব মূলধন জমা (৩-০১০) বা ব্যক্তিগত উত্তোলনের (৩-০৪০) কোনো রেকর্ড নেই। উপরের বাটন ব্যবহার করে লেনদেন যোগ করুন।"
+                compact
+              />
             ) : (
               <>
                 {/* Mobile Owner Entries Card View (Optimized for iPhone 13 mini) */}

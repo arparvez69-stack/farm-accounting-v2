@@ -73,7 +73,7 @@ import { exportAllToExcel, createFullJsonBackup, restoreFromJsonBackup } from '.
 import { db } from '../db/indexedDb';
 import { UserRole, Sale, Purchase, PaymentRecord, Loan, Investor, CashBankAccount, JournalEntry, ClosedPeriod, Account, Animal, AnimalEvent, FishBatch, CropCycle } from '../types';
 import { generateAmortizationSchedule, addMonthsToDate } from '../accounting/amortizationService';
-import { StatusBadge, Card, IconTile } from './ui';
+import { StatusBadge, Card, IconTile, EmptyState } from './ui';
 
 type DatePreset = 'this_month' | 'last_month' | 'this_year' | 'custom';
 
@@ -2857,11 +2857,17 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
 
             if (filtered.length === 0) {
               return (
-                <div className="p-8 text-center text-gray-500 bg-[#F8FAFC] rounded-xl border border-gray-200">
-                  {reportLedgerSearchQuery.trim()
-                    ? `"${reportLedgerSearchQuery}" দিয়ে এই খতিয়ানে কোনো লেনদেন খুঁজে পাওয়া যায়নি।`
-                    : 'এই খতিয়ান হিসাবে নির্বাচিত সময়সীমার মধ্যে কোনো লেনদেন লিপিবদ্ধ নেই।'}
-                </div>
+                <EmptyState
+                  id="empty-report-ledger"
+                  icon={reportLedgerSearchQuery.trim() ? Search : BookOpen}
+                  heading={reportLedgerSearchQuery.trim() ? 'কোনো লেনদেন মেলেনি' : 'খতিয়ানে কোনো লেনদেন নেই'}
+                  message={
+                    reportLedgerSearchQuery.trim()
+                      ? `"${reportLedgerSearchQuery}" দিয়ে এই খতিয়ানে কোনো লেনদেন খুঁজে পাওয়া যায়নি। অনুসন্ধান ফিল্টার পরিবর্তন করুন।`
+                      : 'এই খতিয়ান হিসাবে নির্বাচিত সময়সীমার মধ্যে কোনো লেনদেন লিপিবদ্ধ নেই।'
+                  }
+                  compact
+                />
               );
             }
 
@@ -5738,9 +5744,13 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
               </div>
 
               {(!vatData || vatData.salesWithVat.length === 0) ? (
-                <div className="p-6 text-center bg-gray-50 rounded-xl border border-gray-200 text-gray-500 text-xs">
-                  নির্বাচিত সময়সীমার মধ্যে কোনো ভ্যাটযুক্ত বিক্রয় চালান নেই।
-                </div>
+                <EmptyState
+                  id="empty-vat-sales"
+                  icon={FileText}
+                  heading="কোনো ভ্যাটযুক্ত বিক্রয় চালান নেই"
+                  message="নির্বাচিত সময়সীমার মধ্যে কোনো ভ্যাটযুক্ত বিক্রয় চালান পাওয়া যায়নি।"
+                  compact
+                />
               ) : (
                 <div className="overflow-x-auto border border-gray-200 rounded-xl">
                   <table className="w-full text-left text-xs border-collapse">
@@ -5796,9 +5806,13 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
               </div>
 
               {(!vatData || vatData.purchasesWithVat.length === 0) ? (
-                <div className="p-6 text-center bg-gray-50 rounded-xl border border-gray-200 text-gray-500 text-xs">
-                  নির্বাচিত সময়সীমার মধ্যে কোনো ভ্যাটযুক্ত ক্রয় চালান নেই।
-                </div>
+                <EmptyState
+                  id="empty-vat-purchases"
+                  icon={FileText}
+                  heading="কোনো ভ্যাটযুক্ত ক্রয় চালান নেই"
+                  message="নির্বাচিত সময়সীমার মধ্যে কোনো ভ্যাটযুক্ত ক্রয় চালান পাওয়া যায়নি।"
+                  compact
+                />
               ) : (
                 <div className="overflow-x-auto border border-gray-200 rounded-xl">
                   <table className="w-full text-left text-xs border-collapse">
@@ -6621,9 +6635,13 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
 
         {/* Loans Table */}
         {loanPrincipalBreakdownList.length === 0 ? (
-          <div className="text-center py-12 text-gray-500 bg-gray-50 rounded-xl border border-gray-100 font-sans">
-            কোনো ঋণের তথ্য পাওয়া যায়নি।
-          </div>
+          <EmptyState
+            id="empty-loan-breakdown"
+            icon={Landmark}
+            heading="কোনো ঋণের তথ্য নেই"
+            message="নির্বাচিত সময়সীমার জন্য কোনো সক্রিয় ব্যাংক বা মহাজনি ঋণের স্থিতি পাওয়া যায়নি।"
+            compact
+          />
         ) : (
           <div className="space-y-4">
             <div className="overflow-x-auto rounded-xl border border-gray-200">

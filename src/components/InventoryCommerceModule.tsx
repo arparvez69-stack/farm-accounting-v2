@@ -63,7 +63,7 @@ import { HIGH_AMOUNT_CONFIRMATION_THRESHOLD } from '../constants/validation';
 import { notifyUndoableAction } from '../services/undoService';
 import { triggerSuccessAnimation } from './ui/SuccessAnimation';
 import { CANONICAL_ACCOUNTS, getInventoryAssetAccount, getInventoryAccountDetails } from '../accounting/accountMapping';
-import { SearchableSelect, SearchableOption } from './ui';
+import { SearchableSelect, SearchableOption, EmptyState } from './ui';
 
 const getInventoryCategoryBadge = (category?: string): { code: string; label: string } => {
   const details = getInventoryAccountDetails(category);
@@ -2318,6 +2318,23 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                 ))}
               </div>
             )
+          ) : items.length === 0 ? (
+            <EmptyState
+              id="empty-inventory-items"
+              icon={Package}
+              heading="মজুদ পণ্যের তালিকা খালি"
+              message="খামারের ফিড, সার, ওষুধ বা উৎপাদিত পণ্যের স্টক ও গড় ক্রয়মূল্য ট্র্যাক করতে নতুন পণ্য যুক্ত করুন।"
+              action={
+                role === 'OWNER'
+                  ? {
+                      label: '+ নতুন পণ্য যোগ করুন',
+                      onClick: () => setShowAddItem(true),
+                      icon: PlusCircle
+                    }
+                  : undefined
+              }
+              compact
+            />
           ) : inventoryViewMode === 'cards' ? (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
               {items.map((it, idx) => {
@@ -3038,9 +3055,18 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                 ))}
               </div>
             ) : sales.length === 0 ? (
-              <div className="p-8 text-center text-gray-500 text-[14px] bg-gray-50 rounded-2xl border border-dashed border-gray-200">
-                এখনো কোনো বিক্রয় চালান ইস্যু করা হয়নি।
-              </div>
+              <EmptyState
+                id="empty-sales-list-mobile"
+                icon={TrendingUp}
+                heading="কোনো বিক্রয় চালান নেই"
+                message="খামারের উৎপাদিত পণ্য, দুধ, মাছ বা গবাদিপশু বিক্রির চালান তৈরি করে নগদ বা বাকির হিসাব রাখুন।"
+                action={{
+                  label: '+ নতুন বিক্রয় চালান',
+                  onClick: () => setShowNewSale(true),
+                  icon: PlusCircle
+                }}
+                compact
+              />
             ) : (
               sales.map((s) => {
                 const sPayments = payments.filter((pmt) => pmt.parentId === s.id);
@@ -3203,8 +3229,19 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                   </tr>
                 ) : sales.length === 0 ? (
                   <tr>
-                    <td colSpan={8} className="p-8 text-center text-gray-500 text-[14px]">
-                      এখনো কোনো বিক্রয় চালান ইস্যু করা হয়নি।
+                    <td colSpan={8} className="p-4">
+                      <EmptyState
+                        id="empty-sales-list-desktop"
+                        icon={TrendingUp}
+                        heading="কোনো বিক্রয় চালান নেই"
+                        message="খামারের উৎপাদিত পণ্য, দুধ, মাছ বা গবাদিপশু বিক্রির চালান তৈরি করে নগদ বা বাকির হিসাব রাখুন।"
+                        action={{
+                          label: '+ নতুন বিক্রয় চালান',
+                          onClick: () => setShowNewSale(true),
+                          icon: PlusCircle
+                        }}
+                        compact
+                      />
                     </td>
                   </tr>
                 ) : (
@@ -3836,9 +3873,18 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                 ))}
               </div>
             ) : purchases.length === 0 ? (
-              <div className="p-8 text-center text-gray-500 text-[14px] bg-gray-50 rounded-2xl border border-dashed border-gray-200">
-                এখনো কোনো ক্রয় চালান রেকর্ড করা হয়নি।
-              </div>
+              <EmptyState
+                id="empty-purchases-list-mobile"
+                icon={ShoppingCart}
+                heading="কোনো ক্রয় চালান নেই"
+                message="খাদ্য, ওষুধ বা কাঁচামাল ক্রয়ের চালান রেকর্ড করে পরিশোধ ও সরবরাহকারীর বকেয়া পর্যবেক্ষণ করুন।"
+                action={{
+                  label: '+ নতুন ক্রয় চালান',
+                  onClick: () => setShowNewPurchase(true),
+                  icon: PlusCircle
+                }}
+                compact
+              />
             ) : (
               purchases.map((p) => {
                 const pPayments = payments.filter((pmt) => pmt.parentId === p.id);
@@ -4009,8 +4055,19 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                   </tr>
                 ) : purchases.length === 0 ? (
                   <tr>
-                    <td colSpan={9} className="p-8 text-center text-gray-500 text-[14px]">
-                      এখনো কোনো ক্রয় চালান রেকর্ড করা হয়নি।
+                    <td colSpan={9} className="p-4">
+                      <EmptyState
+                        id="empty-purchases-list-desktop"
+                        icon={ShoppingCart}
+                        heading="কোনো ক্রয় চালান নেই"
+                        message="খাদ্য, ওষুধ বা কাঁচামাল ক্রয়ের চালান রেকর্ড করে পরিশোধ ও সরবরাহকারীর বকেয়া পর্যবেক্ষণ করুন।"
+                        action={{
+                          label: '+ নতুন ক্রয় চালান',
+                          onClick: () => setShowNewPurchase(true),
+                          icon: PlusCircle
+                        }}
+                        compact
+                      />
                     </td>
                   </tr>
                 ) : (
@@ -4417,13 +4474,13 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
               </div>
 
               {partyInvoices.length === 0 ? (
-                <div className="p-8 text-center bg-gray-50 rounded-2xl border border-dashed border-gray-200 space-y-1">
-                  <FileCheck className="w-8 h-8 text-gray-400 mx-auto" />
-                  <div className="text-sm font-semibold text-gray-700">কোনো চালান পাওয়া যায়নি</div>
-                  <div className="text-xs text-gray-500">
-                    এই {activeParty?.type === 'CUSTOMER' ? 'গ্রাহকের' : 'সরবরাহকারীর'} সাথে এখনো কোনো বিক্রয় বা ক্রয় চালান সম্পন্ন হয়নি।
-                  </div>
-                </div>
+                <EmptyState
+                  id="empty-party-invoices"
+                  icon={FileText}
+                  heading="কোনো চালান পাওয়া যায়নি"
+                  message={`এই ${activeParty?.type === 'CUSTOMER' ? 'গ্রাহকের' : 'সরবরাহকারীর'} সাথে এখনো কোনো বিক্রয় বা ক্রয় চালান সম্পন্ন হয়নি।`}
+                  compact
+                />
               ) : (
                 <>
                   {/* Mobile Invoices Card View (Optimized for iPhone 13 mini) */}
@@ -4996,53 +5053,72 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
               </form>
             )}
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
-              {parties.map((p, idx) => (
-                <div
-                  key={p.id}
-                  style={{ animationDelay: `${Math.min(idx * 35, 350)}ms` }}
-                  onClick={() => setSelectedParty(p)}
-                  className="p-4 rounded-2xl bg-[#F8FAFC] border border-gray-200 space-y-2 shadow-xs animate-fade-slide-up hover:border-amber-400 hover:shadow-md transition-all cursor-pointer group"
-                >
-                  <div className="flex items-center justify-between">
-                    <span className="font-bold text-gray-900 text-[15px] group-hover:text-amber-800 transition-colors">{p.name}</span>
-                    <span className={`px-2.5 py-1 rounded-full text-xs font-semibold ${
-                      p.type === 'CUSTOMER' ? 'bg-sky-50 text-sky-700 border border-sky-200' : 'bg-amber-50 text-amber-800 border border-amber-200'
-                    }`}>
-                      {p.type === 'CUSTOMER' ? 'ক্রেতা' : 'সরবরাহকারী'}
-                    </span>
+            {parties.length === 0 ? (
+              <EmptyState
+                id="empty-parties-directory"
+                icon={Users}
+                heading="কোনো গ্রাহক বা সরবরাহকারী নেই"
+                message="খামারের নিয়মিত ক্রেতা ও পাইকারি সরবরাহকারীদের নাম ও যোগাযোগ নম্বর নিবন্ধন করুন।"
+                action={
+                  role === 'OWNER'
+                    ? {
+                        label: '+ নতুন ব্যক্তি/প্রতিষ্ঠান',
+                        onClick: () => setShowAddParty(true),
+                        icon: PlusCircle
+                      }
+                    : undefined
+                }
+                compact
+              />
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
+                {parties.map((p, idx) => (
+                  <div
+                    key={p.id}
+                    style={{ animationDelay: `${Math.min(idx * 35, 350)}ms` }}
+                    onClick={() => setSelectedParty(p)}
+                    className="p-4 rounded-2xl bg-[#F8FAFC] border border-gray-200 space-y-2 shadow-xs animate-fade-slide-up hover:border-amber-400 hover:shadow-md transition-all cursor-pointer group"
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold text-gray-900 text-[15px] group-hover:text-amber-800 transition-colors">{p.name}</span>
+                      <span className={`px-2.5 py-1 rounded-full text-xs font-semibold ${
+                        p.type === 'CUSTOMER' ? 'bg-sky-50 text-sky-700 border border-sky-200' : 'bg-amber-50 text-amber-800 border border-amber-200'
+                      }`}>
+                        {p.type === 'CUSTOMER' ? 'ক্রেতা' : 'সরবরাহকারী'}
+                      </span>
+                    </div>
+                    <div className="text-gray-600 text-[13px] flex items-center gap-1.5">
+                      <Phone className="w-3.5 h-3.5 text-gray-500" />
+                      <span>{p.phone || 'ফোন নেই'}</span>
+                    </div>
+                    <div className="text-gray-600 text-[13px] truncate">
+                      {p.address || 'ঠিকানা নেই'}
+                    </div>
+                    <div className="pt-2 border-t border-gray-200 flex items-center justify-between font-mono">
+                      <span className="text-gray-600 text-[13px]">বর্তমান ব্যালেন্স:</span>
+                      <span className={`font-bold text-[14px] ${p.balance > 0 ? (p.type === 'CUSTOMER' ? 'text-sky-700' : 'text-amber-700') : 'text-gray-600'}`}>
+                        {fmt(p.balance)}
+                      </span>
+                    </div>
+                    {(() => {
+                      const pAdv = advancePayments
+                        .filter((a) => a.partyId === p.id && a.status !== 'CANCELLED')
+                        .reduce((sum, a) => sum + (Number(a.remainingAmount ?? a.remainingBalance ?? a.remainingUnappliedBalance) || 0), 0);
+                      return pAdv > 0 ? (
+                        <div className="flex items-center justify-between font-mono text-xs text-emerald-800 bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-200">
+                          <span className="font-sans font-semibold">অগ্রিম ব্যালেন্স:</span>
+                          <span className="font-bold text-emerald-700">৳{fmt(pAdv)}</span>
+                        </div>
+                      ) : null;
+                    })()}
+                    <div className="pt-1.5 border-t border-gray-100 flex items-center justify-between text-xs text-amber-800 font-semibold group-hover:text-amber-900">
+                      <span>স্টেটমেন্ট ও চালান হিসাব দেখুন</span>
+                      <ChevronRight className="w-4 h-4 transform group-hover:translate-x-1 transition-transform text-amber-700" />
+                    </div>
                   </div>
-                  <div className="text-gray-600 text-[13px] flex items-center gap-1.5">
-                    <Phone className="w-3.5 h-3.5 text-gray-500" />
-                    <span>{p.phone || 'ফোন নেই'}</span>
-                  </div>
-                  <div className="text-gray-600 text-[13px] truncate">
-                    {p.address || 'ঠিকানা নেই'}
-                  </div>
-                  <div className="pt-2 border-t border-gray-200 flex items-center justify-between font-mono">
-                    <span className="text-gray-600 text-[13px]">বর্তমান ব্যালেন্স:</span>
-                    <span className={`font-bold text-[14px] ${p.balance > 0 ? (p.type === 'CUSTOMER' ? 'text-sky-700' : 'text-amber-700') : 'text-gray-600'}`}>
-                      {fmt(p.balance)}
-                    </span>
-                  </div>
-                  {(() => {
-                    const pAdv = advancePayments
-                      .filter((a) => a.partyId === p.id && a.status !== 'CANCELLED')
-                      .reduce((sum, a) => sum + (Number(a.remainingAmount ?? a.remainingBalance ?? a.remainingUnappliedBalance) || 0), 0);
-                    return pAdv > 0 ? (
-                      <div className="flex items-center justify-between font-mono text-xs text-emerald-800 bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-200">
-                        <span className="font-sans font-semibold">অগ্রিম ব্যালেন্স:</span>
-                        <span className="font-bold text-emerald-700">৳{fmt(pAdv)}</span>
-                      </div>
-                    ) : null;
-                  })()}
-                  <div className="pt-1.5 border-t border-gray-100 flex items-center justify-between text-xs text-amber-800 font-semibold group-hover:text-amber-900">
-                    <span>স্টেটমেন্ট ও চালান হিসাব দেখুন</span>
-                    <ChevronRight className="w-4 h-4 transform group-hover:translate-x-1 transition-transform text-amber-700" />
-                  </div>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            )}
           </div>
         )
       )}

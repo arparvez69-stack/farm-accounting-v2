@@ -1793,15 +1793,15 @@ export const FarmOperationsModule: React.FC<Props> = ({
                 return (
                   <EmptyState
                     id="empty-animals-state"
-                    illustration="/illustrations/Adopt_a_pet-bro.svg"
-                    illustrationAlt="No animals illustration"
+                    icon={Tag}
                     heading="কোনো গবাদিপশু নিবন্ধিত নেই"
                     message="আপনার খামারের গবাদিপশুর পরিচিতি, ওজন, খাদ্য ও ভ্যাকসিনের ট্র্যাক রাখতে প্রথম পশুটি যোগ করুন।"
                     action={{
-                      label: 'Add Your First Animal',
+                      label: 'প্রথম পশু নিবন্ধন করুন',
                       onClick: () => setShowAddAnimal(true),
                       icon: PlusCircle
                     }}
+                    compact
                   />
                 );
               }
@@ -1819,7 +1819,7 @@ export const FarmOperationsModule: React.FC<Props> = ({
                       : 'কোনো নিষ্ক্রিয় বা বিক্রিত পশুর রেকর্ড নেই।'
                   }
                   action={{
-                    label: 'Add Your First Animal',
+                    label: 'নতুন পশু যোগ করুন',
                     onClick: () => setShowAddAnimal(true),
                     icon: PlusCircle
                   }}
@@ -3156,15 +3156,26 @@ export const FarmOperationsModule: React.FC<Props> = ({
               ))}
             </div>
           ) : fishBatches.filter((b) => fishFilter === 'ACTIVE' ? b.status === 'ACTIVE' : (b.status === 'HARVESTED' || b.status === 'CLOSED')).length === 0 ? (
-            <div className="flex flex-col items-center justify-center p-8 text-center bg-gray-50/70 dark:bg-slate-800/40 rounded-2xl border border-dashed border-gray-200 dark:border-slate-700">
-              <Fish className="w-12 h-12 text-sky-400 mb-2 stroke-[1.5]" />
-              <p className="text-sm font-bold text-gray-700 dark:text-slate-300">
-                {fishFilter === 'ACTIVE' ? 'কোনো সক্রিয় মাছের ব্যাচ পাওয়া যায়নি' : 'কোনো সমাপ্ত/আহরিত মাছের ব্যাচ নেই'}
-              </p>
-              <p className="text-xs text-gray-500 dark:text-slate-400 mt-0.5">
-                {fishFilter === 'ACTIVE' ? 'নতুন ব্যাচ মজুদ করতে উপরের বোতামটি চাপুন' : 'সক্রিয় ব্যাচ থেকে "আহরণ ও বিক্রয়" সম্পন্ন করলে তা এখানে দেখা যাবে'}
-              </p>
-            </div>
+            <EmptyState
+              id="empty-fish-batches"
+              icon={Fish}
+              heading={fishFilter === 'ACTIVE' ? 'কোনো সক্রিয় মাছের ব্যাচ নেই' : 'কোনো সমাপ্ত বা আহরিত মাছের ব্যাচ নেই'}
+              message={
+                fishFilter === 'ACTIVE'
+                  ? 'পুকুরে নতুন পোনা বা মাছের ব্যাচ মজুদ করতে উপরের বোতাম থেকে ব্যাচ যোগ করুন।'
+                  : 'সক্রিয় ব্যাচ থেকে আহরণ ও বিক্রয় সম্পন্ন করলে তার হিসাব এখানে সংরক্ষিত থাকবে।'
+              }
+              action={
+                fishFilter === 'ACTIVE' && role === 'OWNER'
+                  ? {
+                      label: '+ নতুন মাছের ব্যাচ মজুদ করুন',
+                      onClick: () => setShowAddFish(true),
+                      icon: PlusCircle,
+                    }
+                  : undefined
+              }
+              compact
+            />
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
               {fishBatches
@@ -3415,22 +3426,26 @@ export const FarmOperationsModule: React.FC<Props> = ({
               ))}
             </div>
           ) : cropCycles.filter((c) => cropFilter === 'ACTIVE' ? (c.status === 'PLANTED' || c.status === 'GROWING') : (c.status === 'HARVESTED' || c.status === 'CLOSED')).length === 0 ? (
-            <div className="flex flex-col items-center justify-center p-8 text-center bg-gray-50/70 dark:bg-slate-800/40 rounded-2xl border border-dashed border-gray-200 dark:border-slate-700">
-              <img
-                src={selectedEmptyCropSvg}
-                alt="No crops illustration"
-                loading="lazy"
-                className="w-[50%] max-w-[240px] h-auto object-contain pointer-events-none drop-shadow-xs mb-3"
-              />
-              <p className="text-sm font-bold text-gray-700 dark:text-slate-300">
-                {cropFilter === 'ACTIVE' ? 'কোনো সক্রিয় শস্য চক্র পাওয়া যায়নি' : 'কোনো সমাপ্ত/কর্তনকৃত শস্য চক্র নেই'}
-              </p>
-              <p className="text-xs text-gray-500 dark:text-slate-400 mt-0.5">
-                {cropFilter === 'ACTIVE'
-                  ? 'নতুন শস্য বা নেপিয়ার ঘাস চাষ যুক্ত করতে উপরের বোতামটি ব্যবহার করুন'
-                  : 'সক্রিয় চক্র থেকে "আহরণ ও বিক্রয়" সম্পন্ন করলে তা এখানে দেখা যাবে'}
-              </p>
-            </div>
+            <EmptyState
+              id="empty-crop-cycles"
+              icon={Wheat}
+              heading={cropFilter === 'ACTIVE' ? 'কোনো সক্রিয় শস্য চক্র নেই' : 'কোনো সমাপ্ত বা কর্তনকৃত শস্য চক্র নেই'}
+              message={
+                cropFilter === 'ACTIVE'
+                  ? 'নতুন প্লটে শস্য বা নেপিয়ার ঘাস চাষ শুরু করতে উপরের বোতাম থেকে নতুন শস্য চক্র যোগ করুন।'
+                  : 'কর্তন ও বিক্রয় সম্পন্ন হওয়া শস্যের হিসাব এখানে সংরক্ষিত থাকবে।'
+              }
+              action={
+                cropFilter === 'ACTIVE' && role === 'OWNER'
+                  ? {
+                      label: '+ নতুন শস্য চক্র শুরু করুন',
+                      onClick: () => setShowAddCrop(true),
+                      icon: PlusCircle,
+                    }
+                  : undefined
+              }
+              compact
+            />
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
               {cropCycles
@@ -3636,9 +3651,13 @@ export const FarmOperationsModule: React.FC<Props> = ({
 
           <div className="space-y-2.5">
             {internalFlows.length === 0 ? (
-              <div className="p-8 text-center text-gray-500 text-[14px]">
-                কোনো অভ্যন্তরীণ প্রবাহ রেকর্ড করা নেই।
-              </div>
+              <EmptyState
+                id="empty-internal-flows"
+                icon={ArrowRightLeft}
+                heading="কোনো অভ্যন্তরীণ প্রবাহ রেকর্ড নেই"
+                message="খামারের অভ্যন্তরীণ সম্পদ স্থানান্তর (যেমন এক খাত থেকে অন্য খাতে ঘাস, গোবর বা জৈব সার সরবরাহ) রেকর্ড করতে উপরের ফর্মটি পূরণ করুন।"
+                compact
+              />
             ) : (
               internalFlows.map((fl) => (
                 <div
