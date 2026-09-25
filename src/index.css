@@ -95,6 +95,20 @@ h1, h2, h3, h4 {
   textarea {
     font-size: 16px !important;
   }
+
+  /* Minimum comfortable touch height on all mobile interactive form controls */
+  input:not([type="checkbox"]):not([type="radio"]),
+  select {
+    min-height: 42px;
+  }
+
+  /* Ergonomic hit area for checkboxes and radios */
+  input[type="checkbox"],
+  input[type="radio"] {
+    min-width: 18px;
+    min-height: 18px;
+    cursor: pointer;
+  }
 }
 
 /* Gentle fade-and-slide-up entrance animation */

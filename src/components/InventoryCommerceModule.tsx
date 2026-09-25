@@ -2713,12 +2713,13 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                             <div className="relative">
                               <input
                                 type="number"
+                                inputMode="decimal"
                                 min="0.001"
                                 step="any"
                                 placeholder="পরিমাণ"
                                 value={line.quantity}
                                 onChange={(e) => handleUpdateSaleLine(idx, 'quantity', e.target.value)}
-                                className="w-full bg-white border border-gray-300 rounded-lg p-2 text-[13px] text-gray-900 pr-8"
+                                className="w-full bg-white border border-gray-300 rounded-lg p-2 text-[13px] text-gray-900 pr-8 min-h-[42px]"
                               />
                               {selItem?.unit && (
                                 <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[11px] text-gray-400 pointer-events-none">
@@ -2732,12 +2733,13 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                             <label className="sm:hidden block text-[11px] font-medium text-gray-500 mb-0.5">একক দর ৳</label>
                             <input
                               type="number"
+                              inputMode="decimal"
                               min="0"
                               step="any"
                               placeholder="দর ৳"
                               value={line.unitPrice}
                               onChange={(e) => handleUpdateSaleLine(idx, 'unitPrice', e.target.value)}
-                              className="w-full bg-white border border-gray-300 rounded-lg p-2 text-[13px] text-gray-900 font-mono"
+                              className="w-full bg-white border border-gray-300 rounded-lg p-2 text-[13px] text-gray-900 font-mono min-h-[42px]"
                             />
                           </div>
 
@@ -2753,7 +2755,7 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                               type="button"
                               onClick={() => handleRemoveSaleLine(idx)}
                               title="লাইন মুছুন"
-                              className="p-1.5 rounded-lg text-gray-400 hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer"
+                              className="p-2 min-h-[38px] min-w-[38px] flex items-center justify-center rounded-lg text-gray-400 hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer"
                             >
                               <Trash2 className="w-4 h-4" />
                             </button>
@@ -2933,17 +2935,17 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                 );
               })()}
 
-              <div className="flex justify-end gap-2.5 pt-1">
+              <div className="flex flex-col-reverse sm:flex-row justify-end gap-2.5 pt-2">
                 <button
                   type="button"
                   onClick={() => setShowNewSale(false)}
-                  className="px-4 py-2 rounded-lg bg-gray-200 text-gray-800 text-[13px] font-semibold cursor-pointer min-h-[40px]"
+                  className="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-gray-200 text-gray-800 text-[13px] font-semibold cursor-pointer min-h-[44px]"
                 >
                   বাতিল
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-2 rounded-lg bg-amber-700 hover:bg-amber-800 text-white text-[13px] font-bold cursor-pointer min-h-[40px]"
+                  className="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-amber-700 hover:bg-amber-800 text-white text-[13px] font-bold cursor-pointer min-h-[44px] shadow-sm"
                 >
                   চালান পোস্ট করুন
                 </button>
@@ -3332,12 +3334,13 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                             <div className="relative">
                               <input
                                 type="number"
+                                inputMode="decimal"
                                 min="0.001"
                                 step="any"
                                 placeholder="পরিমাণ"
                                 value={line.quantity}
                                 onChange={(e) => handleUpdatePurchLine(idx, 'quantity', e.target.value)}
-                                className="w-full bg-white border border-gray-300 rounded-lg p-2 text-[13px] text-gray-900 pr-8"
+                                className="w-full bg-white border border-gray-300 rounded-lg p-2 text-[13px] text-gray-900 pr-8 min-h-[42px]"
                               />
                               {selItem?.unit && (
                                 <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[11px] text-gray-400 pointer-events-none">
@@ -3351,12 +3354,13 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                             <label className="sm:hidden block text-[11px] font-medium text-gray-500 mb-0.5">একক দর ৳</label>
                             <input
                               type="number"
+                              inputMode="decimal"
                               min="0"
                               step="any"
                               placeholder="দর ৳"
                               value={line.unitPrice}
                               onChange={(e) => handleUpdatePurchLine(idx, 'unitPrice', e.target.value)}
-                              className="w-full bg-white border border-gray-300 rounded-lg p-2 text-[13px] text-gray-900 font-mono"
+                              className="w-full bg-white border border-gray-300 rounded-lg p-2 text-[13px] text-gray-900 font-mono min-h-[42px]"
                             />
                           </div>
 
@@ -3372,7 +3376,7 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                               type="button"
                               onClick={() => handleRemovePurchLine(idx)}
                               title="লাইন মুছুন"
-                              className="p-1.5 rounded-lg text-gray-400 hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer"
+                              className="p-2 min-h-[38px] min-w-[38px] flex items-center justify-center rounded-lg text-gray-400 hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer"
                             >
                               <Trash2 className="w-4 h-4" />
                             </button>
@@ -3570,17 +3574,17 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                 );
               })()}
 
-              <div className="flex justify-end gap-2.5 pt-1">
+              <div className="flex flex-col-reverse sm:flex-row justify-end gap-2.5 pt-2">
                 <button
                   type="button"
                   onClick={() => setShowNewPurchase(false)}
-                  className="px-4 py-2 rounded-lg bg-gray-200 text-gray-800 text-[13px] font-semibold cursor-pointer min-h-[40px]"
+                  className="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-gray-200 text-gray-800 text-[13px] font-semibold cursor-pointer min-h-[44px]"
                 >
                   বাতিল
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-2 rounded-lg bg-amber-700 hover:bg-amber-800 text-white text-[13px] font-bold cursor-pointer min-h-[40px]"
+                  className="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-amber-700 hover:bg-amber-800 text-white text-[13px] font-bold cursor-pointer min-h-[44px] shadow-sm"
                 >
                   চালান সংরক্ষণ করুন
                 </button>

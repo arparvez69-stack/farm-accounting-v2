@@ -1677,18 +1677,20 @@ export const FarmOperationsModule: React.FC<Props> = ({
                   <label className="block text-[13px] font-medium text-gray-700 mb-1">ক্রয়মূল্য ৳</label>
                   <input
                     type="number"
+                    inputMode="decimal"
                     value={purchaseCost}
                     onChange={(e) => setPurchaseCost(e.target.value)}
-                    className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900"
+                    className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900 min-h-[42px]"
                   />
                 </div>
                 <div>
                   <label className="block text-[13px] font-medium text-gray-700 mb-1">বর্তমান ওজন (কেজি)</label>
                   <input
                     type="number"
+                    inputMode="decimal"
                     value={currentWeight}
                     onChange={(e) => setCurrentWeight(e.target.value)}
-                    className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900"
+                    className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900 min-h-[42px]"
                   />
                 </div>
               </div>
@@ -1758,17 +1760,17 @@ export const FarmOperationsModule: React.FC<Props> = ({
                 </div>
               )}
 
-              <div className="flex justify-end gap-2.5 pt-1">
+              <div className="flex flex-col-reverse sm:flex-row justify-end gap-2.5 pt-2">
                 <button
                   type="button"
                   onClick={() => setShowAddAnimal(false)}
-                  className="px-4 py-2 rounded-lg bg-gray-200 text-gray-800 text-[13px] font-semibold cursor-pointer min-h-[40px]"
+                  className="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-gray-200 text-gray-800 text-[13px] font-semibold cursor-pointer min-h-[44px]"
                 >
                   বাতিল
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-2 rounded-lg bg-[#1E5128] text-white text-[13px] font-bold cursor-pointer min-h-[40px]"
+                  className="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-[#1E5128] text-white text-[13px] font-bold cursor-pointer min-h-[44px] shadow-sm"
                 >
                   নিবন্ধন করুন
                 </button>
@@ -2714,19 +2716,19 @@ export const FarmOperationsModule: React.FC<Props> = ({
                     />
                   </div>
 
-                  <div className="flex justify-end gap-2.5 pt-2 border-t border-gray-100">
+                  <div className="flex flex-col-reverse sm:flex-row justify-end gap-2.5 pt-2 border-t border-gray-100">
                     <button
                       type="button"
                       disabled={submittingEvent}
                       onClick={handleCloseEventModal}
-                      className="px-4 py-2.5 rounded-xl bg-gray-100 hover:bg-gray-200 text-gray-800 text-[13px] font-semibold cursor-pointer min-h-[40px]"
+                      className="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-gray-100 hover:bg-gray-200 text-gray-800 text-[13px] font-semibold cursor-pointer min-h-[44px]"
                     >
                       বাতিল
                     </button>
                     <button
                       type="submit"
                       disabled={submittingEvent || (isBulkMode && bulkSelectedAnimalIds.length === 0)}
-                      className="px-5 py-2.5 rounded-xl bg-[#1E5128] hover:bg-[#173F1F] text-white text-[13px] font-bold cursor-pointer shadow-xs min-h-[40px] disabled:opacity-50"
+                      className="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-[#1E5128] hover:bg-[#173F1F] text-white text-[13px] font-bold cursor-pointer shadow-xs min-h-[44px] disabled:opacity-50"
                     >
                       {submittingEvent
                         ? 'সংরক্ষণ হচ্ছে...'
@@ -2907,19 +2909,19 @@ export const FarmOperationsModule: React.FC<Props> = ({
                     />
                   </div>
 
-                  <div className="flex justify-end gap-2.5 pt-2 border-t border-gray-100">
+                  <div className="flex flex-col-reverse sm:flex-row justify-end gap-2.5 pt-2 border-t border-gray-100">
                     <button
                       type="button"
                       disabled={submittingStatus}
                       onClick={() => setStatusModalAnimal(null)}
-                      className="px-4 py-2.5 rounded-xl bg-gray-100 hover:bg-gray-200 text-gray-800 text-[13px] font-semibold cursor-pointer min-h-[40px]"
+                      className="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-gray-100 hover:bg-gray-200 text-gray-800 text-[13px] font-semibold cursor-pointer min-h-[44px]"
                     >
                       বাতিল
                     </button>
                     <button
                       type="submit"
                       disabled={submittingStatus}
-                      className="px-5 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-[13px] font-bold cursor-pointer shadow-xs min-h-[40px]"
+                      className="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-[13px] font-bold cursor-pointer shadow-xs min-h-[44px]"
                     >
                       {submittingStatus ? 'সংরক্ষণ হচ্ছে...' : 'স্ট্যাটাস নিশ্চিত করুন'}
                     </button>

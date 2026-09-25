@@ -1297,6 +1297,7 @@ export const AccountingModule: React.FC<Props> = ({
                     </span>
                     <input
                       type="number"
+                      inputMode="decimal"
                       step="0.01"
                       min="0.01"
                       required
@@ -1362,24 +1363,26 @@ export const AccountingModule: React.FC<Props> = ({
                       <div className="col-span-5 sm:col-span-2">
                         <input
                           type="number"
+                          inputMode="decimal"
                           step="0.01"
                           min="0"
                           value={line.debit || ''}
                           onChange={(e) => handleLineAmountChange(idx, 'debit', e.target.value)}
                           placeholder="ডেবিট ৳"
-                          className="w-full bg-white border border-gray-300 rounded-lg px-3 py-2 text-[14px] text-[#15803D] font-bold focus:outline-none focus:border-blue-600 min-h-[40px]"
+                          className="w-full bg-white border border-gray-300 rounded-lg px-3 py-2 text-[14px] text-[#15803D] font-bold focus:outline-none focus:border-blue-600 min-h-[42px]"
                         />
                       </div>
 
                       <div className="col-span-5 sm:col-span-2">
                         <input
                           type="number"
+                          inputMode="decimal"
                           step="0.01"
                           min="0"
                           value={line.credit || ''}
                           onChange={(e) => handleLineAmountChange(idx, 'credit', e.target.value)}
                           placeholder="ক্রেডিট ৳"
-                          className="w-full bg-white border border-gray-300 rounded-lg px-3 py-2 text-[14px] text-sky-700 font-bold focus:outline-none focus:border-blue-600 min-h-[40px]"
+                          className="w-full bg-white border border-gray-300 rounded-lg px-3 py-2 text-[14px] text-sky-700 font-bold focus:outline-none focus:border-blue-600 min-h-[42px]"
                         />
                       </div>
 
