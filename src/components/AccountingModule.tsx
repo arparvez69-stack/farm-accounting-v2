@@ -34,7 +34,8 @@ import {
   getClosedPeriods,
   previewYearEndClosing,
   executeYearEndClosing,
-  YearEndClosingPreview
+  YearEndClosingPreview,
+  resolveAuthoritativeAccount
 } from '../accounting/accountingEngine';
 import { runAutomatedDepreciation } from '../accounting/depreciationService';
 import { Account, ClosedPeriod, JournalEntry, JournalLine, RecurringExpenseTemplate, UserRole, VoucherType } from '../types';
@@ -795,12 +796,13 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
       }
 
       const nowIso = new Date().toISOString();
-      const acc: Account = {
+      const rawAcc: Account = {
         id: `acc_${codeToUse}`,
         code: codeToUse,
         nameBn: newAccNameBn.trim(),
         nameEn: newAccNameEn.trim() || newAccNameBn.trim(),
         accountClass: newAccClass,
+        type: newAccClass,
         normalBalance: inferNormalBalance(newAccClass),
         isSystem: false,
         isActive: true,
@@ -808,6 +810,7 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
         createdAt: nowIso,
         updatedAt: nowIso
       };
+      const acc = resolveAuthoritativeAccount(rawAcc);
 
       await safeInsert(db.accounts, acc);
       setShowAddAccount(false);

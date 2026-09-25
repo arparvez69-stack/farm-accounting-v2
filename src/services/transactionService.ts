@@ -3073,9 +3073,9 @@ export async function executeLoanTransaction(
       // 1. Safe insert journal entry
       await safeInsert(dbInstance.journalEntries, journalEntry, { idPrefix: 'j' });
 
-      // Generate Amortization Schedule (Reducing-Balance / Straight-Line)
-      const schedule = generateAmortizationSchedule(principal, effectiveRate, effectiveMonths, dateStr);
-      const monthlyEmi = schedule.length > 0 ? schedule[0].totalPayment : Math.round((principal / effectiveMonths) * 100) / 100;
+      // Principal-only no-interest loan model: active loans never charge interest or use interest amortization
+      const schedule = generateAmortizationSchedule(principal, 0, effectiveMonths, dateStr);
+      const monthlyEmi = Math.round((principal / effectiveMonths) * 100) / 100;
 
       // 2. Safe insert loan record
       const loanRecord: Loan = {
@@ -3086,9 +3086,9 @@ export async function executeLoanTransaction(
         principalAmount: principal,
         disbursedDate: dateStr,
         startDate: dateStr,
-        interestRateAnnual: effectiveRate,
-        annualInterestRatePercent: effectiveRate,
-        interestRate: effectiveRate,
+        interestRateAnnual: 0,
+        annualInterestRatePercent: 0,
+        interestRate: 0,
         monthlyInstallment: monthlyEmi,
         tenureMonths: effectiveMonths,
         termMonths: effectiveMonths,
@@ -4519,12 +4519,14 @@ export async function executeLoanRepaymentTransaction(
           idempotencyKey
         } = params;
 
-        const pAmt = Math.max(0, Number(principalAmount) || 0);
+        const pAmt = Math.max(0, Number(principalAmount) || 0) || Math.max(0, Number(interestAmount) || 0);
         const iAmt = Math.max(0, Number(interestAmount) || 0);
-        const totalRepayment = Math.round((pAmt + iAmt) * 100) / 100;
+        const totalAttempted = Math.round((Math.max(0, Number(principalAmount) || 0) + iAmt) * 100) / 100;
+        // In this Agro ERP, loans are principal-only. Normal repayment reduces principal only.
+        const totalRepayment = pAmt;
 
         if (totalRepayment <= 0) {
-          throw new Error('পরিশোধের পরিমাণ (আসল বা সুদ) ০ থেকে বেশি হতে হবে।');
+          throw new Error('পরিশোধের পরিমাণ (আসল) ০ থেকে বেশি হতে হবে।');
         }
 
         if (!sourceAccountId) {
@@ -4671,18 +4673,18 @@ export async function executeLoanRepaymentTransaction(
           : Math.max(0, Math.round((remainingPrincipal + remainingInterest) * 100) / 100);
 
         // Validate against overpayment BEFORE journal/cash/loan changes
-        const isRepaymentExceeded = totalRepayment > remainingLiability + 0.0001;
+        const isRepaymentExceeded = totalAttempted > remainingLiability + 0.0001;
         const isPrincipalExceeded = pAmt > remainingPrincipal + 0.0001;
 
         if (isRepaymentExceeded && isPrincipalExceeded) {
           throw new Error(
-            `পরিশোধের পরিমাণ অবশিষ্ট দায় ও আসলের চেয়ে বেশি (repayment exceeds remaining liability: ৳${totalRepayment} > ৳${remainingLiability}; principal repayment exceeds remaining principal: ৳${pAmt} > ৳${remainingPrincipal})। অতিরিক্ত ঋণ পরিশোধ গ্রহণযোগ্য নয়।`
+            `পরিশোধের পরিমাণ অবশিষ্ট দায় ও আসলের চেয়ে বেশি (repayment exceeds remaining liability: ৳${totalAttempted} > ৳${remainingLiability}; principal repayment exceeds remaining principal: ৳${pAmt} > ৳${remainingPrincipal})। অতিরিক্ত ঋণ পরিশোধ গ্রহণযোগ্য নয়।`
           );
         }
 
         if (isRepaymentExceeded) {
           throw new Error(
-            `পরিশোধের মোট পরিমাণ অবশিষ্ট ঋণ দায়ের চেয়ে বেশি (repayment exceeds remaining liability: ৳${totalRepayment} > ৳${remainingLiability})। অতিরিক্ত ঋণ পরিশোধ গ্রহণযোগ্য নয়।`
+            `পরিশোধের মোট পরিমাণ অবশিষ্ট ঋণ দায়ের চেয়ে বেশি (repayment exceeds remaining liability: ৳${totalAttempted} > ৳${remainingLiability})। অতিরিক্ত ঋণ পরিশোধ গ্রহণযোগ্য নয়।`
           );
         }
 
@@ -4705,8 +4707,6 @@ export async function executeLoanRepaymentTransaction(
         const assetGlCode = getCashBankAccountGLCode(sourceAcc.accountType);
         // Liability GL Code (2110 or 2120)
         const liabilityGlCode = getLoanLiabilityAccount(loan.termMonths || loan.tenureMonths || 12);
-        // Interest Expense Code (8010 Loan Interest Expense)
-        const interestExpenseCode = '8010';
 
         const accounts = await dbInstance.accounts.toArray();
         const liabilityAcc = accounts.find((a: any) => a.code === liabilityGlCode) || {
@@ -4717,52 +4717,32 @@ export async function executeLoanRepaymentTransaction(
               ? 'স্বল্পমেয়াদী ঋণ (Short-Term Loans)'
               : 'দীর্ঘমেয়াদী ঋণ (Long-Term Loans)'
         };
-        const interestAcc = accounts.find((a: any) => a.code === interestExpenseCode) || {
-          id: `acc_${interestExpenseCode}`,
-          code: interestExpenseCode,
-          nameBn: 'ঋণের সুদ খরচ (Loan Interest Expense)'
-        };
         const assetAcc = accounts.find((a: any) => a.code === assetGlCode) || {
           id: `acc_${assetGlCode}`,
           code: assetGlCode,
           nameBn: sourceAcc.accountName || sourceAcc.name || 'ব্যাংক/নগদ তহবিল'
         };
 
-        const journalLines: JournalLine[] = [];
-
-        // 1. Debit Principal to Liability (2110 / 2120)
-        if (pAmt > 0) {
-          journalLines.push({
+        // In this Agro ERP, loans are principal-only. Normal repayment debits Loan Liability (2110/2120) and credits Cash/Bank (1010/1030).
+        // Account 8010 Loan Interest Expense is never posted. Debits strictly equal credits.
+        const journalLines: JournalLine[] = [
+          {
             accountId: liabilityAcc.id,
             accountCode: liabilityGlCode,
             accountName: liabilityAcc.nameBn,
-            debit: pAmt,
+            debit: totalRepayment,
             credit: 0,
             memo: `ঋণ কিস্তি আসল পরিশোধ: ${loan.lenderName}`
-          });
-        }
-
-        // 2. Debit Interest to Interest Expense (8010)
-        if (iAmt > 0) {
-          journalLines.push({
-            accountId: interestAcc.id,
-            accountCode: interestExpenseCode,
-            accountName: interestAcc.nameBn,
-            debit: iAmt,
-            credit: 0,
-            memo: `ঋণ কিস্তি সুদ পরিশোধ: ${loan.lenderName}`
-          });
-        }
-
-        // 3. Credit Source Account (1010 Cash or 1030 Bank)
-        journalLines.push({
-          accountId: assetAcc.id,
-          accountCode: assetGlCode,
-          accountName: sourceAcc.accountName || sourceAcc.name || assetAcc.nameBn,
-          debit: 0,
-          credit: totalRepayment,
-          memo: `ঋণ পরিশোধ: ${loan.lenderName} (${voucherNumber})`
-        });
+          },
+          {
+            accountId: assetAcc.id,
+            accountCode: assetGlCode,
+            accountName: sourceAcc.accountName || sourceAcc.name || assetAcc.nameBn,
+            debit: 0,
+            credit: totalRepayment,
+            memo: `ঋণ পরিশোধ: ${loan.lenderName} (${voucherNumber})`
+          }
+        ];
 
         let paidInstallmentNum = installmentNumber && Number(installmentNumber) > 0 ? Number(installmentNumber) : undefined;
         let updatedSchedule = [...currentSchedule];
@@ -4787,7 +4767,7 @@ export async function executeLoanRepaymentTransaction(
             voucherNumber,
             voucherType: 'PAYMENT',
             date: dateStr,
-            narration: `ঋণ পরিশোধ: ${loan.lenderName} (আসল: ৳${pAmt}, সুদ: ৳${iAmt})${paidInstallmentNum ? ` [কিস্তি #${paidInstallmentNum}]` : ''}${note ? ` - ${note}` : ''}`,
+            narration: `ঋণ পরিশোধ: ${loan.lenderName} (আসল: ৳${totalRepayment})${paidInstallmentNum ? ` [কিস্তি #${paidInstallmentNum}]` : ''}${note ? ` - ${note}` : ''}`,
             reference: repRef,
             lines: journalLines,
             createdBy: currentUserId,
@@ -4809,10 +4789,10 @@ export async function executeLoanRepaymentTransaction(
           currentBalance: Math.round((sourceAcc.currentBalance - totalRepayment) * 100) / 100
         });
 
-        // Update Loan record, schedule & balances
-        const currentRemaining = Math.max(0, (loan.remainingPrincipal ?? loan.remainingBalance ?? loan.principalAmount) - pAmt);
-        const newTotalPaidP = (loan.totalPaidPrincipal || 0) + pAmt;
-        const newTotalPaidI = (loan.totalPaidInterest || 0) + iAmt;
+        // Update Loan record, schedule & balances (principal-only)
+        const currentRemaining = Math.max(0, (loan.remainingPrincipal ?? loan.remainingBalance ?? loan.principalAmount) - totalRepayment);
+        const newTotalPaidP = (loan.totalPaidPrincipal || 0) + totalRepayment;
+        const newTotalPaidI = loan.totalPaidInterest || 0;
 
         if (updatedSchedule.length > 0) {
           if (installmentNumber && Number(installmentNumber) > 0) {

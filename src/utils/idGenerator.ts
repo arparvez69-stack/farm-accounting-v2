@@ -136,6 +136,9 @@ export async function safeInsert<T extends { id: string }>(
 ): Promise<T> {
   const maxRetries = options?.maxRetries ?? 5;
   let currentRecord = { ...record };
+  if (!currentRecord.id) {
+    currentRecord.id = generateUniqueId(options?.idPrefix);
+  }
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {

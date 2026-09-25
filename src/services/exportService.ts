@@ -327,9 +327,39 @@ export async function createFullJsonBackup(targetDb: any = db): Promise<string> 
     }
   }
 
+  const nowIso = new Date().toISOString();
+  const tablesList = Array.from(tableNamesToExport);
+  const totalRecords = Object.values(verifiedRecordCounts).reduce((a, b) => a + b, 0);
+  const dbSchemaVersion = typeof activeDb.verno === 'number' ? activeDb.verno : 12;
+
   const backup: Record<string, any> = {
     version: '1.0.0',
-    timestamp: new Date().toISOString(),
+    schemaVersion: dbSchemaVersion,
+    timestamp: nowIso,
+    createdAt: nowIso,
+    expectedTables: tablesList,
+    recordCounts: verifiedRecordCounts,
+    metadata: {
+      version: '1.0.0',
+      schemaVersion: dbSchemaVersion,
+      timestamp: nowIso,
+      createdAt: nowIso,
+      expectedTables: tablesList,
+      recordCounts: verifiedRecordCounts,
+      totalTables: tablesList.length,
+      totalRecords
+    },
+    manifest: {
+      version: '1.0.0',
+      schemaVersion: dbSchemaVersion,
+      timestamp: nowIso,
+      createdAt: nowIso,
+      tables: tablesList,
+      expectedTables: tablesList,
+      recordCounts: verifiedRecordCounts,
+      totalTables: tablesList.length,
+      totalRecords
+    },
     ...exportedData,
     // Aliases for backwards compatibility with legacy backup tools/consumers
     inventory: exportedData.inventoryItems || [],
@@ -402,8 +432,19 @@ export async function restoreFromJsonBackup(
       return { success: false, message: 'অবৈধ ব্যাকআপ ফাইল (Missing or invalid backup timestamp).' };
     }
 
-    // 4. Validate completeness: EVERY canonical persistent table must be present
-    for (const tableName of CANONICAL_PERSISTENT_TABLES) {
+    // 4. Validate manifest & expected table structure
+    const manifestTables: string[] = (Array.isArray(data.expectedTables) && data.expectedTables.length > 0)
+      ? data.expectedTables
+      : ((Array.isArray(data.metadata?.expectedTables) && data.metadata.expectedTables.length > 0)
+        ? data.metadata.expectedTables
+        : ((Array.isArray(data.manifest?.tables) && data.manifest.tables.length > 0)
+          ? data.manifest.tables
+          : CANONICAL_PERSISTENT_TABLES));
+
+    // Combine canonical tables with any tables explicitly specified in manifest
+    const requiredTables = new Set<string>([...CANONICAL_PERSISTENT_TABLES, ...manifestTables]);
+
+    for (const tableName of requiredTables) {
       const rawTableData = getTableDataFromBackup(data, tableName);
       if (rawTableData === undefined) {
         return {
@@ -414,7 +455,7 @@ export async function restoreFromJsonBackup(
     }
 
     // 5. Validate table data types: systemConfig must be object/array; all others must be arrays
-    for (const tableName of CANONICAL_PERSISTENT_TABLES) {
+    for (const tableName of requiredTables) {
       const rawTableData = getTableDataFromBackup(data, tableName);
       if (tableName === 'systemConfig') {
         if (!rawTableData || typeof rawTableData !== 'object') {
@@ -443,7 +484,7 @@ export async function restoreFromJsonBackup(
     };
 
     // 6. Validate record-level integrity across all tables
-    for (const tableName of CANONICAL_PERSISTENT_TABLES) {
+    for (const tableName of requiredTables) {
       const rawTableData = getTableDataFromBackup(data, tableName);
       const items = normalizeItems(rawTableData);
       if (!items) continue;
@@ -476,6 +517,34 @@ export async function restoreFromJsonBackup(
             return {
               success: false,
               message: `বিকৃত ব্যাকআপ রেকর্ড (Malformed journal entry "${item.id}": missing lines array).`
+            };
+          }
+        }
+      }
+    }
+
+    // 7. Validate dataset completeness against manifest recordCounts if present
+    const manifestCounts: Record<string, number> | undefined = data.recordCounts || data.metadata?.recordCounts || data.manifest?.recordCounts;
+    if (manifestCounts && typeof manifestCounts === 'object') {
+      for (const [tableName, expectedCount] of Object.entries(manifestCounts)) {
+        if (typeof expectedCount === 'number') {
+          const rawTableData = getTableDataFromBackup(data, tableName);
+          if (rawTableData === undefined) {
+            return {
+              success: false,
+              message: `অসম্পূর্ণ ব্যাকআপ ফাইল (Incomplete backup: missing required persistent table "${tableName}").`
+            };
+          }
+          let actualCount = 0;
+          if (Array.isArray(rawTableData)) {
+            actualCount = rawTableData.length;
+          } else if (rawTableData && typeof rawTableData === 'object') {
+            actualCount = 1;
+          }
+          if (actualCount !== expectedCount) {
+            return {
+              success: false,
+              message: `অসম্পূর্ণ ব্যাকআপ ফাইল (Incomplete backup dataset: table "${tableName}" expected ${expectedCount} records according to manifest, but found ${actualCount}).`
             };
           }
         }

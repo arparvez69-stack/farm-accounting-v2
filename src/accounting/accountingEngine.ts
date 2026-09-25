@@ -318,6 +318,7 @@ export async function postJournalEntry(
 
   const fullEntry: JournalEntry = {
     ...entry,
+    id: entry.id || generateUniqueId('j'),
     totalDebit: check.totalDebit,
     totalCredit: check.totalCredit,
     synced: false
@@ -1673,62 +1674,257 @@ export async function reverseJournalEntry(
 export const reverseTransaction = reverseJournalEntry;
 
 /**
- * Helper to resolve or synthesize account metadata for any account code
- * present in journal entries (guaranteeing that Balance Sheet & P&L remain balanced).
+ * Canonical valid account classes in Bangladesh Agro ERP double-entry accounting.
  */
-function resolveAccountMetadata(code: string, accountsByCode: Map<string, Account>): Account {
-  const existing = accountsByCode.get(code);
-  if (existing) return existing;
+export const VALID_ACCOUNT_CLASSES: readonly AccountClass[] = [
+  'ASSET',
+  'LIABILITY',
+  'EQUITY',
+  'REVENUE',
+  'COGS',
+  'EXPENSE',
+  'OTHER_INCOME',
+  'OTHER_EXPENSE'
+] as const;
+
+export function isValidAccountClass(cls: any): cls is AccountClass {
+  return typeof cls === 'string' && (VALID_ACCOUNT_CLASSES as readonly string[]).includes(cls);
+}
+
+/**
+ * Standard classification ranges based on standard Chart of Accounts code prefix:
+ * 1xxx -> ASSET
+ * 2xxx -> LIABILITY
+ * 3xxx -> EQUITY
+ * 4xxx -> REVENUE
+ * 5xxx -> COGS
+ * 6xxx -> EXPENSE
+ * 7xxx -> OTHER_INCOME
+ * 8xxx -> OTHER_EXPENSE
+ */
+export function getAccountClassFromPrefix(code: string): AccountClass | undefined {
+  if (!code || typeof code !== 'string') return undefined;
+  const trimmed = code.trim();
+  const first = trimmed.charAt(0);
+  switch (first) {
+    case '1': return 'ASSET';
+    case '2': return 'LIABILITY';
+    case '3': return 'EQUITY';
+    case '4': return 'REVENUE';
+    case '5': return 'COGS';
+    case '6': return 'EXPENSE';
+    case '7': return 'OTHER_INCOME';
+    case '8': return 'OTHER_EXPENSE';
+    default: return undefined;
+  }
+}
+
+/**
+ * Determines the authoritative normal balance for any given account class and code.
+ * Contra accounts (like 1590 Accumulated Depreciation, 3040 Owner Drawings) are strictly respected.
+ * For non-contra accounts, prevents inverted normalBalance from causing classification conflicts.
+ */
+export function getAuthoritativeNormalBalance(
+  accountClass: AccountClass | 'UNKNOWN' | string | undefined,
+  code?: string,
+  declaredNormalBalance?: NormalBalance
+): NormalBalance {
+  if (!accountClass || accountClass === 'UNKNOWN' || accountClass === 'UNRESOLVED' || accountClass === 'INVALID') {
+    return 'UNKNOWN';
+  }
+
+  const cleanCode = code ? String(code).trim() : '';
+
+  // Canonical contra accounts in default chart:
+  if (cleanCode === '1590') return 'CREDIT'; // Accumulated Depreciation (Contra-Asset)
+  if (cleanCode === '3040') return 'DEBIT';  // Owner Drawings (Contra-Equity)
+  if (cleanCode === '3060') return 'DEBIT';  // Income Summary
+  if (cleanCode === '3070') return 'DEBIT';  // Profit Distribution (Contra-Equity)
+
+  // Explicitly declared contra accounts:
+  if (accountClass === 'ASSET' && declaredNormalBalance === 'CREDIT' && cleanCode.startsWith('159')) {
+    return 'CREDIT';
+  }
+  if (accountClass === 'EQUITY' && declaredNormalBalance === 'DEBIT' && (cleanCode.startsWith('304') || cleanCode.startsWith('307'))) {
+    return 'DEBIT';
+  }
+
+  // Canonical class normal balance rules:
+  switch (accountClass) {
+    case 'ASSET':
+    case 'COGS':
+    case 'EXPENSE':
+    case 'OTHER_EXPENSE':
+      return 'DEBIT';
+    case 'LIABILITY':
+    case 'EQUITY':
+    case 'REVENUE':
+    case 'OTHER_INCOME':
+      return 'CREDIT';
+    default:
+      return 'UNKNOWN';
+  }
+}
+
+/**
+ * Single authoritative classification resolution function for all Account objects.
+ * Resolves conflicting fields (accountClass, type, normalBalance, parentCode) into
+ * a single authoritative classification.
+ *
+ * Precedence / Authoritative Path:
+ * 1. System Default Chart of Accounts match (immutable standard accounts)
+ * 2. If already marked as orphan / UNKNOWN, preserve UNKNOWN
+ * 3. Primary declared `accountClass` (if valid)
+ * 4. Secondary declared `type` (if valid AccountClass)
+ * 5. Parent account inheritance (`parentCode`)
+ * 6. Code prefix range fallback (only for registered accounts, not ad-hoc journal orphans)
+ * 7. Enforces synchronized `accountClass`, `type`, and non-conflicting `normalBalance`.
+ */
+export function resolveAuthoritativeAccount(
+  rawAcc: Partial<Account>,
+  parentLookup?: (code: string) => Account | undefined
+): Account {
+  const code = String(rawAcc.code || '').trim();
+
+  // 1. System Default Chart of Accounts match
+  const defaultAcc = DEFAULT_CHART_OF_ACCOUNTS.find((a) => a.code === code);
+  if (defaultAcc) {
+    return {
+      ...defaultAcc,
+      ...rawAcc,
+      id: defaultAcc.id,
+      code: defaultAcc.code,
+      accountClass: defaultAcc.accountClass,
+      type: defaultAcc.accountClass,
+      normalBalance: defaultAcc.normalBalance
+    };
+  }
+
+  // 2. Check if explicitly an orphan / unknown account
+  const rawClassStr = String(rawAcc.accountClass || '');
+  if (
+    rawAcc.id?.startsWith('orphan_') ||
+    rawClassStr === 'UNKNOWN' ||
+    rawClassStr === 'UNRESOLVED' ||
+    rawClassStr === 'INVALID' ||
+    rawAcc.normalBalance === 'UNKNOWN'
+  ) {
+    if (
+      !rawAcc.accountClass ||
+      rawClassStr === 'UNKNOWN' ||
+      rawClassStr === 'UNRESOLVED' ||
+      rawClassStr === 'INVALID'
+    ) {
+      return {
+        id: rawAcc.id || `orphan_${code}`,
+        code,
+        nameBn: rawAcc.nameBn || `[অবৈধ / অনাথ হিসাব] ${code}`,
+        nameEn: rawAcc.nameEn || `[INVALID / ORPHAN ACCOUNT] ${code}`,
+        accountClass: 'UNKNOWN' as unknown as AccountClass,
+        type: 'UNKNOWN',
+        normalBalance: 'UNKNOWN',
+        isSystem: false,
+        isActive: false
+      };
+    }
+  }
+
+  // 3. Resolve authoritative AccountClass
+  let authoritativeClass: AccountClass | 'UNKNOWN' = 'UNKNOWN';
+
+  // Rule 3a: Primary declared accountClass
+  if (isValidAccountClass(rawAcc.accountClass)) {
+    authoritativeClass = rawAcc.accountClass;
+  }
+  // Rule 3b: Fallback to type if accountClass missing or invalid
+  else if (isValidAccountClass(rawAcc.type)) {
+    authoritativeClass = rawAcc.type as AccountClass;
+  }
+  // Rule 3c: Fallback to parentCode inheritance
+  else if (rawAcc.parentCode && parentLookup) {
+    const parent = parentLookup(rawAcc.parentCode);
+    if (parent) {
+      const parentResolved = resolveAuthoritativeAccount(parent, parentLookup);
+      if (isValidAccountClass(parentResolved.accountClass)) {
+        authoritativeClass = parentResolved.accountClass;
+      }
+    }
+  }
+  // Rule 3d: Fallback to code prefix range for registered custom accounts
+  else if (rawAcc.id && !rawAcc.id.startsWith('orphan_') && code) {
+    const prefixClass = getAccountClassFromPrefix(code);
+    if (prefixClass) {
+      authoritativeClass = prefixClass;
+    }
+  }
+
+  // 4. Resolve authoritative normal balance (reconciles conflicts)
+  const authoritativeNormalBalance = getAuthoritativeNormalBalance(
+    authoritativeClass,
+    code,
+    rawAcc.normalBalance
+  );
+
+  return {
+    id: rawAcc.id || `acc_${code}`,
+    code,
+    nameBn: rawAcc.nameBn || code,
+    nameEn: rawAcc.nameEn || rawAcc.nameBn || code,
+    accountClass: authoritativeClass as unknown as AccountClass,
+    type: authoritativeClass,
+    parentCode: rawAcc.parentCode,
+    normalBalance: authoritativeNormalBalance,
+    isSystem: rawAcc.isSystem || false,
+    isActive: rawAcc.isActive !== false,
+    createdAt: rawAcc.createdAt,
+    updatedAt: rawAcc.updatedAt
+  };
+}
+
+/**
+ * Helper to resolve account metadata for any account code.
+ * Valid registered or default chart accounts return their authentic metadata.
+ * Unknown, unregistered, or orphan account codes are NEVER silently given DEBIT normal balance
+ * or ASSET classification (or any invented classification), but resolve safely as UNKNOWN / UNRESOLVED.
+ */
+export function resolveAccountMetadata(code: string, accountsByCode?: Map<string, Account>): Account {
+  if (accountsByCode) {
+    const existing = accountsByCode.get(code);
+    if (existing) {
+      const normalized = resolveAuthoritativeAccount(existing, (pCode) => accountsByCode.get(pCode));
+      accountsByCode.set(code, normalized);
+      return normalized;
+    }
+  }
 
   const defaultAcc = DEFAULT_CHART_OF_ACCOUNTS.find((a) => a.code === code);
   if (defaultAcc) {
-    accountsByCode.set(code, defaultAcc);
-    return defaultAcc;
+    const authoritative = resolveAuthoritativeAccount(defaultAcc);
+    if (accountsByCode) {
+      accountsByCode.set(code, authoritative);
+    }
+    return authoritative;
   }
 
-  // Infer class based on standard Bangladesh Agro ERP chart prefix
-  const firstDigit = code.charAt(0);
-  let accountClass: AccountClass = 'ASSET';
-  let normalBalance: NormalBalance = 'DEBIT';
-
-  if (firstDigit === '2') {
-    accountClass = 'LIABILITY';
-    normalBalance = 'CREDIT';
-  } else if (firstDigit === '3') {
-    accountClass = 'EQUITY';
-    normalBalance = code === '3040' ? 'DEBIT' : 'CREDIT';
-  } else if (firstDigit === '4') {
-    accountClass = 'REVENUE';
-    normalBalance = 'CREDIT';
-  } else if (firstDigit === '5') {
-    accountClass = 'COGS';
-    normalBalance = 'DEBIT';
-  } else if (firstDigit === '6') {
-    accountClass = 'EXPENSE';
-    normalBalance = 'DEBIT';
-  } else if (firstDigit === '7') {
-    accountClass = 'OTHER_INCOME';
-    normalBalance = 'CREDIT';
-  } else if (firstDigit === '8') {
-    accountClass = 'OTHER_EXPENSE';
-    normalBalance = 'DEBIT';
-  } else {
-    accountClass = 'ASSET';
-    normalBalance = code === '1590' ? 'CREDIT' : 'DEBIT';
-  }
-
-  const synthesized: Account = {
-    id: `acc_${code}`,
+  // Unknown / unregistered / orphan account:
+  // Must NEVER silently default to DEBIT normal balance or ASSET class, or invent any classification.
+  // Resolves as INVALID / UNKNOWN / UNRESOLVED.
+  const unresolved: Account = {
+    id: `orphan_${code}`,
     code,
-    nameBn: `[অনিবন্ধিত হিসাব] ${code}`,
-    nameEn: `[Unregistered Account] ${code}`,
-    accountClass,
-    normalBalance,
+    nameBn: `[অবৈধ / অনাথ হিসাব] ${code}`,
+    nameEn: `[INVALID / ORPHAN ACCOUNT] ${code}`,
+    accountClass: 'UNKNOWN' as unknown as AccountClass,
+    type: 'UNKNOWN',
+    normalBalance: 'UNKNOWN',
     isSystem: false,
-    isActive: true
+    isActive: false
   };
-  accountsByCode.set(code, synthesized);
-  return synthesized;
+
+  if (accountsByCode) {
+    accountsByCode.set(code, unresolved);
+  }
+  return unresolved;
 }
 
 /**
@@ -1765,11 +1961,16 @@ export async function generateTrialBalance(
     });
   }
 
-  // Deduplicate accounts by code
+  // Deduplicate and normalize accounts by code
   const accountMap = new Map<string, Account>();
   for (const acc of rawAccounts) {
     if (!accountMap.has(acc.code)) {
-      accountMap.set(acc.code, acc);
+      accountMap.set(acc.code, resolveAuthoritativeAccount(acc, (pCode) => rawAccounts.find((a: any) => a.code === pCode)));
+    }
+  }
+  for (const acc of DEFAULT_CHART_OF_ACCOUNTS) {
+    if (!accountMap.has(acc.code)) {
+      accountMap.set(acc.code, resolveAuthoritativeAccount(acc));
     }
   }
   const accounts = Array.from(accountMap.values());
@@ -1952,11 +2153,11 @@ export async function generateProfitLoss(
     });
   }
 
-  // Deduplicate accounts by code
+  // Deduplicate and normalize accounts by code
   const accountsByCode = new Map<string, Account>();
   for (const acc of rawAccounts) {
     if (!accountsByCode.has(acc.code)) {
-      accountsByCode.set(acc.code, acc);
+      accountsByCode.set(acc.code, resolveAuthoritativeAccount(acc, (pCode) => rawAccounts.find((a: any) => a.code === pCode)));
     }
   }
 
@@ -2037,6 +2238,8 @@ export async function generateProfitLoss(
   };
 }
 
+export const generateProfitAndLoss = generateProfitLoss;
+
 /**
  * Computes Balance Sheet (উদ্বৃত্তপত্র)
  * Assets = Liabilities + Equity
@@ -2088,11 +2291,11 @@ export async function generateBalanceSheet(
     endDate: cleanEndDate
   }, undefined, dbInstance);
 
-  // Deduplicate accounts by code
+  // Deduplicate and normalize accounts by code
   const accountsByCode = new Map<string, Account>();
   for (const acc of rawAccounts) {
     if (!accountsByCode.has(acc.code)) {
-      accountsByCode.set(acc.code, acc);
+      accountsByCode.set(acc.code, resolveAuthoritativeAccount(acc, (pCode) => rawAccounts.find((a: any) => a.code === pCode)));
     }
   }
 
@@ -2361,7 +2564,12 @@ export async function getGeneralLedger(
   dbInstance?: any
 ): Promise<GeneralLedgerReport> {
   const targetDb = dbInstance || db;
-  const account = await targetDb.accounts.where('code').equals(accountCode).first();
+  const rawAccount =
+    (await targetDb.accounts.where('code').equals(accountCode).first()) ||
+    DEFAULT_CHART_OF_ACCOUNTS.find((a) => a.code === accountCode);
+  const account = rawAccount
+    ? resolveAuthoritativeAccount(rawAccount)
+    : resolveAccountMetadata(accountCode);
   const rawEntries = await targetDb.journalEntries.toArray();
 
   // Normalize date boundaries
@@ -3291,7 +3499,7 @@ export async function generateCashFlowStatement(
   const accountsByCode = new Map<string, Account>();
   for (const acc of rawAccounts) {
     if (!accountsByCode.has(acc.code)) {
-      accountsByCode.set(acc.code, acc);
+      accountsByCode.set(acc.code, resolveAuthoritativeAccount(acc, (pCode) => rawAccounts.find((a: any) => a.code === pCode)));
     }
   }
 

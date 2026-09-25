@@ -881,7 +881,11 @@ if (typeof window !== 'undefined') {
  * and NO internet connection available to check Firestore, returns offlineEmptyWarning: true
  * so a clear warning can be displayed instead of silently acting like a brand-new account.
  */
-export async function restoreRemoteDataIfLocalEmpty(userEmail?: string, force?: boolean): Promise<{
+export async function restoreRemoteDataIfLocalEmpty(
+  userEmail?: string,
+  force?: boolean,
+  options?: { mockRemoteCollections?: Record<string, any[]> }
+): Promise<{
   restored: boolean;
   count: number;
   offlineEmptyWarning: boolean;
@@ -917,265 +921,314 @@ export async function restoreRemoteDataIfLocalEmpty(userEmail?: string, force?: 
     ]);
     const totalLocalRecords = localOperationalCounts.reduce((a, b) => a + b, 0);
 
-    // If local IndexedDB already has records, no cloud restore is needed unless forced
-    if (totalLocalRecords > 0 && !force) {
-      return { restored: false, count: totalLocalRecords, offlineEmptyWarning: false };
-    }
-
     // Known owner email check
     const allowed = getStoredOwnerEmails();
     const cleanEmail = (userEmail || auth.currentUser?.email || '').toLowerCase().trim();
     const isKnownOwner = allowed.length === 0 || (cleanEmail && allowed.includes(cleanEmail));
 
     // If genuinely empty and no internet connection available
-    if (typeof window !== 'undefined' && typeof navigator !== 'undefined' && navigator.onLine === false) {
-      if (isKnownOwner) {
+    const isMock = !!(options?.mockRemoteCollections);
+    if (!isMock && typeof window !== 'undefined' && typeof navigator !== 'undefined' && navigator.onLine === false) {
+      if (isKnownOwner && totalLocalRecords === 0) {
         console.warn('[The Goated Farm] Known owner opened app with empty local database while offline.');
         return { restored: false, count: 0, offlineEmptyWarning: true };
       }
-      return { restored: false, count: 0, offlineEmptyWarning: false };
+      return { restored: false, count: totalLocalRecords, offlineEmptyWarning: false };
     }
 
     let restoredCount = 0;
 
-    // Get auth token if available
-    let token: string | null = null;
-    if (auth.currentUser) {
-      try {
-        token = await auth.currentUser.getIdToken();
-      } catch {}
-    }
-    if (!token && typeof localStorage !== 'undefined') {
-      try {
-        const raw = localStorage.getItem('goted_owner_session');
-        if (raw) {
-          const parsed = JSON.parse(raw);
-          token = parsed.sessionToken || null;
-        }
-      } catch {}
-    }
+    /**
+     * Intelligent, non-destructive restore helper:
+     * - Restores missing records
+     * - Updates older local records when cloud has confirmed newer timestamp
+     * - NEVER overwrites or destroys newer local records
+     * - Does NOT duplicate records (preserves primary key ID)
+     * - Preserves relationships and foreign keys
+     */
+    const restoreTableItemsWithDiff = async (table: any, items: any[] | undefined, tableName?: string): Promise<number> => {
+      if (!Array.isArray(items) || items.length === 0 || !table) {
+        return 0;
+      }
 
-    // 1. Try server restore endpoint (fastest, Admin-privileged, complete)
-    try {
-      const endpoint = typeof window !== 'undefined' && window.location?.origin
-        ? `${window.location.origin}/api/sync/restore`
-        : (typeof process !== 'undefined' && process.env?.PORT ? `http://localhost:${process.env.PORT}/api/sync/restore` : 'http://localhost:3000/api/sync/restore');
-      const res = await fetch(endpoint, {
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {})
-        }
-      });
-      if (res.ok) {
-        const payload = await res.json();
-        if (payload.success && payload.collections) {
-          const c = payload.collections;
+      let count = 0;
+      const localCount = await table.count();
 
-          const restoreTableItems = async (table: any, items: any[] | undefined, tableName?: string) => {
-            if (Array.isArray(items) && items.length > 0 && table) {
-              if (table === db.accounts || tableName === 'accounts') {
-                for (const item of items) {
-                  if (!item) continue;
-                  const itemCode = (item.code || '').trim();
-                  let existing = null;
-                  if (itemCode) {
-                    existing = await db.accounts.where('code').equals(itemCode).first();
-                  }
-                  if (!existing && item.id) {
-                    existing = await db.accounts.get(item.id);
-                  }
-
-                  if (existing) {
-                    // Stale local vs remote check:
-                    // If local account has a newer modification timestamp than remote, don't overwrite with stale cloud data
-                    const localTime = existing.updatedAt || existing.syncedAt;
-                    const remoteTime = item.updatedAt || item.syncedAt;
-                    if (localTime && remoteTime && new Date(localTime).getTime() > new Date(remoteTime).getTime()) {
-                      continue;
-                    }
-                    const isSys = existing.isSystem || DEFAULT_CHART_OF_ACCOUNTS.some((a) => a.code === existing.code);
-                    await db.accounts.put({
-                      ...existing,
-                      ...item,
-                      id: existing.id || item.id || (itemCode ? `acc_${itemCode}` : `acc_${Date.now()}`),
-                      code: existing.code || item.code,
-                      isSystem: isSys,
-                      ...(isSys ? { accountClass: existing.accountClass, normalBalance: existing.normalBalance } : {}),
-                      synced: true
-                    });
-                  } else {
-                    await db.accounts.put({
-                      ...item,
-                      id: item.id || (itemCode ? `acc_${itemCode}` : `acc_${Date.now()}`),
-                      synced: true
-                    });
-                  }
-                  restoredCount++;
-                }
-              } else if (typeof table.bulkPut === 'function') {
-                const prepared = items.map((item: any) => ({
-                  ...item,
-                  ownerUid: item.ownerUid || (table === db.systemConfig || tableName === 'systemConfig' ? (item.id || item.ownerUid || 'config') : item.ownerUid),
-                  id: item.id || (table === db.systemConfig || tableName === 'systemConfig' ? (item.ownerUid || item.id || 'config') : item.id),
-                  synced: true
-                }));
-                await table.bulkPut(prepared);
-                restoredCount += prepared.length;
-              }
-            }
+      // Fast-path: table is completely missing locally and not accounts
+      if (localCount === 0 && table !== db.accounts && tableName !== 'accounts') {
+        const prepared = items.map((item: any) => {
+          const itemId = (table === db.systemConfig || tableName === 'systemConfig')
+            ? (item.ownerUid || item.id || 'config')
+            : item.id;
+          return {
+            ...item,
+            id: itemId,
+            ownerUid: item.ownerUid || (table === db.systemConfig || tableName === 'systemConfig' ? itemId : item.ownerUid),
+            synced: true
           };
+        });
+        await table.bulkPut(prepared);
+        return prepared.length;
+      }
 
-          await restoreTableItems(db.systemConfig, c.systemConfig, 'systemConfig');
-          await restoreTableItems(db.accounts, c.accounts, 'accounts');
-          await restoreTableItems(db.animals, c.animals);
-          await restoreTableItems(db.animalEvents, c.animalEvents);
-          await restoreTableItems(db.journalEntries, c.journalEntries);
-          await restoreTableItems(db.sales, c.sales);
-          await restoreTableItems(db.purchases, c.purchases);
-          await restoreTableItems(db.payments, c.payments);
-          await restoreTableItems(db.salesReturns, c.salesReturns);
-          await restoreTableItems(db.purchaseReturns, c.purchaseReturns);
-          await restoreTableItems(db.advancePayments, c.advancePayments);
-          await restoreTableItems(db.cropCycles, c.cropCycles);
-          await restoreTableItems(db.fishBatches, c.fishBatches);
-          await restoreTableItems(db.ponds, c.ponds);
-          await restoreTableItems(db.plots, c.plots);
-          const invList = (Array.isArray(c.inventory) && c.inventory.length > 0) ? c.inventory : ((Array.isArray(c.inventoryItems) && c.inventoryItems.length > 0) ? c.inventoryItems : []);
-          await restoreTableItems(db.inventoryItems, invList);
-          await restoreTableItems(db.stockMovements, c.stockMovements);
-          await restoreTableItems(db.parties, c.parties);
-          await restoreTableItems(db.fixedAssets, c.fixedAssets);
-          await restoreTableItems(db.loans, c.loans);
-          await restoreTableItems(db.investors, c.investors);
-          await restoreTableItems(db.cashBankAccounts, c.cashBankAccounts);
-          await restoreTableItems(db.bankTransfers, c.bankTransfers);
-          await restoreTableItems(db.reminders, c.reminders);
-          await restoreTableItems(db.internalFlows, c.internalFlows);
-          await restoreTableItems(db.processingRuns, c.processingRuns);
-          await restoreTableItems(db.recurringExpenseTemplates, c.recurringExpenseTemplates);
-          await restoreTableItems(db.accessLogs, c.accessLogs);
-          await restoreTableItems(db.auditLogs, c.auditLogs);
-          await restoreTableItems(db.closedPeriods, c.closedPeriods);
+      // Accounts special handling: respect default chart and system accounts
+      if (table === db.accounts || tableName === 'accounts') {
+        for (const item of items) {
+          if (!item) continue;
+          const itemCode = (item.code || '').trim();
+          let existing: any = null;
+          if (itemCode) {
+            existing = await db.accounts.where('code').equals(itemCode).first();
+          }
+          if (!existing && item.id) {
+            existing = await db.accounts.get(item.id);
+          }
 
-          // Universal persistent Dexie table sweep: ensures NO table is ever silently omitted
-          for (const tbl of db.tables) {
-            const tblName = tbl.name;
-            const items = c[tblName] || (tblName === 'inventoryItems' ? c.inventory : undefined) || (tblName === 'systemConfig' ? c.system : undefined);
-            if (Array.isArray(items) && items.length > 0) {
-              const currentCount = await tbl.count();
-              if (currentCount === 0) {
-                const prepared = items.map((item: any) => ({
-                  ...item,
-                  id: item.id || (tblName === 'systemConfig' ? (item.ownerUid || item.id) : item.id),
-                  synced: true
-                }));
-                await tbl.bulkPut(prepared);
-                restoredCount += prepared.length;
-              }
+          if (existing) {
+            const localTime = existing.updatedAt || existing.syncedAt || existing.createdAt;
+            const remoteTime = item.updatedAt || item.syncedAt || item.createdAt;
+            const localMs = localTime ? new Date(localTime).getTime() : 0;
+            const remoteMs = remoteTime ? new Date(remoteTime).getTime() : 0;
+
+            // Never destroy newer local records because an older cloud snapshot exists
+            if (localMs > 0 && remoteMs > 0 && localMs >= remoteMs) {
+              continue;
             }
+            if (localMs > 0 && !remoteMs) {
+              continue;
+            }
+            if (!localMs && !remoteMs) {
+              continue;
+            }
+
+            const isSys = existing.isSystem || DEFAULT_CHART_OF_ACCOUNTS.some((a) => a.code === existing.code);
+            await db.accounts.put({
+              ...existing,
+              ...item,
+              id: existing.id || item.id || (itemCode ? `acc_${itemCode}` : `acc_${Date.now()}`),
+              code: existing.code || item.code,
+              isSystem: isSys,
+              ...(isSys ? { accountClass: existing.accountClass, normalBalance: existing.normalBalance } : {}),
+              synced: true
+            });
+            count++;
+          } else {
+            await db.accounts.put({
+              ...item,
+              id: item.id || (itemCode ? `acc_${itemCode}` : `acc_${Date.now()}`),
+              synced: true
+            });
+            count++;
+          }
+        }
+        return count;
+      }
+
+      // General operational tables diff & restore
+      for (const item of items) {
+        if (!item) continue;
+        const itemId = (table === db.systemConfig || tableName === 'systemConfig')
+          ? (item.ownerUid || item.id || 'config')
+          : item.id;
+        if (!itemId) continue;
+
+        const existing = await table.get(itemId);
+
+        if (existing) {
+          const localTime = existing.updatedAt || existing.syncedAt || existing.createdAt;
+          const remoteTime = item.updatedAt || item.syncedAt || item.createdAt;
+          const localMs = localTime ? new Date(localTime).getTime() : 0;
+          const remoteMs = remoteTime ? new Date(remoteTime).getTime() : 0;
+
+          // Never destroy newer local records because an older cloud snapshot exists
+          if (localMs > 0 && remoteMs > 0 && localMs >= remoteMs) {
+            continue;
+          }
+          if (localMs > 0 && !remoteMs) {
+            continue;
+          }
+          if (!localMs && !remoteMs) {
+            continue;
+          }
+
+          // Cloud is confirmed newer than local: update with newer cloud data, preserving local ID and relationships
+          await table.put({
+            ...existing,
+            ...item,
+            id: itemId,
+            ownerUid: item.ownerUid || existing.ownerUid,
+            synced: true
+          });
+          count++;
+        } else {
+          // Missing record locally: restore it
+          await table.put({
+            ...item,
+            id: itemId,
+            ownerUid: item.ownerUid || (table === db.systemConfig || tableName === 'systemConfig' ? itemId : item.ownerUid),
+            synced: true
+          });
+          count++;
+        }
+      }
+
+      return count;
+    };
+
+    const applyCollectionsRestore = async (c: Record<string, any[]>): Promise<number> => {
+      let applied = 0;
+      applied += await restoreTableItemsWithDiff(db.systemConfig, c.systemConfig || c.system, 'systemConfig');
+      applied += await restoreTableItemsWithDiff(db.accounts, c.accounts, 'accounts');
+      applied += await restoreTableItemsWithDiff(db.animals, c.animals);
+      applied += await restoreTableItemsWithDiff(db.animalEvents, c.animalEvents);
+      applied += await restoreTableItemsWithDiff(db.journalEntries, c.journalEntries);
+      applied += await restoreTableItemsWithDiff(db.sales, c.sales);
+      applied += await restoreTableItemsWithDiff(db.purchases, c.purchases);
+      applied += await restoreTableItemsWithDiff(db.payments, c.payments);
+      applied += await restoreTableItemsWithDiff(db.salesReturns, c.salesReturns);
+      applied += await restoreTableItemsWithDiff(db.purchaseReturns, c.purchaseReturns);
+      applied += await restoreTableItemsWithDiff(db.advancePayments, c.advancePayments);
+      applied += await restoreTableItemsWithDiff(db.cropCycles, c.cropCycles);
+      applied += await restoreTableItemsWithDiff(db.fishBatches, c.fishBatches);
+      applied += await restoreTableItemsWithDiff(db.ponds, c.ponds);
+      applied += await restoreTableItemsWithDiff(db.plots, c.plots);
+      const invList = (Array.isArray(c.inventory) && c.inventory.length > 0) ? c.inventory : ((Array.isArray(c.inventoryItems) && c.inventoryItems.length > 0) ? c.inventoryItems : []);
+      applied += await restoreTableItemsWithDiff(db.inventoryItems, invList);
+      applied += await restoreTableItemsWithDiff(db.stockMovements, c.stockMovements);
+      applied += await restoreTableItemsWithDiff(db.parties, c.parties);
+      applied += await restoreTableItemsWithDiff(db.fixedAssets, c.fixedAssets);
+      applied += await restoreTableItemsWithDiff(db.loans, c.loans);
+      applied += await restoreTableItemsWithDiff(db.investors, c.investors);
+      applied += await restoreTableItemsWithDiff(db.cashBankAccounts, c.cashBankAccounts);
+      applied += await restoreTableItemsWithDiff(db.bankTransfers, c.bankTransfers);
+      applied += await restoreTableItemsWithDiff(db.reminders, c.reminders);
+      applied += await restoreTableItemsWithDiff(db.internalFlows, c.internalFlows);
+      applied += await restoreTableItemsWithDiff(db.processingRuns, c.processingRuns);
+      applied += await restoreTableItemsWithDiff(db.recurringExpenseTemplates, c.recurringExpenseTemplates);
+      applied += await restoreTableItemsWithDiff(db.accessLogs, c.accessLogs);
+      applied += await restoreTableItemsWithDiff(db.auditLogs, c.auditLogs);
+      applied += await restoreTableItemsWithDiff(db.closedPeriods, c.closedPeriods);
+
+      // Universal persistent Dexie table sweep
+      const standardKnown = new Set([
+        'systemConfig', 'accounts', 'animals', 'animalEvents', 'journalEntries', 'sales', 'purchases',
+        'payments', 'salesReturns', 'purchaseReturns', 'advancePayments', 'cropCycles', 'fishBatches',
+        'ponds', 'plots', 'inventoryItems', 'stockMovements', 'parties', 'fixedAssets', 'loans',
+        'investors', 'cashBankAccounts', 'bankTransfers', 'reminders', 'internalFlows', 'processingRuns',
+        'recurringExpenseTemplates', 'accessLogs', 'auditLogs', 'closedPeriods'
+      ]);
+      for (const tbl of db.tables) {
+        const tblName = tbl.name;
+        if (!standardKnown.has(tblName)) {
+          const items = c[tblName];
+          if (Array.isArray(items) && items.length > 0) {
+            applied += await restoreTableItemsWithDiff(tbl, items, tblName);
           }
         }
       }
-    } catch (serverErr) {
-      console.warn('[The Goated Farm] Server restore endpoint read note:', serverErr);
-    }
+      return applied;
+    };
 
-    // 2. Direct Firestore fallback if server restore was not possible
-    if (restoredCount === 0 && auth.currentUser) {
+    // 0. Use mock collections if provided
+    if (options?.mockRemoteCollections) {
+      restoredCount += await applyCollectionsRestore(options.mockRemoteCollections);
+    } else {
+      // Get auth token if available
+      let token: string | null = null;
+      if (auth.currentUser) {
+        try {
+          token = await auth.currentUser.getIdToken();
+        } catch {}
+      }
+      if (!token && typeof localStorage !== 'undefined') {
+        try {
+          const raw = localStorage.getItem('goted_owner_session');
+          if (raw) {
+            const parsed = JSON.parse(raw);
+            token = parsed.sessionToken || null;
+          }
+        } catch {}
+      }
+
+      // 1. Try server restore endpoint (fastest, Admin-privileged, complete)
       try {
-        const collectionsToFetchFromFirestore: Array<{ col: string; table: any }> = [
-          { col: 'systemConfig', table: db.systemConfig },
-          { col: 'accounts', table: db.accounts },
-          { col: 'animals', table: db.animals },
-          { col: 'animalEvents', table: db.animalEvents },
-          { col: 'journalEntries', table: db.journalEntries },
-          { col: 'sales', table: db.sales },
-          { col: 'purchases', table: db.purchases },
-          { col: 'payments', table: db.payments },
-          { col: 'salesReturns', table: db.salesReturns },
-          { col: 'purchaseReturns', table: db.purchaseReturns },
-          { col: 'advancePayments', table: db.advancePayments },
-          { col: 'cropCycles', table: db.cropCycles },
-          { col: 'fishBatches', table: db.fishBatches },
-          { col: 'ponds', table: db.ponds },
-          { col: 'plots', table: db.plots },
-          { col: 'inventoryItems', table: db.inventoryItems },
-          { col: 'stockMovements', table: db.stockMovements },
-          { col: 'parties', table: db.parties },
-          { col: 'fixedAssets', table: db.fixedAssets },
-          { col: 'loans', table: db.loans },
-          { col: 'investors', table: db.investors },
-          { col: 'cashBankAccounts', table: db.cashBankAccounts },
-          { col: 'bankTransfers', table: db.bankTransfers },
-          { col: 'reminders', table: db.reminders },
-          { col: 'internalFlows', table: db.internalFlows },
-          { col: 'processingRuns', table: db.processingRuns },
-          { col: 'recurringExpenseTemplates', table: db.recurringExpenseTemplates },
-          { col: 'closedPeriods', table: db.closedPeriods },
-          { col: 'auditLogs', table: db.auditLogs },
-          { col: 'accessLogs', table: db.accessLogs }
-        ];
-
-        for (const { col, table } of collectionsToFetchFromFirestore) {
-          try {
-            const snap = await getDocs(collection(firestore, col));
-            if (!snap.empty) {
-              const list: any[] = [];
-              snap.forEach((d) => {
-                const data = d.data();
-                list.push({
-                  ...data,
-                  id: data.id || d.id,
-                  synced: true
-                });
-              });
-              if (table === db.accounts) {
-                for (const item of list) {
-                  if (!item) continue;
-                  const itemCode = (item.code || '').trim();
-                  let existing = null;
-                  if (itemCode) {
-                    existing = await db.accounts.where('code').equals(itemCode).first();
-                  }
-                  if (!existing && item.id) {
-                    existing = await db.accounts.get(item.id);
-                  }
-                  if (existing) {
-                    const localTime = existing.updatedAt || existing.syncedAt;
-                    const remoteTime = item.updatedAt || item.syncedAt;
-                    if (localTime && remoteTime && new Date(localTime).getTime() > new Date(remoteTime).getTime()) {
-                      continue;
-                    }
-                    const isSys = existing.isSystem || DEFAULT_CHART_OF_ACCOUNTS.some((a) => a.code === existing.code);
-                    await db.accounts.put({
-                      ...existing,
-                      ...item,
-                      id: existing.id || item.id || (itemCode ? `acc_${itemCode}` : `acc_${Date.now()}`),
-                      code: existing.code || item.code,
-                      isSystem: isSys,
-                      ...(isSys ? { accountClass: existing.accountClass, normalBalance: existing.normalBalance } : {}),
-                      synced: true
-                    });
-                  } else {
-                    await db.accounts.put({
-                      ...item,
-                      id: item.id || (itemCode ? `acc_${itemCode}` : `acc_${Date.now()}`),
-                      synced: true
-                    });
-                  }
-                  restoredCount++;
-                }
-              } else if (table && typeof table.bulkPut === 'function') {
-                await table.bulkPut(list);
-                restoredCount += list.length;
-              }
-            }
-          } catch (colErr: any) {
-            console.warn(`[The Goated Farm] Direct Firestore restore fallback note for ${col}:`, colErr.message);
+        const endpoint = typeof window !== 'undefined' && window.location?.origin
+          ? `${window.location.origin}/api/sync/restore`
+          : (typeof process !== 'undefined' && process.env?.PORT ? `http://localhost:${process.env.PORT}/api/sync/restore` : 'http://localhost:3000/api/sync/restore');
+        const res = await fetch(endpoint, {
+          headers: {
+            'Content-Type': 'application/json',
+            ...(token ? { Authorization: `Bearer ${token}` } : {})
+          }
+        });
+        if (res.ok) {
+          const payload = await res.json();
+          if (payload.success && payload.collections) {
+            restoredCount += await applyCollectionsRestore(payload.collections);
           }
         }
-      } catch (fsErr) {
-        console.warn('[The Goated Farm] Direct Firestore restore fallback note:', fsErr);
+      } catch (serverErr) {
+        console.warn('[The Goated Farm] Server restore endpoint read note:', serverErr);
+      }
+
+      // 2. Direct Firestore fallback if server restore was not possible
+      if (restoredCount === 0 && auth.currentUser) {
+        try {
+          const collectionsToFetchFromFirestore: Array<{ col: string; table: any }> = [
+            { col: 'systemConfig', table: db.systemConfig },
+            { col: 'accounts', table: db.accounts },
+            { col: 'animals', table: db.animals },
+            { col: 'animalEvents', table: db.animalEvents },
+            { col: 'journalEntries', table: db.journalEntries },
+            { col: 'sales', table: db.sales },
+            { col: 'purchases', table: db.purchases },
+            { col: 'payments', table: db.payments },
+            { col: 'salesReturns', table: db.salesReturns },
+            { col: 'purchaseReturns', table: db.purchaseReturns },
+            { col: 'advancePayments', table: db.advancePayments },
+            { col: 'cropCycles', table: db.cropCycles },
+            { col: 'fishBatches', table: db.fishBatches },
+            { col: 'ponds', table: db.ponds },
+            { col: 'plots', table: db.plots },
+            { col: 'inventoryItems', table: db.inventoryItems },
+            { col: 'stockMovements', table: db.stockMovements },
+            { col: 'parties', table: db.parties },
+            { col: 'fixedAssets', table: db.fixedAssets },
+            { col: 'loans', table: db.loans },
+            { col: 'investors', table: db.investors },
+            { col: 'cashBankAccounts', table: db.cashBankAccounts },
+            { col: 'bankTransfers', table: db.bankTransfers },
+            { col: 'reminders', table: db.reminders },
+            { col: 'internalFlows', table: db.internalFlows },
+            { col: 'processingRuns', table: db.processingRuns },
+            { col: 'recurringExpenseTemplates', table: db.recurringExpenseTemplates },
+            { col: 'closedPeriods', table: db.closedPeriods },
+            { col: 'auditLogs', table: db.auditLogs },
+            { col: 'accessLogs', table: db.accessLogs }
+          ];
+
+          for (const { col, table } of collectionsToFetchFromFirestore) {
+            try {
+              const snap = await getDocs(collection(firestore, col));
+              if (!snap.empty) {
+                const list: any[] = [];
+                snap.forEach((d) => {
+                  const data = d.data();
+                  list.push({
+                    ...data,
+                    id: data.id || d.id,
+                    synced: true
+                  });
+                });
+                restoredCount += await restoreTableItemsWithDiff(table, list, col);
+              }
+            } catch (colErr: any) {
+              console.warn(`[The Goated Farm] Direct Firestore restore fallback note for ${col}:`, colErr.message);
+            }
+          }
+        } catch (fsErr) {
+          console.warn('[The Goated Farm] Direct Firestore restore fallback note:', fsErr);
+        }
       }
     }
 
@@ -1185,7 +1238,7 @@ export async function restoreRemoteDataIfLocalEmpty(userEmail?: string, force?: 
       return { restored: true, count: restoredCount, offlineEmptyWarning: false };
     }
 
-    return { restored: false, count: 0, offlineEmptyWarning: false };
+    return { restored: false, count: totalLocalRecords, offlineEmptyWarning: false };
   } catch (err) {
     console.warn('[The Goated Farm] restoreRemoteDataIfLocalEmpty error:', err);
     return { restored: false, count: 0, offlineEmptyWarning: false };

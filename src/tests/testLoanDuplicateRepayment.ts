@@ -33,15 +33,15 @@ export async function runLoanDuplicateRepaymentTests() {
 
   // --- TEST 1: Duplicate Installment Repayment (same installment number) ---
   console.log('\n--- TEST 1: Duplicate Installment Repayment (same installment number) ---');
-  const loan1Schedule = generateAmortizationSchedule(12000, 10, 12, '2026-01-01');
+  const loan1Schedule = generateAmortizationSchedule(12000, 0, 12, '2026-01-01');
   const loan1: Loan = {
     id: 'LN-DUP-001',
     loanNumber: 'LN-DUP-001',
     lenderName: 'Krishi Bank Dup 1',
     loanType: 'BANK',
     principalAmount: 12000,
-    annualInterestRatePercent: 10,
-    interestRateAnnual: 10,
+    annualInterestRatePercent: 0,
+    interestRateAnnual: 0,
     tenureMonths: 12,
     termMonths: 12,
     startDate: '2026-01-01',
@@ -252,15 +252,15 @@ export async function runLoanDuplicateRepaymentTests() {
 
   // --- TEST 4: Concurrent Duplicate Repayment Attempts (double submission) ---
   console.log('\n--- TEST 4: Concurrent Duplicate Repayment Attempts (double submission) ---');
-  const loan4Schedule = generateAmortizationSchedule(15000, 8, 12, '2026-04-01');
+  const loan4Schedule = generateAmortizationSchedule(15000, 0, 12, '2026-04-01');
   const loan4: Loan = {
     id: 'LN-DUP-004',
     loanNumber: 'LN-DUP-004',
     lenderName: 'Sonali Bank Dup 4',
     loanType: 'BANK',
     principalAmount: 15000,
-    annualInterestRatePercent: 8,
-    interestRateAnnual: 8,
+    annualInterestRatePercent: 0,
+    interestRateAnnual: 0,
     tenureMonths: 12,
     termMonths: 12,
     startDate: '2026-04-01',

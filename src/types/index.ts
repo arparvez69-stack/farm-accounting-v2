@@ -49,7 +49,7 @@ export type AccountClass =
   | 'OTHER_INCOME'
   | 'OTHER_EXPENSE';
 
-export type NormalBalance = 'DEBIT' | 'CREDIT';
+export type NormalBalance = 'DEBIT' | 'CREDIT' | 'UNKNOWN' | 'UNRESOLVED' | 'INVALID';
 
 export interface Account {
   id: string;
@@ -160,6 +160,10 @@ export interface Animal {
   supplierId?: string;
   bankAccountId?: string;
   synced?: boolean;
+  createdAt?: string;
+  updatedAt?: string;
+  syncedAt?: string;
+  ownerUid?: string;
 }
 
 export interface AnimalCostBreakdown {
