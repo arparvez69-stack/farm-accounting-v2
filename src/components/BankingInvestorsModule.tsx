@@ -749,32 +749,16 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
   const fmt = (n: number) => `৳${Number(n || 0).toLocaleString('en-IN', { minimumFractionDigits: 0 })}`;
 
   return (
-    <div className="space-y-4 pb-6 max-w-5xl mx-auto rounded-3xl p-2 sm:p-4 bg-gradient-to-b from-blue-500/[0.08] via-sky-500/[0.03] to-transparent dark:from-blue-950/30 dark:via-blue-950/10 dark:to-transparent">
-      {/* Module Header Illustration */}
-      <div
-        className="w-full h-40 sm:h-48 flex justify-center items-center overflow-hidden"
-        style={{
-          maskImage: 'linear-gradient(to bottom, black 60%, transparent 100%)',
-          WebkitMaskImage: 'linear-gradient(to bottom, black 60%, transparent 100%)'
-        }}
-      >
-        <img
-          src="/illustrations/Payment_Information-bro.svg"
-          alt="Banking & Capital illustration"
-          loading="lazy"
-          className="w-auto max-w-full h-full object-contain pointer-events-none drop-shadow-xs"
-        />
-      </div>
-
+    <div className="space-y-5 pb-6 max-w-5xl mx-auto p-2 sm:p-4">
       {/* Module Title */}
       <div className="flex flex-col gap-3.5 p-4 sm:p-5 rounded-2xl bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 shadow-xs">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div>
-            <h2 className="text-lg sm:text-xl font-bold text-gray-900 flex items-center gap-2">
-              <Landmark className="w-5 h-5 text-[#1E5128]" />
+            <h2 className="text-lg sm:text-xl font-bold text-gray-900 dark:text-slate-100 flex items-center gap-2">
+              <Landmark className="w-5 h-5 text-[#1E5128] dark:text-emerald-400" />
               <span>ব্যাংকিং, তহবিল স্থানান্তর, ঋণ ও মূলধন (Banking & Capital)</span>
             </h2>
-            <p className="text-[14px] text-gray-600 mt-0.5">
+            <p className="text-[14px] text-gray-600 dark:text-slate-400 mt-0.5">
               নগদ ও ব্যাংক তহবিল (1010/1030), কন্ট্রা জাবেদা, ব্যাংক ঋণ (2110/2120), বিনিয়োগকারী (3020) ও মালিকের মূলধন/উত্তোলন (3010/3040)
             </p>
           </div>

@@ -73,8 +73,8 @@ export const MobileBottomNav: React.FC<Props> = ({ activeTab, onChangeTab }) => 
       id: 'reports',
       labelKey: 'nav.reports',
       icon: FileSpreadsheet,
-      activeTextColor: 'text-teal-700 dark:text-teal-400',
-      activeBgColor: 'bg-teal-50 dark:bg-teal-950/70 text-teal-700 dark:text-teal-400'
+      activeTextColor: 'text-purple-700 dark:text-purple-400',
+      activeBgColor: 'bg-purple-50 dark:bg-purple-950/70 text-purple-700 dark:text-purple-400'
     },
     {
       id: 'more',

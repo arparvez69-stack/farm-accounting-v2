@@ -914,32 +914,16 @@ export const AccountingModule: React.FC<Props> = ({
   const fmt = (n: number) => `৳${Number(n || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`;
 
   return (
-    <div className="space-y-4 pb-6 max-w-5xl mx-auto rounded-3xl p-2 sm:p-4 bg-gradient-to-b from-blue-500/[0.08] via-sky-500/[0.03] to-transparent dark:from-blue-950/30 dark:via-blue-950/10 dark:to-transparent">
-      {/* Module Header Illustration */}
-      <div
-        className="w-full h-40 sm:h-48 flex justify-center items-center overflow-hidden"
-        style={{
-          maskImage: 'linear-gradient(to bottom, black 60%, transparent 100%)',
-          WebkitMaskImage: 'linear-gradient(to bottom, black 60%, transparent 100%)'
-        }}
-      >
-        <img
-          src="/illustrations/Payment_Information-bro.svg"
-          alt="Accounting Payment Information illustration"
-          loading="lazy"
-          className="w-auto max-w-full h-full object-contain pointer-events-none drop-shadow-xs"
-        />
-      </div>
-
+    <div className="space-y-5 pb-6 max-w-5xl mx-auto p-2 sm:p-4">
       {/* Top Header & Subtabs */}
       <div className="flex flex-col gap-3.5 p-4 sm:p-5 rounded-2xl bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 shadow-xs">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div>
-            <h2 className="text-lg sm:text-xl font-bold text-gray-900 flex items-center gap-2">
-              <BookOpen className="w-5 h-5 text-blue-700" />
+            <h2 className="text-lg sm:text-xl font-bold text-gray-900 dark:text-slate-100 flex items-center gap-2">
+              <BookOpen className="w-5 h-5 text-[#1E5128] dark:text-emerald-400" />
               <span>দ্বৈত-দাখিলা হিসাবরক্ষণ</span>
             </h2>
-            <p className="text-[14px] text-gray-600 mt-0.5">
+            <p className="text-[14px] text-gray-600 dark:text-slate-400 mt-0.5">
               রশিদ, পরিশোধ, কন্ট্রা, সাধারণ জাবেদা, খতিয়ান ও স্বয়ংক্রিয় রেওয়ামিল
             </p>
           </div>
@@ -979,7 +963,7 @@ export const AccountingModule: React.FC<Props> = ({
             onClick={() => handleSubTabChange('daybook')}
             className={`flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg transition-all cursor-pointer min-h-[42px] text-center text-xs sm:text-[13px] font-bold ${
               subTab === 'daybook'
-                ? 'bg-blue-700 text-white shadow-xs border border-blue-700'
+                ? 'bg-[#1E5128] text-white shadow-xs border border-[#1E5128]'
                 : 'bg-white dark:bg-slate-900/60 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800'
             }`}
           >
@@ -991,7 +975,7 @@ export const AccountingModule: React.FC<Props> = ({
             onClick={() => handleSubTabChange('vouchers')}
             className={`flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg transition-all cursor-pointer min-h-[42px] text-center text-xs sm:text-[13px] font-bold ${
               subTab === 'vouchers'
-                ? 'bg-blue-700 text-white shadow-xs border border-blue-700'
+                ? 'bg-[#1E5128] text-white shadow-xs border border-[#1E5128]'
                 : 'bg-white dark:bg-slate-900/60 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800'
             }`}
           >
@@ -1003,7 +987,7 @@ export const AccountingModule: React.FC<Props> = ({
             onClick={() => handleSubTabChange('ledger')}
             className={`flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg transition-all cursor-pointer min-h-[42px] text-center text-xs sm:text-[13px] font-bold ${
               subTab === 'ledger'
-                ? 'bg-blue-700 text-white shadow-xs border border-blue-700'
+                ? 'bg-[#1E5128] text-white shadow-xs border border-[#1E5128]'
                 : 'bg-white dark:bg-slate-900/60 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800'
             }`}
           >
@@ -1015,7 +999,7 @@ export const AccountingModule: React.FC<Props> = ({
             onClick={() => handleSubTabChange('trialBalance')}
             className={`flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg transition-all cursor-pointer min-h-[42px] text-center text-xs sm:text-[13px] font-bold ${
               subTab === 'trialBalance'
-                ? 'bg-blue-700 text-white shadow-xs border border-blue-700'
+                ? 'bg-[#1E5128] text-white shadow-xs border border-[#1E5128]'
                 : 'bg-white dark:bg-slate-900/60 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800'
             }`}
           >
@@ -1027,7 +1011,7 @@ export const AccountingModule: React.FC<Props> = ({
             onClick={() => handleSubTabChange('chart')}
             className={`flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg transition-all cursor-pointer min-h-[42px] text-center text-xs sm:text-[13px] font-bold ${
               subTab === 'chart'
-                ? 'bg-blue-700 text-white shadow-xs border border-blue-700'
+                ? 'bg-[#1E5128] text-white shadow-xs border border-[#1E5128]'
                 : 'bg-white dark:bg-slate-900/60 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800'
             }`}
           >
@@ -1040,7 +1024,7 @@ export const AccountingModule: React.FC<Props> = ({
             onClick={() => handleSubTabChange('recurring')}
             className={`flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg transition-all cursor-pointer min-h-[42px] text-center text-xs sm:text-[13px] font-bold ${
               subTab === 'recurring'
-                ? 'bg-blue-700 text-white shadow-xs border border-blue-700'
+                ? 'bg-[#1E5128] text-white shadow-xs border border-[#1E5128]'
                 : 'bg-white dark:bg-slate-900/60 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800'
             }`}
           >
@@ -1735,7 +1719,15 @@ export const AccountingModule: React.FC<Props> = ({
                             <span className="font-mono font-bold text-blue-700 dark:text-blue-400 text-[15px]">
                               {j.voucherNumber}
                             </span>
-                            <span className="px-2 py-0.5 rounded bg-gray-100 dark:bg-slate-700 border border-gray-200 dark:border-slate-600 text-xs text-gray-700 dark:text-slate-300 font-semibold">
+                            <span className={`px-2 py-0.5 rounded border text-xs font-semibold ${
+                              j.voucherType === 'RECEIPT'
+                                ? 'bg-emerald-50 dark:bg-emerald-950/60 border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-300'
+                                : j.voucherType === 'PAYMENT'
+                                ? 'bg-rose-50 dark:bg-rose-950/60 border-rose-200 dark:border-rose-800 text-rose-800 dark:text-rose-300'
+                                : j.voucherType === 'CONTRA'
+                                ? 'bg-blue-50 dark:bg-blue-950/60 border-blue-200 dark:border-blue-800 text-blue-800 dark:text-blue-300'
+                                : 'bg-purple-50 dark:bg-purple-950/60 border-purple-200 dark:border-purple-800 text-purple-800 dark:text-purple-300'
+                            }`}>
                               {j.voucherType}
                             </span>
 

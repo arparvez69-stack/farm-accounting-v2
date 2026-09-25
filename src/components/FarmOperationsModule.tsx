@@ -1272,15 +1272,15 @@ export const FarmOperationsModule: React.FC<Props> = ({
   const fmt = (n: number) => `৳${Number(n || 0).toLocaleString('en-IN', { minimumFractionDigits: 0 })}`;
 
   return (
-    <div className="space-y-4 pb-6 max-w-5xl mx-auto rounded-3xl p-2 sm:p-4 bg-gradient-to-b from-emerald-500/[0.08] via-emerald-500/[0.03] to-transparent dark:from-emerald-950/30 dark:via-emerald-950/10 dark:to-transparent">
+    <div className="space-y-5 pb-6 max-w-5xl mx-auto p-2 sm:p-4">
       {/* Header & Subtabs */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 sm:p-5 rounded-2xl bg-white border border-gray-200 shadow-xs">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 sm:p-5 rounded-2xl bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 shadow-xs">
         <div>
-          <h2 className="text-lg sm:text-xl font-bold text-gray-900 flex items-center gap-2">
-            <Tractor className="w-5 h-5 text-[#1E5128]" />
+          <h2 className="text-lg sm:text-xl font-bold text-gray-900 dark:text-slate-100 flex items-center gap-2">
+            <Tractor className="w-5 h-5 text-[#1E5128] dark:text-emerald-400" />
             <span>সমন্বিত খামার ব্যবস্থাপনা (Agro Operations)</span>
           </h2>
-          <p className="text-[14px] text-gray-600 mt-0.5">
+          <p className="text-[14px] text-gray-600 dark:text-slate-400 mt-0.5">
             গরু-ছাগল ফ্যাটেনিং/দুগ্ধ খামার, মৎস্য হ্যাচারি, নেপিয়ার ঘাস, বায়ো-ফ্লো ও প্রসেসিং
           </p>
         </div>
@@ -1295,7 +1295,7 @@ export const FarmOperationsModule: React.FC<Props> = ({
             <span>+ নতুন রিমাইন্ডার</span>
           </button>
 
-          <div className="w-full sm:w-auto grid grid-cols-2 sm:grid-cols-4 gap-2 bg-gray-100 p-1.5 rounded-xl text-[13px] font-semibold">
+          <div className="w-full sm:w-auto grid grid-cols-2 sm:grid-cols-4 gap-2 bg-slate-100 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 p-1.5 rounded-xl text-[13px] font-semibold">
             <button
               type="button"
               onClick={() => {
@@ -1305,8 +1305,8 @@ export const FarmOperationsModule: React.FC<Props> = ({
               }}
               className={`flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg transition-all cursor-pointer min-h-[42px] text-center text-xs sm:text-[13px] font-bold ${
                 tab === 'livestock'
-                  ? 'bg-emerald-700 text-white shadow-xs border border-emerald-700'
-                  : 'bg-emerald-50 text-emerald-900 border border-emerald-200/80 hover:bg-emerald-100/90'
+                  ? 'bg-[#1E5128] text-white shadow-xs border border-[#1E5128]'
+                  : 'bg-white dark:bg-slate-900/60 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800'
               }`}
             >
               <Tractor className="w-4 h-4 shrink-0" />
@@ -1321,8 +1321,8 @@ export const FarmOperationsModule: React.FC<Props> = ({
               }}
               className={`flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg transition-all cursor-pointer min-h-[42px] text-center text-xs sm:text-[13px] font-bold ${
                 tab === 'fisheries'
-                  ? 'bg-cyan-700 text-white shadow-xs border border-cyan-700'
-                  : 'bg-cyan-50 text-cyan-900 border border-cyan-200/80 hover:bg-cyan-100/90'
+                  ? 'bg-[#1E5128] text-white shadow-xs border border-[#1E5128]'
+                  : 'bg-white dark:bg-slate-900/60 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800'
               }`}
             >
               <Fish className="w-4 h-4 shrink-0" />
@@ -1337,8 +1337,8 @@ export const FarmOperationsModule: React.FC<Props> = ({
               }}
               className={`flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg transition-all cursor-pointer min-h-[42px] text-center text-xs sm:text-[13px] font-bold ${
                 tab === 'crops'
-                  ? 'bg-amber-700 text-white shadow-xs border border-amber-700'
-                  : 'bg-amber-50 text-amber-900 border border-amber-200/80 hover:bg-amber-100/90'
+                  ? 'bg-[#1E5128] text-white shadow-xs border border-[#1E5128]'
+                  : 'bg-white dark:bg-slate-900/60 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800'
               }`}
             >
               <Wheat className="w-4 h-4 shrink-0" />
@@ -1353,8 +1353,8 @@ export const FarmOperationsModule: React.FC<Props> = ({
               }}
               className={`flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg transition-all cursor-pointer min-h-[42px] text-center text-xs sm:text-[13px] font-bold ${
                 tab === 'flows'
-                  ? 'bg-indigo-700 text-white shadow-xs border border-indigo-700'
-                  : 'bg-indigo-50 text-indigo-900 border border-indigo-200/80 hover:bg-indigo-100/90'
+                  ? 'bg-[#1E5128] text-white shadow-xs border border-[#1E5128]'
+                  : 'bg-white dark:bg-slate-900/60 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800'
               }`}
             >
               <ArrowRightLeft className="w-4 h-4 shrink-0" />
@@ -1419,22 +1419,6 @@ export const FarmOperationsModule: React.FC<Props> = ({
             />
           ) : (
             <div className="space-y-4">
-              {/* Livestock Header Illustration */}
-              <div
-                className="w-full h-40 sm:h-48 flex justify-center items-center overflow-hidden"
-                style={{
-                  maskImage: 'linear-gradient(to bottom, black 60%, transparent 100%)',
-                  WebkitMaskImage: 'linear-gradient(to bottom, black 60%, transparent 100%)'
-                }}
-              >
-                <img
-                  src="/illustrations/free_range_chicken_farm-pana.svg"
-                  alt="Livestock section illustration"
-                  loading="lazy"
-                  className="w-auto max-w-full h-full object-contain pointer-events-none drop-shadow-xs"
-                />
-              </div>
-
               <div className="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 rounded-2xl p-4 sm:p-5 shadow-xs space-y-4">
 
           <div className="flex flex-col sm:flex-row sm:items-center justify-between border-b border-gray-100 pb-4 gap-3">
@@ -3042,22 +3026,6 @@ export const FarmOperationsModule: React.FC<Props> = ({
       {/* ===================== TAB 2: FISHERIES ===================== */}
       {tab === 'fisheries' && (
         <div className="space-y-4">
-          {/* Fishery Header Illustration */}
-          <div
-            className="w-full h-40 sm:h-48 flex justify-center items-center overflow-hidden"
-            style={{
-              maskImage: 'linear-gradient(to bottom, black 60%, transparent 100%)',
-              WebkitMaskImage: 'linear-gradient(to bottom, black 60%, transparent 100%)'
-            }}
-          >
-            <img
-              src="/illustrations/fishing_with_net-rafiki.svg"
-              alt="Fishery section illustration"
-              loading="lazy"
-              className="w-auto max-w-full h-full object-contain pointer-events-none drop-shadow-xs"
-            />
-          </div>
-
           <div className="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 rounded-2xl p-4 sm:p-5 shadow-xs space-y-4">
 
           <div className="flex items-center justify-between border-b border-gray-100 pb-3 flex-wrap gap-2">
@@ -3318,22 +3286,6 @@ export const FarmOperationsModule: React.FC<Props> = ({
       {/* ===================== TAB 3: CROPS & FODDER ===================== */}
       {tab === 'crops' && (
         <div className="space-y-4">
-          {/* Crops Section Header Illustration */}
-          <div
-            className="w-full h-40 sm:h-48 flex justify-center items-center overflow-hidden"
-            style={{
-              maskImage: 'linear-gradient(to bottom, black 60%, transparent 100%)',
-              WebkitMaskImage: 'linear-gradient(to bottom, black 60%, transparent 100%)'
-            }}
-          >
-            <img
-              src="/illustrations/rice_field-cuate.svg"
-              alt="Crops section header illustration"
-              loading="lazy"
-              className="w-auto max-w-full h-full object-contain pointer-events-none drop-shadow-xs"
-            />
-          </div>
-
           <div className="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 rounded-2xl p-4 sm:p-5 shadow-xs space-y-4">
 
           <div className="flex items-center justify-between border-b border-gray-100 pb-3 flex-wrap gap-2">

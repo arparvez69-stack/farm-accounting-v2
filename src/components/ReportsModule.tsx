@@ -1827,32 +1827,16 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
   };
 
   return (
-    <div className="space-y-4 pb-6 max-w-5xl mx-auto rounded-3xl p-2 sm:p-4 bg-gradient-to-b from-teal-500/[0.08] via-teal-500/[0.03] to-transparent dark:from-teal-950/30 dark:via-teal-950/10 dark:to-transparent">
-      {/* Module Header Illustration */}
-      <div
-        className="w-full h-40 sm:h-48 flex justify-center items-center overflow-hidden"
-        style={{
-          maskImage: 'linear-gradient(to bottom, black 60%, transparent 100%)',
-          WebkitMaskImage: 'linear-gradient(to bottom, black 60%, transparent 100%)'
-        }}
-      >
-        <img
-          src="/illustrations/Revenue-bro.svg"
-          alt="Reports & Revenue illustration"
-          loading="lazy"
-          className="w-auto max-w-full h-full object-contain pointer-events-none drop-shadow-xs"
-        />
-      </div>
-
+    <div className="space-y-5 pb-6 max-w-5xl mx-auto p-2 sm:p-4">
       {/* Header & Report Selectors */}
       <div className="flex flex-col gap-3.5 p-4 sm:p-5 rounded-2xl bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 shadow-xs">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div>
-            <h2 className="text-lg sm:text-xl font-bold text-gray-900 flex items-center gap-2">
-              <FileSpreadsheet className="w-5 h-5 text-teal-700" />
+            <h2 className="text-lg sm:text-xl font-bold text-gray-900 dark:text-slate-100 flex items-center gap-2">
+              <FileSpreadsheet className="w-5 h-5 text-purple-700 dark:text-purple-400" />
               <span>আর্থিক প্রতিবেদন ও ব্যালেন্স শীট (Financial Reports)</span>
             </h2>
-            <p className="text-[14px] text-gray-600 mt-0.5">
+            <p className="text-[14px] text-gray-600 dark:text-slate-400 mt-0.5">
               আন্তর্জাতিক মানের লাভ-ক্ষতি বিবরণী, ব্যালেন্স শীট, রেওয়ামিল ও এক্সেল এক্সপোর্ট
             </p>
           </div>
@@ -1861,24 +1845,23 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
             <button
               onClick={handleExportExcel}
               disabled={isExporting}
-              className="px-4 py-2.5 rounded-xl bg-teal-700 hover:bg-teal-800 disabled:opacity-50 text-white text-[13px] font-bold shadow-xs transition-all flex items-center gap-2 cursor-pointer min-h-[42px]"
+              className="px-4 py-2.5 rounded-xl bg-purple-700 hover:bg-purple-800 disabled:opacity-50 text-white text-[13px] font-bold shadow-xs transition-all flex items-center gap-2 cursor-pointer min-h-[42px]"
             >
               <Download className="w-4 h-4" />
               <span>{isExporting ? 'এক্সপোর্ট হচ্ছে...' : 'Excel এক্সপোর্ট (.xlsx)'}</span>
             </button>
           </div>
         </div>
-      </div>
 
-      {/* Report Switcher Tabs */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-2 bg-teal-50/50 dark:bg-slate-800/80 border border-teal-100 dark:border-slate-700 p-2 rounded-xl text-[13px] font-semibold">
+        {/* Report Switcher Tabs */}
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-2 bg-slate-100 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 p-1.5 rounded-xl text-[13px] font-semibold">
         <button
           type="button"
           onClick={() => setActiveReport('pl')}
           className={`flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg transition-all cursor-pointer min-h-[42px] text-center text-xs sm:text-[13px] font-bold ${
             activeReport === 'pl'
-              ? 'bg-emerald-700 text-white shadow-xs border border-emerald-700'
-              : 'bg-white dark:bg-slate-900/60 text-emerald-950 dark:text-emerald-300 border border-emerald-200/80 dark:border-emerald-800 hover:bg-emerald-100/80'
+              ? 'bg-purple-700 text-white shadow-xs border border-purple-700'
+              : 'bg-white dark:bg-slate-900/60 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800'
           }`}
         >
           <PieChart className="w-4 h-4 shrink-0" />
@@ -1890,8 +1873,8 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
           onClick={() => setActiveReport('balanceSheet')}
           className={`flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg transition-all cursor-pointer min-h-[42px] text-center text-xs sm:text-[13px] font-bold ${
             activeReport === 'balanceSheet'
-              ? 'bg-blue-700 text-white shadow-xs border border-blue-700'
-              : 'bg-white dark:bg-slate-900/60 text-blue-950 dark:text-blue-300 border border-blue-200/80 dark:border-blue-800 hover:bg-blue-100/80'
+              ? 'bg-purple-700 text-white shadow-xs border border-purple-700'
+              : 'bg-white dark:bg-slate-900/60 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800'
           }`}
         >
           <Scale className="w-4 h-4 shrink-0" />
@@ -1903,8 +1886,8 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
           onClick={() => setActiveReport('trialBalance')}
           className={`flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg transition-all cursor-pointer min-h-[42px] text-center text-xs sm:text-[13px] font-bold ${
             activeReport === 'trialBalance'
-              ? 'bg-amber-700 text-white shadow-xs border border-amber-700'
-              : 'bg-white dark:bg-slate-900/60 text-amber-950 dark:text-amber-300 border border-amber-200/80 dark:border-amber-800 hover:bg-amber-100/80'
+              ? 'bg-purple-700 text-white shadow-xs border border-purple-700'
+              : 'bg-white dark:bg-slate-900/60 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800'
           }`}
         >
           <Layers className="w-4 h-4 shrink-0" />
@@ -1920,8 +1903,8 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
           }}
           className={`flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg transition-all cursor-pointer min-h-[42px] text-center text-xs sm:text-[13px] font-bold ${
             activeReport === 'reconciliation'
-              ? 'bg-rose-700 text-white shadow-xs border border-rose-700'
-              : 'bg-white dark:bg-slate-900/60 text-rose-950 dark:text-rose-300 border border-rose-200/80 dark:border-rose-800 hover:bg-rose-100/80'
+              ? 'bg-purple-700 text-white shadow-xs border border-purple-700'
+              : 'bg-white dark:bg-slate-900/60 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800'
           }`}
         >
           <ShieldCheck className="w-4 h-4 shrink-0" />
@@ -1937,8 +1920,8 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
           }}
           className={`flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg transition-all cursor-pointer min-h-[42px] text-center text-xs sm:text-[13px] font-bold ${
             activeReport === 'ledger'
-              ? 'bg-indigo-700 text-white shadow-xs border border-indigo-700'
-              : 'bg-white dark:bg-slate-900/60 text-indigo-950 dark:text-indigo-300 border border-indigo-200/80 dark:border-indigo-800 hover:bg-indigo-100/80'
+              ? 'bg-purple-700 text-white shadow-xs border border-purple-700'
+              : 'bg-white dark:bg-slate-900/60 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800'
           }`}
         >
           <BookOpen className="w-4 h-4 shrink-0" />
@@ -1950,8 +1933,8 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
           onClick={() => setActiveReport('animalProfitability')}
           className={`flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg transition-all cursor-pointer min-h-[42px] text-center text-xs sm:text-[13px] font-bold ${
             activeReport === 'animalProfitability'
-              ? 'bg-teal-700 text-white shadow-xs border border-teal-700'
-              : 'bg-white dark:bg-slate-900/60 text-teal-950 dark:text-teal-300 border border-teal-200/80 dark:border-teal-800 hover:bg-teal-100/80'
+              ? 'bg-purple-700 text-white shadow-xs border border-purple-700'
+              : 'bg-white dark:bg-slate-900/60 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800'
           }`}
         >
           <TrendingUp className="w-4 h-4 shrink-0" />
@@ -1964,8 +1947,8 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
           onClick={() => setActiveReport('pondProfitability')}
           className={`flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg transition-all cursor-pointer min-h-[42px] text-center text-xs sm:text-[13px] font-bold ${
             activeReport === 'pondProfitability'
-              ? 'bg-blue-700 text-white shadow-xs border border-blue-700'
-              : 'bg-white dark:bg-slate-900/60 text-blue-950 dark:text-blue-300 border border-blue-200/80 dark:border-blue-800 hover:bg-blue-100/80'
+              ? 'bg-purple-700 text-white shadow-xs border border-purple-700'
+              : 'bg-white dark:bg-slate-900/60 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800'
           }`}
         >
           <Fish className="w-4 h-4 shrink-0" />
@@ -1978,8 +1961,8 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
           onClick={() => setActiveReport('cropProfitability')}
           className={`flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg transition-all cursor-pointer min-h-[42px] text-center text-xs sm:text-[13px] font-bold ${
             activeReport === 'cropProfitability'
-              ? 'bg-emerald-700 text-white shadow-xs border border-emerald-700'
-              : 'bg-white dark:bg-slate-900/60 text-emerald-950 dark:text-emerald-300 border border-emerald-200/80 dark:border-emerald-800 hover:bg-emerald-100/80'
+              ? 'bg-purple-700 text-white shadow-xs border border-purple-700'
+              : 'bg-white dark:bg-slate-900/60 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800'
           }`}
         >
           <Sprout className="w-4 h-4 shrink-0" />
@@ -1992,8 +1975,8 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
           onClick={() => setActiveReport('herdSummary')}
           className={`flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg transition-all cursor-pointer min-h-[42px] text-center text-xs sm:text-[13px] font-bold ${
             activeReport === 'herdSummary'
-              ? 'bg-cyan-700 text-white shadow-xs border border-cyan-700'
-              : 'bg-white dark:bg-slate-900/60 text-cyan-950 dark:text-cyan-300 border border-cyan-200/80 dark:border-cyan-800 hover:bg-cyan-100/80'
+              ? 'bg-purple-700 text-white shadow-xs border border-purple-700'
+              : 'bg-white dark:bg-slate-900/60 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800'
           }`}
         >
           <Activity className="w-4 h-4 shrink-0" />
@@ -2006,8 +1989,8 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
           onClick={() => setActiveReport('aging')}
           className={`flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg transition-all cursor-pointer min-h-[42px] text-center text-xs sm:text-[13px] font-bold ${
             activeReport === 'aging'
-              ? 'bg-rose-700 text-white shadow-xs border border-rose-700'
-              : 'bg-white dark:bg-slate-900/60 text-rose-950 dark:text-rose-300 border border-rose-200/80 dark:border-rose-800 hover:bg-rose-100/80'
+              ? 'bg-purple-700 text-white shadow-xs border border-purple-700'
+              : 'bg-white dark:bg-slate-900/60 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800'
           }`}
         >
           <Clock className="w-4 h-4 shrink-0" />
@@ -2020,8 +2003,8 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
           onClick={() => setActiveReport('cashFlow')}
           className={`flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg transition-all cursor-pointer min-h-[42px] text-center text-xs sm:text-[13px] font-bold ${
             activeReport === 'cashFlow'
-              ? 'bg-violet-700 text-white shadow-xs border border-violet-700'
-              : 'bg-white dark:bg-slate-900/60 text-violet-950 dark:text-violet-300 border border-violet-200/80 dark:border-violet-800 hover:bg-violet-100/80'
+              ? 'bg-purple-700 text-white shadow-xs border border-purple-700'
+              : 'bg-white dark:bg-slate-900/60 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800'
           }`}
         >
           <Coins className="w-4 h-4 shrink-0" />
@@ -2035,8 +2018,8 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
             onClick={() => setActiveReport('vatSummary')}
             className={`flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg transition-all cursor-pointer min-h-[42px] text-center text-xs sm:text-[13px] font-bold ${
               activeReport === 'vatSummary'
-                ? 'bg-orange-700 text-white shadow-xs border border-orange-700'
-                : 'bg-white dark:bg-slate-900/60 text-orange-950 dark:text-orange-300 border border-orange-200/80 dark:border-orange-800 hover:bg-orange-100/80'
+                ? 'bg-purple-700 text-white shadow-xs border border-purple-700'
+                : 'bg-white dark:bg-slate-900/60 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800'
             }`}
           >
             <FileText className="w-4 h-4 shrink-0" />
@@ -2050,8 +2033,8 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
           onClick={() => setActiveReport('yoyComparison')}
           className={`flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg transition-all cursor-pointer min-h-[42px] text-center text-xs sm:text-[13px] font-bold ${
             activeReport === 'yoyComparison'
-              ? 'bg-fuchsia-700 text-white shadow-xs border border-fuchsia-700'
-              : 'bg-white dark:bg-slate-900/60 text-fuchsia-950 dark:text-fuchsia-300 border border-fuchsia-200/80 dark:border-fuchsia-800 hover:bg-fuchsia-100/80'
+              ? 'bg-purple-700 text-white shadow-xs border border-purple-700'
+              : 'bg-white dark:bg-slate-900/60 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800'
           }`}
         >
           <GitCompare className="w-4 h-4 shrink-0" />
@@ -2064,8 +2047,8 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
           onClick={() => setActiveReport('loans')}
           className={`flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg transition-all cursor-pointer min-h-[42px] text-center text-xs sm:text-[13px] font-bold ${
             activeReport === 'loans'
-              ? 'bg-amber-700 text-white shadow-xs border border-amber-700'
-              : 'bg-white dark:bg-slate-900/60 text-amber-950 dark:text-amber-300 border border-amber-200/80 dark:border-amber-800 hover:bg-amber-100/80'
+              ? 'bg-purple-700 text-white shadow-xs border border-purple-700'
+              : 'bg-white dark:bg-slate-900/60 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800'
           }`}
         >
           <Landmark className="w-4 h-4 shrink-0" />
@@ -2078,13 +2061,14 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
           onClick={() => setActiveReport('backup')}
           className={`flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg transition-all cursor-pointer min-h-[42px] text-center text-xs sm:text-[13px] font-bold ${
             activeReport === 'backup'
-              ? 'bg-slate-700 text-white shadow-xs border border-slate-700'
-              : 'bg-white dark:bg-slate-900/60 text-slate-950 dark:text-slate-300 border border-slate-200/80 dark:border-slate-800 hover:bg-slate-100/80'
+              ? 'bg-purple-700 text-white shadow-xs border border-purple-700'
+              : 'bg-white dark:bg-slate-900/60 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800'
           }`}
         >
           <Upload className="w-4 h-4 shrink-0" />
           <span>ব্যাকআপ ও রিস্টোর</span>
         </button>
+        </div>
       </div>
 
       {/* Date Range Control (Visible for Financial Reports: pl, balanceSheet, trialBalance, animalProfitability, vatSummary, reconciliation, aging) */}
@@ -4394,22 +4378,6 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
       {/* ===================== REPORT: AGING REPORT (পাওনা-দেনার হিসাব) ===================== */}
       {activeReport === 'aging' && (
         <div className="space-y-5">
-          {/* Aging Report Header Illustration */}
-          <div
-            className="w-full h-40 sm:h-48 flex justify-center items-center overflow-hidden"
-            style={{
-              maskImage: 'linear-gradient(to bottom, black 60%, transparent 100%)',
-              WebkitMaskImage: 'linear-gradient(to bottom, black 60%, transparent 100%)'
-            }}
-          >
-            <img
-              src="/illustrations/Pie_chart-pana.svg"
-              alt="Aging report illustration"
-              loading="lazy"
-              className="w-auto max-w-full h-full object-contain pointer-events-none drop-shadow-xs"
-            />
-          </div>
-
           {/* Sub-tabs: Receivables & Payables */}
           <div className="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 rounded-2xl p-4 sm:p-5 shadow-xs space-y-4">
 
@@ -6235,22 +6203,6 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
       {/* ===================== REPORT 11: HERD SUMMARY & OPERATIONAL KPIS ===================== */}
       {activeReport === 'herdSummary' && herdKpiData && (
         <div className="space-y-4">
-          {/* Herd Summary Header Illustration */}
-          <div
-            className="w-full h-40 sm:h-48 flex justify-center items-center overflow-hidden"
-            style={{
-              maskImage: 'linear-gradient(to bottom, black 60%, transparent 100%)',
-              WebkitMaskImage: 'linear-gradient(to bottom, black 60%, transparent 100%)'
-            }}
-          >
-            <img
-              src="/illustrations/Analysis-amico.svg"
-              alt="Herd summary analysis illustration"
-              loading="lazy"
-              className="w-auto max-w-full h-full object-contain pointer-events-none drop-shadow-xs"
-            />
-          </div>
-
           <div className="bg-white dark:bg-slate-900 border border-purple-200/80 dark:border-purple-900/50 rounded-2xl p-4 sm:p-6 space-y-6 shadow-xs">
             {/* Header */}
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-purple-100 pb-4">

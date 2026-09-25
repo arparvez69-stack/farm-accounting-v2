@@ -41,6 +41,14 @@ export default {
           text: '#1E40AF',    // Accessible dark blue text
           dark: '#1D4ED8',
         },
+        purple: {
+          DEFAULT: '#7C3AED', // Purple - for reports, analytics, analytical info
+          soft: '#FAF5FF',    // Very light purple tint for badges/cards
+          light: '#F3E8FF',   // Light purple for borders/highlights
+          border: '#E9D5FF',  // Border purple
+          text: '#6B21A8',    // Accessible dark purple text
+          dark: '#581C87',
+        },
       },
     },
   },

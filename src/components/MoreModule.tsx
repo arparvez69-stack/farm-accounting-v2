@@ -697,25 +697,12 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
   const fmt = (n: number) => `৳${Number(n || 0).toLocaleString('en-IN', { minimumFractionDigits: 0 })}`;
 
   return (
-    <div className="relative space-y-5 pb-6 max-w-5xl mx-auto rounded-3xl p-2 sm:p-4 bg-gradient-to-b from-slate-500/[0.07] via-gray-500/[0.02] to-transparent dark:from-slate-800/30 dark:via-slate-800/10 dark:to-transparent overflow-hidden">
-      {/* Background Forest Illustration */}
-      <div
-        className="pointer-events-none absolute inset-0 z-0 flex items-center justify-center opacity-5 dark:opacity-5 overflow-hidden"
-        aria-hidden="true"
-      >
-        <img
-          src="/illustrations/Forest-cuate.svg"
-          alt=""
-          loading="lazy"
-          className="w-full max-w-4xl h-auto object-cover select-none"
-        />
-      </div>
-
+    <div className="space-y-5 pb-6 max-w-5xl mx-auto p-2 sm:p-4">
       {/* Header & Subtabs */}
       <div className="flex flex-col gap-3 p-4 sm:p-5 rounded-2xl bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 shadow-xs transition-colors">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div className="flex items-start gap-3.5">
-            <IconTile icon={ShieldCheck} color="gray" size="lg" rounded="xl" />
+            <IconTile icon={ShieldCheck} color="emerald" size="lg" rounded="xl" />
             <div>
               <h2 className="text-lg sm:text-xl font-bold text-gray-900 dark:text-slate-100">
                 নিরাপত্তা, স্থায়ী সম্পদ ও অডিট (System & Security)
@@ -747,14 +734,14 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
           </button>
         </div>
 
-        <div className="w-full grid grid-cols-3 sm:grid-cols-4 lg:grid-cols-7 gap-2 bg-gray-100 dark:bg-slate-800/80 p-2 rounded-xl text-xs sm:text-[13px] font-semibold">
+        <div className="w-full grid grid-cols-3 sm:grid-cols-4 lg:grid-cols-7 gap-2 bg-slate-100 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 p-1.5 rounded-xl text-xs sm:text-[13px] font-semibold">
           <button
             id="tab-access-logs-btn"
             type="button"
             onClick={() => setTab('accessLogs')}
             className={`flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-1.5 px-2 py-2 rounded-lg text-center transition-all cursor-pointer min-h-[44px] font-bold ${
               tab === 'accessLogs'
-                ? 'bg-slate-800 dark:bg-slate-700 text-white shadow-xs border border-slate-800 dark:border-slate-700'
+                ? 'bg-[#1E5128] text-white shadow-xs border border-[#1E5128]'
                 : 'bg-white dark:bg-slate-900/60 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800'
             }`}
           >
@@ -767,7 +754,7 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
             onClick={() => setTab('changePin')}
             className={`flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-1.5 px-2 py-2 rounded-lg text-center transition-all cursor-pointer min-h-[44px] font-bold ${
               tab === 'changePin'
-                ? 'bg-slate-800 dark:bg-slate-700 text-white shadow-xs border border-slate-800 dark:border-slate-700'
+                ? 'bg-[#1E5128] text-white shadow-xs border border-[#1E5128]'
                 : 'bg-white dark:bg-slate-900/60 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800'
             }`}
           >
@@ -779,7 +766,7 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
             onClick={() => setTab('audit')}
             className={`flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-1.5 px-2 py-2 rounded-lg text-center transition-all cursor-pointer min-h-[44px] font-bold ${
               tab === 'audit'
-                ? 'bg-slate-800 dark:bg-slate-700 text-white shadow-xs border border-slate-800 dark:border-slate-700'
+                ? 'bg-[#1E5128] text-white shadow-xs border border-[#1E5128]'
                 : 'bg-white dark:bg-slate-900/60 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800'
             }`}
           >
@@ -791,7 +778,7 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
             onClick={() => setTab('assets')}
             className={`flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-1.5 px-2 py-2 rounded-lg text-center transition-all cursor-pointer min-h-[44px] font-bold ${
               tab === 'assets'
-                ? 'bg-slate-800 dark:bg-slate-700 text-white shadow-xs border border-slate-800 dark:border-slate-700'
+                ? 'bg-[#1E5128] text-white shadow-xs border border-[#1E5128]'
                 : 'bg-white dark:bg-slate-900/60 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800'
             }`}
           >
@@ -803,7 +790,7 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
             onClick={() => setTab('owners')}
             className={`flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-1.5 px-2 py-2 rounded-lg text-center transition-all cursor-pointer min-h-[44px] font-bold ${
               tab === 'owners'
-                ? 'bg-slate-800 dark:bg-slate-700 text-white shadow-xs border border-slate-800 dark:border-slate-700'
+                ? 'bg-[#1E5128] text-white shadow-xs border border-[#1E5128]'
                 : 'bg-white dark:bg-slate-900/60 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800'
             }`}
           >
@@ -815,7 +802,7 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
             onClick={() => setTab('settings')}
             className={`flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-1.5 px-2 py-2 rounded-lg text-center transition-all cursor-pointer min-h-[44px] font-bold ${
               tab === 'settings'
-                ? 'bg-slate-800 dark:bg-slate-700 text-white shadow-xs border border-slate-800 dark:border-slate-700'
+                ? 'bg-[#1E5128] text-white shadow-xs border border-[#1E5128]'
                 : 'bg-white dark:bg-slate-900/60 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800'
             }`}
           >
@@ -828,7 +815,7 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
             onClick={() => setTab('vaccines')}
             className={`col-span-3 sm:col-span-2 lg:col-span-1 flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-1.5 px-2 py-2 rounded-lg text-center transition-all cursor-pointer min-h-[44px] font-bold ${
               tab === 'vaccines'
-                ? 'bg-slate-800 dark:bg-slate-700 text-white shadow-xs border border-slate-800 dark:border-slate-700'
+                ? 'bg-[#1E5128] text-white shadow-xs border border-[#1E5128]'
                 : 'bg-white dark:bg-slate-900/60 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800'
             }`}
           >
@@ -1228,22 +1215,6 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
       {/* ===================== TAB 2: FIXED ASSETS ===================== */}
       {tab === 'assets' && (
         <div className="space-y-4">
-          {/* Fixed Assets Header Illustration */}
-          <div
-            className="w-full h-40 sm:h-48 flex justify-center items-center overflow-hidden"
-            style={{
-              maskImage: 'linear-gradient(to bottom, black 60%, transparent 100%)',
-              WebkitMaskImage: 'linear-gradient(to bottom, black 60%, transparent 100%)'
-            }}
-          >
-            <img
-              src="/illustrations/Environment-bro.svg"
-              alt="Fixed assets illustration"
-              loading="lazy"
-              className="w-auto max-w-full h-full object-contain pointer-events-none drop-shadow-xs"
-            />
-          </div>
-
           <div className="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 rounded-2xl p-4 sm:p-5 shadow-xs space-y-4">
 
           <div className="flex items-center justify-between border-b border-gray-100 pb-3 flex-wrap gap-2">

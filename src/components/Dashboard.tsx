@@ -564,11 +564,11 @@ export const Dashboard: React.FC<Props> = ({ role, onNavigate, regressionTestRes
         <div
           id="low-cash-alert-banner"
           role="alert"
-          className="relative p-4 sm:p-5 rounded-2xl bg-rose-50/95 dark:bg-rose-950/40 border-2 border-rose-400 dark:border-rose-600 text-rose-950 dark:text-rose-100 shadow-sm space-y-3"
+          className="relative p-4 sm:p-5 rounded-2xl bg-rose-50/90 dark:bg-rose-950/40 border border-rose-300 dark:border-rose-800 text-rose-950 dark:text-rose-100 shadow-xs space-y-3"
         >
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div className="flex items-start gap-3.5">
-              <div className="w-10 h-10 rounded-xl bg-rose-200 dark:bg-rose-800/80 text-rose-900 dark:text-rose-200 flex items-center justify-center shrink-0 shadow-2xs">
+              <div className="w-10 h-10 rounded-xl bg-rose-200/90 dark:bg-rose-800/80 text-rose-900 dark:text-rose-200 flex items-center justify-center shrink-0 shadow-2xs">
                 <AlertTriangle className="w-5 h-5 text-rose-700 dark:text-rose-300" />
               </div>
               <div>
@@ -596,19 +596,19 @@ export const Dashboard: React.FC<Props> = ({ role, onNavigate, regressionTestRes
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 pt-1">
-            <div className="p-3 rounded-xl bg-white/90 dark:bg-slate-900/85 border border-rose-300 dark:border-rose-700/60 shadow-2xs">
+            <div className="p-3 rounded-xl bg-white/90 dark:bg-slate-900/85 border border-rose-200 dark:border-rose-800/60 shadow-2xs">
               <div className="text-[11px] text-gray-500 dark:text-slate-400">বর্তমান সম্মিলিত নগদ ও ব্যাংক তহবিল:</div>
               <div className="text-base font-extrabold text-rose-600 dark:text-rose-400 mt-0.5 font-mono">
                 {fmtMoney(combinedCashBankBalance)}
               </div>
             </div>
-            <div className="p-3 rounded-xl bg-white/90 dark:bg-slate-900/85 border border-rose-300 dark:border-rose-700/60 shadow-2xs">
+            <div className="p-3 rounded-xl bg-white/90 dark:bg-slate-900/85 border border-rose-200 dark:border-rose-800/60 shadow-2xs">
               <div className="text-[11px] text-gray-500 dark:text-slate-400">নির্ধারিত সতর্কতা সীমা:</div>
               <div className="text-base font-extrabold text-gray-900 dark:text-slate-100 mt-0.5 font-mono">
                 {fmtMoney(lowCashThreshold)}
               </div>
             </div>
-            <div className="p-3 rounded-xl bg-white/90 dark:bg-slate-900/85 border border-rose-300 dark:border-rose-700/60 shadow-2xs">
+            <div className="p-3 rounded-xl bg-white/90 dark:bg-slate-900/85 border border-rose-200 dark:border-rose-800/60 shadow-2xs">
               <div className="text-[11px] text-gray-500 dark:text-slate-400">তহবিল ঘাটতি (Shortfall):</div>
               <div className="text-base font-extrabold text-amber-700 dark:text-amber-400 mt-0.5 font-mono">
                 {fmtMoney(Math.max(0, lowCashThreshold - combinedCashBankBalance))}
@@ -622,7 +622,7 @@ export const Dashboard: React.FC<Props> = ({ role, onNavigate, regressionTestRes
         <div
           id="low-feed-stock-banner"
           role="alert"
-          className="relative p-4 sm:p-5 rounded-2xl bg-amber-50/95 dark:bg-amber-950/40 border-2 border-amber-400 dark:border-amber-600 text-amber-950 dark:text-amber-100 shadow-sm space-y-3"
+          className="relative p-4 sm:p-5 rounded-2xl bg-amber-50/90 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-800 text-amber-950 dark:text-amber-100 shadow-xs space-y-3"
         >
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div className="flex items-start gap-3.5">
@@ -709,7 +709,7 @@ export const Dashboard: React.FC<Props> = ({ role, onNavigate, regressionTestRes
         <div
           id="backup-reminder-banner"
           role="alert"
-          className="relative p-4 sm:p-5 rounded-2xl bg-amber-50/95 border-2 border-amber-300 text-amber-950 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4"
+          className="relative p-4 sm:p-5 rounded-2xl bg-amber-50/90 border border-amber-300 text-amber-950 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4"
         >
           <div className="flex items-start gap-3.5 pr-6 sm:pr-0">
             <div className="w-10 h-10 rounded-xl bg-amber-200/80 text-amber-900 flex items-center justify-center shrink-0 shadow-2xs">
@@ -762,7 +762,7 @@ export const Dashboard: React.FC<Props> = ({ role, onNavigate, regressionTestRes
 
       {/* 2. SYSTEM ALERTS & NOTICES */}
       {testResult && !testResult.success && testResult.failures.length > 0 && (
-        <div className="p-4 rounded-2xl bg-amber-50 dark:bg-amber-950/40 border-2 border-amber-400 dark:border-amber-600 text-amber-950 dark:text-amber-100 shadow-xs space-y-2">
+        <div className="p-4 rounded-2xl bg-amber-50/90 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-700 text-amber-950 dark:text-amber-100 shadow-xs space-y-2">
           <div className="flex items-center justify-between gap-3 flex-wrap">
             <div className="flex items-center gap-2.5">
               <AlertTriangle className="w-5 h-5 text-amber-700 dark:text-amber-400 shrink-0 animate-pulse" />
@@ -788,7 +788,7 @@ export const Dashboard: React.FC<Props> = ({ role, onNavigate, regressionTestRes
       )}
 
       {alerts.length > 0 && (
-        <div className="p-4 rounded-2xl bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-700 text-amber-900 dark:text-amber-200 shadow-xs space-y-2">
+        <div className="p-4 rounded-2xl bg-amber-50/90 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-700 text-amber-900 dark:text-amber-200 shadow-xs space-y-2">
           <div className="flex items-center gap-2 font-bold text-[15px] text-amber-900 dark:text-amber-200">
             <AlertTriangle className="w-5 h-5 text-amber-700 dark:text-amber-400 shrink-0" />
             <span>{t('dashboard.alerts')} ({alerts.length} {t('dashboard.unitPieces')})</span>
@@ -801,57 +801,71 @@ export const Dashboard: React.FC<Props> = ({ role, onNavigate, regressionTestRes
         </div>
       )}
 
-      {/* 3. CORE FINANCIAL PERFORMANCE & LIQUIDITY PANEL */}
+      {/* 3. CORE FINANCIAL PERFORMANCE & WORKING CAPITAL PANEL */}
       <div className="bg-white dark:bg-slate-900 rounded-2xl border border-gray-200 dark:border-slate-800 p-4 sm:p-5 shadow-xs space-y-4 transition-colors">
-        <div className="flex items-center justify-between pb-3 border-b border-gray-100 dark:border-slate-800">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-gray-100 dark:border-slate-800">
           <div>
             <h2 className="text-base sm:text-lg font-bold text-gray-900 dark:text-slate-100 flex items-center gap-2">
               <TrendingUp className="w-5 h-5 text-[#1E5128] dark:text-emerald-400" />
-              <span>আর্থিক পারফরম্যান্স ও তারল্য (Financial Overview)</span>
+              <span>আর্থিক পারফরম্যান্স ও চলতি মূলধন (Financial Overview)</span>
             </h2>
             <p className="text-xs sm:text-sm text-gray-500 dark:text-slate-400 mt-0.5">
-              মোট তারল্য, নিট মুনাফা ও কার্যকরী মূলধনের সার্বিক অবস্থা
+              মোট আয়, পরিচালন ব্যয়, নিট মুনাফা ও কার্যকরী সম্পদের সুসংগঠিত চিত্র
             </p>
           </div>
 
           <button
             type="button"
             onClick={() => onNavigate('accounting')}
-            className="text-xs sm:text-sm text-[#1E5128] dark:text-emerald-400 hover:underline font-bold cursor-pointer inline-flex items-center gap-1"
+            className="text-xs sm:text-sm text-[#1E5128] dark:text-emerald-400 hover:underline font-bold cursor-pointer inline-flex items-center gap-1 self-start sm:self-auto"
           >
             <span>হিসাব বিবরণী →</span>
           </button>
         </div>
 
-        {/* Hero 2 Key Metrics (Liquidity & Net Profit) */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-          {/* Total Liquidity */}
-          <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/80 border border-gray-200/80 dark:border-slate-700/80">
+        {/* Primary Operating P&L Metrics (Revenue, Expenses, Net Profit) */}
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
+          {/* Total Revenue */}
+          <div className="p-4 rounded-xl bg-slate-50/80 dark:bg-slate-800/80 border border-gray-200/80 dark:border-slate-700/80 flex flex-col justify-between">
             <div className="flex items-center justify-between text-xs sm:text-[13px] text-gray-600 dark:text-slate-400 font-semibold">
-              <span>{t('dashboard.totalLiquidity')}</span>
-              <div className="p-1.5 rounded-lg bg-blue-100/80 dark:bg-blue-950/60 text-blue-700 dark:text-blue-400">
-                <Wallet className="w-4 h-4" />
+              <span>{t('dashboard.totalRevenue')}</span>
+              <div className="p-1.5 rounded-lg bg-emerald-100/80 dark:bg-emerald-950/60 text-[#15803D] dark:text-emerald-400">
+                <ArrowUpRight className="w-4 h-4" />
               </div>
             </div>
             <div className="text-2xl sm:text-3xl font-extrabold font-mono tabular-nums text-gray-900 dark:text-slate-100 tracking-tight mt-1.5">
-              {fmtMoney(cashBalance + bankBalance)}
+              {fmtMoney(totalRevenue)}
             </div>
-            <div className="flex items-center gap-2.5 text-xs text-gray-500 dark:text-slate-400 mt-2 pt-2 border-t border-gray-200/60 dark:border-slate-700/60 font-medium font-mono">
-              <span>{t('dashboard.cash')} <strong className="text-gray-900 dark:text-slate-200">{fmtMoney(cashBalance)}</strong></span>
-              <span>•</span>
-              <span>{t('dashboard.bank')} <strong className="text-gray-900 dark:text-slate-200">{fmtMoney(bankBalance)}</strong></span>
+            <div className="text-xs text-emerald-700 dark:text-emerald-400 mt-2 pt-2 border-t border-gray-200/60 dark:border-slate-700/60 font-medium">
+              মোট পণ্য বিক্রয় ও খামার পরিচালন আয়
+            </div>
+          </div>
+
+          {/* Total Expenses */}
+          <div className="p-4 rounded-xl bg-slate-50/80 dark:bg-slate-800/80 border border-gray-200/80 dark:border-slate-700/80 flex flex-col justify-between">
+            <div className="flex items-center justify-between text-xs sm:text-[13px] text-gray-600 dark:text-slate-400 font-semibold">
+              <span>{t('dashboard.totalExpenses')}</span>
+              <div className="p-1.5 rounded-lg bg-rose-100/80 dark:bg-rose-950/60 text-rose-600 dark:text-rose-400">
+                <ArrowDownLeft className="w-4 h-4" />
+              </div>
+            </div>
+            <div className="text-2xl sm:text-3xl font-extrabold font-mono tabular-nums text-gray-900 dark:text-slate-100 tracking-tight mt-1.5">
+              {fmtMoney(totalExpenses)}
+            </div>
+            <div className="text-xs text-rose-700 dark:text-rose-400 mt-2 pt-2 border-t border-gray-200/60 dark:border-slate-700/60 font-medium">
+              ফিড, ওষুধ, মজুরি ও পরিচালন খরচ
             </div>
           </div>
 
           {/* Net Profit / Margin */}
-          <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/80 border border-gray-200/80 dark:border-slate-700/80">
+          <div className="p-4 rounded-xl bg-slate-50/80 dark:bg-slate-800/80 border border-gray-200/80 dark:border-slate-700/80 flex flex-col justify-between">
             <div className="flex items-center justify-between text-xs sm:text-[13px] text-gray-600 dark:text-slate-400 font-semibold">
               <span>{t('dashboard.netProfit')}</span>
-              <div className={`p-1.5 rounded-lg ${netProfit >= 0 ? 'bg-emerald-100/80 dark:bg-emerald-950/60 text-[#15803D] dark:text-emerald-400' : 'bg-red-100/80 dark:bg-red-950/60 text-[#C2410C] dark:text-rose-400'}`}>
+              <div className={`p-1.5 rounded-lg ${netProfit >= 0 ? 'bg-emerald-100/80 dark:bg-emerald-950/60 text-[#15803D] dark:text-emerald-400' : 'bg-rose-100/80 dark:bg-rose-950/60 text-rose-600 dark:text-rose-400'}`}>
                 {netProfit >= 0 ? <TrendingUp className="w-4 h-4" /> : <TrendingDown className="w-4 h-4" />}
               </div>
             </div>
-            <div className={`text-2xl sm:text-3xl font-extrabold font-mono tabular-nums tracking-tight mt-1.5 ${netProfit >= 0 ? 'text-[#15803D] dark:text-emerald-400' : 'text-[#C2410C] dark:text-rose-400'}`}>
+            <div className={`text-2xl sm:text-3xl font-extrabold font-mono tabular-nums tracking-tight mt-1.5 ${netProfit >= 0 ? 'text-[#15803D] dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
               {fmtMoney(netProfit)}
             </div>
             <div className="text-xs text-gray-500 dark:text-slate-400 mt-2 pt-2 border-t border-gray-200/60 dark:border-slate-700/60 font-medium">
@@ -860,51 +874,78 @@ export const Dashboard: React.FC<Props> = ({ role, onNavigate, regressionTestRes
           </div>
         </div>
 
-        {/* Secondary Financial & Working Capital Row */}
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 pt-1">
-          {/* Total Revenue */}
-          <div className="p-3.5 rounded-xl bg-[#F8FAFC] dark:bg-slate-800/60 border border-gray-200/70 dark:border-slate-700/60">
-            <div className="flex items-center justify-between text-xs text-gray-600 dark:text-slate-400 font-medium">
-              <span>{t('dashboard.totalRevenue')}</span>
-              <ArrowUpRight className="w-3.5 h-3.5 text-[#15803D] dark:text-emerald-400" />
+        {/* Working Capital & Balance Sheet Row */}
+        <div>
+          <span className="text-xs font-bold text-gray-500 dark:text-slate-400 uppercase tracking-wider block mb-2">
+            কার্যকরী মূলধন ও চলতি সম্পদ (Working Capital & Current Assets)
+          </span>
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+            {/* Total Liquidity */}
+            <div
+              onClick={() => onNavigate('finance')}
+              className="p-3.5 rounded-xl bg-[#F8FAFC] dark:bg-slate-800/60 border border-gray-200/70 dark:border-slate-700/60 hover:border-[#1E5128]/50 cursor-pointer transition-colors"
+            >
+              <div className="flex items-center justify-between text-xs text-gray-600 dark:text-slate-400 font-medium">
+                <span>{t('dashboard.totalLiquidity')}</span>
+                <Wallet className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
+              </div>
+              <div className="text-lg sm:text-xl font-bold font-mono tabular-nums text-gray-900 dark:text-slate-100 mt-1">
+                {fmtMoney(cashBalance + bankBalance)}
+              </div>
+              <div className="text-[11px] text-gray-500 dark:text-slate-400 mt-1 truncate">
+                নগদ: {fmtMoney(cashBalance)}
+              </div>
             </div>
-            <div className="text-lg sm:text-xl font-bold font-mono tabular-nums text-gray-900 dark:text-slate-100 mt-1">
-              {fmtMoney(totalRevenue)}
-            </div>
-          </div>
 
-          {/* Total Expenses */}
-          <div className="p-3.5 rounded-xl bg-[#F8FAFC] dark:bg-slate-800/60 border border-gray-200/70 dark:border-slate-700/60">
-            <div className="flex items-center justify-between text-xs text-gray-600 dark:text-slate-400 font-medium">
-              <span>{t('dashboard.totalExpenses')}</span>
-              <ArrowDownLeft className="w-3.5 h-3.5 text-rose-600 dark:text-rose-400" />
+            {/* AR (Receivable) */}
+            <div
+              onClick={() => onNavigate('commerce')}
+              className="p-3.5 rounded-xl bg-[#F8FAFC] dark:bg-slate-800/60 border border-gray-200/70 dark:border-slate-700/60 hover:border-sky-500/50 cursor-pointer transition-colors"
+            >
+              <div className="flex items-center justify-between text-xs text-gray-600 dark:text-slate-400 font-medium">
+                <span>{t('dashboard.receivables')}</span>
+                <span className="text-[10px] font-mono text-sky-600 dark:text-sky-400 font-bold">AR</span>
+              </div>
+              <div className="text-lg sm:text-xl font-bold font-mono tabular-nums text-sky-700 dark:text-sky-400 mt-1">
+                {fmtMoney(arBalance)}
+              </div>
+              <div className="text-[11px] text-gray-500 dark:text-slate-400 mt-1">
+                বকেয়া বিক্রয় দেনাদার
+              </div>
             </div>
-            <div className="text-lg sm:text-xl font-bold font-mono tabular-nums text-gray-900 dark:text-slate-100 mt-1">
-              {fmtMoney(totalExpenses)}
-            </div>
-          </div>
 
-          {/* AR (Receivable) */}
-          <div className="p-3.5 rounded-xl bg-[#F8FAFC] dark:bg-slate-800/60 border border-gray-200/70 dark:border-slate-700/60">
-            <div className="text-xs text-gray-600 dark:text-slate-400 font-medium">{t('dashboard.receivables')}</div>
-            <div className="text-lg sm:text-xl font-bold font-mono tabular-nums text-sky-700 dark:text-sky-400 mt-1">
-              {fmtMoney(arBalance)}
+            {/* AP (Payable) */}
+            <div
+              onClick={() => onNavigate('commerce')}
+              className="p-3.5 rounded-xl bg-[#F8FAFC] dark:bg-slate-800/60 border border-gray-200/70 dark:border-slate-700/60 hover:border-amber-500/50 cursor-pointer transition-colors"
+            >
+              <div className="flex items-center justify-between text-xs text-gray-600 dark:text-slate-400 font-medium">
+                <span>{t('dashboard.payables')}</span>
+                <span className="text-[10px] font-mono text-amber-600 dark:text-amber-400 font-bold">AP</span>
+              </div>
+              <div className="text-lg sm:text-xl font-bold font-mono tabular-nums text-amber-700 dark:text-amber-400 mt-1">
+                {fmtMoney(apBalance)}
+              </div>
+              <div className="text-[11px] text-gray-500 dark:text-slate-400 mt-1">
+                বকেয়া ক্রয় পাওনাদার
+              </div>
             </div>
-          </div>
 
-          {/* AP (Payable) */}
-          <div className="p-3.5 rounded-xl bg-[#F8FAFC] dark:bg-slate-800/60 border border-gray-200/70 dark:border-slate-700/60">
-            <div className="text-xs text-gray-600 dark:text-slate-400 font-medium">{t('dashboard.payables')}</div>
-            <div className="text-lg sm:text-xl font-bold font-mono tabular-nums text-amber-700 dark:text-amber-400 mt-1">
-              {fmtMoney(apBalance)}
-            </div>
-          </div>
-
-          {/* Inventory Valuation */}
-          <div className="p-3.5 rounded-xl bg-[#F8FAFC] dark:bg-slate-800/60 border border-gray-200/70 dark:border-slate-700/60 col-span-2 sm:col-span-1">
-            <div className="text-xs text-gray-600 dark:text-slate-400 font-medium">মজুদ পণ্যের মূল্য</div>
-            <div className="text-lg sm:text-xl font-bold font-mono tabular-nums text-emerald-800 dark:text-emerald-400 mt-1">
-              {fmtMoney(inventoryValue)}
+            {/* Inventory Valuation */}
+            <div
+              onClick={() => onNavigate('commerce')}
+              className="p-3.5 rounded-xl bg-[#F8FAFC] dark:bg-slate-800/60 border border-gray-200/70 dark:border-slate-700/60 hover:border-emerald-500/50 cursor-pointer transition-colors"
+            >
+              <div className="flex items-center justify-between text-xs text-gray-600 dark:text-slate-400 font-medium">
+                <span>মজুদ পণ্যের মূল্য</span>
+                <span className="text-[10px] font-mono text-emerald-600 dark:text-emerald-400 font-bold">INV</span>
+              </div>
+              <div className="text-lg sm:text-xl font-bold font-mono tabular-nums text-emerald-800 dark:text-emerald-400 mt-1">
+                {fmtMoney(inventoryValue)}
+              </div>
+              <div className="text-[11px] text-gray-500 dark:text-slate-400 mt-1">
+                ফিড, ওষুধ ও কাঁচামাল
+              </div>
             </div>
           </div>
         </div>
@@ -1121,10 +1162,10 @@ export const Dashboard: React.FC<Props> = ({ role, onNavigate, regressionTestRes
                   style={{ animationDelay: `${Math.min(idx * 35, 240)}ms` }}
                   className={`p-3 sm:p-3.5 rounded-xl border transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-3 animate-fade-slide-up ${
                     isOverdue
-                      ? 'bg-red-50/50 border-red-200'
+                      ? 'bg-rose-50/70 dark:bg-rose-950/30 border-rose-200 dark:border-rose-900/50'
                       : isToday
-                      ? 'bg-amber-50/50 border-amber-300'
-                      : 'bg-white border-gray-200 hover:border-[#1E5128]/50'
+                      ? 'bg-amber-50/70 dark:bg-amber-950/30 border-amber-200 dark:border-amber-800/60'
+                      : 'bg-white dark:bg-slate-800/80 border-gray-200 dark:border-slate-700/80 hover:border-[#1E5128]/50 dark:hover:border-emerald-500/50'
                   } ${rem.animalId ? 'cursor-pointer hover:shadow-xs group' : ''}`}
                 >
                   <div className="space-y-1.5 flex-1 min-w-0">
@@ -1152,19 +1193,19 @@ export const Dashboard: React.FC<Props> = ({ role, onNavigate, regressionTestRes
                         />
                       )}
 
-                      <span className="text-[12px] text-gray-500 font-mono">
+                      <span className="text-[12px] text-gray-500 dark:text-slate-400 font-mono">
                         {t('dashboard.date')} {rem.dueDate}
                       </span>
                     </div>
 
-                    <div className="font-bold text-[14px] sm:text-[15px] text-gray-900 leading-snug">
+                    <div className="font-bold text-[14px] sm:text-[15px] text-gray-900 dark:text-slate-100 leading-snug">
                       {rem.title}
                     </div>
 
                     {rem.animalId && (
-                      <div className="text-[12px] text-[#1E5128] font-semibold flex items-center gap-1 group-hover:underline">
+                      <div className="text-[12px] text-[#1E5128] dark:text-emerald-400 font-semibold flex items-center gap-1 group-hover:underline">
                         <span>{t('dashboard.animalId')} {rem.animalId}</span>
-                        <span className="text-gray-400 font-normal">{t('dashboard.viewDetails')}</span>
+                        <span className="text-gray-400 dark:text-slate-500 font-normal">{t('dashboard.viewDetails')}</span>
                       </div>
                     )}
                   </div>
@@ -1232,7 +1273,15 @@ export const Dashboard: React.FC<Props> = ({ role, onNavigate, regressionTestRes
                     <span className="font-mono text-[#1E5128] dark:text-emerald-400 font-bold text-[13px] sm:text-[14px]">
                       {tx.voucherNumber}
                     </span>
-                    <span className="text-[11px] font-semibold px-2 py-0.5 rounded-md bg-white dark:bg-slate-700 border border-gray-200 dark:border-slate-600 text-gray-700 dark:text-slate-200">
+                    <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-md border ${
+                      tx.voucherType === 'RECEIPT'
+                        ? 'bg-emerald-50 dark:bg-emerald-950/60 border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-300'
+                        : tx.voucherType === 'PAYMENT'
+                        ? 'bg-rose-50 dark:bg-rose-950/60 border-rose-200 dark:border-rose-800 text-rose-800 dark:text-rose-300'
+                        : tx.voucherType === 'CONTRA'
+                        ? 'bg-blue-50 dark:bg-blue-950/60 border-blue-200 dark:border-blue-800 text-blue-800 dark:text-blue-300'
+                        : 'bg-purple-50 dark:bg-purple-950/60 border-purple-200 dark:border-purple-800 text-purple-800 dark:text-purple-300'
+                    }`}>
                       {tx.voucherType}
                     </span>
                     {tx.reversedBy && (

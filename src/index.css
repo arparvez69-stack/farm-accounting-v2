@@ -11,8 +11,9 @@
     --color-text-muted: #4B5563;
     --color-brand-moss: #1E5128;
     --color-income: #15803D;
-    --color-expense: #C2410C;
-    --color-alert: #B45309;
+    --color-expense: #DC2626;
+    --color-alert: #D97706;
+    --color-report: #7C3AED;
   }
 
   .dark {

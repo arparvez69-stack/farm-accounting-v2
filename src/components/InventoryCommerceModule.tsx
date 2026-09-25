@@ -2039,27 +2039,27 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
   };
 
   return (
-    <div className="space-y-4 pb-6 max-w-5xl mx-auto rounded-3xl p-2 sm:p-4 bg-gradient-to-b from-amber-500/[0.08] via-amber-500/[0.03] to-transparent dark:from-amber-950/30 dark:via-amber-950/10 dark:to-transparent">
+    <div className="space-y-5 pb-6 max-w-5xl mx-auto p-2 sm:p-4">
       {/* Header & Tabs */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-3.5 p-4 sm:p-5 rounded-2xl bg-white border border-gray-200 shadow-xs">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-3.5 p-4 sm:p-5 rounded-2xl bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 shadow-xs">
         <div>
-          <h2 className="text-lg sm:text-xl font-bold text-gray-900 flex items-center gap-2">
-            <Package className="w-5 h-5 text-amber-700" />
+          <h2 className="text-lg sm:text-xl font-bold text-gray-900 dark:text-slate-100 flex items-center gap-2">
+            <Package className="w-5 h-5 text-[#1E5128] dark:text-emerald-400" />
             <span>ক্রয়-বিক্রয়, মজুদ ও পক্ষসমূহ (Commerce & Inventory)</span>
           </h2>
-          <p className="text-[14px] text-gray-600 mt-0.5">
+          <p className="text-[14px] text-gray-600 dark:text-slate-400 mt-0.5">
             ফিড, সার, ওষুধ মজুদ, ক্রয় চালান, বিক্রয় ও দেনাদার-পাওনাদার খতিয়ান
           </p>
         </div>
 
-        <div className="w-full md:w-auto grid grid-cols-2 sm:grid-cols-4 gap-2 bg-amber-50/50 border border-amber-100 p-1.5 rounded-xl text-[13px] font-semibold">
+        <div className="w-full md:w-auto grid grid-cols-2 sm:grid-cols-4 gap-2 bg-slate-100 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 p-1.5 rounded-xl text-[13px] font-semibold">
           <button
             type="button"
             onClick={() => setTab('inventory')}
             className={`flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg transition-all cursor-pointer min-h-[42px] text-center text-xs sm:text-[13px] font-bold ${
               tab === 'inventory'
-                ? 'bg-amber-700 text-white shadow-xs border border-amber-700'
-                : 'bg-white text-amber-950 border border-amber-200/80 hover:bg-amber-100/80'
+                ? 'bg-[#1E5128] text-white shadow-xs border border-[#1E5128]'
+                : 'bg-white dark:bg-slate-900/60 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800'
             }`}
           >
             <Package className="w-4 h-4 shrink-0" />
@@ -2070,8 +2070,8 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
             onClick={() => setTab('sales')}
             className={`flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg transition-all cursor-pointer min-h-[42px] text-center text-xs sm:text-[13px] font-bold ${
               tab === 'sales'
-                ? 'bg-amber-700 text-white shadow-xs border border-amber-700'
-                : 'bg-white text-amber-950 border border-amber-200/80 hover:bg-amber-100/80'
+                ? 'bg-[#1E5128] text-white shadow-xs border border-[#1E5128]'
+                : 'bg-white dark:bg-slate-900/60 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800'
             }`}
           >
             <TrendingUp className="w-4 h-4 shrink-0" />
@@ -2082,8 +2082,8 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
             onClick={() => setTab('purchases')}
             className={`flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg transition-all cursor-pointer min-h-[42px] text-center text-xs sm:text-[13px] font-bold ${
               tab === 'purchases'
-                ? 'bg-amber-700 text-white shadow-xs border border-amber-700'
-                : 'bg-white text-amber-950 border border-amber-200/80 hover:bg-amber-100/80'
+                ? 'bg-[#1E5128] text-white shadow-xs border border-[#1E5128]'
+                : 'bg-white dark:bg-slate-900/60 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800'
             }`}
           >
             <ShoppingCart className="w-4 h-4 shrink-0" />
@@ -2094,8 +2094,8 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
             onClick={() => setTab('parties')}
             className={`flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg transition-all cursor-pointer min-h-[42px] text-center text-xs sm:text-[13px] font-bold ${
               tab === 'parties'
-                ? 'bg-amber-700 text-white shadow-xs border border-amber-700'
-                : 'bg-white text-amber-950 border border-amber-200/80 hover:bg-amber-100/80'
+                ? 'bg-[#1E5128] text-white shadow-xs border border-[#1E5128]'
+                : 'bg-white dark:bg-slate-900/60 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800'
             }`}
           >
             <Users className="w-4 h-4 shrink-0" />
@@ -2120,22 +2120,6 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
       {/* ===================== TAB 1: INVENTORY ===================== */}
       {tab === 'inventory' && (
         <div className="space-y-4">
-          {/* Stock Header Illustration */}
-          <div
-            className="w-full h-40 sm:h-48 flex justify-center items-center overflow-hidden"
-            style={{
-              maskImage: 'linear-gradient(to bottom, black 60%, transparent 100%)',
-              WebkitMaskImage: 'linear-gradient(to bottom, black 60%, transparent 100%)'
-            }}
-          >
-            <img
-              src="/illustrations/Nature-pana.svg"
-              alt="Stock & Nature illustration"
-              loading="lazy"
-              className="w-auto max-w-full h-full object-contain pointer-events-none drop-shadow-xs"
-            />
-          </div>
-
           <div className="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 rounded-2xl p-4 sm:p-5 shadow-xs space-y-4">
 
           <div className="flex items-center justify-between border-b border-gray-100 pb-3 flex-wrap gap-2">
@@ -2348,7 +2332,11 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                           </div>
                         )}
                         <div className="absolute top-2.5 right-2.5">
-                          {isLow ? (
+                          {it.currentStock <= 0 ? (
+                            <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-rose-600 text-white shadow-xs">
+                              মজুদ শেষ!
+                            </span>
+                          ) : isLow ? (
                             <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-amber-500 text-white shadow-xs">
                               মজুদ কম!
                             </span>
@@ -2437,11 +2425,13 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                           </div>
                         </div>
                         <span className={`px-2 py-0.5 rounded-full text-xs font-semibold shrink-0 ${
-                          isLow
-                            ? 'bg-amber-50 text-amber-800 border border-amber-200'
-                            : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                          it.currentStock <= 0
+                            ? 'bg-rose-50 text-rose-800 border border-rose-200 dark:bg-rose-950/40 dark:text-rose-300 dark:border-rose-800'
+                            : isLow
+                            ? 'bg-amber-50 text-amber-800 border border-amber-200 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-800'
+                            : 'bg-emerald-50 text-[#14532D] border border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800'
                         }`}>
-                          {isLow ? 'মজুদ কম!' : 'পর্যাপ্ত'}
+                          {it.currentStock <= 0 ? 'মজুদ শেষ' : isLow ? 'মজুদ কম!' : 'পর্যাপ্ত'}
                         </span>
                       </div>
 
@@ -2543,12 +2533,18 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                             </div>
                           </td>
                           <td className="p-3">
-                            {isLow ? (
-                              <span className="px-2.5 py-1 rounded-full text-xs font-semibold bg-amber-50 text-amber-800 border border-amber-200">
+                            {it.currentStock <= 0 ? (
+                              <span className="px-2.5 py-1 rounded-full text-xs font-semibold bg-rose-50 text-rose-800 border border-rose-200 dark:bg-rose-950/40 dark:text-rose-300 dark:border-rose-800">
+                                মজুদ শেষ
+                              </span>
+                            ) : isLow ? (
+                              <span className="px-2.5 py-1 rounded-full text-xs font-semibold bg-amber-50 text-amber-800 border border-amber-200 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-800">
                                 মজুদ কম!
                               </span>
                             ) : (
-                              <span className="text-xs font-medium text-gray-500">পর্যাপ্ত</span>
+                              <span className="px-2.5 py-1 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-800 border border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800">
+                                পর্যাপ্ত
+                              </span>
                             )}
                           </td>
                         </tr>
@@ -2621,22 +2617,6 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
       {/* ===================== TAB 2: SALES ===================== */}
       {tab === 'sales' && (
         <div className="space-y-4">
-          {/* Sales Invoices Header Illustration */}
-          <div
-            className="w-full h-40 sm:h-48 flex justify-center items-center overflow-hidden"
-            style={{
-              maskImage: 'linear-gradient(to bottom, black 60%, transparent 100%)',
-              WebkitMaskImage: 'linear-gradient(to bottom, black 60%, transparent 100%)'
-            }}
-          >
-            <img
-              src="/illustrations/Farmers_market-cuate.svg"
-              alt="Sales invoices illustration"
-              loading="lazy"
-              className="w-auto max-w-full h-full object-contain pointer-events-none drop-shadow-xs"
-            />
-          </div>
-
           <div className="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 rounded-2xl p-4 sm:p-5 shadow-xs space-y-4">
 
           <div className="flex items-center justify-between border-b border-gray-100 pb-3 flex-wrap gap-2">
@@ -3069,8 +3049,10 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                       </div>
                       <span className={`px-2.5 py-1 rounded-full text-xs font-semibold shrink-0 ${
                         due <= 0 || s.status === 'PAID'
-                          ? 'bg-[#F0FDF4] text-[#15803D] border border-[#BBF7D0]'
-                          : (paid > 0 ? 'bg-blue-50 text-blue-800 border border-blue-200' : 'bg-amber-50 text-amber-800 border border-amber-200')
+                          ? 'bg-emerald-50 text-[#14532D] border border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800'
+                          : (paid > 0
+                              ? 'bg-amber-50 text-amber-800 border border-amber-200 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-800'
+                              : 'bg-rose-50 text-rose-800 border border-rose-200 dark:bg-rose-950/40 dark:text-rose-300 dark:border-rose-800')
                       }`}>
                         {due <= 0 || s.status === 'PAID' ? 'পরিশোধিত' : (paid > 0 ? `আংশিক (৳${fmt(due)})` : `বাকি (৳${fmt(due)})`)}
                       </span>
@@ -3281,8 +3263,10 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                           <td className="p-3">
                             <span className={`px-2.5 py-1 rounded-full text-xs font-semibold ${
                               due <= 0 || s.status === 'PAID'
-                                ? 'bg-[#F0FDF4] text-[#15803D] border border-[#BBF7D0]'
-                                : (paid > 0 ? 'bg-blue-50 text-blue-800 border border-blue-200' : 'bg-amber-50 text-amber-800 border border-amber-200')
+                                ? 'bg-emerald-50 text-[#14532D] border border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800'
+                                : (paid > 0
+                                    ? 'bg-amber-50 text-amber-800 border border-amber-200 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-800'
+                                    : 'bg-rose-50 text-rose-800 border border-rose-200 dark:bg-rose-950/40 dark:text-rose-300 dark:border-rose-800')
                             }`}>
                               {due <= 0 || s.status === 'PAID' ? 'পরিশোধিত' : (paid > 0 ? `আংশিক বাকি (৳${fmt(due)})` : `বাকি (৳${fmt(due)})`)}
                             </span>
@@ -3847,8 +3831,10 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                       </div>
                       <span className={`px-2.5 py-1 rounded-full text-xs font-semibold shrink-0 ${
                         due <= 0 || p.status === 'PAID'
-                          ? 'bg-[#F0FDF4] text-[#15803D] border border-[#BBF7D0]'
-                          : (paid > 0 ? 'bg-blue-50 text-blue-800 border border-blue-200' : 'bg-amber-50 text-amber-800 border border-amber-200')
+                          ? 'bg-emerald-50 text-[#14532D] border border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800'
+                          : (paid > 0
+                              ? 'bg-amber-50 text-amber-800 border border-amber-200 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-800'
+                              : 'bg-rose-50 text-rose-800 border border-rose-200 dark:bg-rose-950/40 dark:text-rose-300 dark:border-rose-800')
                       }`}>
                         {due <= 0 || p.status === 'PAID' ? 'পরিশোধিত' : (paid > 0 ? `আংশিক (৳${fmt(due)})` : `বাকি (৳${fmt(due)})`)}
                       </span>
@@ -4068,8 +4054,10 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                           <td className="p-3">
                             <span className={`px-2.5 py-1 rounded-full text-xs font-semibold ${
                               due <= 0 || p.status === 'PAID'
-                                ? 'bg-[#F0FDF4] text-[#15803D] border border-[#BBF7D0]'
-                                : (paid > 0 ? 'bg-blue-50 text-blue-800 border border-blue-200' : 'bg-amber-50 text-amber-800 border border-amber-200')
+                                ? 'bg-emerald-50 text-[#14532D] border border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800'
+                                : (paid > 0
+                                    ? 'bg-amber-50 text-amber-800 border border-amber-200 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-800'
+                                    : 'bg-rose-50 text-rose-800 border border-rose-200 dark:bg-rose-950/40 dark:text-rose-300 dark:border-rose-800')
                             }`}>
                               {due <= 0 || p.status === 'PAID' ? 'পরিশোধিত' : (paid > 0 ? `আংশিক বাকি (৳${fmt(due)})` : `বাকি (৳${fmt(due)})`)}
                             </span>

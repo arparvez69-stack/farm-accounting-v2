@@ -50,11 +50,11 @@ const getModuleTheme = (tab?: string) => {
       };
     case 'reports':
       return {
-        iconBg: 'bg-teal-600 dark:bg-teal-700',
-        textColor: 'text-teal-700 dark:text-teal-400',
-        barColor: 'bg-teal-600',
-        roleBadge: 'bg-teal-50 dark:bg-teal-950/60 text-teal-800 dark:text-teal-400 border-teal-200 dark:border-teal-800',
-        roleIcon: 'text-teal-600 dark:text-teal-400'
+        iconBg: 'bg-purple-700 dark:bg-purple-800',
+        textColor: 'text-purple-700 dark:text-purple-400',
+        barColor: 'bg-purple-600',
+        roleBadge: 'bg-purple-50 dark:bg-purple-950/60 text-purple-800 dark:text-purple-400 border-purple-200 dark:border-purple-800',
+        roleIcon: 'text-purple-600 dark:text-purple-400'
       };
     case 'more':
       return {
