@@ -63,7 +63,7 @@ import { HIGH_AMOUNT_CONFIRMATION_THRESHOLD } from '../constants/validation';
 import { notifyUndoableAction } from '../services/undoService';
 import { triggerSuccessAnimation } from './ui/SuccessAnimation';
 import { CANONICAL_ACCOUNTS, getInventoryAssetAccount, getInventoryAccountDetails } from '../accounting/accountMapping';
-import { SearchableSelect, SearchableOption, EmptyState } from './ui';
+import { SearchableSelect, SearchableOption, EmptyState, ErrorState } from './ui';
 
 const getInventoryCategoryBadge = (category?: string): { code: string; label: string } => {
   const details = getInventoryAccountDetails(category);
@@ -568,6 +568,11 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
   const [inventoryViewMode, setInventoryViewMode] = useState<'cards' | 'table'>('cards');
   const [loading, setLoading] = useState(false);
   const [msg, setMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [commerceLoadError, setCommerceLoadError] = useState<string | null>(null);
+  const [saleFormError, setSaleFormError] = useState<string | null>(null);
+  const [purchaseFormError, setPurchaseFormError] = useState<string | null>(null);
+  const [itemFormError, setItemFormError] = useState<string | null>(null);
+  const [partyFormError, setPartyFormError] = useState<string | null>(null);
 
   const [items, setItems] = useState<InventoryItem[]>([]);
   const [parties, setParties] = useState<Party[]>([]);
@@ -1057,6 +1062,7 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
 
   const loadCommerceData = async () => {
     setLoading(true);
+    setCommerceLoadError(null);
     try {
       // Load inventory items from database without auto-seeding
       const itemList = await db.inventoryItems.toArray();
@@ -1089,8 +1095,9 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
         const pList = await db.purchases.orderBy('date').reverse().toArray();
         setPurchases(pList);
       }
-    } catch (e) {
+    } catch (e: any) {
       console.error(e);
+      setCommerceLoadError(e?.message || 'ইনভেন্টরি ও বাণিজ্য তথ্য লোড করতে সমস্যা হয়েছে');
     } finally {
       setLoading(false);
     }
@@ -1099,6 +1106,7 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
   // ADD ITEM
   const handleAddItem = async (e: React.FormEvent) => {
     e.preventDefault();
+    setItemFormError(null);
     try {
       const stockNum = parseFloat(itemStock) || 0;
       const reorderNum = parseFloat(itemReorder) || 10;
@@ -1133,6 +1141,7 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
       setItemPrice('0');
       setItemReorder('10');
       setItemThreshold('');
+      setItemFormError(null);
       setMsg({
         type: 'success',
         text: `পণ্য ${item.nameBn} যুক্ত হয়েছে!${postedJournalEntryId ? ' (প্রারম্ভিক মজুদ জাবেদা দাখিলা সম্পন্ন হয়েছে)' : ''}`
@@ -1142,6 +1151,7 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
       window.dispatchEvent(new CustomEvent('accounting_entry_posted'));
       loadCommerceData();
     } catch (err: any) {
+      setItemFormError(err.message || 'পণ্য সংরক্ষণ করতে সমস্যা হয়েছে');
       setMsg({ type: 'error', text: err.message });
     }
   };
@@ -1270,34 +1280,45 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
       }
       loadCommerceData();
     } catch (err: any) {
-      setMsg({ type: 'error', text: err.message || 'বিক্রয় লেনদেন ব্যর্থ হয়েছে।' });
+      const errText = err.message || 'বিক্রয় লেনদেন ব্যর্থ হয়েছে।';
+      setMsg({ type: 'error', text: errText });
+      setSaleFormError(errText);
     }
   };
 
   const handleCreateSale = async (e: React.FormEvent) => {
     e.preventDefault();
+    setSaleFormError(null);
     if (!saleCustomerId) {
-      setMsg({ type: 'error', text: 'ক্রেতা নির্বাচন করুন।' });
+      const errText = 'অনুগ্রহ করে একজন ক্রেতা নির্বাচন করুন।';
+      setMsg({ type: 'error', text: errText });
+      setSaleFormError(errText);
       return;
     }
 
     const customer = parties.find((p) => p.id === saleCustomerId);
     if (!customer) {
-      setMsg({ type: 'error', text: 'সঠিক ক্রেতা পাওয়া যায়নি।' });
+      const errText = 'সঠিক ক্রেতা পাওয়া যায়নি। পুনরায় ক্রেতা নির্বাচন করুন।';
+      setMsg({ type: 'error', text: errText });
+      setSaleFormError(errText);
       return;
     }
 
     const todayStr = new Date().toISOString().split('T')[0];
     if (saleDate > todayStr) {
+      const errText = `বিক্রয় চালানের তারিখ ভবিষ্যতের হতে পারে না (${todayStr} বা তার পূর্বের তারিখ নির্বাচন করুন)।`;
       setMsg({
         type: 'error',
-        text: `বিক্রয় চালানের তারিখ ভবিষ্যতের হতে পারে না (${todayStr} বা তার পূর্বের তারিখ নির্বাচন করুন)।`
+        text: errText
       });
+      setSaleFormError(errText);
       return;
     }
 
     if (!saleLines || saleLines.length === 0) {
-      setMsg({ type: 'error', text: 'কমপক্ষে একটি বিক্রয় পণ্য লাইন যোগ করুন।' });
+      const errText = 'কমপক্ষে একটি বিক্রয় পণ্য লাইন যোগ করুন।';
+      setMsg({ type: 'error', text: errText });
+      setSaleFormError(errText);
       return;
     }
 
@@ -1309,22 +1330,28 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
     for (let idx = 0; idx < saleLines.length; idx++) {
       const line = saleLines[idx];
       if (!line.itemId) {
-        setMsg({ type: 'error', text: `লাইন #${idx + 1}: পণ্য নির্বাচন করুন।` });
+        const errText = `লাইন #${idx + 1}: অনুগ্রহ করে পণ্য নির্বাচন করুন।`;
+        setMsg({ type: 'error', text: errText });
+        setSaleFormError(errText);
         return;
       }
       if (seenItemIds.has(line.itemId)) {
         const dupItem = items.find((i) => i.id === line.itemId);
+        const errText = `লাইন #${idx + 1}: "${dupItem?.nameBn || 'পণ্য'}" একই চালানে একাধিকবার যোগ করা হয়েছে। অনুগ্রহ করে পরিমাণ একত্রিত করুন।`;
         setMsg({
           type: 'error',
-          text: `লাইন #${idx + 1}: "${dupItem?.nameBn || 'পণ্য'}" একই চালানে একাধিকবার যোগ করা হয়েছে। অনুগ্রহ করে পরিমাণ একত্রিত করুন।`
+          text: errText
         });
+        setSaleFormError(errText);
         return;
       }
       seenItemIds.add(line.itemId);
 
       const it = items.find((i) => i.id === line.itemId);
       if (!it) {
-        setMsg({ type: 'error', text: `লাইন #${idx + 1}: নির্বাচিত পণ্য পাওয়া যায়নি।` });
+        const errText = `লাইন #${idx + 1}: নির্বাচিত পণ্য পাওয়া যায়নি।`;
+        setMsg({ type: 'error', text: errText });
+        setSaleFormError(errText);
         return;
       }
 
@@ -1332,15 +1359,19 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
       const price = parseFloat(line.unitPrice) || it.sellingPrice || 0;
 
       if (qty <= 0 || price <= 0) {
-        setMsg({ type: 'error', text: `লাইন #${idx + 1} (${it.nameBn}): পরিমাণ ও দর ০ এর বেশি হতে হবে।` });
+        const errText = `লাইন #${idx + 1} (${it.nameBn}): পরিমাণ ও দর ০ এর বেশি হতে হবে।`;
+        setMsg({ type: 'error', text: errText });
+        setSaleFormError(errText);
         return;
       }
 
       if (it.currentStock < qty) {
+        const errText = `লাইন #${idx + 1} (${it.nameBn}): পর্যাপ্ত স্টক নেই (অনুরোধ: ${qty} ${it.unit}, মজুদ: ${it.currentStock} ${it.unit})।`;
         setMsg({
           type: 'error',
-          text: `লাইন #${idx + 1} (${it.nameBn}): পর্যাপ্ত স্টক নেই (অনুরোধ: ${qty} ${it.unit}, মজুদ: ${it.currentStock} ${it.unit})। সমগ্র চালানটি স্থগিত করা হয়েছে।`
+          text: errText
         });
+        setSaleFormError(errText);
         return;
       }
 
@@ -1357,23 +1388,29 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
     const totalAmount = Math.max(0, Math.round((netBeforeVat + totalVat) * 100) / 100);
 
     if (totalAmount <= 0) {
-      setMsg({ type: 'error', text: 'মূল্যছাড়ের পর চালানের সর্বমোট মূল্য ০ এর বেশি হতে হবে।' });
+      const errText = 'মূল্যছাড়ের পর চালানের সর্বমোট মূল্য ০ এর বেশি হতে হবে।';
+      setMsg({ type: 'error', text: errText });
+      setSaleFormError(errText);
       return;
     }
 
     const advanceApplied = parseFloat(saleAdvanceApplied) || 0;
     if (advanceApplied > availableCustomerAdvance) {
+      const errText = `অগ্রিম সমন্বয় (৳${advanceApplied}) উপলব্ধ অগ্রিম ব্যালেন্সের (৳${availableCustomerAdvance}) চেয়ে বেশি হতে পারে না।`;
       setMsg({
         type: 'error',
-        text: `অগ্রিম সমন্বয় (৳${advanceApplied}) উপলব্ধ অগ্রিম ব্যালেন্সের (৳${availableCustomerAdvance}) চেয়ে বেশি হতে পারে না।`
+        text: errText
       });
+      setSaleFormError(errText);
       return;
     }
     if (advanceApplied > totalAmount) {
+      const errText = `অগ্রিম সমন্বয় (৳${advanceApplied}) চালানের মোট মূল্যের (৳${totalAmount}) চেয়ে বেশি হতে পারে না।`;
       setMsg({
         type: 'error',
-        text: `অগ্রিম সমন্বয় (৳${advanceApplied}) চালানের মোট মূল্যের (৳${totalAmount}) চেয়ে বেশি হতে পারে না।`
+        text: errText
       });
+      setSaleFormError(errText);
       return;
     }
 
@@ -2104,17 +2141,48 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
         </div>
       </div>
 
+      {commerceLoadError && (
+        <ErrorState
+          id="commerce-load-error-banner"
+          variant="banner"
+          title="বাণিজ্য তথ্য লোড করা যায়নি"
+          message="ডাটাবেজ থেকে পণ্যের স্টক, বিক্রয় ও ক্রয় চালান লোড করতে সমস্যা হয়েছে। অনুগ্রহ করে পুনরায় চেষ্টা করুন।"
+          technicalDetails={commerceLoadError}
+          retryAction={{
+            label: 'পুনরায় চেষ্টা করুন',
+            onClick: () => loadCommerceData(),
+            icon: RotateCcw
+          }}
+          onDismiss={() => setCommerceLoadError(null)}
+        />
+      )}
+
       {msg && (
-        <div
-          className={`p-3.5 rounded-xl border text-[14px] font-medium flex items-center gap-2.5 ${
-            msg.type === 'success'
-              ? 'bg-[#F0FDF4] border-[#BBF7D0] text-[#15803D]'
-              : 'bg-red-50 border-red-200 text-red-700'
-          }`}
-        >
-          {msg.type === 'success' ? <FileCheck className="w-5 h-5 shrink-0" /> : <AlertTriangle className="w-5 h-5 shrink-0" />}
-          <span>{msg.text}</span>
-        </div>
+        msg.type === 'error' ? (
+          <ErrorState
+            id="commerce-global-error-inline"
+            variant="inline"
+            message={msg.text}
+            onDismiss={() => setMsg(null)}
+          />
+        ) : (
+          <div
+            className="p-3.5 rounded-xl border text-[14px] font-medium flex items-center justify-between gap-2.5 bg-[#F0FDF4] border-[#BBF7D0] text-[#15803D]"
+          >
+            <div className="flex items-center gap-2.5">
+              <FileCheck className="w-5 h-5 shrink-0" />
+              <span>{msg.text}</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setMsg(null)}
+              aria-label="Dismiss message"
+              className="p-1 rounded-lg text-emerald-600 hover:bg-emerald-100/70 transition-colors cursor-pointer"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        )
       )}
 
       {/* ===================== TAB 1: INVENTORY ===================== */}
@@ -2279,6 +2347,15 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                   <span className="text-[11px] text-gray-500 mt-1 block">ডিফল্ট: ২০% রিস্টক</span>
                 </div>
               </div>
+
+              {itemFormError && (
+                <ErrorState
+                  id="item-form-inline-error"
+                  variant="inline"
+                  message={itemFormError}
+                  onDismiss={() => setItemFormError(null)}
+                />
+              )}
 
               <div className="flex flex-col-reverse sm:flex-row justify-end gap-2.5 pt-2">
                 <button

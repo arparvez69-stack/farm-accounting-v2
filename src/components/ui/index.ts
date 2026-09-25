@@ -10,6 +10,9 @@ export type { CardProps, CardVariant } from './Card';
 export { EmptyState } from './EmptyState';
 export type { EmptyStateProps, EmptyStateAction } from './EmptyState';
 
+export { ErrorState } from './ErrorState';
+export type { ErrorStateProps, ErrorStateAction } from './ErrorState';
+
 export { PatternBackground } from './PatternBackground';
 
 export { SuccessAnimationToast, triggerSuccessAnimation } from './SuccessAnimation';

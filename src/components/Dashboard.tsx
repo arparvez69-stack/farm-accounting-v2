@@ -37,6 +37,7 @@ import { Card } from './ui/Card';
 import { StatusBadge } from './ui/StatusBadge';
 import { IconTile } from './ui/IconTile';
 import { EmptyState } from './ui/EmptyState';
+import { ErrorState } from './ui/ErrorState';
 import { triggerSuccessAnimation } from './ui/SuccessAnimation';
 
 interface LowFeedItemInfo {
@@ -81,6 +82,7 @@ export const Dashboard: React.FC<Props> = ({ role, onNavigate, regressionTestRes
   const [recentTransactions, setRecentTransactions] = useState<any[]>([]);
   const [alerts, setAlerts] = useState<string[]>([]);
   const [isAccountingBalanced, setIsAccountingBalanced] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   // Low feed stock warnings and threshold setting
   const [lowFeedItems, setLowFeedItems] = useState<LowFeedItemInfo[]>([]);
@@ -220,6 +222,7 @@ export const Dashboard: React.FC<Props> = ({ role, onNavigate, regressionTestRes
   const loadDashboardData = async () => {
     try {
       setLoading(true);
+      setLoadError(null);
 
       // Financials via Double-Entry Engine
       const pl = await generateProfitLoss();
@@ -333,8 +336,9 @@ export const Dashboard: React.FC<Props> = ({ role, onNavigate, regressionTestRes
         activeAlerts.push('ব্যাংক হিসাব ঋণাত্মক (Negative Bank Balance)!');
       }
       setAlerts(activeAlerts);
-    } catch (e) {
+    } catch (e: any) {
       console.error('Failed to load dashboard:', e);
+      setLoadError(e?.message || 'ড্যাশবোর্ড তথ্য লোড করার সময় সমস্যা হয়েছে');
     } finally {
       setLoading(false);
     }
@@ -509,6 +513,26 @@ export const Dashboard: React.FC<Props> = ({ role, onNavigate, regressionTestRes
           </div>
         )}
       </div>
+
+      {loadError && (
+        <ErrorState
+          id="dashboard-load-error-banner"
+          variant="banner"
+          title={lang === 'en' ? 'Unable to Load Dashboard Data' : 'ড্যাশবোর্ড তথ্য লোড করা যায়নি'}
+          message={
+            lang === 'en'
+              ? 'Could not retrieve recent transactions and farm metrics. Please check your data connection and try again.'
+              : 'ডাটাবেজ থেকে সাম্প্রতিক লেনদেন ও খামার পরিসংখ্যান লোড করতে সমস্যা হয়েছে। পুনরায় চেষ্টা করুন।'
+          }
+          technicalDetails={loadError}
+          retryAction={{
+            label: lang === 'en' ? 'Retry' : 'পুনরায় চেষ্টা করুন',
+            onClick: () => loadDashboardData(),
+            icon: RotateCcw
+          }}
+          onDismiss={() => setLoadError(null)}
+        />
+      )}
 
       {/* 2. SUMMARY CARD (STATIC VARIANT) */}
       <Card
