@@ -2075,8 +2075,8 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
       {activeReport !== 'backup' && activeReport !== 'yoyComparison' && (
         <div className="p-4 rounded-2xl bg-white border border-gray-200 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-3">
           <div className="flex items-center gap-2.5">
-            <div className="w-9 h-9 rounded-xl bg-teal-50 text-teal-700 border border-teal-100 flex items-center justify-center shrink-0">
-              <CalendarDays className="w-5 h-5 text-teal-700" />
+            <div className="w-9 h-9 rounded-xl bg-purple-50 text-purple-700 border border-purple-100 flex items-center justify-center shrink-0">
+              <CalendarDays className="w-5 h-5 text-purple-700" />
             </div>
             <div>
               <span className="text-[11px] font-bold text-gray-500 uppercase tracking-wider block">সময়সীমা নির্বাচন (Report Date Range)</span>
@@ -2105,7 +2105,7 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
                 onClick={() => handleSelectPreset('this_month')}
                 className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer min-h-[36px] ${
                   datePreset === 'this_month'
-                    ? 'bg-teal-700 text-white shadow-xs'
+                    ? 'bg-purple-700 text-white shadow-xs'
                     : 'text-gray-700 hover:text-gray-900 hover:bg-gray-200/70'
                 }`}
               >
@@ -2117,7 +2117,7 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
                 onClick={() => handleSelectPreset('last_month')}
                 className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer min-h-[36px] ${
                   datePreset === 'last_month'
-                    ? 'bg-teal-700 text-white shadow-xs'
+                    ? 'bg-purple-700 text-white shadow-xs'
                     : 'text-gray-700 hover:text-gray-900 hover:bg-gray-200/70'
                 }`}
               >
@@ -2129,7 +2129,7 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
                 onClick={() => handleSelectPreset('this_year')}
                 className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer min-h-[36px] ${
                   datePreset === 'this_year'
-                    ? 'bg-teal-700 text-white shadow-xs'
+                    ? 'bg-purple-700 text-white shadow-xs'
                     : 'text-gray-700 hover:text-gray-900 hover:bg-gray-200/70'
                 }`}
               >
@@ -2146,7 +2146,7 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
                   id="filter-start-date"
                   value={startDate}
                   onChange={(e) => handleCustomStartDateChange(e.target.value)}
-                  className="w-full sm:w-auto px-2 py-1 bg-white border border-gray-300 rounded-lg text-gray-800 text-base font-sans cursor-pointer focus:outline-hidden focus:ring-1 focus:ring-teal-600 min-h-[36px]"
+                  className="w-full sm:w-auto px-2 py-1 bg-white border border-gray-300 rounded-lg text-gray-800 text-base font-sans cursor-pointer focus:outline-hidden focus:ring-1 focus:ring-purple-600 min-h-[36px]"
                   title="শুরুর তারিখ (From Date)"
                 />
               </div>
@@ -2157,7 +2157,7 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
                   id="filter-end-date"
                   value={endDate}
                   onChange={(e) => handleCustomEndDateChange(e.target.value)}
-                  className="w-full sm:w-auto px-2 py-1 bg-white border border-gray-300 rounded-lg text-gray-800 text-base font-sans cursor-pointer focus:outline-hidden focus:ring-1 focus:ring-teal-600 min-h-[36px]"
+                  className="w-full sm:w-auto px-2 py-1 bg-white border border-gray-300 rounded-lg text-gray-800 text-base font-sans cursor-pointer focus:outline-hidden focus:ring-1 focus:ring-purple-600 min-h-[36px]"
                   title="শেষ তারিখ (To Date)"
                 />
               </div>
@@ -2617,7 +2617,7 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
                   setActiveReport('ledger');
                 }}
                 className={`p-3.5 rounded-xl border border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900/80 shadow-2xs space-y-2 cursor-pointer transition-colors ${
-                  r.isOrphan ? 'border-red-300 bg-red-50/50 dark:bg-red-950/20' : 'hover:border-teal-300'
+                  r.isOrphan ? 'border-red-300 bg-red-50/50 dark:bg-red-950/20' : 'hover:border-purple-300'
                 }`}
               >
                 <div className="flex items-start justify-between gap-2">
@@ -2701,7 +2701,7 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-gray-100 pb-4">
             <div>
               <h3 className="text-base sm:text-lg font-bold text-gray-900 flex items-center gap-2">
-                <BookOpen className="w-5 h-5 text-teal-700" />
+                <BookOpen className="w-5 h-5 text-purple-700" />
                 <span>সাধারণ খতিয়ান ও হিসাব বহি (General Ledger)</span>
               </h3>
               <p className="text-[13px] text-gray-500 mt-0.5">
@@ -2721,7 +2721,7 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
                   setSelectedLedgerAccountCode(val);
                   loadLedgerReport(val);
                 }}
-                className="bg-[#F8FAFC] border border-gray-300 rounded-xl px-3 py-2 text-[13px] text-gray-900 font-semibold focus:outline-none focus:border-teal-600 focus:bg-white transition-all min-h-[40px] max-w-[260px] sm:max-w-[320px]"
+                className="bg-[#F8FAFC] border border-gray-300 rounded-xl px-3 py-2 text-[13px] text-gray-900 font-semibold focus:outline-none focus:border-purple-600 focus:bg-white transition-all min-h-[40px] max-w-[260px] sm:max-w-[320px]"
               >
                 {reportAccounts.map((acc) => (
                   <option key={acc.code} value={acc.code}>
@@ -2791,7 +2791,7 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
                 value={reportLedgerSearchQuery}
                 onChange={(e) => setReportLedgerSearchQuery(e.target.value)}
                 placeholder="খতিয়ান লেনদেন খুঁজুন (বিবরণ, টাকার পরিমাণ, তারিখ YYYY-MM-DD, ভাউচার)..."
-                className="w-full pl-10 pr-9 py-2.5 bg-[#F8FAFC] border border-gray-300 rounded-xl text-[14px] text-gray-900 focus:outline-none focus:border-teal-600 focus:bg-white transition-all min-h-[42px]"
+                className="w-full pl-10 pr-9 py-2.5 bg-[#F8FAFC] border border-gray-300 rounded-xl text-[14px] text-gray-900 focus:outline-none focus:border-purple-600 focus:bg-white transition-all min-h-[42px]"
               />
               {reportLedgerSearchQuery && (
                 <button
@@ -2808,7 +2808,7 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
             {reportLedgerSearchQuery.trim() && (
               <div className="text-xs text-gray-500 font-medium whitespace-nowrap">
                 অনুসন্ধানের ফলাফল:{' '}
-                <span className="font-bold text-teal-700">
+                <span className="font-bold text-purple-700">
                   {
                     reportLedgerEntries.filter((row) => {
                       const q = reportLedgerSearchQuery.toLowerCase().trim();
@@ -2871,7 +2871,7 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
                     >
                       <div className="flex items-start justify-between gap-2">
                         <div>
-                          <div className="font-semibold text-teal-700 font-mono text-xs">
+                          <div className="font-semibold text-purple-700 font-mono text-xs">
                             {entry.isOpeningBalance
                               ? 'OPENING BALANCE'
                               : (entry.voucherNumber || (entry.journalId && entry.journalId.slice(0, 8)) || 'VOUCHER')}
@@ -2935,7 +2935,7 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
                           }`}
                         >
                           <td className="p-3 font-sans whitespace-nowrap text-gray-700">{entry.date}</td>
-                          <td className="p-3 font-semibold text-teal-700 whitespace-nowrap">
+                          <td className="p-3 font-semibold text-purple-700 whitespace-nowrap">
                             {entry.isOpeningBalance
                               ? 'OPENING'
                               : (entry.voucherNumber || (entry.journalId && entry.journalId.slice(0, 8)) || '')}
@@ -2967,7 +2967,7 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
                       type="button"
                       id="btn-load-more-report-ledger"
                       onClick={() => setReportLedgerVisibleCount((prev) => prev + 25)}
-                      className="px-6 py-2.5 bg-white border-2 border-teal-700 text-teal-700 hover:bg-teal-700 hover:text-white rounded-xl text-xs font-bold transition-all shadow-xs cursor-pointer inline-flex items-center gap-2 min-h-[42px]"
+                      className="px-6 py-2.5 bg-white border-2 border-purple-700 text-purple-700 hover:bg-purple-700 hover:text-white rounded-xl text-xs font-bold transition-all shadow-xs cursor-pointer inline-flex items-center gap-2 min-h-[42px]"
                     >
                       <span>আরও দেখুন (Load More)</span>
                       <span className="text-[11px] opacity-80 font-normal">
@@ -2989,7 +2989,7 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-gray-100 pb-4">
             <div>
               <h3 className="text-base sm:text-lg font-bold text-gray-900 flex items-center gap-2">
-                <TrendingUp className="w-5 h-5 text-teal-700" />
+                <TrendingUp className="w-5 h-5 text-purple-700" />
                 <span>পশুভিত্তিক লাভ-ক্ষতি প্রতিবেদন (Per-Animal Profitability Report)</span>
               </h3>
               <p className="text-[13px] text-gray-500 mt-0.5">
@@ -2998,7 +2998,7 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
             </div>
             <div className="text-[12px] text-gray-500 bg-gray-50 px-3 py-1.5 rounded-lg border border-gray-200 flex items-center gap-1.5">
               <span>ক্রমানুসারে সাজানো:</span>
-              <span className="font-bold text-teal-700">
+              <span className="font-bold text-purple-700">
                 {animalSortKey === 'netProfit'
                   ? `নিট লাভ (${animalSortDirection === 'desc' ? 'সর্বোচ্চ ➔ সর্বনিম্ন' : 'সর্বনিম্ন ➔ সর্বোচ্চ'})`
                   : animalSortKey === 'totalCost'
@@ -3092,7 +3092,7 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
                 value={animalSearchQuery}
                 onChange={(e) => setAnimalSearchQuery(e.target.value)}
                 placeholder="আইডি, ট্যাগ বা জাত দিয়ে খুঁজুন..."
-                className="w-full pl-9 pr-4 py-2 text-[13px] rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-teal-600 focus:border-transparent bg-gray-50"
+                className="w-full pl-9 pr-4 py-2 text-[13px] rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-purple-600 focus:border-transparent bg-gray-50"
               />
             </div>
 
@@ -3136,7 +3136,7 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
                 onClick={() => toggleSort('netProfit')}
                 className={`px-3 py-2 rounded-xl border text-[12px] font-bold flex items-center gap-1.5 cursor-pointer transition-all ${
                   animalSortKey === 'netProfit'
-                    ? 'bg-teal-700 text-white border-teal-700 shadow-xs'
+                    ? 'bg-purple-700 text-white border-purple-700 shadow-xs'
                     : 'bg-white text-gray-700 border-gray-200 hover:bg-gray-50'
                 }`}
               >
@@ -3282,7 +3282,7 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
                     onClick={() => toggleSort('netProfit')}
                     className="py-3 px-3.5 whitespace-nowrap cursor-pointer bg-gray-200/50 hover:bg-gray-200 transition-all"
                   >
-                    <div className="flex items-center gap-1 text-teal-700">
+                    <div className="flex items-center gap-1 text-purple-700">
                       <span>নিট লাভ / ক্ষতি</span>
                       {animalSortKey === 'netProfit' ? (
                         animalSortDirection === 'desc' ? <ArrowDown className="w-4 h-4" /> : <ArrowUp className="w-4 h-4" />
@@ -4405,7 +4405,7 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
                   }}
                   className={`px-3.5 py-1.5 rounded-lg text-xs sm:text-[13px] font-bold transition-all cursor-pointer flex items-center gap-1.5 min-h-[38px] ${
                     agingSubTab === 'receivables'
-                      ? 'bg-teal-700 text-white shadow-xs'
+                      ? 'bg-purple-700 text-white shadow-xs'
                       : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200/50'
                   }`}
                 >
@@ -4427,7 +4427,7 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
                   }}
                   className={`px-3.5 py-1.5 rounded-lg text-xs sm:text-[13px] font-bold transition-all cursor-pointer flex items-center gap-1.5 min-h-[38px] ${
                     agingSubTab === 'payables'
-                      ? 'bg-teal-700 text-white shadow-xs'
+                      ? 'bg-purple-700 text-white shadow-xs'
                       : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200/50'
                   }`}
                 >
@@ -4470,7 +4470,7 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
                       onClick={() => setAgingBucketFilter(agingBucketFilter === b.key ? 'ALL' : b.key)}
                       className={`p-3.5 rounded-xl border text-left transition-all cursor-pointer ${
                         agingBucketFilter === b.key
-                          ? 'ring-2 ring-teal-600 bg-white shadow-xs'
+                          ? 'ring-2 ring-purple-600 bg-white shadow-xs'
                           : 'bg-white hover:bg-gray-50/80'
                       } ${b.cardBorder}`}
                     >
@@ -4534,7 +4534,7 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
                   }
                   value={agingSearchQuery}
                   onChange={(e) => setAgingSearchQuery(e.target.value)}
-                  className="w-full pl-9 pr-3 py-2 text-sm bg-gray-50 border border-gray-200 rounded-xl focus:bg-white focus:outline-hidden focus:ring-1 focus:ring-teal-600"
+                  className="w-full pl-9 pr-3 py-2 text-sm bg-gray-50 border border-gray-200 rounded-xl focus:bg-white focus:outline-hidden focus:ring-1 focus:ring-purple-600"
                 />
               </div>
 
@@ -4561,7 +4561,7 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
                     onClick={() => setAgingBucketFilter(b.key)}
                     className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer min-h-[32px] inline-flex items-center gap-1.5 ${
                       agingBucketFilter === b.key
-                        ? 'bg-teal-700 text-white shadow-2xs'
+                        ? 'bg-purple-700 text-white shadow-2xs'
                         : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
                     }`}
                   >
@@ -4773,10 +4773,10 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
           ) : (
             <>
               {/* Cash Flow Header Card */}
-              <div className="bg-white border border-teal-200/80 rounded-2xl p-4 sm:p-5 shadow-xs space-y-4">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-teal-100">
+              <div className="bg-white border border-purple-200/80 rounded-2xl p-4 sm:p-5 shadow-xs space-y-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-purple-100">
                   <div className="flex items-center gap-3">
-                    <IconTile icon={Coins} color="teal" size="md" rounded="xl" />
+                    <IconTile icon={Coins} color="purple" size="md" rounded="xl" />
                     <div>
                       <h3 className="text-base sm:text-lg font-bold text-gray-900">
                         নগদ প্রবাহ বিবরণী (Cash Flow Statement - Direct Method)
@@ -4895,38 +4895,38 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
                   {/* 5. Net Cash Flow */}
                   <div className={`p-3.5 rounded-xl border space-y-1 ${
                     cashFlowData.netCashFlow >= 0
-                      ? 'bg-teal-50/60 border-teal-200'
+                      ? 'bg-emerald-50/70 border-emerald-200'
                       : 'bg-rose-50/60 border-rose-200'
                   }`}>
                     <span className={`text-[11px] font-bold uppercase tracking-wider block ${
-                      cashFlowData.netCashFlow >= 0 ? 'text-teal-800' : 'text-rose-800'
+                      cashFlowData.netCashFlow >= 0 ? 'text-[#14532D]' : 'text-rose-800'
                     }`}>
                       ৫. নিট পরিবর্তন
                     </span>
                     <div className={`text-base sm:text-lg font-bold font-mono ${
-                      cashFlowData.netCashFlow >= 0 ? 'text-teal-700' : 'text-rose-700'
+                      cashFlowData.netCashFlow >= 0 ? 'text-[#15803D]' : 'text-rose-700'
                     }`}>
                       {cashFlowData.netCashFlow >= 0 ? '+' : ''}{fmt(cashFlowData.netCashFlow)}
                     </div>
-                    <span className={`text-[11px] block ${
-                      cashFlowData.netCashFlow >= 0 ? 'text-teal-600' : 'text-rose-600'
+                    <span className={`text-[11px] block font-medium ${
+                      cashFlowData.netCashFlow >= 0 ? 'text-emerald-700' : 'text-rose-600'
                     }`}>
                       {cashFlowData.netCashFlow >= 0 ? 'তহবিল নিট বৃদ্ধি' : 'তহবিল নিট হ্রাস'}
                     </span>
                   </div>
 
                   {/* 6. Closing Cash */}
-                  <div className="p-3.5 rounded-xl bg-teal-50/80 border border-teal-300 space-y-1">
+                  <div className="p-3.5 rounded-xl bg-purple-50/80 border border-purple-200 space-y-1">
                     <div className="flex items-center justify-between gap-1">
-                      <span className="text-[11px] font-bold text-teal-900 uppercase tracking-wider">
+                      <span className="text-[11px] font-bold text-purple-900 uppercase tracking-wider">
                         ৬. সমাপ্তি নগদ (Closing)
                       </span>
-                      <CheckCircle2 className="w-4 h-4 text-teal-700 shrink-0" />
+                      <CheckCircle2 className="w-4 h-4 text-purple-700 shrink-0" />
                     </div>
-                    <div className="text-base sm:text-lg font-bold font-mono text-teal-900">
+                    <div className="text-base sm:text-lg font-bold font-mono text-purple-900">
                       {fmt(cashFlowData.closingCash)}
                     </div>
-                    <span className="text-[11px] text-teal-700 font-medium block truncate">
+                    <span className="text-[11px] text-purple-700 font-medium block truncate">
                       = লেজার সমাপ্তি স্থিতি
                     </span>
                   </div>
@@ -5290,7 +5290,7 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-gray-100">
                   <div>
                     <h4 className="font-bold text-gray-900 text-sm sm:text-base flex items-center gap-2">
-                      <Scale className="w-4 h-4 text-teal-700" />
+                      <Scale className="w-4 h-4 text-purple-700" />
                       <span>সমাপ্তি স্থিতি সমন্বয় সমীকরণ (Cash Flow Reconciliation Statement)</span>
                     </h4>
                     <p className="text-xs text-gray-500 mt-0.5">
@@ -5374,23 +5374,23 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
                           {cashFlowData.financing.netFinancingFlow >= 0 ? '+' : ''}{fmt(cashFlowData.financing.netFinancingFlow)}
                         </td>
                       </tr>
-                      <tr className="bg-teal-50/50">
-                        <td className="py-2.5 px-3 font-medium text-teal-950">
+                      <tr className="bg-emerald-50/40">
+                        <td className="py-2.5 px-3 font-medium text-gray-900">
                           সময়কালে মোট নিট নগদ পরিবর্তন (Net Increase / Decrease in Cash)
                         </td>
-                        <td className="py-2.5 px-3 font-mono text-teal-700 font-bold">(=)</td>
+                        <td className="py-2.5 px-3 font-mono text-gray-600 font-bold">(=)</td>
                         <td className={`py-2.5 px-3 text-right font-mono font-bold ${
-                          cashFlowData.netCashFlow >= 0 ? 'text-teal-700' : 'text-rose-700'
+                          cashFlowData.netCashFlow >= 0 ? 'text-[#15803D]' : 'text-rose-700'
                         }`}>
                           {cashFlowData.netCashFlow >= 0 ? '+' : ''}{fmt(cashFlowData.netCashFlow)}
                         </td>
                       </tr>
-                      <tr className="bg-teal-100/70 font-bold text-gray-900 border-t-2 border-teal-400">
-                        <td className="py-3 px-3 text-teal-950 font-bold">
+                      <tr className="bg-purple-50/80 font-bold text-gray-900 border-t-2 border-purple-300">
+                        <td className="py-3 px-3 text-purple-950 font-bold">
                           সমাপ্তি নগদ ও ব্যাংক স্থিতি (Resulting Closing Cash & Bank Balance)
                         </td>
-                        <td className="py-3 px-3 font-mono text-teal-900 font-bold">(=)</td>
-                        <td className="py-3 px-3 text-right font-mono text-teal-950 font-extrabold text-base sm:text-lg">
+                        <td className="py-3 px-3 font-mono text-purple-900 font-bold">(=)</td>
+                        <td className="py-3 px-3 text-right font-mono text-purple-950 font-extrabold text-base sm:text-lg">
                           {fmt(cashFlowData.closingCash)}
                         </td>
                       </tr>
@@ -5462,11 +5462,11 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
                         ))}
                       </tbody>
                       <tfoot>
-                        <tr className="bg-teal-50/80 font-bold border-t border-teal-200 text-teal-950">
+                        <tr className="bg-purple-50/80 font-bold border-t border-purple-200 text-purple-950">
                           <td colSpan={5} className="py-2.5 px-3 text-right">
                             সর্বমোট খতিয়ান ক্যাশ ও ব্যাংক সমাপ্তি স্থিতি (Total GL Cash & Bank):
                           </td>
-                          <td className="py-2.5 px-3 text-right font-mono text-sm font-extrabold text-teal-900">
+                          <td className="py-2.5 px-3 text-right font-mono text-sm font-extrabold text-purple-900">
                             {fmt(cashFlowData.closingCash)}
                           </td>
                         </tr>
@@ -5513,7 +5513,7 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             {/* EXPORT BACKUP */}
             <div className="p-5 rounded-xl bg-[#F8FAFC] border border-gray-200 space-y-3">
-              <h4 className="font-bold text-teal-700 text-[15px] flex items-center gap-2">
+              <h4 className="font-bold text-purple-700 text-[15px] flex items-center gap-2">
                 <Download className="w-4 h-4" />
                 <span>JSON ব্যাকআপ ডাউনলোড</span>
               </h4>
@@ -5522,7 +5522,7 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
               </p>
               <button
                 onClick={handleBackupJson}
-                className="w-full py-2.5 px-4 rounded-xl bg-teal-700 hover:bg-teal-800 text-white font-bold text-[13px] transition-all flex items-center justify-center gap-2 cursor-pointer shadow-xs min-h-[42px]"
+                className="w-full py-2.5 px-4 rounded-xl bg-purple-700 hover:bg-purple-800 text-white font-bold text-[13px] transition-all flex items-center justify-center gap-2 cursor-pointer shadow-xs min-h-[42px]"
               >
                 <Download className="w-4 h-4" />
                 <span>সম্পূর্ণ ডাটাবেজ ব্যাকআপ নিন (Download JSON)</span>
@@ -5560,7 +5560,7 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-gray-100 pb-4">
             <div>
               <div className="flex items-center gap-2">
-                <FileText className="w-5 h-5 text-teal-700" />
+                <FileText className="w-5 h-5 text-purple-700" />
                 <h3 className="text-base sm:text-lg font-bold text-gray-900">
                   ভ্যাট ও মূসক সারাংশ প্রতিবেদন (VAT Summary Report)
                 </h3>
@@ -6022,7 +6022,7 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
             <div className="bg-white border border-gray-200 rounded-2xl p-5 shadow-xs space-y-4">
               <div className="flex items-center justify-between pb-3 border-b border-gray-100">
                 <h4 className="font-bold text-gray-900 text-sm sm:text-base flex items-center gap-2">
-                  <FileSpreadsheet className="w-4 h-4 text-teal-700" />
+                  <FileSpreadsheet className="w-4 h-4 text-purple-700" />
                   <span>তুলনামূলক লাভ-ক্ষতি বিবরণী (Comparative Profit & Loss Statement)</span>
                 </h4>
                 <span className="text-xs text-gray-500 font-mono">মান: বিডিটি (BDT)</span>
@@ -6873,7 +6873,7 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
 
               <div className={`p-3.5 rounded-xl border space-y-1 ${
                 reconciliationReport.isAllMatched
-                  ? 'border-teal-200 bg-teal-50/60'
+                  ? 'border-emerald-200 bg-emerald-50/60'
                   : 'border-amber-200 bg-amber-50/60'
               }`}>
                 <span className="text-xs text-gray-600 font-medium block">সার্বিক হিসাব স্থিতি</span>

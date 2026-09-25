@@ -124,7 +124,7 @@ const MAIN_MODULES: {
     nameBn: 'রিপোর্টস ও বিবরণী',
     nameEn: 'Reports & Analytics',
     icon: FileSpreadsheet,
-    color: 'teal',
+    color: 'purple',
     subtitle: 'লাভ-ক্ষতি, ব্যালেন্স শিট ও আর্থিক বিশ্লেষণ'
   },
   {
