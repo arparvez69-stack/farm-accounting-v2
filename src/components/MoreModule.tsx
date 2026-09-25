@@ -1016,7 +1016,16 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
             </div>
           </div>
 
-          {accessLogs.length === 0 ? (
+          {loading ? (
+            <div className="space-y-3">
+              {[1, 2, 3].map((n) => (
+                <div
+                  key={n}
+                  className="h-20 rounded-xl bg-slate-100 dark:bg-slate-800 animate-pulse border border-slate-200/60 dark:border-slate-700/60"
+                />
+              ))}
+            </div>
+          ) : accessLogs.length === 0 ? (
             <div className="rounded-xl border border-dashed border-gray-300 dark:border-slate-700 p-8 text-center text-gray-500 dark:text-slate-400 text-[14px] bg-gray-50/50 dark:bg-slate-900/30">
               এখনো কোনো অ্যাক্সেস লগ নেই। নতুন কেউ পিন দিয়ে লগইন করলে এখানে প্রদর্শিত হবে।
             </div>
@@ -1122,7 +1131,16 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
           </div>
 
           {/* Responsive Audit Logs Display */}
-          {logs.length === 0 ? (
+          {loading ? (
+            <div className="space-y-3">
+              {[1, 2, 3].map((n) => (
+                <div
+                  key={n}
+                  className="h-16 rounded-xl bg-slate-100 dark:bg-slate-800 animate-pulse border border-slate-200/60 dark:border-slate-700/60"
+                />
+              ))}
+            </div>
+          ) : logs.length === 0 ? (
             <div className="p-8 text-center text-gray-500 text-[14px] bg-gray-50/50 dark:bg-slate-900/30 rounded-xl border border-dashed border-gray-300 dark:border-slate-700">
               কোনো অডিট লগ এন্ট্রি পাওয়া যায়নি
             </div>
@@ -1452,8 +1470,22 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
             </form>
           )}
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {assets.map((ast, idx) => {
+          {loading ? (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+              {[1, 2, 3].map((n) => (
+                <div
+                  key={n}
+                  className="h-64 rounded-2xl bg-slate-100 dark:bg-slate-800 animate-pulse border border-slate-200/60 dark:border-slate-700/60"
+                />
+              ))}
+            </div>
+          ) : assets.length === 0 ? (
+            <div className="p-8 text-center text-gray-500 text-[14px] bg-gray-50/50 dark:bg-slate-900/30 rounded-xl border border-dashed border-gray-300 dark:border-slate-700">
+              কোনো স্থায়ী সম্পদ তালিকাভুক্ত নেই
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+              {assets.map((ast, idx) => {
               const deprParams = calculateAssetDepreciationParameters(
                 ast.originalCost,
                 ast.salvageValue,
@@ -1585,7 +1617,8 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
                 </div>
               );
             })}
-          </div>
+            </div>
+          )}
 
           {/* Edit Asset Modal */}
           {editingAsset && (

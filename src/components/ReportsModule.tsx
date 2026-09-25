@@ -2829,7 +2829,16 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
           </div>
 
           {/* Ledger Table */}
-          {(() => {
+          {loading ? (
+            <div className="space-y-2.5">
+              {[1, 2, 3, 4].map((n) => (
+                <div
+                  key={n}
+                  className="h-12 rounded-xl bg-slate-100 dark:bg-slate-800 animate-pulse border border-slate-200/60 dark:border-slate-700/60"
+                />
+              ))}
+            </div>
+          ) : (() => {
             const q = reportLedgerSearchQuery.toLowerCase().trim();
             const reversed = [...reportLedgerEntries].reverse();
             const filtered = reversed.filter((row) => {
@@ -4578,8 +4587,18 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
           </div>
 
           {/* Grouped Buckets Content */}
-          <div className="space-y-4">
-            {agingBuckets
+          {loading ? (
+            <div className="space-y-3">
+              {[1, 2].map((n) => (
+                <div
+                  key={n}
+                  className="h-28 rounded-2xl bg-slate-100 dark:bg-slate-800 animate-pulse border border-slate-200/60 dark:border-slate-700/60"
+                />
+              ))}
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {agingBuckets
               .filter((b) => agingBucketFilter === 'ALL' || agingBucketFilter === b.key)
               .map((bucket) => (
                 <div
@@ -4749,7 +4768,8 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
                   </div>
                 </div>
               ))}
-          </div>
+            </div>
+          )}
 
           {/* Aging Explanatory Footnote */}
           <div className="p-3.5 bg-gray-50 rounded-xl border border-gray-200 text-xs text-gray-600 space-y-1">
@@ -4767,8 +4787,17 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
       {activeReport === 'cashFlow' && (
         <div className="space-y-4">
           {loading || !cashFlowData ? (
-            <div className="p-8 text-center bg-white rounded-2xl border border-gray-200 text-gray-500 font-medium">
-              নগদ প্রবাহ বিবরণী লোড হচ্ছে...
+            <div className="space-y-4">
+              <div className="h-20 rounded-2xl bg-slate-100 dark:bg-slate-800 animate-pulse border border-slate-200/60 dark:border-slate-700/60" />
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                {[1, 2, 3].map((n) => (
+                  <div
+                    key={n}
+                    className="h-20 rounded-xl bg-slate-100 dark:bg-slate-800 animate-pulse border border-slate-200/60 dark:border-slate-700/60"
+                  />
+                ))}
+              </div>
+              <div className="h-56 rounded-2xl bg-slate-100 dark:bg-slate-800 animate-pulse border border-slate-200/60 dark:border-slate-700/60" />
             </div>
           ) : (
             <>
@@ -6839,7 +6868,16 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
           </div>
 
           {/* KPI Summary Cards */}
-          {reconciliationReport && (
+          {(isReconciling || loading) && !reconciliationReport ? (
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+              {[1, 2, 3, 4].map((n) => (
+                <div
+                  key={n}
+                  className="h-20 rounded-xl bg-slate-100 dark:bg-slate-800 animate-pulse border border-slate-200/60 dark:border-slate-700/60"
+                />
+              ))}
+            </div>
+          ) : reconciliationReport && (
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
               <div className="p-3.5 rounded-xl border border-gray-200 bg-gray-50/60 space-y-1">
                 <span className="text-xs text-gray-500 font-medium block">মোট নিরীক্ষিত ক্ষেত্র</span>
@@ -6923,7 +6961,16 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
           )}
 
           {/* Table of Reconciliation Checks */}
-          {reconciliationReport && (
+          {(isReconciling || loading) && !reconciliationReport ? (
+            <div className="space-y-2.5">
+              {[1, 2, 3, 4].map((n) => (
+                <div
+                  key={n}
+                  className="h-16 rounded-xl bg-slate-100 dark:bg-slate-800 animate-pulse border border-slate-200/60 dark:border-slate-700/60"
+                />
+              ))}
+            </div>
+          ) : reconciliationReport && (
             <div className="space-y-3">
               {/* Desktop Table */}
               <div className="hidden md:block overflow-x-auto rounded-xl border border-gray-200">
