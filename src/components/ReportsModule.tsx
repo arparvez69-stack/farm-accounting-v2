@@ -36,7 +36,8 @@ import {
   ChevronDown,
   ChevronUp,
   ShieldCheck,
-  AlertTriangle
+  AlertTriangle,
+  RotateCcw
 } from 'lucide-react';
 import {
   FullReconciliationReport,
@@ -73,7 +74,7 @@ import { exportAllToExcel, createFullJsonBackup, restoreFromJsonBackup } from '.
 import { db } from '../db/indexedDb';
 import { UserRole, Sale, Purchase, PaymentRecord, Loan, Investor, CashBankAccount, JournalEntry, ClosedPeriod, Account, Animal, AnimalEvent, FishBatch, CropCycle } from '../types';
 import { generateAmortizationSchedule, addMonthsToDate } from '../accounting/amortizationService';
-import { StatusBadge, Card, IconTile, EmptyState } from './ui';
+import { StatusBadge, Card, IconTile, EmptyState, ErrorState } from './ui';
 
 type DatePreset = 'this_month' | 'last_month' | 'this_year' | 'custom';
 
@@ -328,6 +329,8 @@ type ReportType =
 export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
   const [activeReport, setActiveReport] = useState<ReportType>('pl');
   const [loading, setLoading] = useState(false);
+  const [reportsError, setReportsError] = useState<string | null>(null);
+  const [exportError, setExportError] = useState<string | null>(null);
 
   const [pl, setPl] = useState<ProfitLossReport | null>(null);
   const [bs, setBs] = useState<BalanceSheetReport | null>(null);
@@ -1054,6 +1057,7 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
 
   const loadReports = async () => {
     setLoading(true);
+    setReportsError(null);
     try {
       const [periods, allLoans] = await Promise.all([
         getClosedPeriods(),
@@ -1099,8 +1103,13 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
       } else if (activeReport === 'reconciliation') {
         await loadReconciliationReport(endDate);
       }
-    } catch (e) {
-      console.error(e);
+    } catch (e: any) {
+      console.error('Failed to load reports:', e);
+      setReportsError(
+        typeof e?.message === 'string' && e.message.length > 0
+          ? e.message
+          : 'প্রতিবেদন সংক্রান্ত তথ্য লোড করতে সমস্যা হয়েছে। অনুগ্রহ করে পুনরায় চেষ্টা করুন।'
+      );
     } finally {
       setLoading(false);
     }
@@ -1112,8 +1121,13 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
       const targetDate = overrideDate || endDate || new Date().toISOString().split('T')[0];
       const report = await runAccountingReconciliation(db, targetDate);
       setReconciliationReport(report);
-    } catch (e) {
+    } catch (e: any) {
       console.error('Failed to run accounting reconciliation:', e);
+      setReportsError(
+        typeof e?.message === 'string' && e.message.length > 0
+          ? e.message
+          : 'হিসাব পুনর্মিলন প্রতিবেদন লোড করতে সমস্যা হয়েছে। অনুগ্রহ করে পুনরায় চেষ্টা করুন।'
+      );
     } finally {
       setIsReconciling(false);
     }
@@ -1629,20 +1643,32 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
 
   const handleExportExcel = async () => {
     setIsExporting(true);
+    setExportError(null);
     try {
       await exportAllToExcel('Agro_Farm');
     } catch (e: any) {
-      alert(`এক্সেল এক্সপোর্ট ত্রুটি: ${e.message}`);
+      console.error('Excel export error:', e);
+      setExportError(
+        typeof e?.message === 'string' && e.message.length > 0
+          ? `এক্সেল এক্সপোর্ট ত্রুটি: ${e.message}`
+          : 'এক্সেল ফাইল এক্সপোর্ট করতে সমস্যা হয়েছে। অনুগ্রহ করে পুনরায় চেষ্টা করুন।'
+      );
     } finally {
       setIsExporting(false);
     }
   };
 
   const handleBackupJson = async () => {
+    setExportError(null);
     try {
       await createFullJsonBackup();
     } catch (e: any) {
-      alert(`ব্যাকআপ ত্রুটি: ${e.message}`);
+      console.error('JSON backup error:', e);
+      setExportError(
+        typeof e?.message === 'string' && e.message.length > 0
+          ? `ব্যাকআপ ত্রুটি: ${e.message}`
+          : 'সম্পূর্ণ ব্যাকআপ ফাইল তৈরিতে সমস্যা হয়েছে। অনুগ্রহ করে পুনরায় চেষ্টা করুন।'
+      );
     }
   };
 
@@ -1828,6 +1854,31 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
 
   return (
     <div className="space-y-5 pb-6 max-w-5xl mx-auto p-2 sm:p-4">
+      {reportsError && (
+        <ErrorState
+          id="reports-load-error-banner"
+          variant="banner"
+          title="প্রতিবেদন লোড করতে সমস্যা হয়েছে"
+          message="ডাটাবেজ বা হিসাব বিবরণী থেকে প্রতিবেদন প্রস্তুত করতে সমস্যা হয়েছে। অনুগ্রহ করে পুনরায় চেষ্টা করুন।"
+          technicalDetails={reportsError}
+          retryAction={{
+            label: 'পুনরায় চেষ্টা করুন',
+            onClick: () => loadReports(),
+            icon: RotateCcw
+          }}
+          onDismiss={() => setReportsError(null)}
+        />
+      )}
+
+      {exportError && (
+        <ErrorState
+          id="reports-export-error-inline"
+          variant="inline"
+          message={exportError}
+          onDismiss={() => setExportError(null)}
+        />
+      )}
+
       {/* Header & Report Selectors */}
       <div className="flex flex-col gap-3.5 p-4 sm:p-5 rounded-2xl bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 shadow-xs">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
