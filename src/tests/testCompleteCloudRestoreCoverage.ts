@@ -180,6 +180,7 @@ export async function runCompleteCloudRestoreCoverageTests(): Promise<AssertionR
       reminders: {
         id: `rem_${runTag}`,
         animalId: animalId,
+        title: 'Quarterly Deworming Booster',
         category: 'DEWORMING',
         dueDate: '2026-10-15',
         status: 'PENDING',

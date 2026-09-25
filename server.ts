@@ -1999,7 +1999,7 @@ export function validateRecordShape(targetCol: string, data: any): { valid: bool
       break;
     }
     case 'reminders': {
-      if (!isNonEmptyStr(data.title)) {
+      if (!isNonEmptyStr(data.title) && !isNonEmptyStr(data.category) && !isNonEmptyStr(data.details)) {
         return { valid: false, error: 'স্মারক শিরোনাম আবশ্যক (Reminder must specify title).' };
       }
       break;
