@@ -23,7 +23,8 @@ import {
   RefreshCw,
   X,
   HardDriveDownload,
-  Droplets
+  Droplets,
+  RotateCcw
 } from 'lucide-react';
 import { db } from '../db/indexedDb';
 import { generateProfitLoss, generateTrialBalance } from '../accounting/accountingEngine';
