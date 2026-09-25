@@ -1582,16 +1582,16 @@ export const FarmOperationsModule: React.FC<Props> = ({
           </div>
 
           {showAddAnimal && (
-            <form onSubmit={handleAddAnimal} className="p-4 bg-[#F8FAFC] border border-gray-300 rounded-xl space-y-3">
+            <form onSubmit={handleAddAnimal} className="p-4 bg-[#F8FAFC] border border-gray-300 rounded-xl space-y-3.5">
               <div className="font-bold text-[#1E5128] text-[15px]">নতুন গবাদিপশু তথ্য যোগ করুন</div>
-              <div className="grid grid-cols-1 sm:grid-cols-4 gap-2.5">
+              <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
                 <div>
                   <input
                     type="text"
                     placeholder="ট্যাগ নং (যেমন: COW-105)"
                     value={tagId}
                     onChange={(e) => setTagId(e.target.value)}
-                    className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900"
+                    className="w-full bg-white border border-gray-300 rounded-xl px-3.5 py-2.5 text-sm sm:text-[15px] text-gray-900 focus:outline-none focus:border-[#1E5128] focus:ring-2 focus:ring-[#1E5128]/20 min-h-[44px]"
                   />
                   {tagId.trim() &&
                     animals.some(
@@ -1607,7 +1607,7 @@ export const FarmOperationsModule: React.FC<Props> = ({
                 <select
                   value={species}
                   onChange={(e) => setSpecies(e.target.value as any)}
-                  className="bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900"
+                  className="bg-white border border-gray-300 rounded-xl px-3.5 py-2.5 text-sm sm:text-[15px] text-gray-900 focus:outline-none focus:border-[#1E5128] focus:ring-2 focus:ring-[#1E5128]/20 min-h-[44px]"
                 >
                   <option value="CATTLE">গরু (Cattle)</option>
                   <option value="GOAT">ছাগল (Goat)</option>
@@ -1619,30 +1619,30 @@ export const FarmOperationsModule: React.FC<Props> = ({
                   placeholder="জাত (Breed)"
                   value={breed}
                   onChange={(e) => setBreed(e.target.value)}
-                  className="bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900"
+                  className="bg-white border border-gray-300 rounded-xl px-3.5 py-2.5 text-sm sm:text-[15px] text-gray-900 focus:outline-none focus:border-[#1E5128] focus:ring-2 focus:ring-[#1E5128]/20 min-h-[44px]"
                 />
                 <select
                   value={gender}
                   onChange={(e) => setGender(e.target.value as any)}
-                  className="bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900"
+                  className="bg-white border border-gray-300 rounded-xl px-3.5 py-2.5 text-sm sm:text-[15px] text-gray-900 focus:outline-none focus:border-[#1E5128] focus:ring-2 focus:ring-[#1E5128]/20 min-h-[44px]"
                 >
                   <option value="FEMALE">মাদি (Female)</option>
                   <option value="MALE">মদ্দা (Male)</option>
                 </select>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-[13px] font-medium text-gray-700 mb-1">জন্ম তারিখ (Birth Date) *</label>
+                  <label className="block text-xs sm:text-[13px] font-semibold text-gray-700 mb-1.5">জন্ম তারিখ (Birth Date) *</label>
                   <input
                     type="date"
                     required
                     value={animalBirthDate}
                     onChange={(e) => setAnimalBirthDate(e.target.value)}
-                    className={`w-full bg-white border rounded-lg p-2.5 text-[14px] text-gray-900 ${
+                    className={`w-full bg-white border rounded-xl px-3.5 py-2.5 text-sm sm:text-[15px] text-gray-900 min-h-[44px] focus:outline-none ${
                       animalBirthDate > new Date().toISOString().split('T')[0]
                         ? 'border-rose-500 bg-rose-50/20'
-                        : 'border-gray-300'
+                        : 'border-gray-300 focus:border-[#1E5128] focus:ring-2 focus:ring-[#1E5128]/20'
                     }`}
                   />
                   {animalBirthDate > new Date().toISOString().split('T')[0] && (

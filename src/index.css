@@ -96,17 +96,18 @@ h1, h2, h3, h4 {
     font-size: 16px !important;
   }
 
-  /* Minimum comfortable touch height on all mobile interactive form controls */
+  /* Minimum comfortable touch height on all mobile interactive form controls (iOS Apple HIG 44pt touch target standard) */
   input:not([type="checkbox"]):not([type="radio"]),
-  select {
-    min-height: 42px;
+  select,
+  textarea {
+    min-height: 44px;
   }
 
   /* Ergonomic hit area for checkboxes and radios */
   input[type="checkbox"],
   input[type="radio"] {
-    min-width: 18px;
-    min-height: 18px;
+    min-width: 20px;
+    min-height: 20px;
     cursor: pointer;
   }
 }

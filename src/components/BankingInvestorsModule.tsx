@@ -1228,26 +1228,26 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
             </div>
 
             {showAddAccount && (
-              <form onSubmit={handleAddAccount} className="p-4 bg-[#F8FAFC] border border-gray-300 rounded-xl space-y-3">
+              <form onSubmit={handleAddAccount} className="p-4 bg-[#F8FAFC] border border-gray-300 rounded-xl space-y-3.5">
                 <div className="font-bold text-[#1E5128] text-[15px]">নতুন ব্যাংক/তহবিল হিসাব যোগ করুন</div>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                   <div>
-                    <label className="block text-[13px] font-medium text-gray-700 mb-1">হিসাবের নাম</label>
+                    <label className="block text-xs sm:text-[13px] font-semibold text-gray-700 mb-1.5">হিসাবের নাম *</label>
                     <input
                       type="text"
                       required
                       placeholder="যেমন: ইসলামী ব্যাংক চলতি হিসাব"
                       value={accName}
                       onChange={(e) => setAccName(e.target.value)}
-                      className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900"
+                      className="w-full bg-white border border-gray-300 rounded-xl px-3.5 py-2.5 text-sm sm:text-[15px] text-gray-900 focus:outline-none focus:border-[#1E5128] focus:ring-2 focus:ring-[#1E5128]/20 min-h-[44px]"
                     />
                   </div>
                   <div>
-                    <label className="block text-[13px] font-medium text-gray-700 mb-1">হিসাবের ধরন</label>
+                    <label className="block text-xs sm:text-[13px] font-semibold text-gray-700 mb-1.5">হিসাবের ধরন *</label>
                     <select
                       value={accType}
                       onChange={(e) => setAccType(e.target.value as any)}
-                      className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900"
+                      className="w-full bg-white border border-gray-300 rounded-xl px-3.5 py-2.5 text-sm sm:text-[15px] text-gray-900 focus:outline-none focus:border-[#1E5128] focus:ring-2 focus:ring-[#1E5128]/20 min-h-[44px]"
                     >
                       <option value="BANK">ব্যাংক হিসাব (Bank - 1030)</option>
                       <option value="MOBILE_BANKING">মোবাইল ব্যাংকিং (bKash/Nagad - 1030)</option>
@@ -1255,52 +1255,52 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
                     </select>
                   </div>
                   <div>
-                    <label className="block text-[13px] font-medium text-gray-700 mb-1">হিসাব নম্বর</label>
+                    <label className="block text-xs sm:text-[13px] font-semibold text-gray-700 mb-1.5">হিসাব নম্বর</label>
                     <input
                       type="text"
                       placeholder="A/C Number"
                       value={accNumber}
                       onChange={(e) => setAccNumber(e.target.value)}
-                      className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900"
+                      className="w-full bg-white border border-gray-300 rounded-xl px-3.5 py-2.5 text-sm sm:text-[15px] text-gray-900 focus:outline-none focus:border-[#1E5128] focus:ring-2 focus:ring-[#1E5128]/20 min-h-[44px]"
                     />
                   </div>
                 </div>
 
                 {accType === 'BANK' && (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <div>
-                      <label className="block text-[13px] font-medium text-gray-700 mb-1">ব্যাংকের নাম</label>
+                      <label className="block text-xs sm:text-[13px] font-semibold text-gray-700 mb-1.5">ব্যাংকের নাম</label>
                       <input
                         type="text"
                         value={bankName}
                         onChange={(e) => setBankName(e.target.value)}
-                        className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900"
+                        className="w-full bg-white border border-gray-300 rounded-xl px-3.5 py-2.5 text-sm sm:text-[15px] text-gray-900 focus:outline-none focus:border-[#1E5128] focus:ring-2 focus:ring-[#1E5128]/20 min-h-[44px]"
                       />
                     </div>
                     <div>
-                      <label className="block text-[13px] font-medium text-gray-700 mb-1">শাখা (Branch)</label>
+                      <label className="block text-xs sm:text-[13px] font-semibold text-gray-700 mb-1.5">শাখা (Branch)</label>
                       <input
                         type="text"
                         value={branch}
                         onChange={(e) => setBranch(e.target.value)}
                         placeholder="শাখার নাম"
-                        className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900"
+                        className="w-full bg-white border border-gray-300 rounded-xl px-3.5 py-2.5 text-sm sm:text-[15px] text-gray-900 focus:outline-none focus:border-[#1E5128] focus:ring-2 focus:ring-[#1E5128]/20 min-h-[44px]"
                       />
                     </div>
                   </div>
                 )}
 
-                <div className="flex justify-end gap-2.5 pt-1">
+                <div className="flex flex-col-reverse sm:flex-row justify-end gap-2.5 pt-2">
                   <button
                     type="button"
                     onClick={() => setShowAddAccount(false)}
-                    className="px-4 py-2 rounded-lg bg-gray-200 text-gray-800 text-[13px] font-semibold cursor-pointer min-h-[40px]"
+                    className="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-gray-200 text-gray-800 text-[13px] font-semibold cursor-pointer min-h-[44px]"
                   >
                     বাতিল
                   </button>
                   <button
                     type="submit"
-                    className="px-4 py-2 rounded-lg bg-[#1E5128] text-white text-[13px] font-bold cursor-pointer min-h-[40px]"
+                    className="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-[#1E5128] text-white text-[13px] font-bold cursor-pointer min-h-[44px] shadow-sm hover:bg-[#173F1F] transition-colors"
                   >
                     সংরক্ষণ করুন
                   </button>
@@ -1385,15 +1385,15 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
           </div>
 
           {showTransfer && (
-            <form onSubmit={handleExecuteTransfer} className="p-4 bg-[#F8FAFC] border border-gray-300 rounded-xl space-y-3">
+            <form onSubmit={handleExecuteTransfer} className="p-4 bg-[#F8FAFC] border border-gray-300 rounded-xl space-y-3.5">
               <div className="font-bold text-[#1E5128] text-[15px]">কন্ট্রা ভাউচার তৈরি করুন</div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-[13px] font-medium text-gray-700 mb-1">উৎস হিসাব (টাকা যাবে)</label>
+                  <label className="block text-xs sm:text-[13px] font-semibold text-gray-700 mb-1.5">উৎস হিসাব (টাকা যাবে) *</label>
                   <select
                     value={fromAccId}
                     onChange={(e) => setFromAccId(e.target.value)}
-                    className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900"
+                    className="w-full bg-white border border-gray-300 rounded-xl px-3.5 py-2.5 text-sm sm:text-[15px] text-gray-900 focus:outline-none focus:border-[#1E5128] focus:ring-2 focus:ring-[#1E5128]/20 min-h-[44px]"
                   >
                     <option value="">-- যে হিসাব থেকে টাকা বের হবে --</option>
                     {accounts.map((a) => (
@@ -1405,11 +1405,11 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
                 </div>
 
                 <div>
-                  <label className="block text-[13px] font-medium text-gray-700 mb-1">গন্তব্য হিসাব (টাকা জমা হবে)</label>
+                  <label className="block text-xs sm:text-[13px] font-semibold text-gray-700 mb-1.5">গন্তব্য হিসাব (টাকা জমা হবে) *</label>
                   <select
                     value={toAccId}
                     onChange={(e) => setToAccId(e.target.value)}
-                    className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900"
+                    className="w-full bg-white border border-gray-300 rounded-xl px-3.5 py-2.5 text-sm sm:text-[15px] text-gray-900 focus:outline-none focus:border-[#1E5128] focus:ring-2 focus:ring-[#1E5128]/20 min-h-[44px]"
                   >
                     <option value="">-- যে হিসাবে টাকা জমা হবে --</option>
                     {accounts.filter((a) => a.id !== fromAccId).map((a) => (
@@ -1423,40 +1423,41 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-[13px] font-medium text-gray-700 mb-1">স্থানান্তরের পরিমাণ (৳)</label>
+                  <label className="block text-xs sm:text-[13px] font-semibold text-gray-700 mb-1.5">স্থানান্তরের পরিমাণ (৳) *</label>
                   <input
                     type="number"
+                    inputMode="decimal"
                     step="0.01"
                     required
                     placeholder="টাকার অংক"
                     value={transferAmount}
                     onChange={(e) => setTransferAmount(e.target.value)}
-                    className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900 font-mono"
+                    className="w-full bg-white border border-gray-300 rounded-xl px-3.5 py-2.5 text-sm sm:text-[15px] text-gray-900 font-mono focus:outline-none focus:border-[#1E5128] focus:ring-2 focus:ring-[#1E5128]/20 min-h-[44px]"
                   />
                 </div>
                 <div>
-                  <label className="block text-[13px] font-medium text-gray-700 mb-1">বিবরণ / নোট</label>
+                  <label className="block text-xs sm:text-[13px] font-semibold text-gray-700 mb-1.5">বিবরণ / নোট</label>
                   <input
                     type="text"
                     placeholder="যেমন: খামার খরচের জন্য ব্যাংক হতে নগদ উত্তোলন"
                     value={transferNarration}
                     onChange={(e) => setTransferNarration(e.target.value)}
-                    className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900"
+                    className="w-full bg-white border border-gray-300 rounded-xl px-3.5 py-2.5 text-sm sm:text-[15px] text-gray-900 focus:outline-none focus:border-[#1E5128] focus:ring-2 focus:ring-[#1E5128]/20 min-h-[44px]"
                   />
                 </div>
               </div>
 
-              <div className="flex justify-end gap-2.5 pt-1">
+              <div className="flex flex-col-reverse sm:flex-row justify-end gap-2.5 pt-2">
                 <button
                   type="button"
                   onClick={() => setShowTransfer(false)}
-                  className="px-4 py-2 rounded-lg bg-gray-200 text-gray-800 text-[13px] font-semibold cursor-pointer min-h-[40px]"
+                  className="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-gray-200 text-gray-800 text-[13px] font-semibold cursor-pointer min-h-[44px]"
                 >
                   বাতিল
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-2 rounded-lg bg-[#1E5128] text-white text-[13px] font-bold cursor-pointer min-h-[40px]"
+                  className="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-[#1E5128] text-white text-[13px] font-bold cursor-pointer min-h-[44px] shadow-sm hover:bg-[#173F1F] transition-colors"
                 >
                   স্থানান্তর সম্পন্ন করুন
                 </button>
@@ -1497,16 +1498,16 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
           </div>
 
           {showNewLoan && (
-            <form onSubmit={handleCreateLoan} className="p-4 bg-[#F8FAFC] border border-gray-300 rounded-xl space-y-3">
+            <form onSubmit={handleCreateLoan} className="p-4 bg-[#F8FAFC] border border-gray-300 rounded-xl space-y-3.5">
               <div className="font-bold text-[#1E5128] text-[15px]">নতুন ঋণ গ্রহণ ও হিসাবভুক্তকরণ</div>
-              <div className="grid grid-cols-1 sm:grid-cols-4 gap-2.5">
+              <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
                 <div>
-                  <label className="block text-[13px] font-medium text-gray-700 mb-1">ঋণের উৎস/প্রকার (Type)</label>
+                  <label className="block text-xs sm:text-[13px] font-semibold text-gray-700 mb-1.5">ঋণের উৎস/প্রকার (Type) *</label>
                   <select
                     id="loanTypeSelect"
                     value={loanType}
                     onChange={(e) => setLoanType(e.target.value as 'BANK' | 'NGO' | 'INDIVIDUAL')}
-                    className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900"
+                    className="w-full bg-white border border-gray-300 rounded-xl px-3.5 py-2.5 text-sm sm:text-[15px] text-gray-900 focus:outline-none focus:border-[#1E5128] focus:ring-2 focus:ring-[#1E5128]/20 min-h-[44px]"
                   >
                     <option value="BANK">বাণিজ্যিক/কৃষি ব্যাংক (Bank)</option>
                     <option value="NGO">এনজিও/সমিতি ঋণ (NGO)</option>
@@ -1514,36 +1515,36 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
                   </select>
                 </div>
                 <div>
-                  <label className="block text-[13px] font-medium text-gray-700 mb-1">ঋণদাতা ব্যাংক/মহাজন</label>
+                  <label className="block text-xs sm:text-[13px] font-semibold text-gray-700 mb-1.5">ঋণদাতা ব্যাংক/মহাজন *</label>
                   <input
                     type="text"
                     required
                     placeholder="যেমন: বাংলাদেশ কৃষি ব্যাংক"
                     value={loanLenderName}
                     onChange={(e) => setLoanLenderName(e.target.value)}
-                    className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900"
+                    className="w-full bg-white border border-gray-300 rounded-xl px-3.5 py-2.5 text-sm sm:text-[15px] text-gray-900 focus:outline-none focus:border-[#1E5128] focus:ring-2 focus:ring-[#1E5128]/20 min-h-[44px]"
                   />
                 </div>
                 <div>
-                  <label className="block text-[13px] font-medium text-gray-700 mb-1">ঋণের মেয়াদকাল</label>
+                  <label className="block text-xs sm:text-[13px] font-semibold text-gray-700 mb-1.5">ঋণের মেয়াদকাল *</label>
                   <select
                     value={loanTerm}
                     onChange={(e) => setLoanTerm(e.target.value as any)}
-                    className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900"
+                    className="w-full bg-white border border-gray-300 rounded-xl px-3.5 py-2.5 text-sm sm:text-[15px] text-gray-900 focus:outline-none focus:border-[#1E5128] focus:ring-2 focus:ring-[#1E5128]/20 min-h-[44px]"
                   >
                     <option value="SHORT_TERM">স্বল্পমেয়াদী ঋণ (১২ মাসের নিচে - 2110)</option>
                     <option value="LONG_TERM">দীর্ঘমেয়াদী ঋণ (১২ মাসের উপরে - 2120)</option>
                   </select>
                 </div>
                 <div>
-                  <label className="block text-[13px] font-medium text-gray-700 mb-1">
+                  <label className="block text-xs sm:text-[13px] font-semibold text-gray-700 mb-1.5">
                     টাকা জমার হিসাব (Target Account) <span className="text-red-500">*</span>
                   </label>
                   <select
                     required
                     value={loanDestinationAcc}
                     onChange={(e) => setLoanDestinationAcc(e.target.value)}
-                    className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900"
+                    className="w-full bg-white border border-gray-300 rounded-xl px-3.5 py-2.5 text-sm sm:text-[15px] text-gray-900 focus:outline-none focus:border-[#1E5128] focus:ring-2 focus:ring-[#1E5128]/20 min-h-[44px]"
                   >
                     <option value="">হিসাব নির্বাচন করুন...</option>
                     {accounts.map((acc) => (
@@ -1555,63 +1556,66 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-4 gap-2.5">
+              <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
                 <div>
-                  <label className="block text-[13px] font-medium text-gray-700 mb-1">মূল ঋণের পরিমাণ ৳ (Principal)</label>
+                  <label className="block text-xs sm:text-[13px] font-semibold text-gray-700 mb-1.5">মূল ঋণের পরিমাণ ৳ (Principal) *</label>
                   <input
                     type="number"
+                    inputMode="decimal"
                     required
                     placeholder="টাকা"
                     value={loanPrincipal}
                     onChange={(e) => setLoanPrincipal(e.target.value)}
-                    className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900 font-mono"
+                    className="w-full bg-white border border-gray-300 rounded-xl px-3.5 py-2.5 text-sm sm:text-[15px] text-gray-900 font-mono focus:outline-none focus:border-[#1E5128] focus:ring-2 focus:ring-[#1E5128]/20 min-h-[44px]"
                   />
                 </div>
                 <div>
-                  <label className="block text-[13px] font-medium text-gray-700 mb-1">
-                    বার্ষিক সুদের হার % (annualInterestRatePercent)
+                  <label className="block text-xs sm:text-[13px] font-semibold text-gray-700 mb-1.5">
+                    বার্ষিক সুদের হার % *
                   </label>
                   <input
                     id="annualInterestRatePercent"
                     name="annualInterestRatePercent"
                     type="number"
+                    inputMode="decimal"
                     step="0.1"
                     min="0"
                     required
                     value={annualInterestRatePercent}
                     onChange={(e) => setAnnualInterestRatePercent(e.target.value)}
-                    className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900 font-mono"
+                    className="w-full bg-white border border-gray-300 rounded-xl px-3.5 py-2.5 text-sm sm:text-[15px] text-gray-900 font-mono focus:outline-none focus:border-[#1E5128] focus:ring-2 focus:ring-[#1E5128]/20 min-h-[44px]"
                   />
                 </div>
                 <div>
-                  <label className="block text-[13px] font-medium text-gray-700 mb-1">
-                    ঋণের মেয়াদ মাস (termMonths)
+                  <label className="block text-xs sm:text-[13px] font-semibold text-gray-700 mb-1.5">
+                    ঋণের মেয়াদ মাস *
                   </label>
                   <input
                     id="termMonths"
                     name="termMonths"
                     type="number"
+                    inputMode="numeric"
                     min="1"
                     required
                     value={termMonths}
                     onChange={(e) => setTermMonths(e.target.value)}
-                    className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900 font-mono"
+                    className="w-full bg-white border border-gray-300 rounded-xl px-3.5 py-2.5 text-sm sm:text-[15px] text-gray-900 font-mono focus:outline-none focus:border-[#1E5128] focus:ring-2 focus:ring-[#1E5128]/20 min-h-[44px]"
                   />
                 </div>
                 <div>
-                  <label className="block text-[13px] font-medium text-gray-700 mb-1">শুরুর/বিতরণ তারিখ</label>
+                  <label className="block text-xs sm:text-[13px] font-semibold text-gray-700 mb-1.5">শুরুর/বিতরণ তারিখ *</label>
                   <input
                     type="date"
                     required
                     value={loanStartDate}
                     onChange={(e) => setLoanStartDate(e.target.value)}
-                    className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900"
+                    className="w-full bg-white border border-gray-300 rounded-xl px-3.5 py-2.5 text-sm sm:text-[15px] text-gray-900 focus:outline-none focus:border-[#1E5128] focus:ring-2 focus:ring-[#1E5128]/20 min-h-[44px]"
                   />
                 </div>
               </div>
 
               {Number(loanPrincipal) > 0 && (
-                <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-lg text-[13px] text-emerald-900 flex flex-col sm:flex-row sm:items-center justify-between gap-1.5">
+                <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-[13px] text-emerald-900 flex flex-col sm:flex-row sm:items-center justify-between gap-1.5">
                   <span className="flex items-center gap-1.5 font-semibold text-[#1E5128]">
                     <Calendar className="w-4 h-4 shrink-0 text-[#1E5128]" />
                     <span>অনুমানিত মাসিক কিস্তি (Estimated Monthly Installment):</span>
@@ -1629,17 +1633,17 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
                 </div>
               )}
 
-              <div className="flex justify-end gap-2.5 pt-1">
+              <div className="flex flex-col-reverse sm:flex-row justify-end gap-2.5 pt-2">
                 <button
                   type="button"
                   onClick={() => setShowNewLoan(false)}
-                  className="px-4 py-2 rounded-lg bg-gray-200 text-gray-800 text-[13px] font-semibold cursor-pointer min-h-[40px]"
+                  className="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-gray-200 text-gray-800 text-[13px] font-semibold cursor-pointer min-h-[44px]"
                 >
                   বাতিল
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-2 rounded-lg bg-[#1E5128] text-white text-[13px] font-bold cursor-pointer min-h-[40px]"
+                  className="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-[#1E5128] text-white text-[13px] font-bold cursor-pointer min-h-[44px] shadow-sm hover:bg-[#173F1F] transition-colors"
                 >
                   ঋণ নিশ্চিত ও পোস্ট করুন
                 </button>
@@ -1778,35 +1782,36 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div>
-                  <label className="block text-[13px] font-medium text-gray-700 mb-1">বিনিয়োগকারীর পূর্ণ নাম <span className="text-red-500">*</span></label>
+                  <label className="block text-xs sm:text-[13px] font-semibold text-gray-700 mb-1.5">বিনিয়োগকারীর পূর্ণ নাম <span className="text-red-500">*</span></label>
                   <input
                     type="text"
                     required
                     placeholder="উদাঃ মোঃ রহিম হোসেন"
                     value={investorName}
                     onChange={(e) => setInvestorName(e.target.value)}
-                    className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900"
+                    className="w-full bg-white border border-gray-300 rounded-xl px-3.5 py-2.5 text-sm sm:text-[15px] text-gray-900 focus:outline-none focus:border-[#1E5128] focus:ring-2 focus:ring-[#1E5128]/20 min-h-[44px]"
                   />
                 </div>
                 <div>
-                  <label className="block text-[13px] font-medium text-gray-700 mb-1">মোবাইল নম্বর (ঐচ্ছিক)</label>
+                  <label className="block text-xs sm:text-[13px] font-semibold text-gray-700 mb-1.5">মোবাইল নম্বর (ঐচ্ছিক)</label>
                   <input
                     type="text"
+                    inputMode="tel"
                     placeholder="01XXXXXXXXX"
                     value={investorPhone}
                     onChange={(e) => setInvestorPhone(e.target.value)}
-                    className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900"
+                    className="w-full bg-white border border-gray-300 rounded-xl px-3.5 py-2.5 text-sm sm:text-[15px] text-gray-900 focus:outline-none focus:border-[#1E5128] focus:ring-2 focus:ring-[#1E5128]/20 min-h-[44px]"
                   />
                 </div>
                 <div>
-                  <label className="block text-[13px] font-medium text-gray-700 mb-1">জমার মাধ্যম (হিসাব) <span className="text-red-500">*</span></label>
+                  <label className="block text-xs sm:text-[13px] font-semibold text-gray-700 mb-1.5">জমার মাধ্যম (হিসাব) <span className="text-red-500">*</span></label>
                   <select
                     required
                     value={investorDestinationAcc}
                     onChange={(e) => setInvestorDestinationAcc(e.target.value)}
-                    className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900"
+                    className="w-full bg-white border border-gray-300 rounded-xl px-3.5 py-2.5 text-sm sm:text-[15px] text-gray-900 focus:outline-none focus:border-[#1E5128] focus:ring-2 focus:ring-[#1E5128]/20 min-h-[44px]"
                   >
                     <option value="">হিসাব নির্বাচন করুন...</option>
                     {accounts.map((acc) => (
@@ -1820,27 +1825,29 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-[13px] font-medium text-gray-700 mb-1">
+                  <label className="block text-xs sm:text-[13px] font-semibold text-gray-700 mb-1.5">
                     বিনিয়োগকৃত মূলধন ৳ (Capital Amount) <span className="text-red-500">*</span>
                   </label>
                   <input
                     type="number"
+                    inputMode="decimal"
                     min="1"
                     step="any"
                     required
                     placeholder="যেমন: 100000"
                     value={investorAmount}
                     onChange={(e) => setInvestorAmount(e.target.value)}
-                    className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900 font-mono font-bold text-[#1E5128]"
+                    className="w-full bg-white border border-gray-300 rounded-xl px-3.5 py-2.5 text-sm sm:text-[15px] text-gray-900 font-mono font-bold text-[#1E5128] focus:outline-none focus:border-[#1E5128] focus:ring-2 focus:ring-[#1E5128]/20 min-h-[44px]"
                   />
-                  <span className="text-[11px] text-gray-500 mt-0.5 block">ইকুইটি হিসাব ৩০২০ এ ক্রেডিট হবে (Cr 3020 Investor Capital)</span>
+                  <span className="text-[11px] text-gray-500 mt-1 block">ইকুইটি হিসাব ৩০২০ এ ক্রেডিট হবে (Cr 3020 Investor Capital)</span>
                 </div>
                 <div>
-                  <label className="block text-[13px] font-medium text-gray-700 mb-1">
+                  <label className="block text-xs sm:text-[13px] font-semibold text-gray-700 mb-1.5">
                     প্রকৃত মুনাফায় বিনিয়োগকারীর অংশ % (Profit-Sharing Ratio) <span className="text-red-500">*</span>
                   </label>
                   <input
                     type="number"
+                    inputMode="decimal"
                     min="0.1"
                     max="100"
                     step="0.1"
@@ -1848,7 +1855,7 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
                     placeholder="যেমন: 40"
                     value={investorSharePct}
                     onChange={(e) => setInvestorSharePct(e.target.value)}
-                    className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900 font-mono font-bold text-sky-700"
+                    className="w-full bg-white border border-gray-300 rounded-xl px-3.5 py-2.5 text-sm sm:text-[15px] text-gray-900 font-mono font-bold text-sky-700 focus:outline-none focus:border-[#1E5128] focus:ring-2 focus:ring-[#1E5128]/20 min-h-[44px]"
                   />
                   {(() => {
                     const activeInvestors = investors.filter((i) => i.status !== 'EXITED');
@@ -1871,17 +1878,17 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
                 </div>
               </div>
 
-              <div className="flex justify-end gap-2.5 pt-1">
+              <div className="flex flex-col-reverse sm:flex-row justify-end gap-2.5 pt-2">
                 <button
                   type="button"
                   onClick={() => setShowNewInvestor(false)}
-                  className="px-4 py-2 rounded-lg bg-gray-200 text-gray-800 text-[13px] font-semibold cursor-pointer min-h-[40px]"
+                  className="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-gray-200 text-gray-800 text-[13px] font-semibold cursor-pointer min-h-[44px]"
                 >
                   বাতিল
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-2 rounded-lg bg-[#1E5128] text-white text-[13px] font-bold cursor-pointer min-h-[40px] hover:bg-[#173F1F] transition-colors"
+                  className="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-[#1E5128] text-white text-[13px] font-bold cursor-pointer min-h-[44px] hover:bg-[#173F1F] shadow-sm transition-colors"
                 >
                   মূলধন হিসাবভুক্ত করুন
                 </button>
@@ -2073,18 +2080,19 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
 
                 <form onSubmit={handleExecuteProfitAllocation} className="space-y-3.5 text-sm">
                   <div>
-                    <label className="block text-xs font-semibold text-gray-700 mb-1">
+                    <label className="block text-xs sm:text-[13px] font-semibold text-gray-700 mb-1.5">
                       ফার্মের চূড়ান্ত বণ্টনযোগ্য প্রকৃত নিট মুনাফা (৳) <span className="text-red-500">*</span>
                     </label>
                     <input
                       type="number"
+                      inputMode="decimal"
                       min="1"
                       step="any"
                       required
                       placeholder="উদাঃ 200000"
                       value={finalizedFarmProfit}
                       onChange={(e) => setFinalizedFarmProfit(e.target.value)}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:outline-hidden font-mono"
+                      className="w-full px-3.5 py-2.5 border border-gray-300 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:outline-hidden font-mono text-sm sm:text-[15px] min-h-[44px]"
                     />
                   </div>
 
@@ -2134,38 +2142,38 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <div>
-                      <label className="block text-xs font-semibold text-gray-700 mb-1">তারিখ</label>
+                      <label className="block text-xs sm:text-[13px] font-semibold text-gray-700 mb-1.5">তারিখ *</label>
                       <input
                         type="date"
                         value={allocationDate}
                         onChange={(e) => setAllocationDate(e.target.value)}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-xs"
+                        className="w-full px-3.5 py-2.5 border border-gray-300 rounded-xl text-sm sm:text-[15px] min-h-[44px]"
                       />
                     </div>
                     <div>
-                      <label className="block text-xs font-semibold text-gray-700 mb-1">মন্তব্য (ঐচ্ছিক)</label>
+                      <label className="block text-xs sm:text-[13px] font-semibold text-gray-700 mb-1.5">মন্তব্য (ঐচ্ছিক)</label>
                       <input
                         type="text"
                         placeholder="উদাঃ ২০২৪ সালের বার্ষিক নিট মুনাফা"
                         value={allocationNotes}
                         onChange={(e) => setAllocationNotes(e.target.value)}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-xs"
+                        className="w-full px-3.5 py-2.5 border border-gray-300 rounded-xl text-sm sm:text-[15px] min-h-[44px]"
                       />
                     </div>
                   </div>
 
-                  <div className="flex justify-end gap-2 pt-2 border-t">
+                  <div className="flex flex-col-reverse sm:flex-row justify-end gap-2.5 pt-2 border-t">
                     <button
                       type="button"
                       onClick={() => setAllocatingInvestor(null)}
-                      className="px-4 py-2 rounded-lg border border-gray-300 text-gray-700 text-xs font-semibold hover:bg-gray-50 cursor-pointer"
+                      className="w-full sm:w-auto px-5 py-2.5 rounded-xl border border-gray-300 text-gray-700 text-[13px] font-semibold hover:bg-gray-50 cursor-pointer min-h-[44px]"
                     >
                       বাতিল
                     </button>
                     <button
                       type="submit"
                       disabled={submittingAllocation}
-                      className="px-4 py-2 rounded-lg bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-bold cursor-pointer disabled:opacity-50"
+                      className="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white text-[13px] font-bold cursor-pointer disabled:opacity-50 min-h-[44px] shadow-sm"
                     >
                       {submittingAllocation ? 'বণ্টন হচ্ছে...' : 'মুনাফা বণ্টন নিশ্চিত করুন'}
                     </button>
@@ -2206,11 +2214,12 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
 
                 <form onSubmit={handleExecuteProfitPayment} className="space-y-3.5 text-sm">
                   <div>
-                    <label className="block text-xs font-semibold text-gray-700 mb-1">
+                    <label className="block text-xs sm:text-[13px] font-semibold text-gray-700 mb-1.5">
                       পরিশোধের পরিমাণ (৳) <span className="text-red-500">*</span>
                     </label>
                     <input
                       type="number"
+                      inputMode="decimal"
                       min="1"
                       max={payingInvestor.profitPayable || 0}
                       step="any"
@@ -2218,7 +2227,7 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
                       placeholder={`সর্বোচ্চ ৳${payingInvestor.profitPayable || 0}`}
                       value={paymentAmount}
                       onChange={(e) => setPaymentAmount(e.target.value)}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-hidden font-mono"
+                      className="w-full px-3.5 py-2.5 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:outline-hidden font-mono text-sm sm:text-[15px] min-h-[44px]"
                     />
                     <p className="text-[11px] text-gray-500 mt-1">
                       নিয়ম: বণ্টনকৃত পাওনা লভ্যাংশের চেয়ে বেশি পরিশোধ করা সম্ভব নয় (সর্বোচ্চ: ৳{(payingInvestor.profitPayable || 0).toLocaleString()})।
@@ -2226,14 +2235,14 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
                   </div>
 
                   <div>
-                    <label className="block text-xs font-semibold text-gray-700 mb-1">
+                    <label className="block text-xs sm:text-[13px] font-semibold text-gray-700 mb-1.5">
                       তহবিল প্রদানকারী অ্যাকাউন্ট (Source Account) <span className="text-red-500">*</span>
                     </label>
                     <select
                       required
                       value={paymentSourceAccId}
                       onChange={(e) => setPaymentSourceAccId(e.target.value)}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg text-xs"
+                      className="w-full px-3.5 py-2.5 border border-gray-300 rounded-xl text-sm sm:text-[15px] min-h-[44px]"
                     >
                       <option value="">হিসাব নির্বাচন করুন...</option>
                       {accounts.map((acc) => (
@@ -2246,22 +2255,22 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <div>
-                      <label className="block text-xs font-semibold text-gray-700 mb-1">পরিশোধের তারিখ</label>
+                      <label className="block text-xs sm:text-[13px] font-semibold text-gray-700 mb-1.5">পরিশোধের তারিখ *</label>
                       <input
                         type="date"
                         value={paymentDate}
                         onChange={(e) => setPaymentDate(e.target.value)}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-xs"
+                        className="w-full px-3.5 py-2.5 border border-gray-300 rounded-xl text-sm sm:text-[15px] min-h-[44px]"
                       />
                     </div>
                     <div>
-                      <label className="block text-xs font-semibold text-gray-700 mb-1">মন্তব্য (ঐচ্ছিক)</label>
+                      <label className="block text-xs sm:text-[13px] font-semibold text-gray-700 mb-1.5">মন্তব্য (ঐচ্ছিক)</label>
                       <input
                         type="text"
                         placeholder="উদাঃ ব্যাংক ট্রান্সফার / চেক"
                         value={paymentNotes}
                         onChange={(e) => setPaymentNotes(e.target.value)}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-xs"
+                        className="w-full px-3.5 py-2.5 border border-gray-300 rounded-xl text-sm sm:text-[15px] min-h-[44px]"
                       />
                     </div>
                   </div>
@@ -2273,18 +2282,18 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
                     </div>
                   )}
 
-                  <div className="flex justify-end gap-2 pt-2 border-t">
+                  <div className="flex flex-col-reverse sm:flex-row justify-end gap-2.5 pt-2 border-t">
                     <button
                       type="button"
                       onClick={() => setPayingInvestor(null)}
-                      className="px-4 py-2 rounded-lg border border-gray-300 text-gray-700 text-xs font-semibold hover:bg-gray-50 cursor-pointer"
+                      className="w-full sm:w-auto px-5 py-2.5 rounded-xl border border-gray-300 text-gray-700 text-[13px] font-semibold hover:bg-gray-50 cursor-pointer min-h-[44px]"
                     >
                       বাতিল
                     </button>
                     <button
                       type="submit"
                       disabled={submittingPayment}
-                      className="px-4 py-2 rounded-lg bg-blue-700 hover:bg-blue-800 text-white text-xs font-bold cursor-pointer disabled:opacity-50"
+                      className="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-blue-700 hover:bg-blue-800 text-white text-[13px] font-bold cursor-pointer disabled:opacity-50 min-h-[44px] shadow-sm"
                     >
                       {submittingPayment ? 'পরিশোধ হচ্ছে...' : 'পরিশোধ নিশ্চিত করুন'}
                     </button>
@@ -2331,11 +2340,12 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
                 <form onSubmit={handleExecuteCapitalReturn} className="space-y-3.5">
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <div>
-                      <label className="block text-xs font-semibold text-gray-700 mb-1">
+                      <label className="block text-xs sm:text-[13px] font-semibold text-gray-700 mb-1.5">
                         ফেরতযোগ্য মূলধনের পরিমাণ ৳ <span className="text-red-500">*</span>
                       </label>
                       <input
                         type="number"
+                        inputMode="decimal"
                         step="any"
                         min="1"
                         max={returningCapitalInvestor.currentCapitalBalance ?? returningCapitalInvestor.capitalAmount ?? 0}
@@ -2343,18 +2353,18 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
                         placeholder="৳ পরিমাণ"
                         value={capitalReturnAmount}
                         onChange={(e) => setCapitalReturnAmount(e.target.value)}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm font-mono font-bold text-rose-700 focus:ring-2 focus:ring-rose-500 focus:border-rose-500"
+                        className="w-full px-3.5 py-2.5 border border-gray-300 rounded-xl text-sm sm:text-[15px] font-mono font-bold text-rose-700 focus:ring-2 focus:ring-rose-500 focus:border-rose-500 min-h-[44px]"
                       />
                     </div>
                     <div>
-                      <label className="block text-xs font-semibold text-gray-700 mb-1">
+                      <label className="block text-xs sm:text-[13px] font-semibold text-gray-700 mb-1.5">
                         ফেরতের মাধ্যম (উৎস হিসাব) <span className="text-red-500">*</span>
                       </label>
                       <select
                         required
                         value={capitalReturnSourceAccId}
                         onChange={(e) => setCapitalReturnSourceAccId(e.target.value)}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-xs"
+                        className="w-full px-3.5 py-2.5 border border-gray-300 rounded-xl text-sm sm:text-[15px] min-h-[44px]"
                       >
                         <option value="">হিসাব নির্বাচন করুন...</option>
                         {accounts.map((acc) => (
@@ -2368,24 +2378,24 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <div>
-                      <label className="block text-xs font-semibold text-gray-700 mb-1">ফেরতের তারিখ <span className="text-red-500">*</span></label>
+                      <label className="block text-xs sm:text-[13px] font-semibold text-gray-700 mb-1.5">ফেরতের তারিখ <span className="text-red-500">*</span></label>
                       <input
                         type="date"
                         required
                         max={new Date().toISOString().split('T')[0]}
                         value={capitalReturnDate}
                         onChange={(e) => setCapitalReturnDate(e.target.value)}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-xs"
+                        className="w-full px-3.5 py-2.5 border border-gray-300 rounded-xl text-sm sm:text-[15px] min-h-[44px]"
                       />
                     </div>
                     <div>
-                      <label className="block text-xs font-semibold text-gray-700 mb-1">বিবরণ / নোট (ঐচ্ছিক)</label>
+                      <label className="block text-xs sm:text-[13px] font-semibold text-gray-700 mb-1.5">বিবরণ / নোট (ঐচ্ছিক)</label>
                       <input
                         type="text"
                         placeholder="উদাঃ মূলধন আংশিক বা পূর্ণাঙ্গ প্রত্যাহার"
                         value={capitalReturnNotes}
                         onChange={(e) => setCapitalReturnNotes(e.target.value)}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-xs"
+                        className="w-full px-3.5 py-2.5 border border-gray-300 rounded-xl text-sm sm:text-[15px] min-h-[44px]"
                       />
                     </div>
                   </div>
@@ -2398,18 +2408,18 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
                     </div>
                   )}
 
-                  <div className="flex justify-end gap-2 pt-2 border-t">
+                  <div className="flex flex-col-reverse sm:flex-row justify-end gap-2.5 pt-2 border-t">
                     <button
                       type="button"
                       onClick={() => setReturningCapitalInvestor(null)}
-                      className="px-4 py-2 rounded-lg border border-gray-300 text-gray-700 text-xs font-semibold hover:bg-gray-50 cursor-pointer"
+                      className="w-full sm:w-auto px-5 py-2.5 rounded-xl border border-gray-300 text-gray-700 text-[13px] font-semibold hover:bg-gray-50 cursor-pointer min-h-[44px]"
                     >
                       বাতিল
                     </button>
                     <button
                       type="submit"
                       disabled={submittingCapitalReturn}
-                      className="px-4 py-2 rounded-lg bg-rose-700 hover:bg-rose-800 text-white text-xs font-bold cursor-pointer disabled:opacity-50"
+                      className="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-rose-700 hover:bg-rose-800 text-white text-[13px] font-bold cursor-pointer disabled:opacity-50 min-h-[44px] shadow-sm"
                     >
                       {submittingCapitalReturn ? 'প্রক্রিয়াকরণ হচ্ছে...' : 'মূলধন ফেরত নিশ্চিত করুন'}
                     </button>
@@ -2486,28 +2496,29 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
                 </button>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs sm:text-[13px]">
                 <div>
-                  <label className="block font-medium text-gray-700 mb-1">মূলধনের পরিমাণ ৳ *</label>
+                  <label className="block font-semibold text-gray-700 mb-1.5">মূলধনের পরিমাণ ৳ *</label>
                   <input
                     type="number"
+                    inputMode="decimal"
                     step="0.01"
                     min="1"
                     required
                     placeholder="যেমন: 50000"
                     value={capitalAmount}
                     onChange={(e) => setCapitalAmount(e.target.value)}
-                    className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-sm text-gray-900 font-mono"
+                    className="w-full bg-white border border-gray-300 rounded-xl px-3.5 py-2.5 text-sm sm:text-[15px] text-gray-900 font-mono min-h-[44px] focus:outline-none focus:border-emerald-600 focus:ring-2 focus:ring-emerald-600/20"
                   />
                 </div>
 
                 <div>
-                  <label className="block font-medium text-gray-700 mb-1">জমার হিসাব (Deposit Destination) *</label>
+                  <label className="block font-semibold text-gray-700 mb-1.5">জমার হিসাব (Deposit Destination) *</label>
                   <select
                     required
                     value={capitalTargetAccId}
                     onChange={(e) => setCapitalTargetAccId(e.target.value)}
-                    className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-sm text-gray-900"
+                    className="w-full bg-white border border-gray-300 rounded-xl px-3.5 py-2.5 text-sm sm:text-[15px] text-gray-900 min-h-[44px] focus:outline-none focus:border-emerald-600 focus:ring-2 focus:ring-emerald-600/20"
                   >
                     <option value="">হিসাব নির্বাচন করুন...</option>
                     {accounts.map((acc) => (
@@ -2519,41 +2530,41 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
                 </div>
 
                 <div>
-                  <label className="block font-medium text-gray-700 mb-1">লেনদেনের তারিখ *</label>
+                  <label className="block font-semibold text-gray-700 mb-1.5">লেনদেনের তারিখ *</label>
                   <input
                     type="date"
                     required
                     max={new Date().toISOString().split('T')[0]}
                     value={capitalDate}
                     onChange={(e) => setCapitalDate(e.target.value)}
-                    className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-sm text-gray-900"
+                    className="w-full bg-white border border-gray-300 rounded-xl px-3.5 py-2.5 text-sm sm:text-[15px] text-gray-900 min-h-[44px] focus:outline-none focus:border-emerald-600 focus:ring-2 focus:ring-emerald-600/20"
                   />
                 </div>
               </div>
 
               <div>
-                <label className="block text-xs font-medium text-gray-700 mb-1">বিবরণ / নোট (ঐচ্ছিক)</label>
+                <label className="block text-xs sm:text-[13px] font-semibold text-gray-700 mb-1.5">বিবরণ / নোট (ঐচ্ছিক)</label>
                 <input
                   type="text"
                   placeholder="যেমন: খামার সম্প্রসারণ বাবদ ব্যক্তিগত তহবিল থেকে মূলধন জমা"
                   value={capitalNotes}
                   onChange={(e) => setCapitalNotes(e.target.value)}
-                  className="w-full bg-white border border-gray-300 rounded-lg p-2 text-sm text-gray-900"
+                  className="w-full bg-white border border-gray-300 rounded-xl px-3.5 py-2.5 text-sm sm:text-[15px] text-gray-900 min-h-[44px] focus:outline-none focus:border-emerald-600 focus:ring-2 focus:ring-emerald-600/20"
                 />
               </div>
 
-              <div className="flex justify-end gap-2 pt-2 border-t border-emerald-100">
+              <div className="flex flex-col-reverse sm:flex-row justify-end gap-2.5 pt-2 border-t border-emerald-100">
                 <button
                   type="button"
                   onClick={() => setShowAddCapitalModal(false)}
-                  className="px-3.5 py-2 rounded-lg bg-gray-200 hover:bg-gray-300 text-gray-800 text-xs font-semibold cursor-pointer"
+                  className="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-gray-200 hover:bg-gray-300 text-gray-800 text-[13px] font-semibold cursor-pointer min-h-[44px]"
                 >
                   বাতিল
                 </button>
                 <button
                   type="submit"
                   disabled={submittingOwner}
-                  className="px-4 py-2 rounded-lg bg-emerald-700 hover:bg-emerald-800 disabled:opacity-50 text-white text-xs font-bold cursor-pointer shadow-xs"
+                  className="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 disabled:opacity-50 text-white text-[13px] font-bold cursor-pointer shadow-sm min-h-[44px]"
                 >
                   {submittingOwner ? 'সংরক্ষণ হচ্ছে...' : 'মূলধন জমা নিশ্চিত করুন'}
                 </button>
@@ -2583,28 +2594,29 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
                 </button>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs sm:text-[13px]">
                 <div>
-                  <label className="block font-medium text-gray-700 mb-1">উত্তোলনের পরিমাণ ৳ *</label>
+                  <label className="block font-semibold text-gray-700 mb-1.5">উত্তোলনের পরিমাণ ৳ *</label>
                   <input
                     type="number"
+                    inputMode="decimal"
                     step="0.01"
                     min="1"
                     required
                     placeholder="যেমন: 15000"
                     value={drawingAmount}
                     onChange={(e) => setDrawingAmount(e.target.value)}
-                    className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-sm text-gray-900 font-mono"
+                    className="w-full bg-white border border-gray-300 rounded-xl px-3.5 py-2.5 text-sm sm:text-[15px] text-gray-900 font-mono min-h-[44px] focus:outline-none focus:border-rose-600 focus:ring-2 focus:ring-rose-600/20"
                   />
                 </div>
 
                 <div>
-                  <label className="block font-medium text-gray-700 mb-1">উৎস হিসাব (Withdrawal Source) *</label>
+                  <label className="block font-semibold text-gray-700 mb-1.5">উৎস হিসাব (Withdrawal Source) *</label>
                   <select
                     required
                     value={drawingSourceAccId}
                     onChange={(e) => setDrawingSourceAccId(e.target.value)}
-                    className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-sm text-gray-900"
+                    className="w-full bg-white border border-gray-300 rounded-xl px-3.5 py-2.5 text-sm sm:text-[15px] text-gray-900 min-h-[44px] focus:outline-none focus:border-rose-600 focus:ring-2 focus:ring-rose-600/20"
                   >
                     <option value="">হিসাব নির্বাচন করুন...</option>
                     {accounts.map((acc) => (
@@ -2616,41 +2628,41 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
                 </div>
 
                 <div>
-                  <label className="block font-medium text-gray-700 mb-1">লেনদেনের তারিখ *</label>
+                  <label className="block font-semibold text-gray-700 mb-1.5">লেনদেনের তারিখ *</label>
                   <input
                     type="date"
                     required
                     max={new Date().toISOString().split('T')[0]}
                     value={drawingDate}
                     onChange={(e) => setDrawingDate(e.target.value)}
-                    className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-sm text-gray-900"
+                    className="w-full bg-white border border-gray-300 rounded-xl px-3.5 py-2.5 text-sm sm:text-[15px] text-gray-900 min-h-[44px] focus:outline-none focus:border-rose-600 focus:ring-2 focus:ring-rose-600/20"
                   />
                 </div>
               </div>
 
               <div>
-                <label className="block text-xs font-medium text-gray-700 mb-1">বিবরণ / নোট (ঐচ্ছিক)</label>
+                <label className="block text-xs sm:text-[13px] font-semibold text-gray-700 mb-1.5">বিবরণ / নোট (ঐচ্ছিক)</label>
                 <input
                   type="text"
                   placeholder="যেমন: ব্যক্তিগত পারিবারিক খরচ বাবদ তহবিল উত্তোলন"
                   value={drawingNotes}
                   onChange={(e) => setDrawingNotes(e.target.value)}
-                  className="w-full bg-white border border-gray-300 rounded-lg p-2 text-sm text-gray-900"
+                  className="w-full bg-white border border-gray-300 rounded-xl px-3.5 py-2.5 text-sm sm:text-[15px] text-gray-900 min-h-[44px] focus:outline-none focus:border-rose-600 focus:ring-2 focus:ring-rose-600/20"
                 />
               </div>
 
-              <div className="flex justify-end gap-2 pt-2 border-t border-rose-100">
+              <div className="flex flex-col-reverse sm:flex-row justify-end gap-2.5 pt-2 border-t border-rose-100">
                 <button
                   type="button"
                   onClick={() => setShowDrawingModal(false)}
-                  className="px-3.5 py-2 rounded-lg bg-gray-200 hover:bg-gray-300 text-gray-800 text-xs font-semibold cursor-pointer"
+                  className="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-gray-200 hover:bg-gray-300 text-gray-800 text-[13px] font-semibold cursor-pointer min-h-[44px]"
                 >
                   বাতিল
                 </button>
                 <button
                   type="submit"
                   disabled={submittingOwner}
-                  className="px-4 py-2 rounded-lg bg-rose-700 hover:bg-rose-800 disabled:opacity-50 text-white text-xs font-bold cursor-pointer shadow-xs"
+                  className="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-rose-700 hover:bg-rose-800 disabled:opacity-50 text-white text-[13px] font-bold cursor-pointer shadow-sm min-h-[44px]"
                 >
                   {submittingOwner ? 'সংরক্ষণ হচ্ছে...' : 'উত্তোলন নিশ্চিত করুন'}
                 </button>
@@ -3127,14 +3139,14 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
               </button>
             </div>
 
-            <div className="space-y-3 text-xs">
+            <div className="space-y-3.5 text-xs sm:text-[13px]">
               <div>
-                <label className="block font-medium text-gray-700 mb-1">পরিশোধের উৎস হিসাব (Source Account)</label>
+                <label className="block font-semibold text-gray-700 mb-1.5">পরিশোধের উৎস হিসাব (Source Account) *</label>
                 <select
                   required
                   value={repaymentSourceAccId}
                   onChange={(e) => setRepaymentSourceAccId(e.target.value)}
-                  className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-sm text-gray-900"
+                  className="w-full bg-white border border-gray-300 rounded-xl px-3.5 py-2.5 text-sm sm:text-[15px] text-gray-900 min-h-[44px] focus:outline-none focus:border-[#1E5128] focus:ring-2 focus:ring-[#1E5128]/20"
                 >
                   <option value="">হিসাব নির্বাচন করুন...</option>
                   {accounts.map((acc) => (
@@ -3145,89 +3157,92 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
                 </select>
               </div>
 
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
-                  <label className="block font-medium text-gray-700 mb-1">আসল অংশ ৳ (Principal)</label>
+                  <label className="block font-semibold text-gray-700 mb-1.5">আসল অংশ ৳ (Principal) *</label>
                   <input
                     type="number"
+                    inputMode="decimal"
                     step="0.01"
                     min="0"
                     required
                     value={repaymentPrincipal}
                     onChange={(e) => setRepaymentPrincipal(e.target.value)}
-                    className="w-full bg-white border border-gray-300 rounded-lg p-2 text-sm text-gray-900 font-mono"
+                    className="w-full bg-white border border-gray-300 rounded-xl px-3.5 py-2.5 text-sm sm:text-[15px] text-gray-900 font-mono min-h-[44px] focus:outline-none focus:border-[#1E5128] focus:ring-2 focus:ring-[#1E5128]/20"
                   />
                 </div>
                 <div>
-                  <label className="block font-medium text-gray-700 mb-1">সুদ খরচ ৳ (Interest Expense)</label>
+                  <label className="block font-semibold text-gray-700 mb-1.5">সুদ খরচ ৳ (Interest Expense)</label>
                   <input
                     type="number"
+                    inputMode="decimal"
                     step="0.01"
                     min="0"
                     value={repaymentInterest}
                     onChange={(e) => setRepaymentInterest(e.target.value)}
-                    className="w-full bg-white border border-gray-300 rounded-lg p-2 text-sm text-gray-900 font-mono"
+                    className="w-full bg-white border border-gray-300 rounded-xl px-3.5 py-2.5 text-sm sm:text-[15px] text-gray-900 font-mono min-h-[44px] focus:outline-none focus:border-[#1E5128] focus:ring-2 focus:ring-[#1E5128]/20"
                   />
                 </div>
               </div>
 
-              <div className="p-2.5 bg-gray-50 rounded-lg border border-gray-200 flex justify-between items-center text-xs">
+              <div className="p-3 bg-gray-50 rounded-xl border border-gray-200 flex justify-between items-center text-xs sm:text-[13px]">
                 <span className="font-semibold text-gray-700">মোট পরিশোধের পরিমাণ:</span>
-                <span className="font-bold text-sm text-[#1E5128] font-mono">
+                <span className="font-bold text-base text-[#1E5128] font-mono">
                   {fmt((parseFloat(repaymentPrincipal) || 0) + (parseFloat(repaymentInterest) || 0))}
                 </span>
               </div>
 
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
-                  <label className="block font-medium text-gray-700 mb-1">পরিশোধ তারিখ</label>
+                  <label className="block font-semibold text-gray-700 mb-1.5">পরিশোধ তারিখ *</label>
                   <input
                     type="date"
                     required
                     value={repaymentDate}
                     onChange={(e) => setRepaymentDate(e.target.value)}
-                    className="w-full bg-white border border-gray-300 rounded-lg p-2 text-sm text-gray-900"
+                    className="w-full bg-white border border-gray-300 rounded-xl px-3.5 py-2.5 text-sm sm:text-[15px] text-gray-900 min-h-[44px] focus:outline-none focus:border-[#1E5128] focus:ring-2 focus:ring-[#1E5128]/20"
                   />
                 </div>
                 <div>
-                  <label className="block font-medium text-gray-700 mb-1">কিস্তি নম্বর (ঐচ্ছিক)</label>
+                  <label className="block font-semibold text-gray-700 mb-1.5">কিস্তি নম্বর (ঐচ্ছিক)</label>
                   <input
                     type="number"
+                    inputMode="numeric"
                     min="1"
                     placeholder="যেমন: 1"
                     value={repaymentInstallmentNum ?? ''}
                     onChange={(e) =>
                       setRepaymentInstallmentNum(e.target.value ? parseInt(e.target.value) : undefined)
                     }
-                    className="w-full bg-white border border-gray-300 rounded-lg p-2 text-sm text-gray-900 font-mono"
+                    className="w-full bg-white border border-gray-300 rounded-xl px-3.5 py-2.5 text-sm sm:text-[15px] text-gray-900 font-mono min-h-[44px] focus:outline-none focus:border-[#1E5128] focus:ring-2 focus:ring-[#1E5128]/20"
                   />
                 </div>
               </div>
 
               <div>
-                <label className="block font-medium text-gray-700 mb-1">নোট / রেফারেন্স</label>
+                <label className="block font-semibold text-gray-700 mb-1.5">নোট / রেফারেন্স</label>
                 <input
                   type="text"
                   placeholder="রেফারেন্স বা চেক নম্বর"
                   value={repaymentNote}
                   onChange={(e) => setRepaymentNote(e.target.value)}
-                  className="w-full bg-white border border-gray-300 rounded-lg p-2 text-sm text-gray-900"
+                  className="w-full bg-white border border-gray-300 rounded-xl px-3.5 py-2.5 text-sm sm:text-[15px] text-gray-900 min-h-[44px] focus:outline-none focus:border-[#1E5128] focus:ring-2 focus:ring-[#1E5128]/20"
                 />
               </div>
             </div>
 
-            <div className="flex justify-end gap-2 pt-2 border-t border-gray-100">
+            <div className="flex flex-col-reverse sm:flex-row justify-end gap-2.5 pt-2 border-t border-gray-100">
               <button
                 type="button"
                 onClick={() => setShowRepaymentModal(false)}
-                className="px-3.5 py-2 rounded-lg bg-gray-200 hover:bg-gray-300 text-gray-800 text-xs font-semibold cursor-pointer"
+                className="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-gray-200 hover:bg-gray-300 text-gray-800 text-[13px] font-semibold cursor-pointer min-h-[44px]"
               >
                 বাতিল
               </button>
               <button
                 type="submit"
                 disabled={submittingRepayment}
-                className={`px-4 py-2 rounded-lg text-white text-xs font-bold shadow-xs ${
+                className={`w-full sm:w-auto px-5 py-2.5 rounded-xl text-white text-[13px] font-bold shadow-sm min-h-[44px] ${
                   submittingRepayment
                     ? 'bg-gray-400 cursor-not-allowed'
                     : 'bg-[#1E5128] hover:bg-[#173F1F] cursor-pointer'

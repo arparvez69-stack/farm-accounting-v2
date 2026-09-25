@@ -1298,22 +1298,22 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
               <div className="font-bold text-slate-800 dark:text-slate-200 text-[15px]">নতুন সম্পদ যুক্ত করুন</div>
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2.5">
                 <div>
-                  <label className="block text-[13px] font-medium text-gray-700 mb-1">সম্পদের নাম</label>
+                  <label className="block text-[13px] font-bold text-gray-700 dark:text-slate-300 mb-1">সম্পদের নাম</label>
                   <input
                     type="text"
                     required
                     placeholder="যেমন: মিল্কিং মেশিন"
                     value={assetName}
                     onChange={(e) => setAssetName(e.target.value)}
-                    className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900"
+                    className="w-full bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-700 rounded-xl px-3.5 py-2.5 text-sm sm:text-[15px] text-gray-900 dark:text-slate-100 min-h-[44px] focus:outline-none focus:border-slate-600 focus:ring-2 focus:ring-slate-500/20"
                   />
                 </div>
                 <div>
-                  <label className="block text-[13px] font-medium text-gray-700 mb-1">ক্যাটাগরি</label>
+                  <label className="block text-[13px] font-bold text-gray-700 dark:text-slate-300 mb-1">ক্যাটাগরি</label>
                   <select
                     value={assetCategory}
                     onChange={(e) => setAssetCategory(e.target.value as any)}
-                    className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900"
+                    className="w-full bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-700 rounded-xl px-3.5 py-2.5 text-sm sm:text-[15px] text-gray-900 dark:text-slate-100 min-h-[44px] focus:outline-none focus:border-slate-600 focus:ring-2 focus:ring-slate-500/20"
                   >
                     <option value="LAND">জমি ও ভূমি উন্নয়ন (1510)</option>
                     <option value="BUILDINGS">শেড ও খামার ভবন (1520)</option>
@@ -1323,17 +1323,17 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
                   </select>
                 </div>
                 <div>
-                  <label className="block text-[13px] font-medium text-gray-700 mb-1">ক্রয়মূল্য (Cost)</label>
+                  <label className="block text-[13px] font-bold text-gray-700 dark:text-slate-300 mb-1">ক্রয়মূল্য (Cost)</label>
                   <input
                     type="number"
                     required
                     value={assetCost}
                     onChange={(e) => setAssetCost(e.target.value)}
-                    className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900 font-mono"
+                    className="w-full bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-700 rounded-xl px-3.5 py-2.5 text-sm sm:text-[15px] text-gray-900 dark:text-slate-100 font-mono min-h-[44px] focus:outline-none focus:border-slate-600 focus:ring-2 focus:ring-slate-500/20"
                   />
                 </div>
                 <div>
-                  <label className="block text-[13px] font-medium text-gray-700 mb-1">আয়ুষ্কাল (বছর)</label>
+                  <label className="block text-[13px] font-bold text-gray-700 dark:text-slate-300 mb-1">আয়ুষ্কাল (বছর)</label>
                   <input
                     type="number"
                     required
@@ -1345,11 +1345,11 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
                         setAssetDepreciationRate((100 / l).toFixed(1));
                       }
                     }}
-                    className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900"
+                    className="w-full bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-700 rounded-xl px-3.5 py-2.5 text-sm sm:text-[15px] text-gray-900 dark:text-slate-100 min-h-[44px] focus:outline-none focus:border-slate-600 focus:ring-2 focus:ring-slate-500/20"
                   />
                 </div>
                 <div>
-                  <label className="block text-[13px] font-medium text-gray-700 mb-1">
+                  <label className="block text-[13px] font-bold text-gray-700 dark:text-slate-300 mb-1">
                     বার্ষিক অবচয় হার (%)
                   </label>
                   <input
@@ -1361,7 +1361,7 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
                     placeholder="যেমন: 20"
                     value={assetDepreciationRate}
                     onChange={(e) => setAssetDepreciationRate(e.target.value)}
-                    className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-[14px] text-gray-900 font-mono"
+                    className="w-full bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-700 rounded-xl px-3.5 py-2.5 text-sm sm:text-[15px] text-gray-900 dark:text-slate-100 font-mono min-h-[44px] focus:outline-none focus:border-slate-600 focus:ring-2 focus:ring-slate-500/20"
                   />
                 </div>
               </div>
@@ -1376,7 +1376,7 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
                     <button
                       type="button"
                       onClick={() => setAssetPaymentMethod('CASH')}
-                      className={`py-2 px-3 rounded-lg text-xs font-bold border transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
+                      className={`min-h-[44px] px-3.5 py-2 rounded-xl text-xs font-bold border transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
                         assetPaymentMethod === 'CASH'
                           ? 'bg-emerald-50 border-emerald-500 text-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-300 ring-2 ring-emerald-500/20'
                           : 'bg-gray-50 dark:bg-slate-800 border-gray-200 dark:border-slate-700 text-gray-700 dark:text-slate-300'
@@ -1393,7 +1393,7 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
                           setAssetSelectedBankAccountId(bankAccountsList[0].id);
                         }
                       }}
-                      className={`py-2 px-3 rounded-lg text-xs font-bold border transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
+                      className={`min-h-[44px] px-3.5 py-2 rounded-xl text-xs font-bold border transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
                         assetPaymentMethod === 'BANK'
                           ? 'bg-blue-50 border-blue-500 text-blue-800 dark:bg-blue-950/50 dark:text-blue-300 ring-2 ring-blue-500/20'
                           : 'bg-gray-50 dark:bg-slate-800 border-gray-200 dark:border-slate-700 text-gray-700 dark:text-slate-300'
@@ -1410,7 +1410,7 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
                           setAssetSelectedSupplierId(suppliersList[0].id);
                         }
                       }}
-                      className={`py-2 px-3 rounded-lg text-xs font-bold border transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
+                      className={`min-h-[44px] px-3.5 py-2 rounded-xl text-xs font-bold border transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
                         assetPaymentMethod === 'CREDIT'
                           ? 'bg-amber-50 border-amber-500 text-amber-800 dark:bg-amber-950/50 dark:text-amber-300 ring-2 ring-amber-500/20'
                           : 'bg-gray-50 dark:bg-slate-800 border-gray-200 dark:border-slate-700 text-gray-700 dark:text-slate-300'
@@ -1423,13 +1423,13 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
 
                   {assetPaymentMethod === 'BANK' && (
                     <div className="pt-1">
-                      <label className="block text-xs font-medium text-gray-700 dark:text-slate-300 mb-1">
+                      <label className="block text-xs font-semibold text-gray-700 dark:text-slate-300 mb-1">
                         ব্যাংক অ্যাকাউন্ট নির্বাচন করুন
                       </label>
                       <select
                         value={assetSelectedBankAccountId}
                         onChange={(e) => setAssetSelectedBankAccountId(e.target.value)}
-                        className="w-full bg-white dark:bg-slate-900 border border-gray-300 dark:border-slate-700 rounded-lg p-2 text-xs text-gray-900 dark:text-slate-100"
+                        className="w-full bg-white dark:bg-slate-900 border border-gray-300 dark:border-slate-700 rounded-xl px-3.5 py-2.5 text-sm sm:text-[15px] text-gray-900 dark:text-slate-100 min-h-[44px] focus:outline-none focus:border-slate-600 focus:ring-2 focus:ring-slate-500/20"
                       >
                         {bankAccountsList.length === 0 && <option value="">কোনো সক্রিয় ব্যাংক অ্যাকাউন্ট পাওয়া যায়নি</option>}
                         {bankAccountsList.map((b) => (
@@ -1443,13 +1443,13 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
 
                   {assetPaymentMethod === 'CREDIT' && (
                     <div className="pt-1">
-                      <label className="block text-xs font-medium text-gray-700 dark:text-slate-300 mb-1">
+                      <label className="block text-xs font-semibold text-gray-700 dark:text-slate-300 mb-1">
                         সরবরাহকারী নির্বাচন করুন (Accounts Payable)
                       </label>
                       <select
                         value={assetSelectedSupplierId}
                         onChange={(e) => setAssetSelectedSupplierId(e.target.value)}
-                        className="w-full bg-white dark:bg-slate-900 border border-gray-300 dark:border-slate-700 rounded-lg p-2 text-xs text-gray-900 dark:text-slate-100"
+                        className="w-full bg-white dark:bg-slate-900 border border-gray-300 dark:border-slate-700 rounded-xl px-3.5 py-2.5 text-sm sm:text-[15px] text-gray-900 dark:text-slate-100 min-h-[44px] focus:outline-none focus:border-slate-600 focus:ring-2 focus:ring-slate-500/20"
                       >
                         {suppliersList.length === 0 && <option value="">কোনো সরবরাহকারী পাওয়া যায়নি (ডিফল্ট পাওনাদার ব্যবহার হবে)</option>}
                         {suppliersList.map((s) => (
@@ -1463,17 +1463,17 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
                 </div>
               )}
 
-              <div className="flex justify-end gap-2.5 pt-1">
+              <div className="flex flex-col-reverse sm:flex-row justify-end gap-2.5 pt-1">
                 <button
                   type="button"
                   onClick={() => setShowAddAsset(false)}
-                  className="px-4 py-2 rounded-lg bg-gray-200 text-gray-800 text-[13px] font-semibold cursor-pointer min-h-[40px]"
+                  className="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-gray-200 text-gray-800 text-[13px] font-semibold cursor-pointer min-h-[44px]"
                 >
                   বাতিল
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-900 text-white text-[13px] font-bold cursor-pointer min-h-[40px]"
+                  className="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-900 text-white text-[13px] font-bold cursor-pointer min-h-[44px] shadow-sm transition-colors"
                 >
                   সংরক্ষণ করুন
                 </button>
@@ -1667,11 +1667,11 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
                       required
                       value={editAssetName}
                       onChange={(e) => setEditAssetName(e.target.value)}
-                      className="w-full bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-700 rounded-lg p-2.5 text-sm text-gray-900 dark:text-slate-100"
+                      className="w-full bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-700 rounded-xl px-3.5 py-2.5 text-sm sm:text-[15px] text-gray-900 dark:text-slate-100 min-h-[44px] focus:outline-none focus:border-slate-600 focus:ring-2 focus:ring-slate-500/20"
                     />
                   </div>
 
-                  <div className="grid grid-cols-2 gap-2.5">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                     <div>
                       <label className="block text-xs font-semibold text-gray-700 dark:text-slate-300 mb-1">
                         ক্যাটাগরি {editAssetHasAccounting && <span className="text-amber-600 dark:text-amber-400 text-[10px] font-normal">(লক করা)</span>}
@@ -1680,7 +1680,7 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
                         value={editAssetCategory}
                         disabled={editAssetHasAccounting}
                         onChange={(e) => setEditAssetCategory(e.target.value as any)}
-                        className="w-full bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-700 rounded-lg p-2.5 text-xs text-gray-900 dark:text-slate-100 disabled:bg-gray-100 dark:disabled:bg-slate-800/60 disabled:cursor-not-allowed disabled:text-gray-500 dark:disabled:text-slate-400"
+                        className="w-full bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-700 rounded-xl px-3.5 py-2.5 text-sm sm:text-[15px] text-gray-900 dark:text-slate-100 disabled:bg-gray-100 dark:disabled:bg-slate-800/60 disabled:cursor-not-allowed disabled:text-gray-500 dark:disabled:text-slate-400 min-h-[44px] focus:outline-none focus:border-slate-600 focus:ring-2 focus:ring-slate-500/20"
                       >
                         <option value="LAND">জমি ও ভূমি উন্নয়ন (1510)</option>
                         <option value="BUILDINGS">শেড ও খামার ভবন (1520)</option>
@@ -1700,12 +1700,12 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
                         disabled={editAssetHasAccounting}
                         value={editAssetCost}
                         onChange={(e) => setEditAssetCost(e.target.value)}
-                        className="w-full bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-700 rounded-lg p-2.5 text-sm font-mono text-gray-900 dark:text-slate-100 disabled:bg-gray-100 dark:disabled:bg-slate-800/60 disabled:cursor-not-allowed disabled:text-gray-500 dark:disabled:text-slate-400"
+                        className="w-full bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-700 rounded-xl px-3.5 py-2.5 text-sm sm:text-[15px] font-mono text-gray-900 dark:text-slate-100 disabled:bg-gray-100 dark:disabled:bg-slate-800/60 disabled:cursor-not-allowed disabled:text-gray-500 dark:disabled:text-slate-400 min-h-[44px] focus:outline-none focus:border-slate-600 focus:ring-2 focus:ring-slate-500/20"
                       />
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-3 gap-2">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                     <div>
                       <label className="block text-xs font-semibold text-gray-700 dark:text-slate-300 mb-1">
                         আয়ুষ্কাল (বছর) {editAssetHasAccounting && <span className="text-amber-600 dark:text-amber-400 text-[10px] font-normal">(লক)</span>}
@@ -1721,7 +1721,7 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
                             setEditAssetDepreciationRate((100 / l).toFixed(1));
                           }
                         }}
-                        className="w-full bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-700 rounded-lg p-2 text-xs text-gray-900 dark:text-slate-100 disabled:bg-gray-100 dark:disabled:bg-slate-800/60 disabled:cursor-not-allowed disabled:text-gray-500 dark:disabled:text-slate-400"
+                        className="w-full bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-700 rounded-xl px-3.5 py-2.5 text-sm sm:text-[15px] text-gray-900 dark:text-slate-100 disabled:bg-gray-100 dark:disabled:bg-slate-800/60 disabled:cursor-not-allowed disabled:text-gray-500 dark:disabled:text-slate-400 min-h-[44px] focus:outline-none focus:border-slate-600 focus:ring-2 focus:ring-slate-500/20"
                       />
                     </div>
                     <div>
@@ -1733,7 +1733,7 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
                         disabled={editAssetHasAccounting}
                         value={editAssetSalvage}
                         onChange={(e) => setEditAssetSalvage(e.target.value)}
-                        className="w-full bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-700 rounded-lg p-2 text-xs text-gray-900 dark:text-slate-100 disabled:bg-gray-100 dark:disabled:bg-slate-800/60 disabled:cursor-not-allowed disabled:text-gray-500 dark:disabled:text-slate-400"
+                        className="w-full bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-700 rounded-xl px-3.5 py-2.5 text-sm sm:text-[15px] text-gray-900 dark:text-slate-100 disabled:bg-gray-100 dark:disabled:bg-slate-800/60 disabled:cursor-not-allowed disabled:text-gray-500 dark:disabled:text-slate-400 min-h-[44px] focus:outline-none focus:border-slate-600 focus:ring-2 focus:ring-slate-500/20"
                       />
                     </div>
                     <div>
@@ -1746,23 +1746,23 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
                         disabled={editAssetHasAccounting}
                         value={editAssetDepreciationRate}
                         onChange={(e) => setEditAssetDepreciationRate(e.target.value)}
-                        className="w-full bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-700 rounded-lg p-2 text-xs text-gray-900 dark:text-slate-100 disabled:bg-gray-100 dark:disabled:bg-slate-800/60 disabled:cursor-not-allowed disabled:text-gray-500 dark:disabled:text-slate-400"
+                        className="w-full bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-700 rounded-xl px-3.5 py-2.5 text-sm sm:text-[15px] text-gray-900 dark:text-slate-100 disabled:bg-gray-100 dark:disabled:bg-slate-800/60 disabled:cursor-not-allowed disabled:text-gray-500 dark:disabled:text-slate-400 min-h-[44px] focus:outline-none focus:border-slate-600 focus:ring-2 focus:ring-slate-500/20"
                       />
                     </div>
                   </div>
 
-                  <div className="flex justify-end gap-2 pt-2 border-t border-gray-100 dark:border-slate-800">
+                  <div className="flex flex-col-reverse sm:flex-row justify-end gap-2 pt-2 border-t border-gray-100 dark:border-slate-800">
                     <button
                       type="button"
                       onClick={() => setEditingAsset(null)}
-                      className="px-4 py-2 rounded-lg bg-gray-100 hover:bg-gray-200 dark:bg-slate-800 text-gray-700 dark:text-slate-300 text-xs font-semibold cursor-pointer"
+                      className="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-gray-100 hover:bg-gray-200 dark:bg-slate-800 text-gray-700 dark:text-slate-300 text-xs font-semibold cursor-pointer min-h-[44px]"
                     >
                       বাতিল
                     </button>
                     <button
                       type="submit"
                       disabled={submittingEditAsset}
-                      className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow-xs cursor-pointer disabled:opacity-50"
+                      className="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow-xs cursor-pointer disabled:opacity-50 min-h-[44px] transition-colors"
                     >
                       {submittingEditAsset ? 'সংরক্ষণ হচ্ছে...' : 'হালনাগাদ সম্পন্ন করুন'}
                     </button>
@@ -1841,7 +1841,7 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
                             required
                             value={disposalProceeds}
                             onChange={(e) => setDisposalProceeds(e.target.value)}
-                            className="w-full bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-700 rounded-lg p-2.5 text-sm text-gray-900 dark:text-slate-100 font-mono font-bold"
+                            className="w-full bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-700 rounded-xl px-3.5 py-2.5 text-sm sm:text-[15px] text-gray-900 dark:text-slate-100 font-mono font-bold min-h-[44px] focus:outline-none focus:border-slate-600 focus:ring-2 focus:ring-slate-500/20"
                             placeholder="0.00"
                           />
                           <p className="text-[11px] text-gray-500 mt-0.5">সম্পদটি অকেজো হয়ে গেলে বা মূল্য না পেলে 0 লিখুন।</p>
@@ -1856,13 +1856,13 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
                               <button
                                 type="button"
                                 onClick={() => setDisposalPaymentMethod('CASH')}
-                                className={`py-1.5 px-3 rounded-lg text-xs font-bold border cursor-pointer flex items-center justify-center gap-1.5 ${
+                                className={`min-h-[44px] px-3 py-2 rounded-xl text-xs font-bold border cursor-pointer flex items-center justify-center gap-1.5 transition-all ${
                                   disposalPaymentMethod === 'CASH'
-                                    ? 'bg-emerald-50 border-emerald-500 text-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-300'
+                                    ? 'bg-emerald-50 border-emerald-500 text-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-300 ring-2 ring-emerald-500/20'
                                     : 'bg-white dark:bg-slate-800 border-gray-200 dark:border-slate-700 text-gray-700 dark:text-slate-300'
                                 }`}
                               >
-                                <Wallet className="w-3.5 h-3.5" />
+                                <Wallet className="w-4 h-4" />
                                 <span>নগদ (Cash 1010)</span>
                               </button>
                               <button
@@ -1873,26 +1873,26 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
                                     setDisposalBankAccountId(bankAccountsList[0].id);
                                   }
                                 }}
-                                className={`py-1.5 px-3 rounded-lg text-xs font-bold border cursor-pointer flex items-center justify-center gap-1.5 ${
+                                className={`min-h-[44px] px-3 py-2 rounded-xl text-xs font-bold border cursor-pointer flex items-center justify-center gap-1.5 transition-all ${
                                   disposalPaymentMethod === 'BANK'
-                                    ? 'bg-blue-50 border-blue-500 text-blue-800 dark:bg-blue-950/50 dark:text-blue-300'
+                                    ? 'bg-blue-50 border-blue-500 text-blue-800 dark:bg-blue-950/50 dark:text-blue-300 ring-2 ring-blue-500/20'
                                     : 'bg-white dark:bg-slate-800 border-gray-200 dark:border-slate-700 text-gray-700 dark:text-slate-300'
                                 }`}
                               >
-                                <Landmark className="w-3.5 h-3.5" />
+                                <Landmark className="w-4 h-4" />
                                 <span>ব্যাংক (Bank 1030)</span>
                               </button>
                             </div>
 
                             {disposalPaymentMethod === 'BANK' && (
                               <div className="pt-1">
-                                <label className="block text-[11px] font-medium text-gray-600 dark:text-slate-400 mb-1">
+                                <label className="block text-[11px] font-semibold text-gray-600 dark:text-slate-400 mb-1">
                                   ব্যাংক অ্যাকাউন্ট
                                 </label>
                                 <select
                                   value={disposalBankAccountId}
                                   onChange={(e) => setDisposalBankAccountId(e.target.value)}
-                                  className="w-full bg-white dark:bg-slate-900 border border-gray-300 dark:border-slate-700 rounded-lg p-2 text-xs text-gray-900 dark:text-slate-100"
+                                  className="w-full bg-white dark:bg-slate-900 border border-gray-300 dark:border-slate-700 rounded-xl px-3.5 py-2.5 text-sm sm:text-[15px] text-gray-900 dark:text-slate-100 min-h-[44px] focus:outline-none focus:border-slate-600 focus:ring-2 focus:ring-slate-500/20"
                                 >
                                   {bankAccountsList.map((b) => (
                                     <option key={b.id} value={b.id}>
@@ -1915,7 +1915,7 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
                               required
                               value={disposalDate}
                               onChange={(e) => setDisposalDate(e.target.value)}
-                              className="w-full bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-700 rounded-lg p-2 text-xs text-gray-900 dark:text-slate-100"
+                              className="w-full bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-700 rounded-xl px-3.5 py-2.5 text-sm sm:text-[15px] text-gray-900 dark:text-slate-100 min-h-[44px] focus:outline-none focus:border-slate-600 focus:ring-2 focus:ring-slate-500/20"
                             />
                           </div>
                           <div>
@@ -1927,7 +1927,7 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
                               value={disposalReason}
                               onChange={(e) => setDisposalReason(e.target.value)}
                               placeholder="যেমন: মেয়াদোত্তীর্ণ বা অকেজো বিক্রয়"
-                              className="w-full bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-700 rounded-lg p-2 text-xs text-gray-900 dark:text-slate-100"
+                              className="w-full bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-700 rounded-xl px-3.5 py-2.5 text-sm sm:text-[15px] text-gray-900 dark:text-slate-100 min-h-[44px] focus:outline-none focus:border-slate-600 focus:ring-2 focus:ring-slate-500/20"
                             />
                           </div>
                         </div>
@@ -1964,20 +1964,20 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
                         ⚠️ নিশ্চিতকরণ: অপসারিত সম্পদের ক্রয়মূল্য ও পুঞ্জীভূত অবচয় সমন্বয় জাবেদার মাধ্যমে সক্রিয় ব্যালেন্স শিট হতে সম্পূর্ণ বাদ দেওয়া হবে।
                       </div>
 
-                      <div className="flex justify-end gap-2 pt-2 border-t border-gray-100 dark:border-slate-800">
+                      <div className="flex flex-col-reverse sm:flex-row justify-end gap-2 pt-2 border-t border-gray-100 dark:border-slate-800">
                         <button
                           type="button"
                           onClick={() => setDisposingAsset(null)}
-                          className="px-4 py-2 rounded-lg bg-gray-100 hover:bg-gray-200 dark:bg-slate-800 text-gray-700 dark:text-slate-300 text-xs font-semibold cursor-pointer"
+                          className="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-gray-100 hover:bg-gray-200 dark:bg-slate-800 text-gray-700 dark:text-slate-300 text-xs font-semibold cursor-pointer min-h-[44px]"
                         >
                           বাতিল
                         </button>
                         <button
                           type="submit"
                           disabled={submittingDisposal}
-                          className="px-4 py-2 rounded-lg bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold shadow-xs cursor-pointer disabled:opacity-50 flex items-center gap-1.5"
+                          className="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold shadow-xs cursor-pointer disabled:opacity-50 flex items-center justify-center gap-1.5 min-h-[44px] transition-colors"
                         >
-                          <Trash2 className="w-3.5 h-3.5" />
+                          <Trash2 className="w-4 h-4" />
                           <span>{submittingDisposal ? 'অপসারণ প্রক্রিয়াধীন...' : 'অপসারণ নিশ্চিত করুন'}</span>
                         </button>
                       </div>
@@ -2206,7 +2206,7 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
                       placeholder="যেমন: ১২৩৪৫৬৭৮৯১০১"
                       value={tinNumber}
                       onChange={(e) => handleTinChange(e.target.value)}
-                      className="w-full bg-white dark:bg-slate-900 border border-gray-300 dark:border-slate-700 rounded-lg p-2 text-[13px] text-gray-900 dark:text-slate-100 font-mono focus:ring-1 focus:ring-slate-600"
+                      className="w-full bg-white dark:bg-slate-900 border border-gray-300 dark:border-slate-700 rounded-xl px-3.5 py-2.5 text-sm sm:text-[15px] text-gray-900 dark:text-slate-100 font-mono min-h-[44px] focus:outline-none focus:ring-2 focus:ring-slate-600/20 focus:border-slate-600"
                     />
                   </div>
                   <div>
@@ -2219,7 +2219,7 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
                       placeholder="যেমন: ০০১২৩৪৫৬৭-০১০১"
                       value={binNumber}
                       onChange={(e) => handleBinChange(e.target.value)}
-                      className="w-full bg-white dark:bg-slate-900 border border-gray-300 dark:border-slate-700 rounded-lg p-2 text-[13px] text-gray-900 dark:text-slate-100 font-mono focus:ring-1 focus:ring-slate-600"
+                      className="w-full bg-white dark:bg-slate-900 border border-gray-300 dark:border-slate-700 rounded-xl px-3.5 py-2.5 text-sm sm:text-[15px] text-gray-900 dark:text-slate-100 font-mono min-h-[44px] focus:outline-none focus:ring-2 focus:ring-slate-600/20 focus:border-slate-600"
                     />
                   </div>
                 </div>
@@ -2245,7 +2245,7 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
                 placeholder="যেমন: +৮৮০ ১৭XXXXXXXXX (খামারের ফোন নম্বর লিখুন)"
                 value={farmPhone}
                 onChange={(e) => handlePhoneChange(e.target.value)}
-                className="w-full bg-white dark:bg-slate-900 border border-gray-300 dark:border-slate-700 rounded-lg p-2 text-[13px] text-gray-900 dark:text-slate-100 font-mono focus:ring-1 focus:ring-slate-600"
+                className="w-full bg-white dark:bg-slate-900 border border-gray-300 dark:border-slate-700 rounded-xl px-3.5 py-2.5 text-sm sm:text-[15px] text-gray-900 dark:text-slate-100 font-mono min-h-[44px] focus:outline-none focus:ring-2 focus:ring-slate-600/20 focus:border-slate-600"
               />
             </div>
           </div>
@@ -2277,7 +2277,7 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
                   placeholder="5000"
                   value={lowCashAlertThreshold}
                   onChange={(e) => handleLowCashAlertThresholdChange(parseFloat(e.target.value) || 0)}
-                  className="w-full pl-8 pr-3 py-2 bg-white dark:bg-slate-900 border border-gray-300 dark:border-slate-700 rounded-lg text-[13px] text-gray-900 dark:text-slate-100 font-mono focus:ring-1 focus:ring-slate-600"
+                  className="w-full pl-8 pr-3.5 py-2.5 bg-white dark:bg-slate-900 border border-gray-300 dark:border-slate-700 rounded-xl text-sm sm:text-[15px] text-gray-900 dark:text-slate-100 font-mono min-h-[44px] focus:outline-none focus:ring-2 focus:ring-slate-600/20 focus:border-slate-600"
                 />
               </div>
             </div>
@@ -2404,12 +2404,12 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
               )}
             </div>
 
-            <div className="flex items-center justify-end gap-3 pt-3 border-t border-gray-100 dark:border-slate-800">
+            <div className="flex flex-col-reverse sm:flex-row items-center justify-end gap-3 pt-3 border-t border-gray-100 dark:border-slate-800">
               <button
                 type="button"
                 disabled={wipeLoading}
                 onClick={() => setShowWipeModal(false)}
-                className="px-4 py-2.5 rounded-xl bg-gray-100 dark:bg-slate-800 hover:bg-gray-200 dark:hover:bg-slate-700 text-gray-700 dark:text-slate-300 text-[13px] font-semibold transition-all cursor-pointer disabled:opacity-50"
+                className="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-gray-100 dark:bg-slate-800 hover:bg-gray-200 dark:hover:bg-slate-700 text-gray-700 dark:text-slate-300 text-[13px] font-semibold transition-all cursor-pointer disabled:opacity-50 min-h-[44px]"
               >
                 বাতিল
               </button>
@@ -2418,7 +2418,7 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
                 id="btn-confirm-wipe-all-data-execute"
                 disabled={wipeConfirmInput.trim() !== 'মুছুন' || wipeLoading}
                 onClick={handleExecuteWipeAllData}
-                className="px-5 py-2.5 rounded-xl bg-red-600 hover:bg-red-700 text-white text-[13px] font-bold shadow-md transition-all cursor-pointer active:scale-95 disabled:opacity-50 disabled:pointer-events-none flex items-center gap-2"
+                className="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-red-600 hover:bg-red-700 text-white text-[13px] font-bold shadow-md transition-all cursor-pointer active:scale-95 disabled:opacity-50 disabled:pointer-events-none flex items-center justify-center gap-2 min-h-[44px]"
               >
                 {wipeLoading ? (
                   <>
@@ -2576,7 +2576,7 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
                       placeholder="যেমন: ক্ষুরারোগ টিকা (FMD)"
                       value={vaccineFormName}
                       onChange={(e) => setVaccineFormName(e.target.value)}
-                      className="w-full bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-700 rounded-xl p-2.5 text-[14px] text-gray-900 dark:text-slate-100 focus:ring-2 focus:ring-slate-600"
+                      className="w-full bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-700 rounded-xl px-3.5 py-2.5 text-sm sm:text-[15px] text-gray-900 dark:text-slate-100 min-h-[44px] focus:outline-none focus:ring-2 focus:ring-slate-600/20 focus:border-slate-600"
                     />
                   </div>
 
@@ -2593,9 +2593,9 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
                         placeholder="১৮০"
                         value={vaccineFormIntervalDays}
                         onChange={(e) => setVaccineFormIntervalDays(e.target.value)}
-                        className="w-full bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-700 rounded-xl p-2.5 text-[14px] font-mono text-gray-900 dark:text-slate-100 focus:ring-2 focus:ring-slate-600"
+                        className="w-full bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-700 rounded-xl px-3.5 py-2.5 pr-16 text-sm sm:text-[15px] font-mono text-gray-900 dark:text-slate-100 min-h-[44px] focus:outline-none focus:ring-2 focus:ring-slate-600/20 focus:border-slate-600"
                       />
-                      <span className="absolute right-3 top-2.5 text-xs text-gray-500 dark:text-slate-400 font-semibold pointer-events-none">
+                      <span className="absolute right-3.5 top-3 text-xs text-gray-500 dark:text-slate-400 font-semibold pointer-events-none">
                         দিন পর পর
                       </span>
                     </div>
@@ -2613,21 +2613,21 @@ export const MoreModule: React.FC<Props> = ({ role, currentUserId, systemConfig,
                       placeholder="যেমন: গরু / মহিষ / ছাগল / ভেড়া"
                       value={vaccineFormAppliesTo}
                       onChange={(e) => setVaccineFormAppliesTo(e.target.value)}
-                      className="w-full bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-700 rounded-xl p-2.5 text-[14px] text-gray-900 dark:text-slate-100 focus:ring-2 focus:ring-slate-600"
+                      className="w-full bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-700 rounded-xl px-3.5 py-2.5 text-sm sm:text-[15px] text-gray-900 dark:text-slate-100 min-h-[44px] focus:outline-none focus:ring-2 focus:ring-slate-600/20 focus:border-slate-600"
                     />
                   </div>
 
-                  <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-gray-100 dark:border-slate-800">
+                  <div className="flex flex-col-reverse sm:flex-row items-center justify-end gap-2.5 pt-3 border-t border-gray-100 dark:border-slate-800">
                     <button
                       type="button"
                       onClick={() => setShowAddEditVaccineModal(false)}
-                      className="px-4 py-2.5 rounded-xl bg-gray-100 dark:bg-slate-800 hover:bg-gray-200 dark:hover:bg-slate-700 text-gray-700 dark:text-slate-300 text-[13px] font-semibold cursor-pointer"
+                      className="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-gray-100 dark:bg-slate-800 hover:bg-gray-200 dark:hover:bg-slate-700 text-gray-700 dark:text-slate-300 text-[13px] font-semibold cursor-pointer min-h-[44px]"
                     >
                       বাতিল
                     </button>
                     <button
                       type="submit"
-                      className="px-5 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-900 text-white text-[13px] font-bold cursor-pointer shadow-xs transition-all active:scale-95"
+                      className="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-900 text-white text-[13px] font-bold cursor-pointer shadow-xs transition-all active:scale-95 min-h-[44px]"
                     >
                       সংরক্ষণ করুন
                     </button>
