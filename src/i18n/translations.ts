@@ -128,10 +128,10 @@ export const translations = {
   en: {
     // Navigation labels
     'nav.dashboard': 'Dashboard',
-    'nav.accounting': 'Accounting',
-    'nav.operations': 'Operations',
-    'nav.commerce': 'Inventory & Sales',
-    'nav.finance': 'Banking & Loans',
+    'nav.accounting': 'Accounts',
+    'nav.operations': 'Farm',
+    'nav.commerce': 'Inventory',
+    'nav.finance': 'Finance',
     'nav.reports': 'Reports',
     'nav.more': 'Menu',
 

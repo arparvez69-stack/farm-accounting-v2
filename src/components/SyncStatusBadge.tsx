@@ -72,7 +72,7 @@ export const SyncStatusBadge: React.FC<Props> = ({
           ? 'ক্লাউড পারসিস্টেন্স ব্যর্থ হয়েছে। ডেটা ডিভাইসে নিরাপদে আছে (ট্যাপ করে পুনরায় চেষ্টা করুন)'
           : 'সিঙ্ক সম্পন্ন (ট্যাপ করে পুনরায় যাচাই করুন)'
       }
-      className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[13px] font-medium border transition-all cursor-pointer min-h-[36px] shadow-xs active:scale-95 ${
+      className={`inline-flex items-center gap-1.5 px-2.5 sm:px-3 py-1 sm:py-1.5 rounded-full text-xs sm:text-[13px] font-medium border transition-all cursor-pointer min-h-[34px] sm:min-h-[36px] shadow-xs active:scale-95 shrink-0 ${
         isOffline
           ? 'bg-amber-50 text-amber-900 border-amber-300 hover:bg-amber-100'
           : isSyncing

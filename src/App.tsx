@@ -349,7 +349,7 @@ export default function App() {
       />
 
       {/* Main App Content Viewport */}
-      <main className="flex-1 px-3.5 py-4 sm:px-6 sm:py-6 max-w-5xl w-full mx-auto pb-28 md:pb-12 relative z-10">
+      <main className="flex-1 px-3 py-3.5 sm:px-6 sm:py-6 max-w-5xl w-full mx-auto pb-28 md:pb-12 relative z-10 min-w-0">
         <ErrorBoundary resetKey={activeTab}>
           {/* TASK 4: Clear warning when opened by known owner with empty local DB and no internet */}
           {offlineEmptyWarning && (
@@ -440,14 +440,14 @@ export default function App() {
           id="toast-undo-container"
           role="status"
           aria-live="polite"
-          className="fixed bottom-20 md:bottom-6 left-1/2 -translate-x-1/2 z-50 animate-in fade-in slide-in-from-bottom-3 duration-200"
+          className="fixed bottom-20 md:bottom-6 left-1/2 -translate-x-1/2 z-50 w-[calc(100%-2rem)] max-w-sm sm:w-auto animate-in fade-in slide-in-from-bottom-3 duration-200"
         >
           <div
             onClick={handlePerformUndo}
-            className="flex items-center gap-3 px-4 sm:px-5 py-3 bg-gray-900/95 dark:bg-slate-900/95 text-white rounded-full shadow-2xl border border-gray-700/80 dark:border-slate-700 cursor-pointer hover:bg-black transition-all active:scale-95 select-none"
+            className="flex items-center justify-between sm:justify-center gap-2.5 sm:gap-3 px-3.5 sm:px-5 py-2.5 sm:py-3 bg-gray-900/95 dark:bg-slate-900/95 text-white rounded-full shadow-2xl border border-gray-700/80 dark:border-slate-700 cursor-pointer hover:bg-black transition-all active:scale-95 select-none"
           >
             <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
-            <span className="text-xs sm:text-sm font-medium">যোগ করা হয়েছে —</span>
+            <span className="text-xs sm:text-sm font-medium truncate">যোগ করা হয়েছে —</span>
             <button
               id="btn-undo-toast"
               type="button"
@@ -455,10 +455,10 @@ export default function App() {
                 e.stopPropagation();
                 handlePerformUndo();
               }}
-              className="text-amber-300 hover:text-amber-200 font-bold text-xs sm:text-sm underline underline-offset-4 cursor-pointer flex items-center gap-1.5 transition-colors"
+              className="text-amber-300 hover:text-amber-200 font-bold text-xs sm:text-sm underline underline-offset-4 cursor-pointer flex items-center gap-1.5 transition-colors shrink-0"
             >
               <RotateCcw className="w-3.5 h-3.5" />
-              <span>আনডু (Added — Undo)</span>
+              <span>আনডু (Undo)</span>
             </button>
           </div>
         </div>
@@ -469,11 +469,11 @@ export default function App() {
         <div
           id="toast-undo-feedback"
           role="status"
-          className="fixed bottom-20 md:bottom-6 left-1/2 -translate-x-1/2 z-50 animate-in fade-in slide-in-from-bottom-2 duration-150"
+          className="fixed bottom-20 md:bottom-6 left-1/2 -translate-x-1/2 z-50 w-[calc(100%-2rem)] max-w-sm sm:w-auto animate-in fade-in slide-in-from-bottom-2 duration-150"
         >
-          <div className="flex items-center gap-2 px-4 py-2.5 bg-emerald-800 text-white text-xs sm:text-sm font-medium rounded-full shadow-xl border border-emerald-600">
+          <div className="flex items-center justify-center gap-2 px-4 py-2.5 bg-emerald-800 text-white text-xs sm:text-sm font-medium rounded-full shadow-xl border border-emerald-600 text-center">
             <CheckCircle2 className="w-4 h-4 text-emerald-300 shrink-0" />
-            <span>{undoToastMessage}</span>
+            <span className="truncate">{undoToastMessage}</span>
           </div>
         </div>
       )}

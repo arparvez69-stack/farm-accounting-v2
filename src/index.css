@@ -29,6 +29,7 @@
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     -webkit-tap-highlight-color: transparent;
+    overflow-x: hidden;
   }
 
   body {
@@ -37,20 +38,41 @@
     min-height: 100vh;
     min-height: -webkit-fill-available;
     overflow-x: hidden;
+    position: relative;
+    width: 100%;
+  }
+
+  #root {
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    overflow-x: hidden;
+    width: 100%;
   }
 }
 
 /* iOS Safe Areas & Thumb ergonomics */
 .pt-safe {
-  padding-top: env(safe-area-inset-top, 0px);
+  padding-top: max(env(safe-area-inset-top, 0px), 0px);
 }
 
 .pb-safe {
-  padding-bottom: max(env(safe-area-inset-bottom, 0px), 12px);
+  padding-bottom: max(env(safe-area-inset-bottom, 0px), 8px);
 }
 
 .mb-safe-bottom {
-  margin-bottom: max(env(safe-area-inset-bottom, 0px), 12px);
+  margin-bottom: max(env(safe-area-inset-bottom, 0px), 8px);
+}
+
+/* Touch & tap comfort */
+.touch-target {
+  min-height: 44px;
+  min-width: 44px;
+}
+
+/* Smooth momentum scrolling for mobile tables and lists */
+.overflow-x-auto, .overflow-y-auto {
+  -webkit-overflow-scrolling: touch;
 }
 
 /* Prevent iOS auto-zoom by ensuring minimum 16px font-size */

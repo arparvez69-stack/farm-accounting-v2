@@ -86,8 +86,8 @@ export const MobileBottomNav: React.FC<Props> = ({ activeTab, onChangeTab }) => 
   ];
 
   return (
-    <nav className="fixed bottom-0 left-0 right-0 z-40 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-t border-gray-200 dark:border-slate-800 pb-safe pt-1 shadow-[0_-4px_16px_rgba(0,0,0,0.06)] dark:shadow-[0_-4px_16px_rgba(0,0,0,0.3)] transition-colors">
-      <div className="flex items-center justify-around px-1 max-w-lg mx-auto">
+    <nav className="fixed bottom-0 left-0 right-0 z-40 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-t border-gray-200 dark:border-slate-800 pb-safe pt-1 shadow-[0_-4px_16px_rgba(0,0,0,0.06)] dark:shadow-[0_-4px_16px_rgba(0,0,0,0.3)] transition-colors select-none">
+      <div className="flex items-center justify-between sm:justify-around px-0.5 sm:px-1 max-w-lg mx-auto w-full">
         {tabs.map((tab) => {
           const Icon = tab.icon;
           const isActive = activeTab === tab.id;
@@ -95,7 +95,7 @@ export const MobileBottomNav: React.FC<Props> = ({ activeTab, onChangeTab }) => 
             <button
               key={tab.id}
               onClick={() => onChangeTab(tab.id)}
-              className={`flex flex-col items-center justify-center min-w-[44px] min-h-[50px] py-1 px-1 rounded-xl transition-all cursor-pointer active:scale-95 ${
+              className={`flex flex-col items-center justify-center flex-1 max-w-[54px] sm:max-w-none min-w-[42px] min-h-[52px] py-1 px-0.5 rounded-xl transition-all cursor-pointer active:scale-95 ${
                 isActive
                   ? `${tab.activeTextColor} font-bold`
                   : 'text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-slate-100 font-medium'
@@ -106,9 +106,9 @@ export const MobileBottomNav: React.FC<Props> = ({ activeTab, onChangeTab }) => 
                   isActive ? tab.activeBgColor : 'text-gray-500 dark:text-slate-400'
                 }`}
               >
-                <Icon className={`w-5 h-5 ${isActive ? 'stroke-[2.5]' : 'stroke-[1.8]'}`} />
+                <Icon className={`w-4 h-4 sm:w-5 sm:h-5 ${isActive ? 'stroke-[2.5]' : 'stroke-[1.8]'}`} />
               </div>
-              <span className="text-[11px] leading-tight mt-0.5 tracking-tight">
+              <span className="text-[10px] sm:text-[11px] leading-tight mt-0.5 tracking-tight truncate w-full max-w-[50px] sm:max-w-none text-center block">
                 {t(tab.labelKey, language)}
               </span>
             </button>
