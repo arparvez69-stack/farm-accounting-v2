@@ -1077,8 +1077,13 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
 
                   {/* Transaction Table (Requirement 1) */}
                   {reconcileLoading ? (
-                    <div className="py-12 text-center text-sm text-gray-500">
-                      লেনদেন লোড হচ্ছে...
+                    <div className="py-8 space-y-2.5">
+                      {[1, 2, 3].map((n) => (
+                        <div
+                          key={n}
+                          className="h-12 rounded-xl bg-slate-100 dark:bg-slate-800 animate-pulse border border-slate-200/60 dark:border-slate-700/60"
+                        />
+                      ))}
                     </div>
                   ) : (() => {
                     const q = reconcileSearch.toLowerCase().trim();

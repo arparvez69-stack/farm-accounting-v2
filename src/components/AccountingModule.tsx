@@ -1659,7 +1659,16 @@ export const AccountingModule: React.FC<Props> = ({
             </div>
           )}
 
-          {journals.length === 0 ? (
+          {loading ? (
+            <div className="space-y-3">
+              {[1, 2, 3].map((n) => (
+                <div
+                  key={n}
+                  className="h-28 rounded-xl bg-slate-100 dark:bg-slate-800 animate-pulse border border-slate-200/60 dark:border-slate-700/60"
+                />
+              ))}
+            </div>
+          ) : journals.length === 0 ? (
             <div className="p-8 text-center text-gray-500 text-[14px]">
               কোনো জাবেদা রেকর্ড নেই। "+ নতুন ভাউচার" বাটনে ক্লিক করে হিসাব শুরু করুন।
             </div>
@@ -1983,7 +1992,16 @@ export const AccountingModule: React.FC<Props> = ({
 
             return (
               <div className="space-y-3">
-                {ledgerEntries.length === 0 ? (
+                {loading ? (
+                  <div className="space-y-3">
+                    {[1, 2, 3].map((n) => (
+                      <div
+                        key={n}
+                        className="h-24 rounded-xl bg-slate-100 dark:bg-slate-800 animate-pulse border border-slate-200/60 dark:border-slate-700/60"
+                      />
+                    ))}
+                  </div>
+                ) : ledgerEntries.length === 0 ? (
                   <div className="p-8 text-center text-gray-500 text-[14px] bg-gray-50 rounded-xl border border-dashed border-gray-300">
                     এই হিসাবে এখনো কোনো লেনদেন সংঘটিত হয়নি।
                   </div>
@@ -2154,8 +2172,20 @@ export const AccountingModule: React.FC<Props> = ({
             </div>
           )}
 
-          {/* Mobile / Tablet Cards View */}
-          <div className="md:hidden space-y-3">
+          {/* Loading or Views */}
+          {loading ? (
+            <div className="space-y-3">
+              {[1, 2, 3, 4].map((n) => (
+                <div
+                  key={n}
+                  className="h-16 rounded-xl bg-slate-100 dark:bg-slate-800 animate-pulse border border-slate-200/60 dark:border-slate-700/60"
+                />
+              ))}
+            </div>
+          ) : (
+            <>
+              {/* Mobile / Tablet Cards View */}
+              <div className="md:hidden space-y-3">
             {tbRows.map((r) => (
               <div
                 key={r.code}
@@ -2223,6 +2253,8 @@ export const AccountingModule: React.FC<Props> = ({
               </tfoot>
             </table>
           </div>
+            </>
+          )}
         </div>
       )}
 

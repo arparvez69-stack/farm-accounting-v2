@@ -1775,6 +1775,19 @@ export const FarmOperationsModule: React.FC<Props> = ({
               return tagMatch || nameMatch || breedMatch;
             });
 
+            if (loading) {
+              return (
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
+                  {[1, 2, 3].map((n) => (
+                    <div
+                      key={n}
+                      className="h-48 rounded-xl bg-slate-100 dark:bg-slate-800 animate-pulse border border-slate-200/60 dark:border-slate-700/60"
+                    />
+                  ))}
+                </div>
+              );
+            }
+
             if (displayedAnimals.length === 0) {
               if (animals.length === 0) {
                 return (
@@ -3133,7 +3146,16 @@ export const FarmOperationsModule: React.FC<Props> = ({
             </form>
           )}
 
-          {fishBatches.filter((b) => fishFilter === 'ACTIVE' ? b.status === 'ACTIVE' : (b.status === 'HARVESTED' || b.status === 'CLOSED')).length === 0 ? (
+          {loading ? (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+              {[1, 2].map((n) => (
+                <div
+                  key={n}
+                  className="h-44 rounded-xl bg-slate-100 dark:bg-slate-800 animate-pulse border border-slate-200/60 dark:border-slate-700/60"
+                />
+              ))}
+            </div>
+          ) : fishBatches.filter((b) => fishFilter === 'ACTIVE' ? b.status === 'ACTIVE' : (b.status === 'HARVESTED' || b.status === 'CLOSED')).length === 0 ? (
             <div className="flex flex-col items-center justify-center p-8 text-center bg-gray-50/70 dark:bg-slate-800/40 rounded-2xl border border-dashed border-gray-200 dark:border-slate-700">
               <Fish className="w-12 h-12 text-sky-400 mb-2 stroke-[1.5]" />
               <p className="text-sm font-bold text-gray-700 dark:text-slate-300">
@@ -3383,7 +3405,16 @@ export const FarmOperationsModule: React.FC<Props> = ({
             </form>
           )}
 
-          {cropCycles.filter((c) => cropFilter === 'ACTIVE' ? (c.status === 'PLANTED' || c.status === 'GROWING') : (c.status === 'HARVESTED' || c.status === 'CLOSED')).length === 0 ? (
+          {loading ? (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+              {[1, 2].map((n) => (
+                <div
+                  key={n}
+                  className="h-44 rounded-xl bg-slate-100 dark:bg-slate-800 animate-pulse border border-slate-200/60 dark:border-slate-700/60"
+                />
+              ))}
+            </div>
+          ) : cropCycles.filter((c) => cropFilter === 'ACTIVE' ? (c.status === 'PLANTED' || c.status === 'GROWING') : (c.status === 'HARVESTED' || c.status === 'CLOSED')).length === 0 ? (
             <div className="flex flex-col items-center justify-center p-8 text-center bg-gray-50/70 dark:bg-slate-800/40 rounded-2xl border border-dashed border-gray-200 dark:border-slate-700">
               <img
                 src={selectedEmptyCropSvg}

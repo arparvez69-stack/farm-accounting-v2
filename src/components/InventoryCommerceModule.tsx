@@ -2298,7 +2298,27 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
             </form>
           )}
 
-          {inventoryViewMode === 'cards' ? (
+          {loading ? (
+            inventoryViewMode === 'cards' ? (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                {[1, 2, 3].map((n) => (
+                  <div
+                    key={n}
+                    className="h-64 rounded-2xl bg-slate-100 dark:bg-slate-800 animate-pulse border border-slate-200/60 dark:border-slate-700/60"
+                  />
+                ))}
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {[1, 2, 3].map((n) => (
+                  <div
+                    key={n}
+                    className="h-20 rounded-xl bg-slate-100 dark:bg-slate-800 animate-pulse border border-slate-200/60 dark:border-slate-700/60"
+                  />
+                ))}
+              </div>
+            )
+          ) : inventoryViewMode === 'cards' ? (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
               {items.map((it, idx) => {
                 const val = it.currentStock * it.avgCostPrice;
@@ -3011,7 +3031,13 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
 
           {/* Mobile Card View (Optimized for iPhone 13 mini & small viewports) */}
           <div className="md:hidden space-y-3">
-            {sales.length === 0 ? (
+            {loading ? (
+              <div className="space-y-3">
+                {[1, 2, 3].map((n) => (
+                  <div key={n} className="h-32 rounded-xl bg-slate-100 dark:bg-slate-800 animate-pulse border border-slate-200/60 dark:border-slate-700/60" />
+                ))}
+              </div>
+            ) : sales.length === 0 ? (
               <div className="p-8 text-center text-gray-500 text-[14px] bg-gray-50 rounded-2xl border border-dashed border-gray-200">
                 এখনো কোনো বিক্রয় চালান ইস্যু করা হয়নি।
               </div>
@@ -3165,7 +3191,17 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
-                {sales.length === 0 ? (
+                {loading ? (
+                  <tr>
+                    <td colSpan={8} className="p-4">
+                      <div className="space-y-2.5">
+                        {[1, 2, 3].map((n) => (
+                          <div key={n} className="h-10 bg-slate-100 dark:bg-slate-800 animate-pulse rounded-lg" />
+                        ))}
+                      </div>
+                    </td>
+                  </tr>
+                ) : sales.length === 0 ? (
                   <tr>
                     <td colSpan={8} className="p-8 text-center text-gray-500 text-[14px]">
                       এখনো কোনো বিক্রয় চালান ইস্যু করা হয়নি।
@@ -3793,7 +3829,13 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
 
           {/* Mobile Card View (Optimized for iPhone 13 mini & small viewports) */}
           <div className="md:hidden space-y-3">
-            {purchases.length === 0 ? (
+            {loading ? (
+              <div className="space-y-3">
+                {[1, 2, 3].map((n) => (
+                  <div key={n} className="h-32 rounded-xl bg-slate-100 dark:bg-slate-800 animate-pulse border border-slate-200/60 dark:border-slate-700/60" />
+                ))}
+              </div>
+            ) : purchases.length === 0 ? (
               <div className="p-8 text-center text-gray-500 text-[14px] bg-gray-50 rounded-2xl border border-dashed border-gray-200">
                 এখনো কোনো ক্রয় চালান রেকর্ড করা হয়নি।
               </div>
@@ -3955,7 +3997,17 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
-                {purchases.length === 0 ? (
+                {loading ? (
+                  <tr>
+                    <td colSpan={9} className="p-4">
+                      <div className="space-y-2.5">
+                        {[1, 2, 3].map((n) => (
+                          <div key={n} className="h-10 bg-slate-100 dark:bg-slate-800 animate-pulse rounded-lg" />
+                        ))}
+                      </div>
+                    </td>
+                  </tr>
+                ) : purchases.length === 0 ? (
                   <tr>
                     <td colSpan={9} className="p-8 text-center text-gray-500 text-[14px]">
                       এখনো কোনো ক্রয় চালান রেকর্ড করা হয়নি।
