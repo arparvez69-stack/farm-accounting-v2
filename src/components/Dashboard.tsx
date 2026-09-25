@@ -461,33 +461,48 @@ export const Dashboard: React.FC<Props> = ({ role, onNavigate, regressionTestRes
   const totalDueOrOverdue = overdueRemindersCount + dueTodayRemindersCount;
 
   return (
-    <div className="space-y-5 pb-6 max-w-5xl mx-auto rounded-3xl p-2 sm:p-4 bg-gradient-to-b from-emerald-500/[0.06] via-green-500/[0.02] to-transparent dark:from-emerald-950/20 dark:via-emerald-950/5 dark:to-transparent">
-      {/* 1. GREETING HEADER & HERO ILLUSTRATION AT THE TOP */}
-      <div id="dashboard-greeting-header" className="pt-1 pb-0.5 space-y-3">
-        <div
-          className="w-full h-48 sm:h-56 flex justify-center items-center overflow-hidden"
-          style={{
-            maskImage: 'linear-gradient(to bottom, black 60%, transparent 100%)',
-            WebkitMaskImage: 'linear-gradient(to bottom, black 60%, transparent 100%)'
-          }}
-        >
-          <img
-            src="/illustrations/Farmer-pana.svg"
-            alt="Farmer illustration"
-            loading="lazy"
-            className="w-auto max-w-full h-full object-contain pointer-events-none drop-shadow-xs"
-          />
-        </div>
-        <div className="flex flex-col sm:flex-row sm:items-baseline justify-between gap-1">
-          <div>
-            <h1 className="text-2xl sm:text-3xl font-extrabold text-gray-900 dark:text-slate-100 tracking-tight leading-tight">
+    <div className="space-y-5 pb-6 max-w-5xl mx-auto p-2 sm:p-4">
+      {/* 1. EXECUTIVE GREETING & ACTION HEADER */}
+      <div
+        id="dashboard-greeting-header"
+        className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 sm:p-5 rounded-2xl bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 shadow-xs"
+      >
+        <div>
+          <div className="flex items-center gap-2 flex-wrap">
+            <h1 className="text-xl sm:text-2xl font-bold text-gray-900 dark:text-slate-100 tracking-tight">
               {getGreeting()}, {ownerName}!
             </h1>
-            <p className="text-sm sm:text-base text-gray-600 dark:text-slate-400 font-medium mt-1">
-              {getFormattedDate()}
-            </p>
+            {isAccountingBalanced && (
+              <span className="inline-flex items-center gap-1 text-xs px-2.5 py-0.5 rounded-full bg-emerald-50 dark:bg-emerald-950/60 text-[#15803D] dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800 font-semibold">
+                <CheckCircle2 className="w-3.5 h-3.5" />
+                <span>{t('dashboard.balanced')}</span>
+              </span>
+            )}
           </div>
+          <p className="text-xs sm:text-sm text-gray-500 dark:text-slate-400 font-medium mt-1">
+            {getFormattedDate()}
+          </p>
         </div>
+
+        {/* Quick Action Dock for Owner */}
+        {role === 'OWNER' && (
+          <div className="flex items-center gap-2.5 flex-wrap">
+            <button
+              onClick={() => onNavigate('accounting')}
+              className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2 rounded-xl bg-[#1E5128] hover:bg-[#173F1F] text-white text-xs sm:text-sm font-bold shadow-xs transition-all active:scale-95 cursor-pointer min-h-[40px]"
+            >
+              <PlusCircle className="w-4 h-4" />
+              <span>{t('btn.newVoucher')}</span>
+            </button>
+            <button
+              onClick={() => onNavigate('commerce')}
+              className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2 rounded-xl bg-gray-100 dark:bg-slate-800 hover:bg-gray-200 dark:hover:bg-slate-700 text-gray-800 dark:text-slate-200 border border-gray-200 dark:border-slate-700 text-xs sm:text-sm font-semibold shadow-xs transition-all active:scale-95 cursor-pointer min-h-[40px]"
+            >
+              <FileText className="w-4 h-4" />
+              <span>{t('btn.salesInvoice')}</span>
+            </button>
+          </div>
+        )}
       </div>
 
       {/* 2. SUMMARY CARD (STATIC VARIANT) */}
@@ -499,17 +514,17 @@ export const Dashboard: React.FC<Props> = ({ role, onNavigate, regressionTestRes
       >
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div className="flex items-center gap-3.5">
-            <div className="w-12 h-12 rounded-2xl bg-emerald-50 dark:bg-emerald-950/50 text-[#1E5128] dark:text-emerald-300 border border-emerald-100 dark:border-emerald-900/60 flex items-center justify-center shrink-0 shadow-2xs">
-              <Wallet className="w-6 h-6" />
+            <div className="w-11 h-11 rounded-xl bg-emerald-50 dark:bg-emerald-950/50 text-[#1E5128] dark:text-emerald-300 border border-emerald-100 dark:border-emerald-900/60 flex items-center justify-center shrink-0 shadow-2xs">
+              <Wallet className="w-5 h-5" />
             </div>
             <div>
-              <span className="text-xs sm:text-[13px] font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wider block">
+              <span className="text-xs font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wider block">
                 {lang === 'en' ? "Today's Cash + Bank Balance" : 'আজকের মোট নগদ ও ব্যাংক তহবিল'}
               </span>
-              <div className="text-2xl sm:text-3xl font-extrabold text-gray-900 dark:text-slate-100 tracking-tight leading-tight mt-0.5">
+              <div className="text-2xl sm:text-3xl font-extrabold text-gray-900 dark:text-slate-100 tracking-tight leading-tight mt-0.5 font-mono">
                 {fmtMoney(combinedCashBankBalance)}
               </div>
-              <div className="flex items-center gap-2 text-xs text-gray-500 dark:text-slate-400 mt-1 font-medium">
+              <div className="flex items-center gap-2 text-xs text-gray-500 dark:text-slate-400 mt-1 font-medium font-mono">
                 <span>নগদ: {fmtMoney(cashBalance)}</span>
                 <span>•</span>
                 <span>ব্যাংক: {fmtMoney(bankBalance)}</span>
@@ -745,92 +760,283 @@ export const Dashboard: React.FC<Props> = ({ role, onNavigate, regressionTestRes
         </div>
       )}
 
-      {/* 0. QUICK ACTIVITY ACTION BUTTONS WITH ICONTILE */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-        <button
-          id="btn-quick-feed-cost"
-          type="button"
-          onClick={() => onNavigate('operations', undefined, { openActivityModal: true, eventType: 'FEED' })}
-          className="flex items-center gap-3.5 p-3.5 sm:p-4 rounded-xl bg-white dark:bg-slate-800/90 border border-gray-200/90 dark:border-slate-700 shadow-xs hover:shadow-md active:scale-[0.99] transition-all cursor-pointer text-left group min-h-[58px]"
-        >
-          <IconTile
-            icon={PlusCircle}
-            color="warning"
-            size="md"
-            rounded="xl"
-          />
-          <div className="min-w-0">
-            <span className="block text-base sm:text-lg font-bold text-gray-900 dark:text-slate-100 group-hover:text-amber-700 dark:group-hover:text-amber-400 transition-colors">
-              + ফিড খরচ
-            </span>
-            <span className="block text-xs text-gray-500 dark:text-slate-400 truncate">
-              দৈনিক খাদ্য খরচ এন্ট্রি
-            </span>
+      {/* 2. SYSTEM ALERTS & NOTICES */}
+      {testResult && !testResult.success && testResult.failures.length > 0 && (
+        <div className="p-4 rounded-2xl bg-amber-50 dark:bg-amber-950/40 border-2 border-amber-400 dark:border-amber-600 text-amber-950 dark:text-amber-100 shadow-xs space-y-2">
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <div className="flex items-center gap-2.5">
+              <AlertTriangle className="w-5 h-5 text-amber-700 dark:text-amber-400 shrink-0 animate-pulse" />
+              <div>
+                <h4 className="font-bold text-[15px] text-amber-950 dark:text-amber-100">
+                  সিস্টেম পরীক্ষায় সমস্যা পাওয়া গেছে, বিস্তারিত দেখতে ট্যাপ করুন
+                </h4>
+                <p className="text-xs text-amber-800 dark:text-amber-300 font-medium mt-0.5">
+                  (System check found an issue, tap for details) • {testResult.failures.length}টি পরীক্ষা ব্যর্থ হয়েছে
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              id="btn-dashboard-test-failures"
+              onClick={() => setShowTestModal(true)}
+              className="px-3.5 py-1.5 rounded-xl bg-amber-200 hover:bg-amber-300 text-amber-950 border border-amber-400 text-xs font-bold transition-all cursor-pointer min-h-[36px]"
+            >
+              বিস্তারিত দেখুন →
+            </button>
           </div>
-        </button>
+        </div>
+      )}
 
-        <button
-          id="btn-quick-milk-today"
-          type="button"
-          onClick={() => onNavigate('operations', undefined, { openActivityModal: true, eventType: 'MILK' })}
-          className="flex items-center gap-3.5 p-3.5 sm:p-4 rounded-xl bg-white dark:bg-slate-800/90 border border-gray-200/90 dark:border-slate-700 shadow-xs hover:shadow-md active:scale-[0.99] transition-all cursor-pointer text-left group min-h-[58px]"
-        >
-          <IconTile
-            icon={Droplets}
-            color="info"
-            size="md"
-            rounded="xl"
-          />
-          <div className="min-w-0">
-            <span className="block text-base sm:text-lg font-bold text-gray-900 dark:text-slate-100 group-hover:text-blue-700 dark:group-hover:text-blue-400 transition-colors">
-              + আজকের দুধ
-            </span>
-            <span className="block text-xs text-gray-500 dark:text-slate-400 truncate">
-              দুধ দোহন ও উৎপাদন হিসাব
-            </span>
+      {alerts.length > 0 && (
+        <div className="p-4 rounded-2xl bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-700 text-amber-900 dark:text-amber-200 shadow-xs space-y-2">
+          <div className="flex items-center gap-2 font-bold text-[15px] text-amber-900 dark:text-amber-200">
+            <AlertTriangle className="w-5 h-5 text-amber-700 dark:text-amber-400 shrink-0" />
+            <span>{t('dashboard.alerts')} ({alerts.length} {t('dashboard.unitPieces')})</span>
           </div>
-        </button>
+          <ul className="list-disc list-inside space-y-1 text-sm text-amber-900 dark:text-amber-200 pl-1">
+            {alerts.map((alt, idx) => (
+              <li key={idx} className="leading-snug">{alt}</li>
+            ))}
+          </ul>
+        </div>
+      )}
 
-        <button
-          id="btn-quick-vaccine"
-          type="button"
-          onClick={() => onNavigate('operations', undefined, { openActivityModal: true, eventType: 'VACCINE' })}
-          className="flex items-center gap-3.5 p-3.5 sm:p-4 rounded-xl bg-white dark:bg-slate-800/90 border border-gray-200/90 dark:border-slate-700 shadow-xs hover:shadow-md active:scale-[0.99] transition-all cursor-pointer text-left group min-h-[58px]"
-        >
-          <IconTile
-            icon={Syringe}
-            color="success"
-            size="md"
-            rounded="xl"
-          />
-          <div className="min-w-0">
-            <span className="block text-base sm:text-lg font-bold text-gray-900 dark:text-slate-100 group-hover:text-emerald-700 dark:group-hover:text-emerald-400 transition-colors">
-              + ভ্যাকসিন
-            </span>
-            <span className="block text-xs text-gray-500 dark:text-slate-400 truncate">
-              টিকা ও অ্যান্টিবায়োটিক প্রয়োগ
-            </span>
+      {/* 3. CORE FINANCIAL PERFORMANCE & LIQUIDITY PANEL */}
+      <div className="bg-white dark:bg-slate-900 rounded-2xl border border-gray-200 dark:border-slate-800 p-4 sm:p-5 shadow-xs space-y-4 transition-colors">
+        <div className="flex items-center justify-between pb-3 border-b border-gray-100 dark:border-slate-800">
+          <div>
+            <h2 className="text-base sm:text-lg font-bold text-gray-900 dark:text-slate-100 flex items-center gap-2">
+              <TrendingUp className="w-5 h-5 text-[#1E5128] dark:text-emerald-400" />
+              <span>আর্থিক পারফরম্যান্স ও তারল্য (Financial Overview)</span>
+            </h2>
+            <p className="text-xs sm:text-sm text-gray-500 dark:text-slate-400 mt-0.5">
+              মোট তারল্য, নিট মুনাফা ও কার্যকরী মূলধনের সার্বিক অবস্থা
+            </p>
           </div>
-        </button>
+
+          <button
+            type="button"
+            onClick={() => onNavigate('accounting')}
+            className="text-xs sm:text-sm text-[#1E5128] dark:text-emerald-400 hover:underline font-bold cursor-pointer inline-flex items-center gap-1"
+          >
+            <span>হিসাব বিবরণী →</span>
+          </button>
+        </div>
+
+        {/* Hero 2 Key Metrics (Liquidity & Net Profit) */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+          {/* Total Liquidity */}
+          <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/80 border border-gray-200/80 dark:border-slate-700/80">
+            <div className="flex items-center justify-between text-xs sm:text-[13px] text-gray-600 dark:text-slate-400 font-semibold">
+              <span>{t('dashboard.totalLiquidity')}</span>
+              <div className="p-1.5 rounded-lg bg-blue-100/80 dark:bg-blue-950/60 text-blue-700 dark:text-blue-400">
+                <Wallet className="w-4 h-4" />
+              </div>
+            </div>
+            <div className="text-2xl sm:text-3xl font-extrabold font-mono tabular-nums text-gray-900 dark:text-slate-100 tracking-tight mt-1.5">
+              {fmtMoney(cashBalance + bankBalance)}
+            </div>
+            <div className="flex items-center gap-2.5 text-xs text-gray-500 dark:text-slate-400 mt-2 pt-2 border-t border-gray-200/60 dark:border-slate-700/60 font-medium font-mono">
+              <span>{t('dashboard.cash')} <strong className="text-gray-900 dark:text-slate-200">{fmtMoney(cashBalance)}</strong></span>
+              <span>•</span>
+              <span>{t('dashboard.bank')} <strong className="text-gray-900 dark:text-slate-200">{fmtMoney(bankBalance)}</strong></span>
+            </div>
+          </div>
+
+          {/* Net Profit / Margin */}
+          <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/80 border border-gray-200/80 dark:border-slate-700/80">
+            <div className="flex items-center justify-between text-xs sm:text-[13px] text-gray-600 dark:text-slate-400 font-semibold">
+              <span>{t('dashboard.netProfit')}</span>
+              <div className={`p-1.5 rounded-lg ${netProfit >= 0 ? 'bg-emerald-100/80 dark:bg-emerald-950/60 text-[#15803D] dark:text-emerald-400' : 'bg-red-100/80 dark:bg-red-950/60 text-[#C2410C] dark:text-rose-400'}`}>
+                {netProfit >= 0 ? <TrendingUp className="w-4 h-4" /> : <TrendingDown className="w-4 h-4" />}
+              </div>
+            </div>
+            <div className={`text-2xl sm:text-3xl font-extrabold font-mono tabular-nums tracking-tight mt-1.5 ${netProfit >= 0 ? 'text-[#15803D] dark:text-emerald-400' : 'text-[#C2410C] dark:text-rose-400'}`}>
+              {fmtMoney(netProfit)}
+            </div>
+            <div className="text-xs text-gray-500 dark:text-slate-400 mt-2 pt-2 border-t border-gray-200/60 dark:border-slate-700/60 font-medium">
+              {t('dashboard.netProfitNote')}
+            </div>
+          </div>
+        </div>
+
+        {/* Secondary Financial & Working Capital Row */}
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 pt-1">
+          {/* Total Revenue */}
+          <div className="p-3.5 rounded-xl bg-[#F8FAFC] dark:bg-slate-800/60 border border-gray-200/70 dark:border-slate-700/60">
+            <div className="flex items-center justify-between text-xs text-gray-600 dark:text-slate-400 font-medium">
+              <span>{t('dashboard.totalRevenue')}</span>
+              <ArrowUpRight className="w-3.5 h-3.5 text-[#15803D] dark:text-emerald-400" />
+            </div>
+            <div className="text-lg sm:text-xl font-bold font-mono tabular-nums text-gray-900 dark:text-slate-100 mt-1">
+              {fmtMoney(totalRevenue)}
+            </div>
+          </div>
+
+          {/* Total Expenses */}
+          <div className="p-3.5 rounded-xl bg-[#F8FAFC] dark:bg-slate-800/60 border border-gray-200/70 dark:border-slate-700/60">
+            <div className="flex items-center justify-between text-xs text-gray-600 dark:text-slate-400 font-medium">
+              <span>{t('dashboard.totalExpenses')}</span>
+              <ArrowDownLeft className="w-3.5 h-3.5 text-rose-600 dark:text-rose-400" />
+            </div>
+            <div className="text-lg sm:text-xl font-bold font-mono tabular-nums text-gray-900 dark:text-slate-100 mt-1">
+              {fmtMoney(totalExpenses)}
+            </div>
+          </div>
+
+          {/* AR (Receivable) */}
+          <div className="p-3.5 rounded-xl bg-[#F8FAFC] dark:bg-slate-800/60 border border-gray-200/70 dark:border-slate-700/60">
+            <div className="text-xs text-gray-600 dark:text-slate-400 font-medium">{t('dashboard.receivables')}</div>
+            <div className="text-lg sm:text-xl font-bold font-mono tabular-nums text-sky-700 dark:text-sky-400 mt-1">
+              {fmtMoney(arBalance)}
+            </div>
+          </div>
+
+          {/* AP (Payable) */}
+          <div className="p-3.5 rounded-xl bg-[#F8FAFC] dark:bg-slate-800/60 border border-gray-200/70 dark:border-slate-700/60">
+            <div className="text-xs text-gray-600 dark:text-slate-400 font-medium">{t('dashboard.payables')}</div>
+            <div className="text-lg sm:text-xl font-bold font-mono tabular-nums text-amber-700 dark:text-amber-400 mt-1">
+              {fmtMoney(apBalance)}
+            </div>
+          </div>
+
+          {/* Inventory Valuation */}
+          <div className="p-3.5 rounded-xl bg-[#F8FAFC] dark:bg-slate-800/60 border border-gray-200/70 dark:border-slate-700/60 col-span-2 sm:col-span-1">
+            <div className="text-xs text-gray-600 dark:text-slate-400 font-medium">মজুদ পণ্যের মূল্য</div>
+            <div className="text-lg sm:text-xl font-bold font-mono tabular-nums text-emerald-800 dark:text-emerald-400 mt-1">
+              {fmtMoney(inventoryValue)}
+            </div>
+          </div>
+        </div>
       </div>
 
-      {/* 0. PROMINENT DUE THIS WEEK (এই সপ্তাহে করণীয়) CARD AT THE TOP */}
-      <div className="bg-white dark:bg-slate-900 rounded-2xl border-2 border-emerald-600/30 dark:border-emerald-500/40 p-4 sm:p-5 shadow-sm space-y-3.5 transition-colors">
+      {/* 4. FARM PRODUCTION & BIOLOGICAL ASSETS PANEL */}
+      <div className="bg-white dark:bg-slate-900 rounded-2xl border border-gray-200 dark:border-slate-800 p-4 sm:p-5 shadow-xs space-y-4 transition-colors">
+        <div className="flex items-center justify-between pb-3 border-b border-gray-100 dark:border-slate-800">
+          <div className="flex items-center gap-2">
+            <Activity className="w-5 h-5 text-[#1E5128] dark:text-emerald-400" />
+            <h3 className="text-base sm:text-lg font-bold text-gray-900 dark:text-slate-100">
+              {t('dashboard.bioAssets')}
+            </h3>
+          </div>
+          <button
+            onClick={() => onNavigate('operations')}
+            className="text-xs sm:text-sm text-[#1E5128] dark:text-emerald-400 hover:underline font-bold cursor-pointer py-1 px-2"
+          >
+            {t('dashboard.details')} →
+          </button>
+        </div>
+
+        {/* 3 Biological Asset Summary Cards */}
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          {/* Livestock */}
+          <div
+            onClick={() => onNavigate('operations')}
+            className="p-4 rounded-xl bg-[#F8FAFC] dark:bg-slate-800/80 border border-gray-200 dark:border-slate-700/80 hover:border-[#1E5128]/60 dark:hover:border-emerald-500/60 cursor-pointer transition-all active:scale-98"
+          >
+            <div className="text-xs sm:text-[13px] text-gray-600 dark:text-slate-400 font-medium">{t('dashboard.activeLivestock')}</div>
+            <div className="text-2xl font-bold text-gray-900 dark:text-slate-100 mt-1 font-mono">{animalCount} {t('dashboard.unitPieces')}</div>
+            <div className="text-xs font-semibold text-[#1E5128] dark:text-emerald-400 mt-1">{t('dashboard.livestockDesc')}</div>
+          </div>
+
+          {/* Fisheries */}
+          <div
+            onClick={() => onNavigate('operations')}
+            className="p-4 rounded-xl bg-[#F8FAFC] dark:bg-slate-800/80 border border-gray-200 dark:border-slate-700/80 hover:border-[#1E5128]/60 dark:hover:border-emerald-500/60 cursor-pointer transition-all active:scale-98"
+          >
+            <div className="text-xs sm:text-[13px] text-gray-600 dark:text-slate-400 font-medium">{t('dashboard.activeFish')}</div>
+            <div className="text-2xl font-bold text-gray-900 dark:text-slate-100 mt-1 font-mono">{fishBatchCount} {t('dashboard.unitPieces')}</div>
+            <div className="text-xs font-semibold text-sky-700 dark:text-sky-400 mt-1">{t('dashboard.fishDesc')}</div>
+          </div>
+
+          {/* Crops */}
+          <div
+            onClick={() => onNavigate('operations')}
+            className="p-4 rounded-xl bg-[#F8FAFC] dark:bg-slate-800/80 border border-gray-200 dark:border-slate-700/80 hover:border-[#1E5128]/60 dark:hover:border-emerald-500/60 cursor-pointer transition-all active:scale-98"
+          >
+            <div className="text-xs sm:text-[13px] text-gray-600 dark:text-slate-400 font-medium">{t('dashboard.activeCrops')}</div>
+            <div className="text-2xl font-bold text-gray-900 dark:text-slate-100 mt-1 font-mono">{cropCycleCount} {t('dashboard.unitPieces')}</div>
+            <div className="text-xs font-semibold text-amber-700 dark:text-amber-400 mt-1">{t('dashboard.cropDesc')}</div>
+          </div>
+        </div>
+
+        {/* Integrated Quick Activity Action Bar */}
+        <div className="pt-2 border-t border-gray-100 dark:border-slate-800">
+          <span className="text-xs font-bold text-gray-500 dark:text-slate-400 uppercase tracking-wider block mb-2.5">
+            দৈনন্দিন খামার এন্ট্রি শর্টকাট (Quick Entry)
+          </span>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+            <button
+              id="btn-quick-feed-cost"
+              type="button"
+              onClick={() => onNavigate('operations', undefined, { openActivityModal: true, eventType: 'FEED' })}
+              className="flex items-center gap-3 p-3 rounded-xl bg-[#F8FAFC] dark:bg-slate-800/70 border border-gray-200 dark:border-slate-700 hover:border-amber-300 dark:hover:border-amber-600 hover:bg-white dark:hover:bg-slate-800 transition-all cursor-pointer text-left group min-h-[50px]"
+            >
+              <div className="w-8 h-8 rounded-lg bg-amber-100 dark:bg-amber-950/60 text-amber-700 dark:text-amber-400 flex items-center justify-center shrink-0">
+                <PlusCircle className="w-4 h-4" />
+              </div>
+              <div className="min-w-0">
+                <span className="block text-sm font-bold text-gray-900 dark:text-slate-100 group-hover:text-amber-700 dark:group-hover:text-amber-400 transition-colors">
+                  + ফিড খরচ
+                </span>
+                <span className="block text-[11px] text-gray-500 dark:text-slate-400 truncate">
+                  দৈনিক খাদ্য খরচ এন্ট্রি
+                </span>
+              </div>
+            </button>
+
+            <button
+              id="btn-quick-milk-today"
+              type="button"
+              onClick={() => onNavigate('operations', undefined, { openActivityModal: true, eventType: 'MILK' })}
+              className="flex items-center gap-3 p-3 rounded-xl bg-[#F8FAFC] dark:bg-slate-800/70 border border-gray-200 dark:border-slate-700 hover:border-blue-300 dark:hover:border-blue-600 hover:bg-white dark:hover:bg-slate-800 transition-all cursor-pointer text-left group min-h-[50px]"
+            >
+              <div className="w-8 h-8 rounded-lg bg-blue-100 dark:bg-blue-950/60 text-blue-700 dark:text-blue-400 flex items-center justify-center shrink-0">
+                <Droplets className="w-4 h-4" />
+              </div>
+              <div className="min-w-0">
+                <span className="block text-sm font-bold text-gray-900 dark:text-slate-100 group-hover:text-blue-700 dark:group-hover:text-blue-400 transition-colors">
+                  + আজকের দুধ
+                </span>
+                <span className="block text-[11px] text-gray-500 dark:text-slate-400 truncate">
+                  দুধ দোহন ও উৎপাদন হিসাব
+                </span>
+              </div>
+            </button>
+
+            <button
+              id="btn-quick-vaccine"
+              type="button"
+              onClick={() => onNavigate('operations', undefined, { openActivityModal: true, eventType: 'VACCINE' })}
+              className="flex items-center gap-3 p-3 rounded-xl bg-[#F8FAFC] dark:bg-slate-800/70 border border-gray-200 dark:border-slate-700 hover:border-emerald-300 dark:hover:border-emerald-600 hover:bg-white dark:hover:bg-slate-800 transition-all cursor-pointer text-left group min-h-[50px]"
+            >
+              <div className="w-8 h-8 rounded-lg bg-emerald-100 dark:bg-emerald-950/60 text-[#15803D] dark:text-emerald-400 flex items-center justify-center shrink-0">
+                <Syringe className="w-4 h-4" />
+              </div>
+              <div className="min-w-0">
+                <span className="block text-sm font-bold text-gray-900 dark:text-slate-100 group-hover:text-emerald-700 dark:group-hover:text-emerald-400 transition-colors">
+                  + ভ্যাকসিন
+                </span>
+                <span className="block text-[11px] text-gray-500 dark:text-slate-400 truncate">
+                  টিকা ও চিকিৎসা প্রয়োগ
+                </span>
+              </div>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* 5. OPERATIONAL SCHEDULE & DUE THIS WEEK (এই সপ্তাহে করণীয়) */}
+      <div className="bg-white dark:bg-slate-900 rounded-2xl border border-gray-200 dark:border-slate-800 p-4 sm:p-5 shadow-xs space-y-3.5 transition-colors">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 pb-2.5 border-b border-gray-100 dark:border-slate-800">
           <div className="flex items-center gap-2.5">
-            <div className="w-9 h-9 rounded-xl bg-[#1E5128] dark:bg-emerald-800 text-white flex items-center justify-center shrink-0 shadow-xs">
-              <Calendar className="w-5 h-5" />
+            <div className="w-8 h-8 rounded-lg bg-[#1E5128] dark:bg-emerald-800 text-white flex items-center justify-center shrink-0 shadow-xs">
+              <Calendar className="w-4 h-4" />
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <h3 className="text-base sm:text-lg font-bold text-gray-900 dark:text-slate-100 tracking-tight flex items-center gap-2">
-                  <span>{t('dashboard.dueThisWeek')}</span>
-                  <img
-                    src="/illustrations/Checklist-bro.svg"
-                    alt="Checklist icon"
-                    loading="lazy"
-                    className="w-6 h-6 object-contain pointer-events-none drop-shadow-xs inline-block"
-                  />
+                <h3 className="text-base sm:text-lg font-bold text-gray-900 dark:text-slate-100 tracking-tight">
+                  {t('dashboard.dueThisWeek')}
                 </h3>
                 <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${
                   reminders.length > 0
@@ -840,7 +1046,7 @@ export const Dashboard: React.FC<Props> = ({ role, onNavigate, regressionTestRes
                   {reminders.length} {t('dashboard.pendingCount')}
                 </span>
               </div>
-              <p className="text-xs sm:text-[13px] text-gray-600 dark:text-slate-400">
+              <p className="text-xs text-gray-500 dark:text-slate-400">
                 {lang === 'en'
                   ? 'Vaccine, treatment follow-up & farm operational schedule (overdue & next 7 days)'
                   : 'টিকা, চিকিৎসা ফলোআপ ও খামার পরিচালনার জরুরি সময়সূচি (বকেয়া ও আগামী ৭ দিন)'}
@@ -850,10 +1056,9 @@ export const Dashboard: React.FC<Props> = ({ role, onNavigate, regressionTestRes
 
           <button
             onClick={() => onNavigate('operations')}
-            className="text-xs sm:text-[13px] font-bold text-[#1E5128] dark:text-emerald-400 hover:text-[#173F1F] dark:hover:text-emerald-300 flex items-center gap-1 self-start sm:self-auto cursor-pointer"
+            className="text-xs sm:text-[13px] font-bold text-[#1E5128] dark:text-emerald-400 hover:underline flex items-center gap-1 self-start sm:self-auto cursor-pointer"
           >
             <span>{t('nav.operations')} →</span>
-            <ChevronRight className="w-4 h-4" />
           </button>
         </div>
 
@@ -943,7 +1148,7 @@ export const Dashboard: React.FC<Props> = ({ role, onNavigate, regressionTestRes
                       ) : (
                         <StatusBadge
                           status="info"
-                          label={`${diffDays} ${t('dashboard.daysRemaining')}`}
+                          label={isToday ? t('dashboard.today') : diffDays === 1 ? t('dashboard.tomorrow') : `${diffDays} দিন বাকি`}
                         />
                       )}
 
@@ -991,224 +1196,6 @@ export const Dashboard: React.FC<Props> = ({ role, onNavigate, regressionTestRes
             })}
           </div>
         )}
-      </div>
-
-      {/* 1. Top Executive Banner & Hero Balances */}
-      <div className="bg-white dark:bg-slate-900 rounded-2xl border border-gray-200 dark:border-slate-800 p-4 sm:p-6 shadow-xs space-y-4 transition-colors">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-gray-100 dark:border-slate-800">
-          <div>
-            <div className="flex items-center gap-2 flex-wrap">
-              <h2 className="text-xl sm:text-2xl font-bold text-gray-900 dark:text-slate-100 tracking-tight">
-                {t('dashboard.title')}
-              </h2>
-              {isAccountingBalanced && (
-                <span className="inline-flex items-center gap-1 text-[13px] px-2.5 py-0.5 rounded-full bg-[#F0FDF4] dark:bg-emerald-950/60 text-[#15803D] dark:text-emerald-400 border border-[#BBF7D0] dark:border-emerald-800 font-semibold">
-                  {t('dashboard.balanced')}
-                </span>
-              )}
-            </div>
-            <p className="text-[14px] text-gray-600 dark:text-slate-400 mt-1">
-              {t('dashboard.subtitle')}
-            </p>
-          </div>
-
-          {/* Quick Action Dock for Owner */}
-          {role === 'OWNER' && (
-            <div className="flex items-center gap-2.5 flex-wrap">
-              <button
-                onClick={() => onNavigate('accounting')}
-                className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-[#1E5128] hover:bg-[#173F1F] text-white text-[14px] font-bold shadow-xs transition-all active:scale-95 cursor-pointer min-h-[44px]"
-              >
-                <PlusCircle className="w-4 h-4" />
-                <span>{t('btn.newVoucher')}</span>
-              </button>
-              <button
-                onClick={() => onNavigate('commerce')}
-                className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-gray-100 dark:bg-slate-800 hover:bg-gray-200 dark:hover:bg-slate-700 text-gray-800 dark:text-slate-200 border border-gray-200 dark:border-slate-700 text-[14px] font-semibold shadow-xs transition-all active:scale-95 cursor-pointer min-h-[44px]"
-              >
-                <FileText className="w-4 h-4" />
-                <span>{t('btn.salesInvoice')}</span>
-              </button>
-            </div>
-          )}
-        </div>
-
-        {/* Hero 2 Key Metrics (Total Liquidity & Net Margin) */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5 pt-1">
-          {/* Liquidity (Cash + Bank) */}
-          <div className="p-4 rounded-xl bg-[#F8FAFC] dark:bg-slate-800/80 border border-gray-200/80 dark:border-slate-700/80">
-            <div className="flex items-center justify-between text-xs sm:text-[13px] text-gray-600 dark:text-slate-400 font-semibold">
-              <span>{t('dashboard.totalLiquidity')}</span>
-              <div className="p-1.5 rounded-lg bg-blue-100/80 dark:bg-blue-950/60 text-blue-700 dark:text-blue-400">
-                <Wallet className="w-4 h-4" />
-              </div>
-            </div>
-            <div className="text-2xl sm:text-3xl font-extrabold font-mono tabular-nums text-gray-900 dark:text-slate-100 tracking-tight mt-1.5">
-              {fmtMoney(cashBalance + bankBalance)}
-            </div>
-            <div className="flex items-center gap-2.5 text-xs text-gray-500 dark:text-slate-400 mt-2 pt-2 border-t border-gray-200/60 dark:border-slate-700/60 font-medium">
-              <span>{t('dashboard.cash')} <strong className="text-gray-900 dark:text-slate-200 font-mono tabular-nums">{fmtMoney(cashBalance)}</strong></span>
-              <span>•</span>
-              <span>{t('dashboard.bank')} <strong className="text-gray-900 dark:text-slate-200 font-mono tabular-nums">{fmtMoney(bankBalance)}</strong></span>
-            </div>
-          </div>
-
-          {/* Net Profit / Margin */}
-          <div className="p-4 rounded-xl bg-[#F8FAFC] dark:bg-slate-800/80 border border-gray-200/80 dark:border-slate-700/80">
-            <div className="flex items-center justify-between text-xs sm:text-[13px] text-gray-600 dark:text-slate-400 font-semibold">
-              <span>{t('dashboard.netProfit')}</span>
-              <div className={`p-1.5 rounded-lg ${netProfit >= 0 ? 'bg-emerald-100/80 dark:bg-emerald-950/60 text-[#15803D] dark:text-emerald-400' : 'bg-red-100/80 dark:bg-red-950/60 text-[#C2410C] dark:text-rose-400'}`}>
-                {netProfit >= 0 ? <TrendingUp className="w-4 h-4" /> : <TrendingDown className="w-4 h-4" />}
-              </div>
-            </div>
-            <div className={`text-2xl sm:text-3xl font-extrabold font-mono tabular-nums tracking-tight mt-1.5 ${netProfit >= 0 ? 'text-[#15803D] dark:text-emerald-400' : 'text-[#C2410C] dark:text-rose-400'}`}>
-              {fmtMoney(netProfit)}
-            </div>
-            <div className="text-xs text-gray-500 dark:text-slate-400 mt-2 pt-2 border-t border-gray-200/60 dark:border-slate-700/60 font-medium">
-              {t('dashboard.netProfitNote')}
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* 2. System Alerts Section (if active) */}
-      {testResult && !testResult.success && testResult.failures.length > 0 && (
-        <div className="p-4 rounded-2xl bg-amber-50 border-2 border-amber-400 text-amber-950 shadow-xs space-y-2">
-          <div className="flex items-center justify-between gap-3 flex-wrap">
-            <div className="flex items-center gap-2.5">
-              <AlertTriangle className="w-5 h-5 text-amber-700 shrink-0 animate-pulse" />
-              <div>
-                <h4 className="font-bold text-[15px] text-amber-950">
-                  সিস্টেম পরীক্ষায় সমস্যা পাওয়া গেছে, বিস্তারিত দেখতে ট্যাপ করুন
-                </h4>
-                <p className="text-xs text-amber-800 font-medium mt-0.5">
-                  (System check found an issue, tap for details) • {testResult.failures.length}টি পরীক্ষা ব্যর্থ হয়েছে
-                </p>
-              </div>
-            </div>
-            <button
-              type="button"
-              id="btn-dashboard-test-failures"
-              onClick={() => setShowTestModal(true)}
-              className="px-3.5 py-1.5 rounded-xl bg-amber-200 hover:bg-amber-300 text-amber-950 border border-amber-400 text-xs font-bold transition-all cursor-pointer min-h-[36px]"
-            >
-              বিস্তারিত দেখুন →
-            </button>
-          </div>
-        </div>
-      )}
-
-      {alerts.length > 0 && (
-        <div className="p-4 rounded-2xl bg-amber-50 border border-amber-300 text-amber-900 shadow-xs space-y-2">
-          <div className="flex items-center gap-2 font-bold text-[15px] text-amber-900">
-            <AlertTriangle className="w-5 h-5 text-amber-700 shrink-0" />
-            <span>{t('dashboard.alerts')} ({alerts.length} {t('dashboard.unitPieces')})</span>
-          </div>
-          <ul className="list-disc list-inside space-y-1 text-[14px] text-amber-900 pl-1">
-            {alerts.map((alt, idx) => (
-              <li key={idx} className="leading-snug">{alt}</li>
-            ))}
-          </ul>
-        </div>
-      )}
-
-      {/* 3. Secondary Revenue, Expense & Working Capital */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-        {/* Total Revenue */}
-        <div className="p-4 rounded-xl bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 shadow-xs transition-colors">
-          <div className="flex items-center justify-between text-xs sm:text-[13px] text-gray-600 dark:text-slate-400 font-medium">
-            <span>{t('dashboard.totalRevenue')}</span>
-            <div className="p-1 rounded-md bg-emerald-50 dark:bg-emerald-950/60 text-[#15803D] dark:text-emerald-400">
-              <ArrowUpRight className="w-4 h-4" />
-            </div>
-          </div>
-          <div className="text-xl sm:text-2xl font-bold font-mono tabular-nums text-gray-900 dark:text-slate-100 tracking-tight mt-1.5">
-            {fmtMoney(totalRevenue)}
-          </div>
-          <p className="text-xs text-gray-500 dark:text-slate-400 mt-1">{t('dashboard.revenueDesc')}</p>
-        </div>
-
-        {/* Total Expenses */}
-        <div className="p-4 rounded-xl bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 shadow-xs transition-colors">
-          <div className="flex items-center justify-between text-xs sm:text-[13px] text-gray-600 dark:text-slate-400 font-medium">
-            <span>{t('dashboard.totalExpenses')}</span>
-            <div className="p-1 rounded-md bg-rose-50 dark:bg-rose-950/60 text-[#C2410C] dark:text-rose-400">
-              <ArrowDownLeft className="w-4 h-4" />
-            </div>
-          </div>
-          <div className="text-xl sm:text-2xl font-bold font-mono tabular-nums text-gray-900 dark:text-slate-100 tracking-tight mt-1.5">
-            {fmtMoney(totalExpenses)}
-          </div>
-          <p className="text-xs text-gray-500 dark:text-slate-400 mt-1">{t('dashboard.expensesDesc')}</p>
-        </div>
-
-        {/* AR (Receivable) */}
-        <div className="p-4 rounded-xl bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 shadow-xs transition-colors">
-          <div className="text-xs sm:text-[13px] text-gray-600 dark:text-slate-400 font-medium">{t('dashboard.receivables')}</div>
-          <div className="text-xl sm:text-2xl font-bold font-mono tabular-nums text-sky-700 dark:text-sky-400 tracking-tight mt-1.5">
-            {fmtMoney(arBalance)}
-          </div>
-          <p className="text-xs text-gray-500 dark:text-slate-400 mt-1">{t('dashboard.receivablesDesc')}</p>
-        </div>
-
-        {/* AP (Payable) */}
-        <div className="p-4 rounded-xl bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 shadow-xs transition-colors">
-          <div className="text-xs sm:text-[13px] text-gray-600 dark:text-slate-400 font-medium">{t('dashboard.payables')}</div>
-          <div className="text-xl sm:text-2xl font-bold font-mono tabular-nums text-amber-700 dark:text-amber-400 tracking-tight mt-1.5">
-            {fmtMoney(apBalance)}
-          </div>
-          <p className="text-xs text-gray-500 dark:text-slate-400 mt-1">{t('dashboard.payablesDesc')}</p>
-        </div>
-      </div>
-
-      {/* 4. Live Farm Biological Assets (Operations) */}
-      <div className="bg-white dark:bg-slate-900 rounded-2xl border border-gray-200 dark:border-slate-800 p-4 sm:p-5 shadow-xs transition-colors">
-        <div className="flex items-center justify-between mb-3.5 pb-2 border-b border-gray-100 dark:border-slate-800">
-          <div className="flex items-center gap-2">
-            <Activity className="w-5 h-5 text-[#1E5128] dark:text-emerald-400" />
-            <h3 className="text-[16px] sm:text-[17px] font-bold text-gray-900 dark:text-slate-100">
-              {t('dashboard.bioAssets')}
-            </h3>
-          </div>
-          <button
-            onClick={() => onNavigate('operations')}
-            className="text-[14px] text-[#1E5128] dark:text-emerald-400 hover:underline font-bold cursor-pointer py-1 px-2"
-          >
-            {t('dashboard.details')}
-          </button>
-        </div>
-
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-          {/* Livestock */}
-          <div
-            onClick={() => onNavigate('operations')}
-            className="p-4 rounded-xl bg-[#F8FAFC] dark:bg-slate-800/80 border border-gray-200 dark:border-slate-700/80 hover:border-[#1E5128]/60 dark:hover:border-emerald-500/60 cursor-pointer transition-all active:scale-98"
-          >
-            <div className="text-[13px] text-gray-600 dark:text-slate-400 font-medium">{t('dashboard.activeLivestock')}</div>
-            <div className="text-2xl font-bold text-gray-900 dark:text-slate-100 mt-1">{animalCount} {t('dashboard.unitPieces')}</div>
-            <div className="text-[13px] font-semibold text-[#1E5128] dark:text-emerald-400 mt-1">{t('dashboard.livestockDesc')}</div>
-          </div>
-
-          {/* Fisheries */}
-          <div
-            onClick={() => onNavigate('operations')}
-            className="p-4 rounded-xl bg-[#F8FAFC] dark:bg-slate-800/80 border border-gray-200 dark:border-slate-700/80 hover:border-[#1E5128]/60 dark:hover:border-emerald-500/60 cursor-pointer transition-all active:scale-98"
-          >
-            <div className="text-[13px] text-gray-600 dark:text-slate-400 font-medium">{t('dashboard.activeFish')}</div>
-            <div className="text-2xl font-bold text-gray-900 dark:text-slate-100 mt-1">{fishBatchCount} {t('dashboard.unitPieces')}</div>
-            <div className="text-[13px] font-semibold text-sky-700 dark:text-sky-400 mt-1">{t('dashboard.fishDesc')}</div>
-          </div>
-
-          {/* Crops */}
-          <div
-            onClick={() => onNavigate('operations')}
-            className="p-4 rounded-xl bg-[#F8FAFC] dark:bg-slate-800/80 border border-gray-200 dark:border-slate-700/80 hover:border-[#1E5128]/60 dark:hover:border-emerald-500/60 cursor-pointer transition-all active:scale-98"
-          >
-            <div className="text-[13px] text-gray-600 dark:text-slate-400 font-medium">{t('dashboard.activeCrops')}</div>
-            <div className="text-2xl font-bold text-gray-900 dark:text-slate-100 mt-1">{cropCycleCount} {t('dashboard.unitPieces')}</div>
-            <div className="text-[13px] font-semibold text-amber-700 dark:text-amber-400 mt-1">{t('dashboard.cropDesc')}</div>
-          </div>
-        </div>
       </div>
 
       {/* 5. Recent Posted Financial Transactions */}
