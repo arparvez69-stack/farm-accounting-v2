@@ -2672,8 +2672,8 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
 
           {/* Edit Threshold Modal */}
           {editingThresholdItem && (
-            <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
-              <div className="bg-white rounded-2xl p-5 max-w-sm w-full space-y-4 shadow-xl border border-gray-200">
+            <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
+              <div className="bg-white rounded-2xl p-4 sm:p-5 max-w-sm w-full space-y-4 shadow-xl border border-gray-200 my-auto">
                 <div className="flex items-center justify-between">
                   <h4 className="font-bold text-gray-900 text-[15px]">কম মজুদের সীমা নির্ধারণ</h4>
                   <button
@@ -5202,8 +5202,8 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
 
       {/* ===================== MODAL: ADD INSTALLMENT / PAYMENT ===================== */}
       {paymentModal && (
-        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4 backdrop-blur-xs">
-          <div className="bg-white rounded-2xl max-w-md w-full p-5 sm:p-6 shadow-xl border border-gray-200 space-y-4">
+        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-3 sm:p-4 backdrop-blur-xs overflow-y-auto">
+          <div className="bg-white rounded-2xl max-w-md w-full p-4 sm:p-6 shadow-xl border border-gray-200 space-y-4 max-h-[90vh] overflow-y-auto my-auto">
             <div className="flex items-center justify-between border-b border-gray-100 pb-3">
               <div>
                 <h3 className="text-base font-bold text-gray-900">
@@ -5641,8 +5641,8 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
 
       {/* High Amount Confirmation Modal */}
       {confirmHighAmountCommerce && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl max-w-md w-full p-5 sm:p-6 shadow-xl border border-gray-200 space-y-4">
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
+          <div className="bg-white rounded-2xl max-w-md w-full p-4 sm:p-6 shadow-xl border border-gray-200 space-y-4 my-auto">
             <div className="flex items-start justify-between gap-3 border-b border-gray-100 pb-3">
               <div className="flex items-center gap-2.5 text-amber-700">
                 <AlertTriangle className="w-6 h-6 shrink-0" />
@@ -5694,8 +5694,8 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
 
       {/* ===================== MODAL: ADVANCE RECEIVED / PAID (Requirement 1) ===================== */}
       {showAdvanceModal && (
-        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4 backdrop-blur-xs">
-          <div className="bg-white rounded-2xl max-w-lg w-full p-5 sm:p-6 shadow-xl border border-gray-200 space-y-4 max-h-[90vh] overflow-y-auto">
+        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-3 sm:p-4 backdrop-blur-xs overflow-y-auto">
+          <div className="bg-white rounded-2xl max-w-lg w-full p-4 sm:p-6 shadow-xl border border-gray-200 space-y-4 max-h-[90vh] overflow-y-auto my-auto">
             <div className="flex items-center justify-between border-b border-gray-100 pb-3">
               <div className="flex items-center gap-2">
                 <div className="p-2 rounded-xl bg-amber-100 text-amber-800">

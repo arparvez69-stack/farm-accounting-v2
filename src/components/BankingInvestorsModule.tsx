@@ -753,18 +753,17 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
     <div className="space-y-5 pb-6 max-w-5xl mx-auto p-2 sm:p-4">
       {/* Module Title */}
       <div className="flex flex-col gap-3.5 p-4 sm:p-5 rounded-2xl bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 shadow-xs">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-          <div>
-            <h2 className="text-lg sm:text-xl font-bold text-gray-900 dark:text-slate-100 flex items-center gap-2">
-              <Landmark className="w-5 h-5 text-[#1E5128] dark:text-emerald-400" />
-              <span>ব্যাংকিং, তহবিল স্থানান্তর, ঋণ ও মূলধন (Banking & Capital)</span>
-            </h2>
-            <p className="text-[14px] text-gray-600 dark:text-slate-400 mt-0.5">
-              নগদ ও ব্যাংক তহবিল (1010/1030), কন্ট্রা জাবেদা, ব্যাংক ঋণ (2110/2120), বিনিয়োগকারী (3020) ও মালিকের মূলধন/উত্তোলন (3010/3040)
-            </p>
-          </div>
+        <div>
+          <h2 className="text-lg sm:text-xl font-bold text-gray-900 dark:text-slate-100 flex items-center gap-2">
+            <Landmark className="w-5 h-5 text-[#1E5128] dark:text-emerald-400" />
+            <span>ব্যাংকিং, তহবিল স্থানান্তর, ঋণ ও মূলধন (Banking & Capital)</span>
+          </h2>
+          <p className="text-[14px] text-gray-600 dark:text-slate-400 mt-0.5">
+            নগদ ও ব্যাংক তহবিল (1010/1030), কন্ট্রা জাবেদা, ব্যাংক ঋণ (2110/2120), বিনিয়োগকারী (3020) ও মালিকের মূলধন/উত্তোলন (3010/3040)
+          </p>
+        </div>
 
-          <div className="w-full sm:w-auto grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2 bg-slate-100 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 p-1.5 rounded-xl text-[13px] font-semibold">
+        <div className="w-full grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2 bg-slate-100 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 p-1.5 rounded-xl text-[13px] font-semibold">
           <button
             type="button"
             onClick={() => setTab('accounts')}
@@ -825,7 +824,6 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
             <UserCheck className="w-4 h-4 shrink-0" />
             <span>মালিকের লেনদেন</span>
           </button>
-        </div>
         </div>
       </div>
 
