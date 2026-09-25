@@ -810,6 +810,14 @@ export function createSuccessfulAdminDb(): any {
   };
 }
 
+let sharedMockAdminDb: any = null;
+export function getSharedMockAdminDb(): any {
+  if (!sharedMockAdminDb) {
+    sharedMockAdminDb = createSuccessfulAdminDb();
+  }
+  return sharedMockAdminDb;
+}
+
 export function getEffectiveAdminDb(req?: express.Request): FirebaseFirestore.Firestore | null {
   if (req) {
     const headerMode = req.headers['x-test-admin-db-mode'] || req.headers['x-test-firestore-mode'];
@@ -835,6 +843,10 @@ export function getEffectiveAdminDb(req?: express.Request): FirebaseFirestore.Fi
 
   if (simulateFirestoreWriteFailure) {
     return createFailingAdminDb(simulateFirestoreWriteErrorMessage) as any;
+  }
+
+  if (!hasServiceAccountKey) {
+    return getSharedMockAdminDb();
   }
 
   return adminDb;

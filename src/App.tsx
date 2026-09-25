@@ -31,6 +31,17 @@ import { subscribeToUndo, executeUndo, UndoableAction } from './services/undoSer
 import { PatternBackground } from './components/ui/PatternBackground';
 import { SuccessAnimationToast } from './components/ui/SuccessAnimation';
 import { WelcomeScreen } from './components/WelcomeScreen';
+import { CompactBackControl } from './components/CompactBackControl';
+import {
+  NavEntry,
+  goBack,
+  pushNav,
+  replaceNav,
+  resetToDashboard,
+  subscribeToNavigation,
+  confirmDiscardUnsaved
+} from './services/navigationService';
+import { useLanguage } from './i18n/translations';
 
 export default function App() {
   const [systemConfig, setSystemConfig] = useState<SystemConfig | null>(null);
@@ -45,13 +56,41 @@ export default function App() {
   const [pendingCount, setPendingCount] = useState(0);
 
   // Active Tab & Cross-Tab Navigation Params
+  const { language } = useLanguage();
   const [activeTab, setActiveTab] = useState<ActiveTab>('dashboard');
+  const [navCanBack, setNavCanBack] = useState(false);
+  const [currentNavEntry, setCurrentNavEntry] = useState<NavEntry>({ tab: 'dashboard' });
+  const [accountingSubTab, setAccountingSubTab] = useState<'vouchers' | 'daybook' | 'ledger' | 'trialBalance' | 'chart' | 'recurring'>('daybook');
   const [selectedAnimalIdForOps, setSelectedAnimalIdForOps] = useState<string | null>(null);
   const [opsActionParams, setOpsActionParams] = useState<{
     openActivityModal?: boolean;
     eventType?: AnimalEvent['eventType'];
   } | null>(null);
   const [offlineEmptyWarning, setOfflineEmptyWarning] = useState<boolean>(false);
+
+  // Subscribe to contextual navigation changes
+  useEffect(() => {
+    const unsub = subscribeToNavigation((entry, canBackState) => {
+      setCurrentNavEntry(entry);
+      setNavCanBack(canBackState);
+      setActiveTab(entry.tab);
+      if (entry.tab === 'operations') {
+        setSelectedAnimalIdForOps(entry.detailId || null);
+        if (entry.params?.action) {
+          setOpsActionParams(entry.params.action);
+        } else {
+          setOpsActionParams(null);
+        }
+      } else {
+        setSelectedAnimalIdForOps(null);
+        setOpsActionParams(null);
+      }
+      if (entry.tab === 'accounting' && entry.subTab) {
+        setAccountingSubTab(entry.subTab as any);
+      }
+    });
+    return () => unsub();
+  }, []);
 
   // Toast Undo State (5 seconds duration)
   const [undoAction, setUndoAction] = useState<UndoableAction | null>(null);
@@ -63,15 +102,22 @@ export default function App() {
     animalId?: string,
     action?: { openActivityModal?: boolean; eventType?: AnimalEvent['eventType'] }
   ) => {
-    setActiveTab(tab);
-    if (tab === 'operations') {
-      if (animalId) {
-        setSelectedAnimalIdForOps(animalId);
-      }
-      if (action) {
-        setOpsActionParams(action);
-      }
-    }
+    if (!confirmDiscardUnsaved()) return;
+    pushNav({
+      tab,
+      detailId: animalId,
+      params: action ? { action } : undefined
+    });
+  };
+
+  const handleTabChange = (tab: ActiveTab) => {
+    if (tab === activeTab && !selectedAnimalIdForOps) return;
+    if (!confirmDiscardUnsaved()) return;
+    pushNav({ tab });
+  };
+
+  const handleHeaderBack = () => {
+    goBack();
   };
 
   const handlePerformUndo = async () => {
@@ -344,12 +390,39 @@ export default function App() {
         pendingCount={pendingCount}
         regressionTestResult={regressionTestResult}
         activeTab={activeTab}
+        canGoBack={navCanBack}
+        onBack={handleHeaderBack}
+        backTitle={
+          activeTab === 'operations' && selectedAnimalIdForOps
+            ? (language === 'en' ? 'All Animals' : 'সকল পশু')
+            : activeTab === 'accounting' && currentNavEntry.detailId
+            ? (language === 'en' ? 'Journal' : 'জাবেদা তালিকা')
+            : activeTab !== 'dashboard'
+            ? (language === 'en' ? 'Dashboard' : 'ড্যাশবোর্ড')
+            : undefined
+        }
         onSyncNow={handleSyncNow}
         onLogout={handleLogout}
       />
 
+      {/* Fixed Compact Back Control for Mobile Viewport */}
+      <CompactBackControl
+        canGoBack={navCanBack}
+        onBack={handleHeaderBack}
+        activeTab={activeTab}
+        backTitle={
+          activeTab === 'operations' && selectedAnimalIdForOps
+            ? (language === 'en' ? 'All Animals' : 'সকল পশু')
+            : activeTab === 'accounting' && currentNavEntry.detailId
+            ? (language === 'en' ? 'Journal' : 'জাবেদা তালিকা')
+            : activeTab !== 'dashboard'
+            ? (language === 'en' ? 'Dashboard' : 'ড্যাশবোর্ড')
+            : undefined
+        }
+      />
+
       {/* Main App Content Viewport */}
-      <main className="flex-1 px-3 py-3.5 sm:px-6 sm:py-6 max-w-5xl w-full mx-auto pb-28 md:pb-12 relative z-10 min-w-0">
+      <main className="flex-1 px-3 py-3.5 sm:px-6 sm:py-6 max-w-5xl w-full mx-auto pb-[calc(env(safe-area-inset-bottom,0px)+6.5rem)] md:pb-12 relative z-10 min-w-0">
         <ErrorBoundary resetKey={activeTab}>
           {/* TASK 4: Clear warning when opened by known owner with empty local DB and no internet */}
           {offlineEmptyWarning && (
@@ -383,6 +456,31 @@ export default function App() {
             <AccountingModule
               role={userProfile.role}
               currentUserId={userProfile.uid}
+              initialSubTab={accountingSubTab}
+              initialDetailId={currentNavEntry.detailId}
+              onSubTabChange={(newSubTab) => {
+                if (newSubTab !== currentNavEntry.subTab) {
+                  pushNav({ tab: 'accounting', subTab: newSubTab });
+                }
+              }}
+              onSelectDetail={(detailId) => {
+                if (detailId) {
+                  pushNav({
+                    tab: 'accounting',
+                    subTab: 'daybook',
+                    detailId,
+                    params: currentNavEntry.params
+                  });
+                } else if (currentNavEntry.detailId) {
+                  goBack();
+                }
+              }}
+              searchFilter={currentNavEntry.params?.searchQuery}
+              onSearchFilterChange={(query) => {
+                replaceNav({
+                  params: { ...currentNavEntry.params, searchQuery: query }
+                });
+              }}
             />
           )}
 
@@ -391,7 +489,21 @@ export default function App() {
               role={userProfile.role}
               currentUserId={userProfile.uid}
               initialAnimalId={selectedAnimalIdForOps}
-              onClearInitialAnimalId={() => setSelectedAnimalIdForOps(null)}
+              onClearInitialAnimalId={() => {
+                setSelectedAnimalIdForOps(null);
+                if (currentNavEntry.detailId) {
+                  goBack();
+                }
+              }}
+              onSelectAnimal={(animalId) => {
+                if (animalId) {
+                  pushNav({
+                    tab: 'operations',
+                    detailId: animalId,
+                    subTab: 'livestock'
+                  });
+                }
+              }}
               initialAction={opsActionParams}
               onClearInitialAction={() => setOpsActionParams(null)}
             />
@@ -425,14 +537,14 @@ export default function App() {
               systemConfig={systemConfig}
               userEmail={userProfile.email}
               onLogout={handleLogout}
-              onNavigate={setActiveTab}
+              onNavigate={handleNavigate}
             />
           )}
         </ErrorBoundary>
       </main>
 
       {/* Persistent Bottom Mobile Navigation Bar */}
-      <MobileBottomNav activeTab={activeTab} onChangeTab={setActiveTab} />
+      <MobileBottomNav activeTab={activeTab} onChangeTab={handleTabChange} />
 
       {/* Global 5-second Undo Toast Notification */}
       {undoAction && (

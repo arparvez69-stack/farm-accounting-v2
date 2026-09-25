@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Shield, LogOut, Sprout, CloudCheck, AlertTriangle, RefreshCw, X, ChevronRight } from 'lucide-react';
+import { Shield, LogOut, Sprout, CloudCheck, AlertTriangle, RefreshCw, X, ChevronRight, ArrowLeft } from 'lucide-react';
 import { SyncState, SystemConfig, UserProfile } from '../types';
 import { SyncStatusBadge } from './SyncStatusBadge';
 import { getLastSyncTime, formatBackupTimestamp } from '../services/exportService';
@@ -13,6 +13,9 @@ interface Props {
   pendingCount: number;
   regressionTestResult?: TestResult | null;
   activeTab?: string;
+  canGoBack?: boolean;
+  onBack?: () => void;
+  backTitle?: string;
   onSyncNow: () => void;
   onLogout: () => void;
   onOpenProfile?: () => void;
@@ -79,6 +82,9 @@ export const Header: React.FC<Props> = ({
   pendingCount,
   regressionTestResult,
   activeTab,
+  canGoBack,
+  onBack,
+  backTitle,
   onSyncNow,
   onLogout
 }) => {
@@ -135,8 +141,21 @@ export const Header: React.FC<Props> = ({
         <div className={`h-1 w-full transition-colors duration-200 ${theme.barColor}`} />
 
         <div className="max-w-5xl mx-auto flex items-center justify-between gap-2 px-3 sm:px-6 py-2 sm:py-2.5">
-          {/* Left: Brand / Farm Info */}
-          <div className="flex items-center gap-2 sm:gap-2.5 min-w-0 flex-1">
+          {/* Left: Brand / Farm Info with contextual Back button */}
+          <div className={`flex items-center gap-2 sm:gap-2.5 min-w-0 flex-1 transition-all ${canGoBack && activeTab !== 'dashboard' ? 'pl-9 md:pl-0' : ''}`}>
+            {canGoBack && onBack && (
+              <button
+                type="button"
+                id="btn-header-back"
+                onClick={onBack}
+                title={language === 'en' ? 'Back' : 'পূর্ববর্তী ধাপে ফিরে যান (Back)'}
+                className="hidden md:flex min-h-[44px] min-w-[44px] px-2.5 py-1.5 rounded-xl bg-gray-100 hover:bg-gray-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-gray-800 dark:text-slate-100 font-bold text-xs sm:text-[13px] items-center justify-center gap-1.5 transition-all cursor-pointer active:scale-95 shrink-0 border border-gray-200/90 dark:border-slate-700 shadow-2xs"
+                aria-label="Back"
+              >
+                <ArrowLeft className="w-4 h-4 text-gray-700 dark:text-slate-200" />
+                <span className="hidden xs:inline">{backTitle || (language === 'en' ? 'Back' : 'ফিরে যান')}</span>
+              </button>
+            )}
             <div className={`w-9 h-9 sm:w-10 sm:h-10 rounded-xl ${theme.iconBg} flex items-center justify-center shadow-sm shrink-0 transition-colors duration-200`}>
               <Sprout className="w-5 h-5 text-white" />
             </div>

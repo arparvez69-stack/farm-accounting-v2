@@ -499,6 +499,8 @@ if (typeof process !== 'undefined' && process.argv[1]?.includes('testTaskF6Versi
   runTaskF6VersionConflictProtectionTests().then((res) => {
     if (res.failed > 0) {
       process.exit(1);
+    } else {
+      process.exit(0);
     }
   });
 }

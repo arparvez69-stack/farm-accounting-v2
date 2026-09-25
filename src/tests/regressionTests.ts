@@ -6777,7 +6777,7 @@ async function runRegressionTestsInternal(): Promise<TestResult> {
     );
     assert(repayRes.updatedLoan.remainingPrincipal === 110000, 'Task A4: Loan principal reduced accurately on repayment (120k - 10k).');
     const a4ActualAccAfterRepay = await a4Db.cashBankAccounts.get('cb_actual_loan_acc');
-    assert(a4ActualAccAfterRepay?.currentBalance === 159000, 'Task A4: Selected source account deducted accurately (170k - 11k).');
+    assert(a4ActualAccAfterRepay?.currentBalance === 160000, 'Task A4: Selected source account deducted accurately by principal only (170k - 10k).');
     const a4FirstAccFinal = await a4Db.cashBankAccounts.get('cb_first_loan_acc');
     assert(a4FirstAccFinal?.currentBalance === 100000, 'Task A4: First account was never touched throughout loan tests.');
 

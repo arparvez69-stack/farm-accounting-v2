@@ -1123,7 +1123,7 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
 
                     return (
                       <div className="overflow-x-auto border border-gray-200 rounded-xl">
-                        <table className="w-full text-left text-xs">
+                        <table className="w-full min-w-[550px] text-left text-xs">
                           <thead className="bg-[#F8FAFC] text-gray-700 font-semibold border-b border-gray-200 select-none">
                             <tr>
                               <th className="py-2.5 px-3 w-36 text-center">মিলিত (Cleared)</th>
@@ -1648,7 +1648,7 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
           )}
 
           <div className="overflow-x-auto rounded-xl border border-gray-200">
-            <table className="w-full text-left text-[14px] text-gray-800">
+            <table className="w-full min-w-[680px] text-left text-[14px] text-gray-800">
               <thead className="bg-[#F8FAFC] text-gray-600 font-semibold border-b border-gray-200 text-[13px]">
                 <tr>
                   <th className="p-3">ঋণ নং</th>
@@ -2709,7 +2709,7 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
               </div>
             ) : (
               <div className="overflow-x-auto rounded-xl border border-gray-200">
-                <table className="w-full text-left text-xs text-gray-800 border-collapse">
+                <table className="w-full min-w-[500px] text-left text-xs text-gray-800 border-collapse">
                   <thead className="bg-[#F8FAFC] text-gray-700 font-semibold border-b border-gray-200">
                     <tr>
                       <th className="p-2.5">তারিখ</th>

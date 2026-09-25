@@ -292,6 +292,9 @@ export async function runTaskF9AuthoritativeOwnerAllowListTests(): Promise<Asser
   assert(obsoleteProf.role === 'UNAPPROVED', `Obsolete ${obsoleteEmail1} resolves to UNAPPROVED`);
   assert(obsoleteProf.isApproved === false, `Obsolete ${obsoleteEmail1} has isApproved === false`);
 
+  if (typeof localStorage !== 'undefined') {
+    localStorage.removeItem('goted_owner_session');
+  }
   const unauthenticatedProf = await resolveUserRole(null);
   assert(unauthenticatedProf.role === 'UNAUTHENTICATED', 'Null user resolves to UNAUTHENTICATED');
   assert(unauthenticatedProf.isApproved === false, 'Null user has isApproved === false');

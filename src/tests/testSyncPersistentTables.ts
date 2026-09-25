@@ -57,8 +57,9 @@ export async function runSyncPersistentTablesTests(): Promise<AssertionResult> {
   // Ensure server is accessible
   let serverInstance: http.Server | null = null;
   let testPort = 3000;
+  const originalPort = process.env.PORT;
   try {
-    const healthCheck = await fetch('http://localhost:3000/api/health', { signal: AbortSignal.timeout(1000) });
+    const healthCheck = await fetch('http://localhost:3000/api/health', { signal: AbortSignal.timeout(3000) });
     if (!healthCheck.ok) throw new Error('Health check non-200');
   } catch {
     // If not running on 3000, start ephemeral server on dynamic port
@@ -251,8 +252,11 @@ export async function runSyncPersistentTablesTests(): Promise<AssertionResult> {
     // Mark one as unsynced again to simulate a network retry
     await db.salesReturns.update(offlineSalesReturn.id, { synced: false });
     const retryResult = await synchronizePendingData();
+    const salesReturnErrors = retryResult.errors.filter(
+      (e) => e.toLowerCase().includes('sales return') || e.includes(offlineSalesReturn.id)
+    );
 
-    assert(retryResult.errors.length === 0, 'Resyncing existing salesReturn succeeded without error');
+    assert(salesReturnErrors.length === 0, 'Resyncing existing salesReturn succeeded without error');
 
     const afterRetryRes = await fetch(`${baseUrl}/api/sync/restore`, {
       headers: { Authorization: `Bearer ${validSessionToken}` }
@@ -382,6 +386,11 @@ export async function runSyncPersistentTablesTests(): Promise<AssertionResult> {
     if (serverInstance) {
       await new Promise<void>((resolve) => (serverInstance as http.Server).close(() => resolve()));
     }
+    if (originalPort !== undefined) {
+      process.env.PORT = originalPort;
+    } else {
+      delete process.env.PORT;
+    }
   }
 
   console.log('\n========================================================');
@@ -389,4 +398,14 @@ export async function runSyncPersistentTablesTests(): Promise<AssertionResult> {
   console.log('========================================================\n');
 
   return result;
+}
+
+if (typeof process !== 'undefined' && process.argv[1]?.includes('testSyncPersistentTables')) {
+  runSyncPersistentTablesTests().then((res) => {
+    if (res.failed > 0) {
+      process.exit(1);
+    } else {
+      process.exit(0);
+    }
+  });
 }

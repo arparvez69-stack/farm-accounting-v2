@@ -82,6 +82,7 @@ interface Props {
   currentUserId: string;
   initialAnimalId?: string | null;
   onClearInitialAnimalId?: () => void;
+  onSelectAnimal?: (animalId: string | null) => void;
   initialAction?: {
     openActivityModal?: boolean;
     eventType?: AnimalEvent['eventType'];
@@ -96,6 +97,7 @@ export const FarmOperationsModule: React.FC<Props> = ({
   currentUserId,
   initialAnimalId,
   onClearInitialAnimalId,
+  onSelectAnimal,
   initialAction,
   onClearInitialAction
 }) => {
@@ -323,6 +325,8 @@ export const FarmOperationsModule: React.FC<Props> = ({
     if (initialAnimalId) {
       setTab('livestock');
       setSelectedAnimalId(initialAnimalId);
+    } else if (initialAnimalId === null) {
+      setSelectedAnimalId(null);
     }
   }, [initialAnimalId]);
 
@@ -1383,6 +1387,7 @@ export const FarmOperationsModule: React.FC<Props> = ({
               onBack={() => {
                 setSelectedAnimalId(null);
                 if (onClearInitialAnimalId) onClearInitialAnimalId();
+                if (onSelectAnimal) onSelectAnimal(null);
               }}
               onAddEvent={(a) => {
                 setEventModalAnimal(a);
@@ -1867,7 +1872,10 @@ export const FarmOperationsModule: React.FC<Props> = ({
                       id={`animal-card-${a.id}`}
                       as="div"
                       variant="interactive"
-                      onClick={() => setSelectedAnimalId(a.id)}
+                      onClick={() => {
+                        setSelectedAnimalId(a.id);
+                        onSelectAnimal?.(a.id);
+                      }}
                       className={`flex flex-col justify-between group overflow-hidden animate-fade-slide-up ${
                         isInactive
                           ? 'opacity-90 border-gray-300 dark:border-slate-700 bg-gray-50/70 dark:bg-slate-800/60'
@@ -1955,34 +1963,34 @@ export const FarmOperationsModule: React.FC<Props> = ({
                           </div>
 
                           {/* Cost & Financial Breakdown */}
-                          <div className="space-y-1.5 text-[13px] pt-2.5 mt-2 border-t border-gray-100 dark:border-slate-800">
-                            <div className="flex justify-between">
+                          <div className="space-y-1.5 text-xs sm:text-[13px] pt-2.5 mt-2 border-t border-gray-100 dark:border-slate-800">
+                            <div className="flex justify-between items-baseline">
                               <span className="text-gray-500 dark:text-slate-400">ক্রয়মূল্য:</span>
-                              <span className="font-semibold text-gray-900 dark:text-slate-200">{fmt(a.purchaseCost)}</span>
+                              <span className="font-semibold font-mono tabular-nums text-gray-800 dark:text-slate-200">{fmt(a.purchaseCost)}</span>
                             </div>
-                            <div className="flex justify-between">
+                            <div className="flex justify-between items-baseline">
                               <span className="text-gray-500 dark:text-slate-400">খাদ্য খরচ:</span>
-                              <span className="font-semibold text-amber-700 dark:text-amber-400">{fmt(a.accumulatedFeedCost)}</span>
+                              <span className="font-semibold font-mono tabular-nums text-amber-700 dark:text-amber-400">{fmt(a.accumulatedFeedCost)}</span>
                             </div>
-                            <div className="flex justify-between">
+                            <div className="flex justify-between items-baseline">
                               <span className="text-gray-500 dark:text-slate-400">চিকিৎসা ও টিকা:</span>
-                              <span className="font-semibold text-blue-700 dark:text-blue-400">{fmt(a.accumulatedMedCost)}</span>
+                              <span className="font-semibold font-mono tabular-nums text-blue-700 dark:text-blue-400">{fmt(a.accumulatedMedCost)}</span>
                             </div>
-                            <div className="flex justify-between">
+                            <div className="flex justify-between items-baseline">
                               <span className="text-gray-500 dark:text-slate-400">লেবার ও অন্যান্য:</span>
-                              <span className="font-semibold text-gray-900 dark:text-slate-200">
+                              <span className="font-semibold font-mono tabular-nums text-gray-800 dark:text-slate-200">
                                 {fmt(a.accumulatedLabourCost + (a.otherCosts || 0))}
                               </span>
                             </div>
-                            <div className="flex justify-between font-bold text-gray-900 dark:text-slate-100 pt-1.5 border-t border-gray-100 dark:border-slate-800 text-[14px]">
+                            <div className="flex justify-between items-baseline font-bold text-gray-900 dark:text-slate-100 pt-1.5 border-t border-gray-100 dark:border-slate-800 text-[13px] sm:text-[14px]">
                               <span>মোট পুঞ্জীভূত খরচ:</span>
-                              <span className="text-[#15803D] dark:text-emerald-400">{fmt(a.totalCost)}</span>
+                              <span className="text-[15px] sm:text-base font-bold font-mono tabular-nums text-[#15803D] dark:text-emerald-400">{fmt(a.totalCost)}</span>
                             </div>
 
                             {a.status === 'SOLD' && (
-                              <div className="flex justify-between font-bold text-amber-900 dark:text-amber-300 pt-1.5 border-t border-amber-200/80 dark:border-amber-900/60 text-[13px] bg-amber-50/80 dark:bg-amber-950/40 px-2.5 py-1.5 rounded-lg">
+                              <div className="flex justify-between items-baseline font-bold text-amber-900 dark:text-amber-300 pt-1.5 border-t border-amber-200/80 dark:border-amber-900/60 text-xs sm:text-[13px] bg-amber-50/80 dark:bg-amber-950/40 px-2.5 py-1.5 rounded-lg">
                                 <span>বিক্রয়মূল্য ({a.saleDate || 'তারিখ অপ্রাপ্ত'}):</span>
-                                <span className="text-amber-700 dark:text-amber-400">{fmt(a.salePrice || 0)}</span>
+                                <span className="font-mono tabular-nums text-amber-700 dark:text-amber-400">{fmt(a.salePrice || 0)}</span>
                               </div>
                             )}
                           </div>

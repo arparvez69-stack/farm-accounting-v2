@@ -2154,26 +2154,26 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
             </div>
 
             {/* Custom From/To Date Picker */}
-            <div className="flex items-center gap-2 bg-gray-50 p-1 rounded-xl border border-gray-200">
-              <div className="flex items-center gap-1.5 pl-1.5">
-                <span className="text-xs font-semibold text-gray-600">হতে:</span>
+            <div className="flex flex-wrap sm:flex-nowrap items-center gap-2 bg-gray-50 p-1.5 rounded-xl border border-gray-200 w-full sm:w-auto">
+              <div className="flex items-center gap-1.5 pl-1.5 flex-1 sm:flex-initial">
+                <span className="text-xs font-semibold text-gray-600 shrink-0">হতে:</span>
                 <input
                   type="date"
                   id="filter-start-date"
                   value={startDate}
                   onChange={(e) => handleCustomStartDateChange(e.target.value)}
-                  className="px-2 py-1 bg-white border border-gray-300 rounded-lg text-gray-800 text-base font-sans cursor-pointer focus:outline-hidden focus:ring-1 focus:ring-teal-600"
+                  className="w-full sm:w-auto px-2 py-1 bg-white border border-gray-300 rounded-lg text-gray-800 text-base font-sans cursor-pointer focus:outline-hidden focus:ring-1 focus:ring-teal-600 min-h-[36px]"
                   title="শুরুর তারিখ (From Date)"
                 />
               </div>
-              <div className="flex items-center gap-1.5 pr-1.5">
-                <span className="text-xs font-semibold text-gray-600">পর্যন্ত:</span>
+              <div className="flex items-center gap-1.5 pr-1.5 flex-1 sm:flex-initial">
+                <span className="text-xs font-semibold text-gray-600 shrink-0">পর্যন্ত:</span>
                 <input
                   type="date"
                   id="filter-end-date"
                   value={endDate}
                   onChange={(e) => handleCustomEndDateChange(e.target.value)}
-                  className="px-2 py-1 bg-white border border-gray-300 rounded-lg text-gray-800 text-base font-sans cursor-pointer focus:outline-hidden focus:ring-1 focus:ring-teal-600"
+                  className="w-full sm:w-auto px-2 py-1 bg-white border border-gray-300 rounded-lg text-gray-800 text-base font-sans cursor-pointer focus:outline-hidden focus:ring-1 focus:ring-teal-600 min-h-[36px]"
                   title="শেষ তারিখ (To Date)"
                 />
               </div>

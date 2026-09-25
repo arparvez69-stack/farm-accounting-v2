@@ -380,6 +380,8 @@ if (typeof process !== 'undefined' && process.argv[1]?.includes('testTaskF4Chart
   runTaskF4ChartOfAccountsCloudPersistenceTests().then((res) => {
     if (res.failed > 0) {
       process.exit(1);
+    } else {
+      process.exit(0);
     }
   });
 }

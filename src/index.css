@@ -75,9 +75,26 @@
   -webkit-overflow-scrolling: touch;
 }
 
-/* Prevent iOS auto-zoom by ensuring minimum 16px font-size */
-input, select, textarea {
-  font-size: 16px !important;
+/* Tabular figures for scannable numerical & accounting alignment */
+.font-mono,
+.tabular-nums,
+[data-tabular-nums] {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+/* Balanced headline wrapping to prevent orphaned single-word lines */
+h1, h2, h3, h4 {
+  text-wrap: balance;
+}
+
+/* Prevent iOS auto-zoom on mobile viewports while preserving standard desktop typography */
+@media screen and (max-width: 768px) {
+  input:not([type="checkbox"]):not([type="radio"]),
+  select,
+  textarea {
+    font-size: 16px !important;
+  }
 }
 
 /* Gentle fade-and-slide-up entrance animation */

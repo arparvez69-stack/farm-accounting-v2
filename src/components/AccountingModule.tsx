@@ -19,7 +19,9 @@ import {
   Edit2,
   Clock,
   Scale,
-  User
+  User,
+  ArrowLeft,
+  Eye
 } from 'lucide-react';
 import { db } from '../db/indexedDb';
 import {
@@ -44,10 +46,17 @@ import { HIGH_AMOUNT_CONFIRMATION_THRESHOLD } from '../constants/validation';
 import { notifyUndoableAction } from '../services/undoService';
 import { StatusBadge, Card, SearchableSelect, SearchableOption } from './ui';
 import { synchronizePendingData } from '../firebase/firebaseClient';
+import { registerUnsavedChecker } from '../services/navigationService';
 
 interface Props {
   role: UserRole;
   currentUserId: string;
+  initialSubTab?: AccountingSubTab;
+  onSubTabChange?: (subTab: AccountingSubTab) => void;
+  initialDetailId?: string | null;
+  onSelectDetail?: (detailId: string | null) => void;
+  searchFilter?: string;
+  onSearchFilterChange?: (search: string) => void;
 }
 
 type AccountingSubTab = 'vouchers' | 'daybook' | 'ledger' | 'trialBalance' | 'chart' | 'recurring';
@@ -119,8 +128,33 @@ export const inferNormalBalance = (
   return 'CREDIT';
 };
 
-export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
-  const [subTab, setSubTab] = useState<AccountingSubTab>('daybook');
+export const AccountingModule: React.FC<Props> = ({
+  role,
+  currentUserId,
+  initialSubTab,
+  onSubTabChange,
+  initialDetailId,
+  onSelectDetail,
+  searchFilter,
+  onSearchFilterChange
+}) => {
+  const [subTab, setSubTab] = useState<AccountingSubTab>(initialSubTab || 'daybook');
+  const [selectedJournalId, setSelectedJournalId] = useState<string | null>(initialDetailId || null);
+
+  useEffect(() => {
+    if (initialSubTab && initialSubTab !== subTab) {
+      setSubTab(initialSubTab);
+    }
+  }, [initialSubTab]);
+
+  useEffect(() => {
+    setSelectedJournalId(initialDetailId || null);
+  }, [initialDetailId]);
+
+  const handleSubTabChange = (newSubTab: AccountingSubTab) => {
+    setSubTab(newSubTab);
+    onSubTabChange?.(newSubTab);
+  };
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [journals, setJournals] = useState<JournalEntry[]>([]);
   const [loading, setLoading] = useState(false);
@@ -179,10 +213,36 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
     { accountId: '', accountCode: '', accountName: '', debit: 0, credit: 0, memo: '' }
   ]);
 
+  // Guard against accidental back navigation when unsaved voucher data is entered
+  useEffect(() => {
+    return registerUnsavedChecker(() => {
+      if (subTab === 'vouchers') {
+        if (voucherMode === 'SIMPLE') {
+          return Boolean(simpleAmount.trim() || narration.trim());
+        } else {
+          return Boolean(
+            narration.trim() ||
+            reference.trim() ||
+            lines.some((l) => (l.debit || 0) > 0 || (l.credit || 0) > 0)
+          );
+        }
+      }
+      return false;
+    });
+  }, [subTab, voucherMode, simpleAmount, narration, reference, lines]);
+
   // Daybook & Reversal Modal State
-  const [searchQuery, setSearchQuery] = useState('');
+  const [searchQuery, setSearchQuery] = useState(searchFilter || '');
   const [daybookVisibleCount, setDaybookVisibleCount] = useState(25);
   const [reversingEntry, setReversingEntry] = useState<JournalEntry | null>(null);
+
+  useEffect(() => {
+    if (searchFilter !== undefined && searchFilter !== searchQuery) {
+      setSearchQuery(searchFilter);
+    }
+  }, [searchFilter]);
+
+  const selectedJournal = selectedJournalId ? journals.find((j) => j.id === selectedJournalId) || null : null;
 
   // General Ledger State
   const [selectedLedgerCode, setSelectedLedgerCode] = useState<string>('1010');
@@ -884,13 +944,13 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
             </p>
           </div>
 
-          <div className="flex items-center gap-2 flex-wrap">
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
             <button
               id="btn-run-depreciation-now"
               type="button"
               onClick={handleRunDepreciationNow}
               disabled={deprRunning}
-              className="px-3.5 py-2 rounded-xl bg-amber-50 hover:bg-amber-100 border border-amber-300 text-amber-900 text-[13px] font-bold shadow-xs transition-all flex items-center gap-1.5 cursor-pointer min-h-[40px] whitespace-nowrap disabled:opacity-50"
+              className="w-full sm:w-auto px-3.5 py-2 rounded-xl bg-amber-50 hover:bg-amber-100 border border-amber-300 text-amber-900 text-[13px] font-bold shadow-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer min-h-[40px] whitespace-nowrap disabled:opacity-50"
               title="বিগত মাসগুলোর বকেয়া স্থায়ী সম্পদ অবচয় জাবেদা হিসাব ও স্বয়ংক্রিয় দাখিলা করুন"
             >
               <Calculator className={`w-4 h-4 text-amber-700 ${deprRunning ? 'animate-spin' : ''}`} />
@@ -902,7 +962,7 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
                 id="btn-year-end-closing"
                 type="button"
                 onClick={handleOpenClosingModal}
-                className="px-3.5 py-2 rounded-xl bg-purple-50 hover:bg-purple-100 border border-purple-300 text-purple-900 text-[13px] font-bold shadow-xs transition-all flex items-center gap-1.5 cursor-pointer min-h-[40px] whitespace-nowrap"
+                className="w-full sm:w-auto px-3.5 py-2 rounded-xl bg-purple-50 hover:bg-purple-100 border border-purple-300 text-purple-900 text-[13px] font-bold shadow-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer min-h-[40px] whitespace-nowrap"
                 title="বছর সমাপ্তি: নির্বাচিত তারিখ পর্যন্ত নিট লাভ হিসাব করে পুঞ্জীভূত লাভ/মুনাফায় স্থানান্তর ও হিসাবকাল সমাপ্ত করুন"
               >
                 <Lock className="w-4 h-4 text-purple-700" />
@@ -916,7 +976,7 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
         <div className="w-full grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 bg-blue-50/50 dark:bg-slate-800/80 border border-blue-100 dark:border-slate-700 p-1.5 rounded-xl text-[13px] font-semibold">
           <button
             type="button"
-            onClick={() => setSubTab('daybook')}
+            onClick={() => handleSubTabChange('daybook')}
             className={`flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg transition-all cursor-pointer min-h-[42px] text-center text-xs sm:text-[13px] font-bold ${
               subTab === 'daybook'
                 ? 'bg-blue-700 text-white shadow-xs border border-blue-700'
@@ -928,7 +988,7 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
           </button>
           <button
             type="button"
-            onClick={() => setSubTab('vouchers')}
+            onClick={() => handleSubTabChange('vouchers')}
             className={`flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg transition-all cursor-pointer min-h-[42px] text-center text-xs sm:text-[13px] font-bold ${
               subTab === 'vouchers'
                 ? 'bg-emerald-700 text-white shadow-xs border border-emerald-700'
@@ -940,7 +1000,7 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
           </button>
           <button
             type="button"
-            onClick={() => setSubTab('ledger')}
+            onClick={() => handleSubTabChange('ledger')}
             className={`flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg transition-all cursor-pointer min-h-[42px] text-center text-xs sm:text-[13px] font-bold ${
               subTab === 'ledger'
                 ? 'bg-indigo-700 text-white shadow-xs border border-indigo-700'
@@ -952,7 +1012,7 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
           </button>
           <button
             type="button"
-            onClick={() => setSubTab('trialBalance')}
+            onClick={() => handleSubTabChange('trialBalance')}
             className={`flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg transition-all cursor-pointer min-h-[42px] text-center text-xs sm:text-[13px] font-bold ${
               subTab === 'trialBalance'
                 ? 'bg-amber-700 text-white shadow-xs border border-amber-700'
@@ -964,7 +1024,7 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
           </button>
           <button
             type="button"
-            onClick={() => setSubTab('chart')}
+            onClick={() => handleSubTabChange('chart')}
             className={`flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg transition-all cursor-pointer min-h-[42px] text-center text-xs sm:text-[13px] font-bold ${
               subTab === 'chart'
                 ? 'bg-teal-700 text-white shadow-xs border border-teal-700'
@@ -977,7 +1037,7 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
           <button
             type="button"
             id="tab-btn-recurring-costs"
-            onClick={() => setSubTab('recurring')}
+            onClick={() => handleSubTabChange('recurring')}
             className={`flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg transition-all cursor-pointer min-h-[42px] text-center text-xs sm:text-[13px] font-bold ${
               subTab === 'recurring'
                 ? 'bg-rose-700 text-white shadow-xs border border-rose-700'
@@ -1094,13 +1154,13 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
 
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
               <div>
-                <label className="block text-[14px] font-bold text-gray-800 mb-1.5">
+                <label className="block text-xs sm:text-[13px] font-semibold text-gray-700 dark:text-slate-300 mb-1.5">
                   ভাউচারের ধরন (Voucher Type)
                 </label>
                 <select
                   value={voucherType}
                   onChange={(e) => setVoucherType(e.target.value as VoucherType)}
-                  className="w-full bg-[#F8FAFC] border border-gray-300 rounded-xl px-3.5 py-2.5 text-[15px] text-gray-900 focus:outline-none focus:border-blue-600 focus:ring-2 focus:ring-blue-600/20 min-h-[44px]"
+                  className="w-full bg-[#F8FAFC] border border-gray-300 rounded-xl px-3.5 py-2.5 text-sm sm:text-[15px] text-gray-900 focus:outline-none focus:border-blue-600 focus:ring-2 focus:ring-blue-600/20 min-h-[44px]"
                 >
                   <option value="PAYMENT">পরিশোধ (Payment Voucher)</option>
                   <option value="RECEIPT">জমা/রশিদ (Receipt Voucher)</option>
@@ -1111,13 +1171,13 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
               </div>
 
               <div>
-                <label className="block text-[14px] font-bold text-gray-800 mb-1.5">তারিখ (Date)</label>
+                <label className="block text-xs sm:text-[13px] font-semibold text-gray-700 dark:text-slate-300 mb-1.5">তারিখ (Date)</label>
                 <input
                   type="date"
                   required
                   value={date}
                   onChange={(e) => setDate(e.target.value)}
-                  className={`w-full bg-[#F8FAFC] border rounded-xl px-3.5 py-2.5 text-[15px] text-gray-900 focus:outline-none min-h-[44px] ${
+                  className={`w-full bg-[#F8FAFC] border rounded-xl px-3.5 py-2.5 text-sm sm:text-[15px] text-gray-900 focus:outline-none min-h-[44px] ${
                     (latestClosed && date <= latestClosed.endDate) || date > new Date().toISOString().split('T')[0]
                       ? 'border-red-500 bg-red-50/50 text-red-900 focus:ring-2 focus:ring-red-300'
                       : 'border-gray-300 focus:border-blue-600 focus:ring-2 focus:ring-blue-600/20'
@@ -1138,18 +1198,18 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
               </div>
 
               <div>
-                <label className="block text-[14px] font-bold text-gray-800 mb-1.5">রেফারেন্স নং (Reference No)</label>
+                <label className="block text-xs sm:text-[13px] font-semibold text-gray-700 dark:text-slate-300 mb-1.5">রেফারেন্স নং (Reference No)</label>
                 <input
                   type="text"
                   value={reference}
                   onChange={(e) => setReference(e.target.value)}
                   placeholder="যেমন: বিল নং / ব্যাংক স্লিপ নং"
-                  className="w-full bg-[#F8FAFC] border border-gray-300 rounded-xl px-3.5 py-2.5 text-[15px] text-gray-900 focus:outline-none focus:border-blue-600 focus:ring-2 focus:ring-blue-600/20 min-h-[44px]"
+                  className="w-full bg-[#F8FAFC] border border-gray-300 rounded-xl px-3.5 py-2.5 text-sm sm:text-[15px] text-gray-900 focus:outline-none focus:border-blue-600 focus:ring-2 focus:ring-blue-600/20 min-h-[44px]"
                 />
               </div>
 
               <div>
-                <label className="block text-[14px] font-bold text-gray-800 mb-1.5">
+                <label className="block text-xs sm:text-[13px] font-semibold text-gray-700 dark:text-slate-300 mb-1.5">
                   <span>সংশ্লিষ্ট ব্যক্তি (Related Person)</span>
                   <span className="text-xs font-normal text-gray-500 ml-1">(ঐচ্ছিক)</span>
                 </label>
@@ -1158,13 +1218,13 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
                   value={relatedPerson}
                   onChange={(e) => setRelatedPerson(e.target.value)}
                   placeholder="যেমন: মো: করিম / আকাশ ট্রেডার্স"
-                  className="w-full bg-[#F8FAFC] border border-gray-300 rounded-xl px-3.5 py-2.5 text-[15px] text-gray-900 focus:outline-none focus:border-blue-600 focus:ring-2 focus:ring-blue-600/20 min-h-[44px]"
+                  className="w-full bg-[#F8FAFC] border border-gray-300 rounded-xl px-3.5 py-2.5 text-sm sm:text-[15px] text-gray-900 focus:outline-none focus:border-blue-600 focus:ring-2 focus:ring-blue-600/20 min-h-[44px]"
                 />
               </div>
             </div>
 
             <div>
-              <label className="block text-[14px] font-bold text-gray-800 mb-1.5">
+              <label className="block text-xs sm:text-[13px] font-semibold text-gray-700 dark:text-slate-300 mb-1.5">
                 লেনদেনের বিবরণ / ব্যাখ্যা (Narration)
               </label>
               <input
@@ -1173,7 +1233,7 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
                 value={narration}
                 onChange={(e) => setNarration(e.target.value)}
                 placeholder="যেমন: ১০০০ কেজি ফিড ক্রয়ের বিল নগদ পরিশোধ"
-                className="w-full bg-[#F8FAFC] border border-gray-300 rounded-xl px-3.5 py-2.5 text-[15px] text-gray-900 focus:outline-none focus:border-blue-600 focus:ring-2 focus:ring-blue-600/20 min-h-[44px]"
+                className="w-full bg-[#F8FAFC] border border-gray-300 rounded-xl px-3.5 py-2.5 text-sm sm:text-[15px] text-gray-900 focus:outline-none focus:border-blue-600 focus:ring-2 focus:ring-blue-600/20 min-h-[44px]"
               />
             </div>
 
@@ -1184,7 +1244,7 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
                   {/* From Account: Money going OUT of (Credit) */}
                   <div className="bg-[#FEF2F2]/60 p-3.5 sm:p-4 rounded-xl border border-rose-200 space-y-2">
                     <div className="flex items-center justify-between">
-                      <label className="block text-[14px] font-bold text-gray-900">
+                      <label className="block text-xs sm:text-[13px] font-semibold text-gray-800">
                         কোন হিসাব থেকে টাকা যাচ্ছে (Money going OUT of)
                       </label>
                       <span className="text-[11px] font-semibold text-rose-700 bg-rose-100 px-2 py-0.5 rounded">
@@ -1206,7 +1266,7 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
                   {/* To Account: Money coming INTO (Debit) */}
                   <div className="bg-[#F0FDF4]/60 p-3.5 sm:p-4 rounded-xl border border-emerald-200 space-y-2">
                     <div className="flex items-center justify-between">
-                      <label className="block text-[14px] font-bold text-gray-900">
+                      <label className="block text-xs sm:text-[13px] font-semibold text-gray-800">
                         কোন হিসাবে টাকা আসছে (Money coming INTO)
                       </label>
                       <span className="text-[11px] font-semibold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded">
@@ -1228,7 +1288,7 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
 
                 {/* Amount Field */}
                 <div className="bg-[#F8FAFC] p-3.5 sm:p-4 rounded-xl border border-gray-200">
-                  <label className="block text-[14px] font-bold text-gray-900 mb-1.5">
+                  <label className="block text-xs sm:text-[13px] font-semibold text-gray-800 mb-1.5">
                     টাকার পরিমাণ (Amount ৳)
                   </label>
                   <div className="relative max-w-xs">
@@ -1243,7 +1303,7 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
                       value={simpleAmount}
                       onChange={(e) => setSimpleAmount(e.target.value)}
                       placeholder="0.00"
-                      className="w-full pl-8 pr-3.5 py-2.5 bg-white border border-gray-300 rounded-xl text-[16px] font-bold text-gray-900 focus:outline-none focus:border-blue-600 focus:ring-2 focus:ring-blue-600/20 min-h-[44px]"
+                      className="w-full pl-8 pr-3.5 py-2.5 bg-white border border-gray-300 rounded-xl font-mono tabular-nums text-lg sm:text-xl font-bold text-gray-900 focus:outline-none focus:border-blue-600 focus:ring-2 focus:ring-blue-600/20 min-h-[44px]"
                     />
                   </div>
                 </div>
@@ -1363,8 +1423,107 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
 
       {/* SUBTAB 2: DAYBOOK / JOURNAL LIST */}
       {subTab === 'daybook' && (
-        <div className="bg-white border border-gray-200 rounded-2xl p-4 sm:p-5 shadow-xs">
-          <div className="flex items-center justify-between mb-4 pb-2 border-b border-gray-100">
+        <div className="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 rounded-2xl p-4 sm:p-5 shadow-xs">
+          {selectedJournal ? (
+            <div className="space-y-4">
+              <div className="flex items-center justify-between gap-3 border-b border-gray-100 dark:border-slate-800 pb-3 flex-wrap">
+                <div className="flex items-center gap-2.5">
+                  <button
+                    type="button"
+                    id="btn-back-to-daybook"
+                    onClick={() => {
+                      setSelectedJournalId(null);
+                      onSelectDetail?.(null);
+                    }}
+                    className="min-h-[44px] min-w-[44px] px-3 py-2 rounded-xl bg-gray-100 hover:bg-gray-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-gray-700 dark:text-slate-200 transition-all cursor-pointer flex items-center gap-1.5 font-bold text-xs sm:text-[13px] border border-gray-200 dark:border-slate-700 shadow-2xs"
+                    title="জাবেদা তালিকায় ফিরুন"
+                  >
+                    <ArrowLeft className="w-4 h-4" />
+                    <span>জাবেদা তালিকা</span>
+                  </button>
+                  <div>
+                    <h4 className="font-bold text-base text-gray-900 dark:text-slate-100 flex items-center gap-2 font-mono">
+                      {selectedJournal.voucherNumber}
+                    </h4>
+                    <p className="text-xs text-gray-500 dark:text-slate-400">
+                      {selectedJournal.voucherType} • {selectedJournal.date}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  {!selectedJournal.reversedBy && !selectedJournal.reversalOf && selectedJournal.status !== 'REVERSED' && role === 'OWNER' && (
+                    <button
+                      type="button"
+                      onClick={() => setReversingEntry(selectedJournal)}
+                      className="px-3 py-1.5 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer shadow-2xs"
+                    >
+                      <ArrowRightLeft className="w-3.5 h-3.5 text-amber-700" />
+                      <span>সংশোধন / রিভার্স করুন</span>
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Metadata cards */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 bg-gray-50 dark:bg-slate-800/50 p-3.5 rounded-xl border border-gray-100 dark:border-slate-800 text-xs sm:text-[13px]">
+                <div>
+                  <span className="text-gray-500 dark:text-slate-400 block text-xs">ভাউচার বিবরণ (Narration):</span>
+                  <span className="font-semibold text-gray-900 dark:text-slate-100">{selectedJournal.narration || 'কোনো বিবরণ নেই'}</span>
+                </div>
+                <div>
+                  <span className="text-gray-500 dark:text-slate-400 block text-xs">মোট অংক (Total Amount):</span>
+                  <span className="font-bold text-base font-mono text-emerald-700 dark:text-emerald-400">{fmt(selectedJournal.totalDebit)}</span>
+                </div>
+                <div>
+                  <span className="text-gray-500 dark:text-slate-400 block text-xs">সংশ্লিষ্ট ব্যক্তি / সূত্র:</span>
+                  <span className="font-semibold text-gray-900 dark:text-slate-100">
+                    {selectedJournal.relatedPerson || selectedJournal.reference || 'প্রযোজ্য নয়'}
+                  </span>
+                </div>
+              </div>
+
+              {/* Lines Table */}
+              <div className="overflow-x-auto rounded-xl border border-gray-200 dark:border-slate-800">
+                <table className="w-full min-w-[440px] text-left text-xs sm:text-[13px]">
+                  <thead className="bg-gray-100 dark:bg-slate-800 text-gray-700 dark:text-slate-300 font-bold border-b border-gray-200 dark:border-slate-700">
+                    <tr>
+                      <th className="p-2.5">হিসাবের কোড ও নাম</th>
+                      <th className="p-2.5">লাইন মেমো</th>
+                      <th className="p-2.5 text-right">ডেবিট (Debit)</th>
+                      <th className="p-2.5 text-right">ক্রেডিট (Credit)</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100 dark:divide-slate-800">
+                    {selectedJournal.lines.map((l, idx) => (
+                      <tr key={idx} className="hover:bg-gray-50/50 dark:hover:bg-slate-800/30">
+                        <td className="p-2.5">
+                          <span className="font-mono font-bold text-blue-700 dark:text-blue-400 mr-2">{l.accountCode}</span>
+                          <span className="font-medium text-gray-900 dark:text-slate-100">{l.accountName}</span>
+                        </td>
+                        <td className="p-2.5 text-gray-500 dark:text-slate-400">{l.memo || '-'}</td>
+                        <td className="p-2.5 text-right font-mono font-semibold text-emerald-700 dark:text-emerald-400">
+                          {l.debit > 0 ? fmt(l.debit) : '-'}
+                        </td>
+                        <td className="p-2.5 text-right font-mono font-semibold text-indigo-700 dark:text-indigo-400">
+                          {l.credit > 0 ? fmt(l.credit) : '-'}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot className="bg-gray-50 dark:bg-slate-800/60 font-bold border-t-2 border-gray-200 dark:border-slate-700">
+                    <tr>
+                      <td colSpan={2} className="p-2.5 text-right">সর্বমোট (Total):</td>
+                      <td className="p-2.5 text-right font-mono text-emerald-700 dark:text-emerald-400">{fmt(selectedJournal.totalDebit)}</td>
+                      <td className="p-2.5 text-right font-mono text-indigo-700 dark:text-indigo-400">{fmt(selectedJournal.totalCredit)}</td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            </div>
+          ) : (
+            <>
+              <div className="flex items-center justify-between mb-4 pb-2 border-b border-gray-100">
             <h3 className="text-[16px] font-bold text-gray-900 flex items-center gap-2">
               <FileText className="w-5 h-5 text-blue-700" />
               <span>লিপিবদ্ধ জাবেদা ভাউচারসমূহ ({journals.length})</span>
@@ -1583,6 +1742,20 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
                             </div>
                           </div>
 
+                          <button
+                            type="button"
+                            id={`btn-view-journal-${j.id}`}
+                            onClick={() => {
+                              setSelectedJournalId(j.id);
+                              onSelectDetail?.(j.id);
+                            }}
+                            className="px-2.5 py-1.5 rounded-lg bg-blue-50 hover:bg-blue-100 dark:bg-blue-950/60 text-blue-800 dark:text-blue-300 border border-blue-200 dark:border-blue-800 text-[12px] font-bold flex items-center gap-1 transition-all cursor-pointer shadow-2xs active:scale-95"
+                            title="ভাউচারের বিস্তারিত বিবরণ দেখুন"
+                          >
+                            <Eye className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
+                            <span>বিস্তারিত</span>
+                          </button>
+
                           {!j.reversedBy && !j.reversalOf && j.status !== 'REVERSED' && role === 'OWNER' && (
                             <button
                               type="button"
@@ -1638,6 +1811,8 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
                 </div>
               );
             })()
+          )}
+            </>
           )}
         </div>
       )}
@@ -1953,10 +2128,10 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
                   </span>
                 </div>
                 <div className="grid grid-cols-2 gap-2 pt-1 text-xs border-t border-gray-100 dark:border-slate-800">
-                  <div className="text-[#15803D] dark:text-emerald-400 font-bold">
+                  <div className="text-[#15803D] dark:text-emerald-400 font-bold font-mono tabular-nums">
                     ডেবিট: {r.debit > 0 ? fmt(r.debit) : '-'}
                   </div>
-                  <div className="text-right text-sky-700 dark:text-sky-400 font-bold">
+                  <div className="text-right text-sky-700 dark:text-sky-400 font-bold font-mono tabular-nums">
                     ক্রেডিট: {r.credit > 0 ? fmt(r.credit) : '-'}
                   </div>
                 </div>
@@ -1964,9 +2139,9 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
             ))}
             <div className="p-3.5 rounded-xl bg-gray-100 dark:bg-slate-800 text-sm font-bold flex justify-between items-center">
               <span>মোট (Total):</span>
-              <div className="flex items-center gap-3 text-xs sm:text-sm">
-                <span className="text-[#15803D] dark:text-emerald-400">{fmt(tbTotalDebit)}</span>
-                <span className="text-sky-700 dark:text-sky-400">{fmt(tbTotalCredit)}</span>
+              <div className="flex items-center gap-3 text-xs sm:text-sm font-mono tabular-nums">
+                <span className="text-[#15803D] dark:text-emerald-400 font-bold">{fmt(tbTotalDebit)}</span>
+                <span className="text-sky-700 dark:text-sky-400 font-bold">{fmt(tbTotalCredit)}</span>
               </div>
             </div>
           </div>
@@ -2622,8 +2797,8 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
 
       {/* REVERSAL CONFIRMATION MODAL */}
       {reversingEntry && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl max-w-lg w-full p-5 sm:p-6 shadow-xl border border-gray-200 space-y-4">
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
+          <div className="bg-white rounded-2xl max-w-lg w-full p-5 sm:p-6 shadow-xl border border-gray-200 space-y-4 max-h-[calc(100vh-2rem)] overflow-y-auto">
             <div className="flex items-start justify-between gap-3 border-b border-gray-100 pb-3">
               <div className="flex items-center gap-2.5 text-amber-700">
                 <ArrowRightLeft className="w-6 h-6 shrink-0" />
@@ -2700,8 +2875,8 @@ export const AccountingModule: React.FC<Props> = ({ role, currentUserId }) => {
       )}
 
       {confirmHighAmountVoucher && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl max-w-md w-full p-5 sm:p-6 shadow-xl border border-gray-200 space-y-4">
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
+          <div className="bg-white rounded-2xl max-w-md w-full p-5 sm:p-6 shadow-xl border border-gray-200 space-y-4 max-h-[calc(100vh-2rem)] overflow-y-auto">
             <div className="flex items-start justify-between gap-3 border-b border-gray-100 pb-3">
               <div className="flex items-center gap-2.5 text-amber-700">
                 <AlertCircle className="w-6 h-6 shrink-0" />

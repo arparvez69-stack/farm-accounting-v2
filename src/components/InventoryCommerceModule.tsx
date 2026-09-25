@@ -2409,7 +2409,7 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
             </div>
           ) : (
             <div className="overflow-x-auto rounded-xl border border-gray-200">
-              <table className="w-full text-left text-[14px] text-gray-800">
+              <table className="w-full min-w-[650px] text-left text-[14px] text-gray-800">
                 <thead className="bg-[#F8FAFC] text-gray-600 font-semibold border-b border-gray-200 text-[13px]">
                   <tr>
                     <th className="p-3">পণ্যের নাম</th>
@@ -2952,7 +2952,7 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
           )}
 
           <div className="overflow-x-auto rounded-xl border border-gray-200">
-            <table className="w-full text-left text-[14px] text-gray-800">
+            <table className="w-full min-w-[650px] text-left text-[14px] text-gray-800">
               <thead className="bg-[#F8FAFC] text-gray-600 font-semibold border-b border-gray-200 text-[13px]">
                 <tr>
                   <th className="p-3">চালান নং</th>
@@ -3589,7 +3589,7 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
           )}
 
           <div className="overflow-x-auto rounded-xl border border-gray-200">
-            <table className="w-full text-left text-[14px] text-gray-800">
+            <table className="w-full min-w-[650px] text-left text-[14px] text-gray-800">
               <thead className="bg-[#F8FAFC] text-gray-600 font-semibold border-b border-gray-200 text-[13px]">
                 <tr>
                   <th className="p-3">চালান নং</th>

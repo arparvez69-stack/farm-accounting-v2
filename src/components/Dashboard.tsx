@@ -1037,34 +1037,34 @@ export const Dashboard: React.FC<Props> = ({ role, onNavigate, regressionTestRes
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5 pt-1">
           {/* Liquidity (Cash + Bank) */}
           <div className="p-4 rounded-xl bg-[#F8FAFC] dark:bg-slate-800/80 border border-gray-200/80 dark:border-slate-700/80">
-            <div className="flex items-center justify-between text-[14px] text-gray-600 dark:text-slate-400 font-medium">
+            <div className="flex items-center justify-between text-xs sm:text-[13px] text-gray-600 dark:text-slate-400 font-semibold">
               <span>{t('dashboard.totalLiquidity')}</span>
-              <div className="p-2 rounded-lg bg-blue-100/80 dark:bg-blue-950/60 text-blue-700 dark:text-blue-400">
-                <Wallet className="w-5 h-5" />
+              <div className="p-1.5 rounded-lg bg-blue-100/80 dark:bg-blue-950/60 text-blue-700 dark:text-blue-400">
+                <Wallet className="w-4 h-4" />
               </div>
             </div>
-            <div className="text-2xl sm:text-3xl font-extrabold text-gray-900 dark:text-slate-100 tracking-tight mt-1">
+            <div className="text-2xl sm:text-3xl font-extrabold font-mono tabular-nums text-gray-900 dark:text-slate-100 tracking-tight mt-1.5">
               {fmtMoney(cashBalance + bankBalance)}
             </div>
-            <div className="flex items-center gap-3 text-[13px] text-gray-600 dark:text-slate-400 mt-2 pt-2 border-t border-gray-200/60 dark:border-slate-700/60 font-medium">
-              <span>{t('dashboard.cash')} <strong className="text-gray-900 dark:text-slate-200">{fmtMoney(cashBalance)}</strong></span>
+            <div className="flex items-center gap-2.5 text-xs text-gray-500 dark:text-slate-400 mt-2 pt-2 border-t border-gray-200/60 dark:border-slate-700/60 font-medium">
+              <span>{t('dashboard.cash')} <strong className="text-gray-900 dark:text-slate-200 font-mono tabular-nums">{fmtMoney(cashBalance)}</strong></span>
               <span>•</span>
-              <span>{t('dashboard.bank')} <strong className="text-gray-900 dark:text-slate-200">{fmtMoney(bankBalance)}</strong></span>
+              <span>{t('dashboard.bank')} <strong className="text-gray-900 dark:text-slate-200 font-mono tabular-nums">{fmtMoney(bankBalance)}</strong></span>
             </div>
           </div>
 
           {/* Net Profit / Margin */}
           <div className="p-4 rounded-xl bg-[#F8FAFC] dark:bg-slate-800/80 border border-gray-200/80 dark:border-slate-700/80">
-            <div className="flex items-center justify-between text-[14px] text-gray-600 dark:text-slate-400 font-medium">
+            <div className="flex items-center justify-between text-xs sm:text-[13px] text-gray-600 dark:text-slate-400 font-semibold">
               <span>{t('dashboard.netProfit')}</span>
-              <div className={`p-2 rounded-lg ${netProfit >= 0 ? 'bg-emerald-100/80 dark:bg-emerald-950/60 text-[#15803D] dark:text-emerald-400' : 'bg-red-100/80 dark:bg-red-950/60 text-[#C2410C] dark:text-rose-400'}`}>
-                {netProfit >= 0 ? <TrendingUp className="w-5 h-5" /> : <TrendingDown className="w-5 h-5" />}
+              <div className={`p-1.5 rounded-lg ${netProfit >= 0 ? 'bg-emerald-100/80 dark:bg-emerald-950/60 text-[#15803D] dark:text-emerald-400' : 'bg-red-100/80 dark:bg-red-950/60 text-[#C2410C] dark:text-rose-400'}`}>
+                {netProfit >= 0 ? <TrendingUp className="w-4 h-4" /> : <TrendingDown className="w-4 h-4" />}
               </div>
             </div>
-            <div className={`text-2xl sm:text-3xl font-extrabold tracking-tight mt-1 ${netProfit >= 0 ? 'text-[#15803D] dark:text-emerald-400' : 'text-[#C2410C] dark:text-rose-400'}`}>
+            <div className={`text-2xl sm:text-3xl font-extrabold font-mono tabular-nums tracking-tight mt-1.5 ${netProfit >= 0 ? 'text-[#15803D] dark:text-emerald-400' : 'text-[#C2410C] dark:text-rose-400'}`}>
               {fmtMoney(netProfit)}
             </div>
-            <div className="text-[13px] text-gray-600 dark:text-slate-400 mt-2 pt-2 border-t border-gray-200/60 dark:border-slate-700/60 font-medium">
+            <div className="text-xs text-gray-500 dark:text-slate-400 mt-2 pt-2 border-t border-gray-200/60 dark:border-slate-700/60 font-medium">
               {t('dashboard.netProfitNote')}
             </div>
           </div>
@@ -1116,48 +1116,48 @@ export const Dashboard: React.FC<Props> = ({ role, onNavigate, regressionTestRes
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
         {/* Total Revenue */}
         <div className="p-4 rounded-xl bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 shadow-xs transition-colors">
-          <div className="flex items-center justify-between text-[13px] text-gray-600 dark:text-slate-400 font-medium">
+          <div className="flex items-center justify-between text-xs sm:text-[13px] text-gray-600 dark:text-slate-400 font-medium">
             <span>{t('dashboard.totalRevenue')}</span>
-            <div className="p-1.5 rounded-lg bg-emerald-50 dark:bg-emerald-950/60 text-[#15803D] dark:text-emerald-400">
+            <div className="p-1 rounded-md bg-emerald-50 dark:bg-emerald-950/60 text-[#15803D] dark:text-emerald-400">
               <ArrowUpRight className="w-4 h-4" />
             </div>
           </div>
-          <div className="text-xl font-bold text-gray-900 dark:text-slate-100 tracking-tight mt-1.5">
+          <div className="text-xl sm:text-2xl font-bold font-mono tabular-nums text-gray-900 dark:text-slate-100 tracking-tight mt-1.5">
             {fmtMoney(totalRevenue)}
           </div>
-          <p className="text-[13px] text-gray-600 dark:text-slate-400 mt-1">{t('dashboard.revenueDesc')}</p>
+          <p className="text-xs text-gray-500 dark:text-slate-400 mt-1">{t('dashboard.revenueDesc')}</p>
         </div>
 
         {/* Total Expenses */}
         <div className="p-4 rounded-xl bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 shadow-xs transition-colors">
-          <div className="flex items-center justify-between text-[13px] text-gray-600 dark:text-slate-400 font-medium">
+          <div className="flex items-center justify-between text-xs sm:text-[13px] text-gray-600 dark:text-slate-400 font-medium">
             <span>{t('dashboard.totalExpenses')}</span>
-            <div className="p-1.5 rounded-lg bg-rose-50 dark:bg-rose-950/60 text-[#C2410C] dark:text-rose-400">
+            <div className="p-1 rounded-md bg-rose-50 dark:bg-rose-950/60 text-[#C2410C] dark:text-rose-400">
               <ArrowDownLeft className="w-4 h-4" />
             </div>
           </div>
-          <div className="text-xl font-bold text-gray-900 dark:text-slate-100 tracking-tight mt-1.5">
+          <div className="text-xl sm:text-2xl font-bold font-mono tabular-nums text-gray-900 dark:text-slate-100 tracking-tight mt-1.5">
             {fmtMoney(totalExpenses)}
           </div>
-          <p className="text-[13px] text-gray-600 dark:text-slate-400 mt-1">{t('dashboard.expensesDesc')}</p>
+          <p className="text-xs text-gray-500 dark:text-slate-400 mt-1">{t('dashboard.expensesDesc')}</p>
         </div>
 
         {/* AR (Receivable) */}
         <div className="p-4 rounded-xl bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 shadow-xs transition-colors">
-          <div className="text-[13px] text-gray-600 dark:text-slate-400 font-medium">{t('dashboard.receivables')}</div>
-          <div className="text-xl font-bold text-sky-700 dark:text-sky-400 tracking-tight mt-1.5">
+          <div className="text-xs sm:text-[13px] text-gray-600 dark:text-slate-400 font-medium">{t('dashboard.receivables')}</div>
+          <div className="text-xl sm:text-2xl font-bold font-mono tabular-nums text-sky-700 dark:text-sky-400 tracking-tight mt-1.5">
             {fmtMoney(arBalance)}
           </div>
-          <p className="text-[13px] text-gray-600 dark:text-slate-400 mt-1">{t('dashboard.receivablesDesc')}</p>
+          <p className="text-xs text-gray-500 dark:text-slate-400 mt-1">{t('dashboard.receivablesDesc')}</p>
         </div>
 
         {/* AP (Payable) */}
         <div className="p-4 rounded-xl bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 shadow-xs transition-colors">
-          <div className="text-[13px] text-gray-600 dark:text-slate-400 font-medium">{t('dashboard.payables')}</div>
-          <div className="text-xl font-bold text-amber-700 dark:text-amber-400 tracking-tight mt-1.5">
+          <div className="text-xs sm:text-[13px] text-gray-600 dark:text-slate-400 font-medium">{t('dashboard.payables')}</div>
+          <div className="text-xl sm:text-2xl font-bold font-mono tabular-nums text-amber-700 dark:text-amber-400 tracking-tight mt-1.5">
             {fmtMoney(apBalance)}
           </div>
-          <p className="text-[13px] text-gray-600 dark:text-slate-400 mt-1">{t('dashboard.payablesDesc')}</p>
+          <p className="text-xs text-gray-500 dark:text-slate-400 mt-1">{t('dashboard.payablesDesc')}</p>
         </div>
       </div>
 
@@ -1242,10 +1242,10 @@ export const Dashboard: React.FC<Props> = ({ role, onNavigate, regressionTestRes
               >
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2 flex-wrap">
-                    <span className="font-mono text-[#1E5128] dark:text-emerald-400 font-bold text-[14px]">
+                    <span className="font-mono text-[#1E5128] dark:text-emerald-400 font-bold text-[13px] sm:text-[14px]">
                       {tx.voucherNumber}
                     </span>
-                    <span className="text-[12px] font-semibold px-2 py-0.5 rounded-md bg-white dark:bg-slate-700 border border-gray-200 dark:border-slate-600 text-gray-700 dark:text-slate-200">
+                    <span className="text-[11px] font-semibold px-2 py-0.5 rounded-md bg-white dark:bg-slate-700 border border-gray-200 dark:border-slate-600 text-gray-700 dark:text-slate-200">
                       {tx.voucherType}
                     </span>
                     {tx.reversedBy && (
@@ -1253,22 +1253,22 @@ export const Dashboard: React.FC<Props> = ({ role, onNavigate, regressionTestRes
                         {t('dashboard.corrected')}
                       </span>
                     )}
-                    <span className="text-gray-500 dark:text-slate-400 text-[13px]">{tx.date}</span>
+                    <span className="text-gray-400 dark:text-slate-500 text-xs">{tx.date}</span>
                     {tx.relatedPerson && (
                       <span className="text-xs text-blue-700 dark:text-blue-400 font-medium">
                         • {tx.relatedPerson}
                       </span>
                     )}
                   </div>
-                  <p className="text-gray-800 dark:text-slate-200 text-[14px] truncate mt-1">
+                  <p className="text-gray-800 dark:text-slate-200 text-xs sm:text-[13px] truncate mt-1">
                     {tx.narration || t('dashboard.noNarration')}
                   </p>
                 </div>
                 <div className="text-left sm:text-right shrink-0 pt-1 sm:pt-0 border-t sm:border-t-0 border-gray-200/50 dark:border-slate-700/50">
-                  <div className="font-bold text-[16px] text-gray-900 dark:text-slate-100">
+                  <div className="font-bold font-mono tabular-nums text-base sm:text-lg text-gray-900 dark:text-slate-100">
                     {fmtMoney(tx.totalDebit)}
                   </div>
-                  <div className="text-[12px] text-gray-500 dark:text-slate-400 font-medium">{t('dashboard.balancedDebitCredit')}</div>
+                  <div className="text-[11px] text-gray-400 dark:text-slate-500 font-medium">{t('dashboard.balancedDebitCredit')}</div>
                 </div>
               </div>
             ))}

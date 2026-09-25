@@ -299,6 +299,9 @@ export async function runTaskF8HardenOwnerSessionAuthTests(): Promise<AssertionR
       })
     });
     const syncJson = await syncRes.json();
+    if (syncRes.status !== 200) {
+      console.error('F8 sync error:', syncRes.status, JSON.stringify(syncJson));
+    }
     assert(syncRes.status === 200 && syncJson.success === true, 'Legitimate authenticated owner sync succeeds without data loss');
   } catch (err: any) {
     assert(false, `Valid sync failed: ${err.message}`);
@@ -315,7 +318,7 @@ export async function runTaskF8HardenOwnerSessionAuthTests(): Promise<AssertionR
   return result;
 }
 
-if (process.argv[1]?.endsWith('testTaskF8HardenOwnerSessionAuth.ts')) {
+if (typeof process !== 'undefined' && process.argv[1]?.includes('testTaskF8HardenOwnerSessionAuth')) {
   runTaskF8HardenOwnerSessionAuthTests()
     .then((res) => {
       if (res.failed > 0) {

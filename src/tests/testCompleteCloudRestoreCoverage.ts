@@ -52,8 +52,9 @@ export async function runCompleteCloudRestoreCoverageTests(): Promise<AssertionR
   // Ensure server is running
   let serverInstance: http.Server | null = null;
   let testPort = 3000;
+  const originalPort = process.env.PORT;
   try {
-    const healthCheck = await fetch('http://localhost:3000/api/health', { signal: AbortSignal.timeout(1000) });
+    const healthCheck = await fetch('http://localhost:3000/api/health', { signal: AbortSignal.timeout(3000) });
     if (!healthCheck.ok) throw new Error('Health check non-200');
   } catch {
     await new Promise<void>((resolve) => {
@@ -715,6 +716,11 @@ export async function runCompleteCloudRestoreCoverageTests(): Promise<AssertionR
   } finally {
     if (serverInstance) {
       serverInstance.close();
+    }
+    if (originalPort !== undefined) {
+      process.env.PORT = originalPort;
+    } else {
+      delete process.env.PORT;
     }
   }
 
