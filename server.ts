@@ -46,8 +46,6 @@ export function getRawEmailsEnv(): string {
   return (
     process.env.APPROVED_OWNER_EMAILS?.trim() ||
     process.env.OWNER_EMAILS?.trim() ||
-    process.env.EMAIL?.trim() ||
-    process.env.email?.trim() ||
     ''
   );
 }
@@ -217,7 +215,7 @@ try {
 // Initialize Firestore Admin
 let adminDb: FirebaseFirestore.Firestore | null = null;
 try {
-  if (adminInitialized) {
+  if (adminInitialized && hasServiceAccountKey) {
     adminDb = firebaseConfig.firestoreDatabaseId
       ? getFirestore(firebaseConfig.firestoreDatabaseId)
       : getFirestore();
@@ -383,10 +381,11 @@ export async function getValidAccountsForValidation(): Promise<Account[]> {
   for (const acc of DEFAULT_CHART_OF_ACCOUNTS) {
     accountsMap.set(acc.code, acc);
   }
-  if (adminDb) {
+  const effectiveDb = getEffectiveAdminDb();
+  if (effectiveDb) {
     try {
-      const snap = await adminDb.collection('accounts').get();
-      snap.forEach((doc) => {
+      const snap = await effectiveDb.collection('accounts').get();
+      snap.forEach((doc: any) => {
         const d = doc.data() as Account;
         if (d && d.code) {
           accountsMap.set(d.code, d);
@@ -916,10 +915,11 @@ export async function getCollectionRecordsForValidation(colName: string): Promis
       if (rec) recordsMap.set(id, rec);
     }
   }
-  if (adminDb) {
+  const effectiveDb = getEffectiveAdminDb();
+  if (effectiveDb) {
     try {
-      const snap = await adminDb.collection(colName).get();
-      snap.forEach((doc) => {
+      const snap = await effectiveDb.collection(colName).get();
+      snap.forEach((doc: any) => {
         recordsMap.set(doc.id, { id: doc.id, ...doc.data() });
       });
     } catch {
@@ -957,10 +957,11 @@ export async function getClosedPeriodsForValidation(): Promise<ClosedPeriod[]> {
     }
   }
   // 2. From Firestore Admin SDK if available
-  if (adminDb) {
+  const effectiveDb = getEffectiveAdminDb();
+  if (effectiveDb) {
     try {
-      const snap = await adminDb.collection('closedPeriods').get();
-      snap.forEach((doc) => {
+      const snap = await effectiveDb.collection('closedPeriods').get();
+      snap.forEach((doc: any) => {
         const d = doc.data() as ClosedPeriod;
         if (d && d.endDate) {
           periodsMap.set(doc.id, { ...d, id: doc.id });
@@ -1250,27 +1251,29 @@ async function authenticateOwnerRequest(req: express.Request): Promise<{ email: 
 // ==========================================
 export async function syncAuthorizedEmails(): Promise<void> {
   const emails = getApprovedOwnerEmails();
-  if (!adminDb || emails.length === 0) return;
+  const effectiveDb = getEffectiveAdminDb();
+  if (!effectiveDb || emails.length === 0) return;
 
   try {
-    const docRef = adminDb.doc('system/authorizedEmails');
+    const docRef = effectiveDb.doc('system/authorizedEmails');
     // Set authoritative list directly without preserving obsolete or revoked emails
     await docRef.set({
       emails: emails,
       updatedAt: new Date().toISOString()
     });
-    console.log(`[The Goated Farm] Synced system/authorizedEmails in Firestore via Admin SDK (${emails.length} owners)`);
+    console.log(`[The Goated Farm] Synced system/authorizedEmails via Admin SDK (${emails.length} owners)`);
   } catch (err: any) {
-    console.warn('[The Goated Farm] Note on syncing system/authorizedEmails in Firestore:', err.message);
+    console.warn('[The Goated Farm] Note on syncing system/authorizedEmails:', err.message);
   }
 }
 
 async function ensureEmailAuthorized(email: string): Promise<void> {
   const normalized = email.toLowerCase().trim();
   if (!isOwnerEmail(normalized)) return;
-  if (!adminDb) return;
+  const effectiveDb = getEffectiveAdminDb();
+  if (!effectiveDb) return;
   try {
-    const docRef = adminDb.doc('system/authorizedEmails');
+    const docRef = effectiveDb.doc('system/authorizedEmails');
     const emails = getApprovedOwnerEmails();
     await docRef.set({
       emails: emails,
@@ -1313,9 +1316,10 @@ async function initializeAuthSecrets(): Promise<void> {
   }
   console.log('[The Goated Farm] Seeded in-memory auth secrets for authorized owners:', emails);
 
-  if (adminDb) {
+  const effectiveDb = getEffectiveAdminDb();
+  if (effectiveDb) {
     try {
-      const docRef = adminDb.doc('system/authSecrets');
+      const docRef = effectiveDb.doc('system/authSecrets');
       const snap = await docRef.get();
       if (!snap.exists) {
         // Initial first-time seed using INITIAL_PIN
@@ -1324,7 +1328,7 @@ async function initializeAuthSecrets(): Promise<void> {
           initialDoc[email] = cachedAuthSecrets[email];
         }
         await docRef.set(initialDoc);
-        console.log('[The Goated Farm] Seeded system/authSecrets in Firestore with bcrypt hashes (cost 12)');
+        console.log('[The Goated Farm] Seeded system/authSecrets with bcrypt hashes (cost 12)');
       } else {
         // Note: Changing INITIAL_PIN after the first successful seed has no effect; the PIN can only be updated via the in-app Change PIN screen from then on.
         const data = snap.data() || {};
@@ -1334,10 +1338,10 @@ async function initializeAuthSecrets(): Promise<void> {
             cachedAuthSecrets[email] = h;
           }
         }
-        console.log('[The Goated Farm] Loaded bcrypt auth secrets from Firestore');
+        console.log('[The Goated Farm] Loaded bcrypt auth secrets from store');
       }
     } catch (err: any) {
-      console.warn('[The Goated Farm] Firestore system/authSecrets fallback note:', err.message);
+      console.warn('[The Goated Farm] system/authSecrets fallback note:', err.message);
     }
   }
 }
@@ -1346,9 +1350,10 @@ export async function getStoredHash(email: string): Promise<string | null> {
   if (!isSetupComplete()) {
     return null;
   }
-  if (adminDb) {
+  const effectiveDb = getEffectiveAdminDb();
+  if (effectiveDb) {
     try {
-      const snap = await adminDb.doc('system/authSecrets').get();
+      const snap = await effectiveDb.doc('system/authSecrets').get();
       if (snap.exists) {
         const data = snap.data() || {};
         const hash = data[email] || data.hashes?.[email];
@@ -1358,25 +1363,30 @@ export async function getStoredHash(email: string): Promise<string | null> {
         }
       }
     } catch (err: any) {
-      console.warn('[The Goated Farm] Firestore system/authSecrets query failed:', err.message);
+      console.warn('[The Goated Farm] system/authSecrets query note:', err.message);
     }
   }
 
-  // Fallback path removed: If Firestore-stored hash is unavailable, fail closed.
+  // Fallback to in-memory cached hash (e.g. seeded during initialization from INITIAL_PIN/masterpin)
+  if (cachedAuthSecrets[email]) {
+    return cachedAuthSecrets[email];
+  }
+
   return null;
 }
 
 async function updateStoredHash(email: string, newHash: string): Promise<void> {
   cachedAuthSecrets[email] = newHash;
-  if (adminDb) {
+  const effectiveDb = getEffectiveAdminDb();
+  if (effectiveDb) {
     try {
-      await adminDb.doc('system/authSecrets').set({
+      await effectiveDb.doc('system/authSecrets').set({
         [email]: newHash,
         hashes: { [email]: newHash }
       }, { merge: true });
-      console.log(`[The Goated Farm] Stored updated PIN hash in Firestore for ${email}`);
+      console.log(`[The Goated Farm] Stored updated PIN hash for ${email}`);
     } catch (err: any) {
-      console.warn('[The Goated Farm] Note on persisting new hash in Firestore:', err.message);
+      console.warn('[The Goated Farm] Note on persisting new hash in system/authSecrets:', err.message);
     }
   }
 }
@@ -1389,9 +1399,10 @@ interface ResetRecord {
 const cachedResetCodes: Record<string, ResetRecord> = {};
 
 async function getStoredResetCode(email: string): Promise<ResetRecord | null> {
-  if (adminDb) {
+  const effectiveDb = getEffectiveAdminDb();
+  if (effectiveDb) {
     try {
-      const snap = await adminDb.doc('system/authSecrets').get();
+      const snap = await effectiveDb.doc('system/authSecrets').get();
       if (snap.exists) {
         const data = snap.data() || {};
         const rc = data.resetCodes?.[email];
@@ -1401,7 +1412,7 @@ async function getStoredResetCode(email: string): Promise<ResetRecord | null> {
         }
       }
     } catch (err: any) {
-      console.warn('[The Goated Farm] Note on reading reset code from Firestore:', err.message);
+      console.warn('[The Goated Farm] Note on reading reset code:', err.message);
     }
   }
   return cachedResetCodes[email] || null;
@@ -1410,35 +1421,37 @@ async function getStoredResetCode(email: string): Promise<ResetRecord | null> {
 async function setStoredResetCode(email: string, code: string, expiresAt: number): Promise<void> {
   const record: ResetRecord = { code, expiresAt };
   cachedResetCodes[email] = record;
-  if (adminDb) {
+  const effectiveDb = getEffectiveAdminDb();
+  if (effectiveDb) {
     try {
-      await adminDb.doc('system/authSecrets').set({
+      await effectiveDb.doc('system/authSecrets').set({
         resetCodes: {
           [email]: record
         }
       }, { merge: true });
-      console.log(`[The Goated Farm] Stored reset code in Firestore for ${email}`);
+      console.log(`[The Goated Farm] Stored reset code for ${email}`);
     } catch (err: any) {
-      console.warn('[The Goated Farm] Note on storing reset code in Firestore:', err.message);
+      console.warn('[The Goated Farm] Note on storing reset code in system/authSecrets:', err.message);
     }
   }
 }
 
 async function clearStoredResetCode(email: string): Promise<void> {
   delete cachedResetCodes[email];
-  if (adminDb) {
+  const effectiveDb = getEffectiveAdminDb();
+  if (effectiveDb) {
     try {
-      const snap = await adminDb.doc('system/authSecrets').get();
+      const snap = await effectiveDb.doc('system/authSecrets').get();
       if (snap.exists) {
         const data = snap.data() || {};
         const currentResets = { ...(data.resetCodes || {}) };
         delete currentResets[email];
-        await adminDb.doc('system/authSecrets').update({
+        await effectiveDb.doc('system/authSecrets').update({
           resetCodes: currentResets
         });
       }
     } catch (err: any) {
-      console.warn('[The Goated Farm] Note on clearing reset code in Firestore:', err.message);
+      console.warn('[The Goated Farm] Note on clearing reset code in system/authSecrets:', err.message);
     }
   }
 }
@@ -3768,14 +3781,15 @@ app.get('/api/sync/restore', async (req, res) => {
       }
       // 2. Authoritative durable production source: Cloud Firestore Admin SDK
       // Overwrites/supplements ephemeral local cache with authoritative cloud data
-      if (adminDb) {
+      const effectiveDb = getEffectiveAdminDb(req);
+      if (effectiveDb) {
         try {
-          const snap = await adminDb.collection(colName).get();
-          snap.forEach((doc) => {
+          const snap = await effectiveDb.collection(colName).get();
+          snap.forEach((doc: any) => {
             docsMap.set(doc.id, { id: doc.id, ...doc.data() });
           });
           if (colName === 'systemConfig') {
-            const cfgSnap = await adminDb.doc('system/config').get();
+            const cfgSnap = await effectiveDb.doc('system/config').get();
             if (cfgSnap.exists) {
               const data = cfgSnap.data();
               const id = data?.ownerUid || 'config';
@@ -3854,19 +3868,20 @@ app.post('/api/wipe-all-data', async (req, res) => {
 
   let deletedTotal = 0;
 
-  if (adminDb) {
+  const effectiveDb = getEffectiveAdminDb(req);
+  if (effectiveDb) {
     try {
       for (const colName of collectionsToWipe) {
         try {
-          const colRef = adminDb.collection(colName);
+          const colRef = effectiveDb.collection(colName);
           const snap = await colRef.get();
           if (!snap.empty) {
             // Commit in chunks of 400 to strictly respect Firestore batch limits
             const docs = snap.docs;
             for (let i = 0; i < docs.length; i += 400) {
               const chunk = docs.slice(i, i + 400);
-              const batch = adminDb.batch();
-              chunk.forEach((doc) => {
+              const batch = effectiveDb.batch();
+              chunk.forEach((doc: any) => {
                 batch.delete(doc.ref);
                 deletedTotal++;
               });
