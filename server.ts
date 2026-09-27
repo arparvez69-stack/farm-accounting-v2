@@ -3888,7 +3888,14 @@ app.post('/api/wipe-all-data', async (req, res) => {
 });
 
 // API Route 3: GET /api/access-logs (to see who is using/accessing the app)
-app.get('/api/access-logs', (req, res) => {
+app.get('/api/access-logs', async (req, res) => {
+  const owner = await authenticateOwnerRequest(req);
+  if (!owner) {
+    return res.status(401).json({
+      error: 'অননুমোদিত অ্যাক্সেস (Unauthorized). শুধুমাত্র অনুমোদিত মালিক অ্যাক্সেস লগ দেখতে পারেন।'
+    });
+  }
+
   res.json({
     success: true,
     logs: serverAccessLogs

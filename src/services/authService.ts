@@ -71,7 +71,20 @@ export async function getAppAccessLogs(): Promise<AppAccessLog[]> {
 
     // 2. Also try fetching server-side logs
     try {
-      const res = await fetch('/api/access-logs');
+      const raw = typeof window !== 'undefined' ? localStorage.getItem('goted_owner_session') : null;
+      let token = '';
+      if (raw) {
+        try {
+          const parsed = JSON.parse(raw);
+          if (parsed.sessionToken) token = parsed.sessionToken;
+        } catch {}
+      }
+
+      const res = await fetch('/api/access-logs', {
+        headers: {
+          ...(token ? { Authorization: `Bearer ${token}` } : {})
+        }
+      });
       if (res.ok) {
         const data = await res.json();
         if (data.success && Array.isArray(data.logs)) {
