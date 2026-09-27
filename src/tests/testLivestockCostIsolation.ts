@@ -27,13 +27,32 @@ import {
 import { CANONICAL_ACCOUNTS } from '../accounting/accountMapping';
 import { Animal, Account, CashBankAccount } from '../types';
 
-function assert(condition: boolean, message: string) {
-  if (!condition) {
-    throw new Error(`Assertion failed: ${message}`);
-  }
+export interface AssertionResult {
+  total: number;
+  passed: number;
+  failed: number;
+  failures: string[];
 }
 
-export async function runLivestockCostIsolationTest() {
+export async function runLivestockCostIsolationTest(): Promise<AssertionResult> {
+  const result: AssertionResult = {
+    total: 0,
+    passed: 0,
+    failed: 0,
+    failures: []
+  };
+
+  function assert(condition: boolean, message: string) {
+    result.total++;
+    if (condition) {
+      result.passed++;
+    } else {
+      result.failed++;
+      result.failures.push(message);
+      throw new Error(`Assertion failed: ${message}`);
+    }
+  }
+
   console.log('====================================================');
   console.log('STARTING LIVESTOCK PRODUCTION COST & RECLASSIFICATION TEST');
   console.log('====================================================');
@@ -677,15 +696,15 @@ export async function runLivestockCostIsolationTest() {
   console.log('✓ 8.7 Historical transactions, animal records, and audit logs fully preserved');
 
   console.log('====================================================');
-  console.log('ALL LIVESTOCK COST ISOLATION & RECLASSIFICATION TESTS PASSED!');
+  console.log(`ALL LIVESTOCK COST ISOLATION & RECLASSIFICATION TESTS PASSED! (${result.passed}/${result.total})`);
   console.log('====================================================');
-  return true;
+  return result;
 }
 
 if (typeof process !== 'undefined' && process.argv && process.argv[1]?.includes('testLivestockCostIsolation')) {
-  runLivestockCostIsolationTest().then(() => {
+  runLivestockCostIsolationTest().then((r) => {
     console.log('Test completed successfully');
-    process.exit(0);
+    process.exit(r.failed === 0 ? 0 : 1);
   }).catch((err) => {
     console.error('Test failed:', err);
     process.exit(1);

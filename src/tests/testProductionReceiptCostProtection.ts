@@ -92,7 +92,48 @@ async function seedChartOfAccounts(dbInstance: any) {
   }
 }
 
-async function runTests() {
+export interface AssertionResult {
+  total: number;
+  passed: number;
+  failed: number;
+  failures: string[];
+}
+
+export async function runProductionReceiptCostProtectionTests(): Promise<AssertionResult> {
+  const result: AssertionResult = {
+    total: 0,
+    passed: 0,
+    failed: 0,
+    failures: []
+  };
+
+  const localAssert: any = (condition: boolean, message?: string) => {
+    result.total++;
+    if (condition) {
+      result.passed++;
+    } else {
+      result.failed++;
+      result.failures.push(message || 'Assertion failed');
+      assert(condition, message);
+    }
+  };
+  localAssert.strictEqual = (actual: any, expected: any, message?: string) => {
+    result.total++;
+    if (actual === expected) {
+      result.passed++;
+    } else {
+      result.failed++;
+      result.failures.push(message || `Expected ${expected} but got ${actual}`);
+      assert.strictEqual(actual, expected, message);
+    }
+  };
+
+  return await runTestsInternal(localAssert, result);
+}
+
+export const runTests = runProductionReceiptCostProtectionTests;
+
+async function runTestsInternal(assert: any, result: AssertionResult): Promise<AssertionResult> {
   console.log('--- STARTING TASK 2: PRODUCTION RECEIPT COST PROTECTION TESTS ---');
   const { dbInstance } = createMockDb();
   await seedChartOfAccounts(dbInstance);
@@ -471,11 +512,16 @@ async function runTests() {
   console.log('✓ TEST 3 PASSED: All excessive, invented, depleted, and cross-batch transfers were rejected with zero negative WIP or biological assets.');
 
   console.log('\n=============================================================');
-  console.log('ALL TASK 2 PRODUCTION RECEIPT COST PROTECTION TESTS PASSED SUCCESSFULLY!');
+  console.log(`ALL TASK 2 PRODUCTION RECEIPT COST PROTECTION TESTS PASSED SUCCESSFULLY! (${result.passed}/${result.total})`);
   console.log('=============================================================');
+  return result;
 }
 
-runTests().catch((err) => {
-  console.error('Test failed with error:', err);
-  process.exit(1);
-});
+if (typeof process !== 'undefined' && process.argv[1]?.includes('testProductionReceiptCostProtection')) {
+  runProductionReceiptCostProtectionTests()
+    .then((r) => process.exit(r.failed === 0 ? 0 : 1))
+    .catch((err) => {
+      console.error('Test failed with error:', err);
+      process.exit(1);
+    });
+}

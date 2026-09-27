@@ -4,13 +4,32 @@ import { DEFAULT_CHART_OF_ACCOUNTS } from '../accounting/defaultAccounts';
 import { resolveAccountMetadata, generateTrialBalance, getGeneralLedger } from '../accounting/accountingEngine';
 import { Account } from '../types';
 
-function assert(condition: boolean, message: string) {
-  if (!condition) {
-    throw new Error(`Assertion failed: ${message}`);
-  }
+export interface AssertionResult {
+  total: number;
+  passed: number;
+  failed: number;
+  failures: string[];
 }
 
-export async function runInvalidOrphanAccountHandlingTests() {
+export async function runInvalidOrphanAccountHandlingTests(): Promise<AssertionResult> {
+  const result: AssertionResult = {
+    total: 0,
+    passed: 0,
+    failed: 0,
+    failures: []
+  };
+
+  function assert(condition: boolean, message: string) {
+    result.total++;
+    if (condition) {
+      result.passed++;
+    } else {
+      result.failed++;
+      result.failures.push(message);
+      throw new Error(`Assertion failed: ${message}`);
+    }
+  }
+
   console.log('====================================================');
   console.log('STARTING INVALID / ORPHAN ACCOUNT HANDLING TESTS (TASK B1)');
   console.log('====================================================');
@@ -153,14 +172,16 @@ export async function runInvalidOrphanAccountHandlingTests() {
   console.log('✅ Test 4 Passed: General Ledger resolves unknown account with accountClass: UNKNOWN without inventing a chart record.');
 
   console.log('\n====================================================');
-  console.log('ALL INVALID / ORPHAN ACCOUNT HANDLING TESTS PASSED! 🎉');
+  console.log(`ALL INVALID / ORPHAN ACCOUNT HANDLING TESTS PASSED! (${result.passed}/${result.total}) 🎉`);
   console.log('====================================================');
-  return { success: true };
+  return result;
 }
 
-runInvalidOrphanAccountHandlingTests()
-  .then(() => process.exit(0))
-  .catch((err) => {
-    console.error('Test failed:', err);
-    process.exit(1);
-  });
+if (typeof process !== 'undefined' && process.argv[1]?.includes('testInvalidOrphanAccountHandling')) {
+  runInvalidOrphanAccountHandlingTests()
+    .then((r) => process.exit(r.failed === 0 ? 0 : 1))
+    .catch((err) => {
+      console.error('Test failed:', err);
+      process.exit(1);
+    });
+}

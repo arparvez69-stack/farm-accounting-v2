@@ -4,7 +4,33 @@ import { initDefaultAccounts, DEFAULT_CHART_OF_ACCOUNTS } from '../accounting/de
 import { postJournalEntry, generateTrialBalance, generateProfitLoss, generateBalanceSheet } from '../accounting/accountingEngine';
 import { Account } from '../types';
 
-export async function runChartOfAccountsExtensionTests() {
+export interface AssertionResult {
+  total: number;
+  passed: number;
+  failed: number;
+  failures: string[];
+}
+
+export async function runChartOfAccountsExtensionTests(): Promise<AssertionResult> {
+  const result: AssertionResult = {
+    total: 0,
+    passed: 0,
+    failed: 0,
+    failures: []
+  };
+
+  function assert(condition: boolean, description: string) {
+    result.total++;
+    if (condition) {
+      result.passed++;
+      console.log(`✅ PASS: ${description}`);
+    } else {
+      result.failed++;
+      result.failures.push(description);
+      console.error(`❌ FAIL: ${description}`);
+    }
+  }
+
   console.log('Testing Chart of Accounts extension, custom accounts, journal entries, and financial reports...');
 
   // 1. Initialize default accounts
@@ -12,9 +38,7 @@ export async function runChartOfAccountsExtensionTests() {
 
   const totalDefault = DEFAULT_CHART_OF_ACCOUNTS.length;
   const dbCount = await db.accounts.count();
-  if (dbCount < totalDefault) {
-    throw new Error(`Expected at least ${totalDefault} accounts in db, got ${dbCount}`);
-  }
+  assert(dbCount >= totalDefault, `Expected at least ${totalDefault} accounts in db, got ${dbCount}`);
 
   // 2. Add custom user-created expense account
   const customExpenseCode = '6199';
@@ -69,32 +93,20 @@ export async function runChartOfAccountsExtensionTests() {
     createdAt: new Date().toISOString()
   });
 
-  if (!testEntry || testEntry.totalDebit !== 5000) {
-    throw new Error('Failed to post journal entry with custom expense account');
-  }
+  assert(!!testEntry && testEntry.totalDebit === 5000, 'Post journal entry with custom expense account succeeds with balanced 5000');
 
   // 5. Verify custom account appears in Trial Balance
   const trialBalance = await generateTrialBalance();
   const tbRow = trialBalance.rows.find((r) => r.code === customExpenseCode);
-  if (!tbRow) {
-    throw new Error(`Custom account ${customExpenseCode} not found in Trial Balance`);
-  }
-  if (tbRow.debit !== 5000) {
-    throw new Error(`Expected Trial Balance row debit 5000, got ${tbRow.debit}`);
-  }
-  if (!trialBalance.isBalanced) {
-    throw new Error(`Trial Balance is not balanced: diff = ${trialBalance.difference}`);
-  }
+  assert(!!tbRow, `Custom account ${customExpenseCode} found in Trial Balance`);
+  assert(tbRow?.debit === 5000, `Expected Trial Balance row debit 5000, got ${tbRow?.debit}`);
+  assert(trialBalance.isBalanced, `Trial Balance is balanced: diff = ${trialBalance.difference}`);
 
   // 6. Verify custom expense account appears in Profit & Loss
   const plReport = await generateProfitLoss();
   const plExpense = plReport.operatingExpenses.find((e) => e.code === customExpenseCode);
-  if (!plExpense) {
-    throw new Error(`Custom expense account ${customExpenseCode} not found in Profit & Loss operatingExpenses`);
-  }
-  if (plExpense.amount !== 5000) {
-    throw new Error(`Expected P&L expense amount 5000, got ${plExpense.amount}`);
-  }
+  assert(!!plExpense, `Custom expense account ${customExpenseCode} found in Profit & Loss operatingExpenses`);
+  assert(plExpense?.amount === 5000, `Expected P&L expense amount 5000, got ${plExpense?.amount}`);
 
   // 7. Post entry with custom asset account
   await postJournalEntry({
@@ -123,28 +135,22 @@ export async function runChartOfAccountsExtensionTests() {
   // 8. Verify custom asset appears in Balance Sheet
   const bsReport = await generateBalanceSheet();
   const bsAsset = bsReport.assets.find((a) => a.code === customAssetCode);
-  if (!bsAsset) {
-    throw new Error(`Custom asset account ${customAssetCode} not found in Balance Sheet assets`);
-  }
-  if (bsAsset.amount !== 25000) {
-    throw new Error(`Expected Balance Sheet asset amount 25000, got ${bsAsset.amount}`);
-  }
+  assert(!!bsAsset, `Custom asset account ${customAssetCode} found in Balance Sheet assets`);
+  assert(bsAsset?.amount === 25000, `Expected Balance Sheet asset amount 25000, got ${bsAsset?.amount}`);
 
   // 9. Verify Balance Sheet is balanced
-  if (!bsReport.isBalanced) {
-    throw new Error(`Balance Sheet is not balanced: discrepancy = ${bsReport.discrepancy}`);
-  }
+  assert(bsReport.isBalanced, `Balance Sheet is balanced: discrepancy = ${bsReport.discrepancy}`);
 
   // 10. Verify default accounts integrity is preserved
+  let allDefaultsIntact = true;
   for (const defAcc of DEFAULT_CHART_OF_ACCOUNTS) {
     const acc = await db.accounts.where('code').equals(defAcc.code).first();
-    if (!acc) {
-      throw new Error(`Default account ${defAcc.code} missing from db.accounts`);
-    }
-    if (acc.accountClass !== defAcc.accountClass || acc.normalBalance !== defAcc.normalBalance) {
-      throw new Error(`Default account ${defAcc.code} modified unexpectedly!`);
+    if (!acc || acc.accountClass !== defAcc.accountClass || acc.normalBalance !== defAcc.normalBalance) {
+      allDefaultsIntact = false;
+      break;
     }
   }
+  assert(allDefaultsIntact, 'All default chart accounts remain intact with matching classes');
 
   // Cleanup test transactions so subsequent tests aren't polluted
   await db.journalEntries.delete('test_custom_acc_jnl_1');
@@ -152,13 +158,13 @@ export async function runChartOfAccountsExtensionTests() {
   await db.accounts.delete(`acc_${customExpenseCode}`);
   await db.accounts.delete(`acc_${customAssetCode}`);
 
-  console.log('✅ All Chart of Accounts extension tests passed perfectly!');
-  return { success: true };
+  console.log(`✅ All Chart of Accounts extension tests passed (${result.passed}/${result.total})!`);
+  return result;
 }
 
-if (process.argv[1]?.includes('testChartOfAccountsExtension')) {
+if (typeof process !== 'undefined' && process.argv[1]?.includes('testChartOfAccountsExtension')) {
   runChartOfAccountsExtensionTests()
-    .then(() => process.exit(0))
+    .then((r) => process.exit(r.failed === 0 ? 0 : 1))
     .catch((err) => {
       console.error('Test failed:', err);
       process.exit(1);

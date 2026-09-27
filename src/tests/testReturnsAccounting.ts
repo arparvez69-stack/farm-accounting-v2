@@ -16,14 +16,33 @@ import {
   PurchaseReturn
 } from '../types';
 
-function assert(condition: boolean, message: string) {
-  if (!condition) {
-    console.error(`❌ ASSERTION FAILED: ${message}`);
-    throw new Error(message);
-  }
+export interface AssertionResult {
+  total: number;
+  passed: number;
+  failed: number;
+  failures: string[];
 }
 
-export async function runReturnsAccountingTest() {
+export async function runReturnsAccountingTest(): Promise<AssertionResult> {
+  const result: AssertionResult = {
+    total: 0,
+    passed: 0,
+    failed: 0,
+    failures: []
+  };
+
+  function assert(condition: boolean, message: string) {
+    result.total++;
+    if (condition) {
+      result.passed++;
+    } else {
+      result.failed++;
+      result.failures.push(message);
+      console.error(`❌ ASSERTION FAILED: ${message}`);
+      throw new Error(message);
+    }
+  }
+
   console.log('========================================================');
   console.log('STARTING SALES RETURN & PURCHASE RETURN ACCOUNTING TESTS');
   console.log('========================================================\n');
@@ -636,15 +655,16 @@ export async function runReturnsAccountingTest() {
   console.log('✅ TEST 10 PASSED: Multi-line invoice return accurately reversed all accounts with balanced entries.\n');
 
   console.log('========================================================');
-  console.log('ALL SALES RETURN & PURCHASE RETURN TESTS PASSED (10/10)!');
+  console.log(`ALL SALES RETURN & PURCHASE RETURN TESTS PASSED! (${result.passed}/${result.total})`);
   console.log('========================================================');
+  return result;
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
   runReturnsAccountingTest()
-    .then(() => {
+    .then((r) => {
       console.log('\nTEST RUNNER FINISHED SUCCESSFULLY.');
-      process.exit(0);
+      process.exit(r.failed === 0 ? 0 : 1);
     })
     .catch((err) => {
       console.error('\nTEST RUNNER FAILED:', err);

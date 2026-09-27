@@ -412,7 +412,11 @@ export async function getValidAccountsForValidation(): Promise<Account[]> {
 // In-memory store for sync operations (serves as fast lookup cache for confirmed persisted documents)
 export const inMemoryStores = new Map<string, Map<string, any>>();
 
-// Non-volatile disk-backed durable storage path (guarantees data survives server restarts and is never only in RAM)
+// Local container runtime cache and dev-recovery layer path.
+// ARCHITECTURAL NOTE: Cloud Run container filesystems are ephemeral; data written here
+// is lost when an instance stops or scales down. This file (durable_cloud_storage.json) is
+// maintained solely as a local runtime cache and development recovery layer, NOT as the
+// authoritative production disaster-recovery source. Cloud Firestore remains the true durable source.
 const DURABLE_STORAGE_DIR = path.join(process.cwd(), 'data');
 const DURABLE_STORAGE_FILE = path.join(DURABLE_STORAGE_DIR, 'durable_cloud_storage.json');
 
@@ -543,7 +547,7 @@ function acquireStorageLock(targetFile: string, timeoutMs = 10000): { release: (
   };
 }
 
-// Initialize durable storage from non-volatile disk
+// Initialize local runtime cache from container disk (ephemeral dev-recovery layer)
 export function initDurableStorage() {
   try {
     const targetFile = getEffectiveDurableStorageFile();
@@ -571,9 +575,12 @@ export function initDurableStorage() {
 initDurableStorage();
 
 /**
- * Hardened durable storage persistence:
- * 1. Serializes writes via filesystem lock and in-process tracker to eliminate concurrent-write data loss.
- * 2. Reads existing JSON. CRITICAL: If existing durable JSON cannot be parsed or is invalid, fails closed immediately.
+ * Hardened local disk cache persistence (RUNTIME CACHE / DEV RECOVERY LAYER ONLY):
+ * NOTE: Cloud Run container filesystems are ephemeral. This writes to local disk as a
+ * secondary runtime cache/dev-recovery layer ONLY after confirmed Cloud Firestore write.
+ * It is NOT the production disaster recovery source (Cloud Firestore is authoritative).
+ * 1. Serializes writes via filesystem lock and in-process tracker to eliminate concurrent-write corruption.
+ * 2. Reads existing JSON. CRITICAL: If existing cached JSON cannot be parsed or is invalid, fails closed immediately.
  *    Never replaces it with an empty object or overwrites it with partial data.
  * 3. Writes safely using atomic replacement (temp file in same dir -> fsync -> close -> atomic rename)
  *    to prevent partial JSON overwrites and protect against interrupted writes.
@@ -3411,12 +3418,13 @@ async function handleSyncWrite(
       });
     }
 
-    // Durably store on non-volatile disk for offline local restart recovery ONLY after confirmed cloud write.
-    // Local disk or in-memory persistence alone is NEVER reported as cloud success.
+    // Write to local container disk cache for local dev/restart recovery ONLY after confirmed cloud write.
+    // Cloud Firestore is the sole authoritative durable source; local disk cache is ephemeral in Cloud Run
+    // and is NEVER treated as the production disaster-recovery or authoritative backup source.
     try {
       saveRecordToDurableDisk(targetCol, finalDocId, recordToWrite);
     } catch (diskErr: any) {
-      console.error('[The Goated Farm] Durable storage write error:', diskErr);
+      console.error('[The Goated Farm] Local runtime cache disk write error:', diskErr);
     }
 
     // CRITICAL: Update in-memory store ONLY after confirmed durable cloud persistence!
@@ -3735,7 +3743,7 @@ app.get('/api/sync/restore', async (req, res) => {
 
     for (const colName of collectionsToRestore) {
       const docsMap = new Map<string, any>();
-      // 1. In-memory store
+      // 1. Local runtime memory cache (seeded on local startup; ephemeral)
       if (inMemoryStores.has(colName)) {
         for (const [id, doc] of inMemoryStores.get(colName)!.entries()) {
           docsMap.set(id, { id, ...doc });
@@ -3747,7 +3755,8 @@ app.get('/api/sync/restore', async (req, res) => {
           docsMap.set(id, { id, ...doc });
         }
       }
-      // 2. Firestore Admin SDK
+      // 2. Authoritative durable production source: Cloud Firestore Admin SDK
+      // Overwrites/supplements ephemeral local cache with authoritative cloud data
       if (adminDb) {
         try {
           const snap = await adminDb.collection(colName).get();

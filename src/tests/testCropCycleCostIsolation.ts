@@ -12,14 +12,33 @@ import {
 } from '../services/transactionService';
 import { CropCycle, CashBankAccount, JournalEntry } from '../types';
 
-function assert(condition: boolean, message: string) {
-  if (!condition) {
-    console.error(`❌ ASSERTION FAILED: ${message}`);
-    throw new Error(message);
-  }
+export interface AssertionResult {
+  total: number;
+  passed: number;
+  failed: number;
+  failures: string[];
 }
 
-export async function runCropCycleCostIsolationTest() {
+export async function runCropCycleCostIsolationTest(): Promise<AssertionResult> {
+  const result: AssertionResult = {
+    total: 0,
+    passed: 0,
+    failed: 0,
+    failures: []
+  };
+
+  function assert(condition: boolean, message: string) {
+    result.total++;
+    if (condition) {
+      result.passed++;
+    } else {
+      result.failed++;
+      result.failures.push(message);
+      console.error(`❌ ASSERTION FAILED: ${message}`);
+      throw new Error(message);
+    }
+  }
+
   console.log('========================================================');
   console.log('STARTING CROP PRODUCTION COST ACCOUNTING ISOLATION TEST');
   console.log('========================================================\n');
@@ -529,11 +548,16 @@ export async function runCropCycleCostIsolationTest() {
   assert(costStatusB_PostHarvest.cogsTransferred === 0, 'Cycle B should have 0 COGS transferred');
 
   console.log('\n========================================================');
-  console.log('ALL CROP PRODUCTION COST ISOLATION & ACCOUNTING TESTS PASSED!');
+  console.log(`ALL CROP PRODUCTION COST ISOLATION & ACCOUNTING TESTS PASSED! (${result.passed}/${result.total})`);
   console.log('========================================================\n');
+  return result;
 }
 
-runCropCycleCostIsolationTest().catch((err) => {
-  console.error('Test run failed:', err);
-  process.exit(1);
-});
+if (typeof process !== 'undefined' && process.argv[1]?.includes('testCropCycleCostIsolation')) {
+  runCropCycleCostIsolationTest()
+    .then((r) => process.exit(r.failed === 0 ? 0 : 1))
+    .catch((err) => {
+      console.error('Test run failed:', err);
+      process.exit(1);
+    });
+}

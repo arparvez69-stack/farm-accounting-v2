@@ -22,44 +22,75 @@ import { runSyncRequestValidationTests } from './testSyncRequestValidation';
 import { runTrialBalanceDateFilteringTests } from './testTrialBalanceDateFiltering';
 import { runGeneralLedgerDateConsistencyTests } from './testGeneralLedgerDateConsistency';
 
+// Standalone test suites wired into the unified runner
+import { runPrincipalOnlyLoanTests } from './testPrincipalOnlyLoans';
+import { runInvalidOrphanAccountHandlingTests } from './testInvalidOrphanAccountHandling';
+import { runClassificationConsistencyAuditTests } from './testClassificationConsistencyAudit';
+import { runReturnsAccountingTest } from './testReturnsAccounting';
+import { runCropCycleCostIsolationTest } from './testCropCycleCostIsolation';
+import { runLivestockCostIsolationTest } from './testLivestockCostIsolation';
+import { runProductionReceiptCostProtectionTests } from './testProductionReceiptCostProtection';
+import { runHarvestQuantityControlTest } from './testHarvestQuantityControl';
+
+interface SuiteResult {
+  total: number;
+  passed: number;
+  failed: number;
+  failures: string[];
+}
+
 async function main() {
   console.log('====================================================');
-  console.log('RUNNING REGRESSION TEST SUITE');
-  console.log('Including separate verification of Profit Allocation, Profit Payment, Cash Flow, Reconciliation, Advance Payments, Item VAT, Bank Reconciliation, Full Backup, Persistent Sync, Complete Cloud Restore, Chart of Accounts Extension, F4 Cloud Persistence, F6 Conflict Protection, F7 Durable Persistence, F8 Session Hardening, F9 Authoritative Allow-List, F10 Calculated Fields Validation, F11 Multi-Line Vouchers, Hardened Durable Disk Storage, Backup Restore Audit, Sync Request Validation, Trial Balance Date Filtering & General Ledger Date Consistency');
+  console.log('RUNNING COMPLETE REGRESSION & AUDIT TEST SUITE');
+  console.log('Including all canonical suites and newly wired standalone audit suites');
   console.log('====================================================');
 
-  const result1 = await runRegressionTests();
-  const result2 = await runCashFlowAccountingTests();
-  const result3 = await runReconciliationTests();
-  const result4 = await runAdvancePaymentTests();
-  const result5 = await runVatAccountingTests();
-  const result6 = await runBankReconciliationTests();
-  const result7 = await runFullJsonBackupCoverageTests();
-  const result8 = await runSyncPersistentTablesTests();
-  const result9 = await runCompleteCloudRestoreCoverageTests();
-  await runChartOfAccountsExtensionTests();
-  const result10 = await runTaskF4ChartOfAccountsCloudPersistenceTests();
-  const result11 = await runTaskF6VersionConflictProtectionTests();
-  const result12 = await runTaskF7DurablePersistenceRequirementTests();
-  const result13 = await runTaskF8HardenOwnerSessionAuthTests();
-  const result14 = await runTaskF9AuthoritativeOwnerAllowListTests();
-  const result15 = await runTaskF10ValidateCalculatedFieldsOnNewRecordsTests();
-  const result16 = await runTaskF11MultiLineVouchersTests();
-  const result17 = await runHardenSaveRecordToDurableDiskTests();
-  const result18 = await runBackupRestoreAuditTests();
-  const result19 = await runSyncRequestValidationTests();
-  const result20 = await runTrialBalanceDateFilteringTests();
-  const result21 = await runGeneralLedgerDateConsistencyTests();
+  const suiteResults: SuiteResult[] = [];
 
-  const total = result1.total + result2.total + result3.total + result4.total + result5.total + result6.total + result7.total + result8.total + result9.total + result10.total + result11.total + result12.total + result13.total + result14.total + result15.total + result16.total + result17.total + result18.total + result19.total + result20.total + result21.total + 10;
-  const passed = result1.passed + result2.passed + result3.passed + result4.passed + result5.passed + result6.passed + result7.passed + result8.passed + result9.passed + result10.passed + result11.passed + result12.passed + result13.passed + result14.passed + result15.passed + result16.passed + result17.passed + result18.passed + result19.passed + result20.passed + result21.passed + 10;
-  const failed = result1.failed + result2.failed + result3.failed + result4.failed + result5.failed + result6.failed + result7.failed + result8.failed + result9.failed + result10.failed + result11.failed + result12.failed + result13.failed + result14.failed + result15.failed + result16.failed + result17.failed + result18.failed + result19.failed + result20.failed + result21.failed;
-  const failures = [...result1.failures, ...result2.failures, ...result3.failures, ...result4.failures, ...result5.failures, ...result6.failures, ...result7.failures, ...result8.failures, ...result9.failures, ...result10.failures, ...result11.failures, ...result12.failures, ...result13.failures, ...result14.failures, ...result15.failures, ...result16.failures, ...result17.failures, ...result18.failures, ...result19.failures, ...result20.failures, ...result21.failures];
+  suiteResults.push(await runRegressionTests());
+  suiteResults.push(await runCashFlowAccountingTests());
+  suiteResults.push(await runReconciliationTests());
+  suiteResults.push(await runAdvancePaymentTests());
+  suiteResults.push(await runVatAccountingTests());
+  suiteResults.push(await runBankReconciliationTests());
+  suiteResults.push(await runFullJsonBackupCoverageTests());
+  suiteResults.push(await runSyncPersistentTablesTests());
+  suiteResults.push(await runCompleteCloudRestoreCoverageTests());
+  suiteResults.push(await runChartOfAccountsExtensionTests());
+  suiteResults.push(await runTaskF4ChartOfAccountsCloudPersistenceTests());
+  suiteResults.push(await runTaskF6VersionConflictProtectionTests());
+  suiteResults.push(await runTaskF7DurablePersistenceRequirementTests());
+  suiteResults.push(await runTaskF8HardenOwnerSessionAuthTests());
+  suiteResults.push(await runTaskF9AuthoritativeOwnerAllowListTests());
+  suiteResults.push(await runTaskF10ValidateCalculatedFieldsOnNewRecordsTests());
+  suiteResults.push(await runTaskF11MultiLineVouchersTests());
+  suiteResults.push(await runHardenSaveRecordToDurableDiskTests());
+  suiteResults.push(await runBackupRestoreAuditTests());
+  suiteResults.push(await runSyncRequestValidationTests());
+  suiteResults.push(await runTrialBalanceDateFilteringTests());
+  suiteResults.push(await runGeneralLedgerDateConsistencyTests());
+
+  // Newly wired standalone suites
+  suiteResults.push(await runPrincipalOnlyLoanTests());
+  suiteResults.push(await runInvalidOrphanAccountHandlingTests());
+  suiteResults.push(await runClassificationConsistencyAuditTests());
+  suiteResults.push(await runReturnsAccountingTest());
+  suiteResults.push(await runCropCycleCostIsolationTest());
+  suiteResults.push(await runLivestockCostIsolationTest());
+  suiteResults.push(await runProductionReceiptCostProtectionTests());
+  suiteResults.push(await runHarvestQuantityControlTest());
+
+  // Strictly aggregate actual executed assertions — no manual +10 or phantom counts
+  const total = suiteResults.reduce((s, r) => s + (r.total || 0), 0);
+  const passed = suiteResults.reduce((s, r) => s + (r.passed || 0), 0);
+  const failed = suiteResults.reduce((s, r) => s + (r.failed || 0), 0);
+  const failures = suiteResults.flatMap((r) => r.failures || []);
   const success = failed === 0;
 
   console.log('\n====================================================');
   console.log('TEST SUITE RESULTS:');
   console.log(`Success: ${success}`);
+  console.log(`Total suites executed: ${suiteResults.length}`);
   console.log(`Total assertions: ${total}`);
   console.log(`Passed assertions: ${passed}`);
   console.log(`Failed assertions: ${failed}`);

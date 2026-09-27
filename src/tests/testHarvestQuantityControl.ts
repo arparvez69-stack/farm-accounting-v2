@@ -10,14 +10,33 @@ import {
 } from '../services/transactionService';
 import { FishBatch, CropCycle, CashBankAccount } from '../types';
 
-function assert(condition: boolean, message: string) {
-  if (!condition) {
-    console.error(`❌ ASSERTION FAILED: ${message}`);
-    throw new Error(message);
-  }
+export interface AssertionResult {
+  total: number;
+  passed: number;
+  failed: number;
+  failures: string[];
 }
 
-export async function runHarvestQuantityControlTest() {
+export async function runHarvestQuantityControlTest(): Promise<AssertionResult> {
+  const result: AssertionResult = {
+    total: 0,
+    passed: 0,
+    failed: 0,
+    failures: []
+  };
+
+  function assert(condition: boolean, message: string) {
+    result.total++;
+    if (condition) {
+      result.passed++;
+    } else {
+      result.failed++;
+      result.failures.push(message);
+      console.error(`❌ ASSERTION FAILED: ${message}`);
+      throw new Error(message);
+    }
+  }
+
   console.log('========================================================');
   console.log('STARTING FISH & CROP HARVEST QUANTITY CONTROL TEST');
   console.log('========================================================\n');
@@ -402,12 +421,17 @@ export async function runHarvestQuantityControlTest() {
   console.log('✅ Post-harvest lock verified: Attempt on completed cycle correctly rejected with ZERO changes.');
 
   console.log('\n========================================================');
-  console.log('ALL FISH & CROP HARVEST QUANTITY CONTROL TESTS PASSED! 🎉');
+  console.log(`ALL FISH & CROP HARVEST QUANTITY CONTROL TESTS PASSED! (${result.passed}/${result.total}) 🎉`);
   console.log('========================================================\n');
+  return result;
 }
 
 // Auto-run when executed directly via tsx
-runHarvestQuantityControlTest().catch((err) => {
-  console.error('Fatal error during test execution:', err);
-  process.exit(1);
-});
+if (typeof process !== 'undefined' && process.argv[1]?.includes('testHarvestQuantityControl')) {
+  runHarvestQuantityControlTest()
+    .then((r) => process.exit(r.failed === 0 ? 0 : 1))
+    .catch((err) => {
+      console.error('Fatal error during test execution:', err);
+      process.exit(1);
+    });
+}

@@ -4,13 +4,32 @@ import { DEFAULT_CHART_OF_ACCOUNTS } from '../accounting/defaultAccounts';
 import { executeLoanTransaction, executeLoanRepaymentTransaction } from '../services/transactionService';
 import { CashBankAccount } from '../types';
 
-function assert(condition: boolean, message: string) {
-  if (!condition) {
-    throw new Error(`Assertion failed: ${message}`);
-  }
+export interface AssertionResult {
+  total: number;
+  passed: number;
+  failed: number;
+  failures: string[];
 }
 
-export async function runPrincipalOnlyLoanTests() {
+export async function runPrincipalOnlyLoanTests(): Promise<AssertionResult> {
+  const result: AssertionResult = {
+    total: 0,
+    passed: 0,
+    failed: 0,
+    failures: []
+  };
+
+  function assert(condition: boolean, message: string) {
+    result.total++;
+    if (condition) {
+      result.passed++;
+    } else {
+      result.failed++;
+      result.failures.push(message);
+      throw new Error(`Assertion failed: ${message}`);
+    }
+  }
+
   console.log('====================================================');
   console.log('STARTING PRINCIPAL-ONLY / NO-INTEREST LOAN REGRESSION TESTS');
   console.log('====================================================');
@@ -174,14 +193,16 @@ export async function runPrincipalOnlyLoanTests() {
   console.log('✅ Test 4 Passed: Full payoff transitioned loan to PAID_OFF cleanly.');
 
   console.log('\n====================================================');
-  console.log('ALL PRINCIPAL-ONLY LOAN REGRESSION TESTS PASSED! 🎉');
+  console.log(`ALL PRINCIPAL-ONLY LOAN REGRESSION TESTS PASSED! (${result.passed}/${result.total}) 🎉`);
   console.log('====================================================');
-  return { success: true };
+  return result;
 }
 
-runPrincipalOnlyLoanTests()
-  .then(() => process.exit(0))
-  .catch((err) => {
-    console.error('Test failed:', err);
-    process.exit(1);
-  });
+if (typeof process !== 'undefined' && process.argv[1]?.includes('testPrincipalOnlyLoans')) {
+  runPrincipalOnlyLoanTests()
+    .then((r) => process.exit(r.failed === 0 ? 0 : 1))
+    .catch((err) => {
+      console.error('Test failed:', err);
+      process.exit(1);
+    });
+}
