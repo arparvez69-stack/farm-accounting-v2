@@ -18,8 +18,15 @@ import { Account, ClosedPeriod } from './src/types';
 
 dotenv.config();
 
+if (process.argv[1]?.endsWith('server.cjs') && !process.env.NODE_ENV) {
+  process.env.NODE_ENV = 'production';
+}
+if (process.env.NODE_ENV !== 'production' && process.env.PORT === '8080') {
+  delete process.env.PORT;
+}
+
 export const app = express();
-const PORT = 3000;
+const PORT = Number(process.env.PORT) || 3000;
 
 app.use(express.json({ limit: '25mb' }));
 app.use(express.urlencoded({ extended: true, limit: '25mb' }));
@@ -3537,6 +3544,16 @@ app.post('/api/sync/:collection', (req, res) => {
     return res.status(400).json({ error: `অননুমোদিত কালেকশন: ${col}` });
   }
   return handleSyncWrite(col, req, res);
+});
+
+// Security: Block test and debug endpoints in production environments at route level
+app.use('/api/test', (req, res, next) => {
+  if (process.env.NODE_ENV === 'production') {
+    return res.status(403).json({
+      error: 'টেস্ট ও ডিবাগিং রুট প্রোডাকশনে সম্পূর্ণ নিষ্ক্রিয় (Test and debug routes are disabled in production).'
+    });
+  }
+  next();
 });
 
 // F7: Test endpoint to simulate Firestore / Cloud persistence unavailability
