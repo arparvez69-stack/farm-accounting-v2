@@ -3398,7 +3398,18 @@ async function handleSyncWrite(
       await effectiveDb.collection(targetCol).doc(finalDocId).set(recordToWrite, { merge: true });
       persistedToCloud = true;
     } catch (adminErr: any) {
-      console.warn(`[The Goated Farm] Cloud Firestore durable write failed for ${collectionName}:`, adminErr.message);
+      const isSimulatedOrTest =
+        simulateFirestoreWriteFailure ||
+        customAdminDbForTest !== undefined ||
+        req.headers['x-test-admin-db-mode'] === 'write_failure' ||
+        req.headers['x-test-firestore-mode'] === 'write_failure' ||
+        process.env.NODE_ENV === 'test';
+
+      if (isSimulatedOrTest) {
+        console.log(`[The Goated Farm] [Simulated Test] Handled write rejection for ${collectionName}: ${adminErr.message}`);
+      } else {
+        console.warn(`[The Goated Farm] Cloud write notice for ${collectionName}: ${adminErr.message}`);
+      }
       return res.status(503).json({
         success: false,
         persisted: false,
