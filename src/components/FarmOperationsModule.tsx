@@ -1280,7 +1280,7 @@ export const FarmOperationsModule: React.FC<Props> = ({
             <Tractor className="w-5 h-5 text-[#1E5128] dark:text-emerald-400" />
             <span>সমন্বিত খামার ব্যবস্থাপনা (Agro Operations)</span>
           </h2>
-          <p className="text-[14px] text-gray-600 dark:text-slate-400 mt-0.5">
+          <p className="text-xs sm:text-sm text-gray-500 dark:text-slate-400 mt-0.5">
             গরু-ছাগল ফ্যাটেনিং/দুগ্ধ খামার, মৎস্য হ্যাচারি, নেপিয়ার ঘাস, বায়ো-ফ্লো ও প্রসেসিং
           </p>
         </div>
@@ -1421,13 +1421,13 @@ export const FarmOperationsModule: React.FC<Props> = ({
             <div className="space-y-4">
               <div className="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 rounded-2xl p-4 sm:p-5 shadow-xs space-y-4">
 
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between border-b border-gray-100 pb-4 gap-3">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between border-b border-gray-100 dark:border-slate-800 pb-4 gap-3">
             <div>
-              <h3 className="text-[16px] font-bold text-gray-900 flex items-center gap-2">
-                <Activity className="w-5 h-5 text-[#1E5128]" />
+              <h3 className="text-base sm:text-lg font-bold text-gray-900 dark:text-slate-100 flex items-center gap-2">
+                <Activity className="w-5 h-5 text-[#1E5128] dark:text-emerald-400" />
                 <span>গবাদিপশু প্রোফাইল ও উৎপাদন সূচক ({animals.length})</span>
               </h3>
-              <p className="text-[13px] text-gray-600 mt-0.5">
+              <p className="text-xs sm:text-sm text-gray-500 dark:text-slate-400 mt-0.5">
                 প্রতিটি প্রাণীর স্বতন্ত্র ব্যয়, খাদ্য ও চিকিৎসা ট্র্যাকিং এবং কার্যক্রম ব্যবস্থাপনা
               </p>
             </div>
@@ -2100,7 +2100,8 @@ export const FarmOperationsModule: React.FC<Props> = ({
                   <button
                     type="button"
                     onClick={handleCloseEventModal}
-                    className="p-1 rounded-lg hover:bg-gray-100 text-gray-500 hover:text-gray-800 cursor-pointer"
+                    aria-label="বন্ধ করুন (Close)"
+                    className="p-1 rounded-lg hover:bg-gray-100 text-gray-500 hover:text-gray-800 cursor-pointer min-h-[44px] min-w-[44px] flex items-center justify-center focus-visible:ring-2 focus-visible:ring-[#1E5128]"
                   >
                     <X className="w-5 h-5" />
                   </button>
@@ -2725,7 +2726,7 @@ export const FarmOperationsModule: React.FC<Props> = ({
                     <button
                       type="submit"
                       disabled={submittingEvent || (isBulkMode && bulkSelectedAnimalIds.length === 0)}
-                      className="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-[#1E5128] hover:bg-[#173F1F] text-white text-[13px] font-bold cursor-pointer shadow-xs min-h-[44px] disabled:opacity-50"
+                      className="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-[#1E5128] hover:bg-[#173F1F] text-white text-[13px] font-bold cursor-pointer shadow-xs min-h-[44px] disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       {submittingEvent
                         ? 'সংরক্ষণ হচ্ছে...'
@@ -2756,7 +2757,8 @@ export const FarmOperationsModule: React.FC<Props> = ({
                   <button
                     type="button"
                     onClick={() => setStatusModalAnimal(null)}
-                    className="p-1 rounded-lg hover:bg-gray-100 text-gray-500 hover:text-gray-800"
+                    aria-label="বন্ধ করুন (Close)"
+                    className="p-1 rounded-lg hover:bg-gray-100 text-gray-500 hover:text-gray-800 cursor-pointer min-h-[44px] min-w-[44px] flex items-center justify-center focus-visible:ring-2 focus-visible:ring-[#1E5128]"
                   >
                     <X className="w-5 h-5" />
                   </button>
@@ -2945,7 +2947,8 @@ export const FarmOperationsModule: React.FC<Props> = ({
                   <button
                     type="button"
                     onClick={() => setHistoryModalAnimal(null)}
-                    className="p-1 rounded-lg hover:bg-gray-100 text-gray-500 hover:text-gray-800"
+                    aria-label="বন্ধ করুন (Close)"
+                    className="p-1 rounded-lg hover:bg-gray-100 text-gray-500 hover:text-gray-800 cursor-pointer min-h-[44px] min-w-[44px] flex items-center justify-center focus-visible:ring-2 focus-visible:ring-[#1E5128]"
                   >
                     <X className="w-5 h-5" />
                   </button>
@@ -3041,13 +3044,13 @@ export const FarmOperationsModule: React.FC<Props> = ({
         <div className="space-y-4">
           <div className="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 rounded-2xl p-4 sm:p-5 shadow-xs space-y-4">
 
-          <div className="flex items-center justify-between border-b border-gray-100 pb-3 flex-wrap gap-2">
+          <div className="flex items-center justify-between border-b border-gray-100 dark:border-slate-800 pb-3 flex-wrap gap-2">
             <div>
-              <h3 className="text-[16px] font-bold text-gray-900 flex items-center gap-2">
-                <Fish className="w-5 h-5 text-sky-600" />
+              <h3 className="text-base sm:text-lg font-bold text-gray-900 dark:text-slate-100 flex items-center gap-2">
+                <Fish className="w-5 h-5 text-sky-600 dark:text-sky-400" />
                 <span>মৎস্য চাষ ও পুকুর ব্যাচ ({fishBatches.length})</span>
               </h3>
-              <p className="text-[13px] text-gray-600 mt-0.5">পোনা মজুদের হিসাব, ফিড খরচ, মরটালিটি ও আহরণ-বিক্রয় ট্র্যাকিং</p>
+              <p className="text-xs sm:text-sm text-gray-500 dark:text-slate-400 mt-0.5">পোনা মজুদের হিসাব, ফিড খরচ, মরটালিটি ও আহরণ-বিক্রয় ট্র্যাকিং</p>
             </div>
 
             <div className="flex items-center gap-2 flex-wrap">
@@ -3321,13 +3324,13 @@ export const FarmOperationsModule: React.FC<Props> = ({
         <div className="space-y-4">
           <div className="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 rounded-2xl p-4 sm:p-5 shadow-xs space-y-4">
 
-          <div className="flex items-center justify-between border-b border-gray-100 pb-3 flex-wrap gap-2">
+          <div className="flex items-center justify-between border-b border-gray-100 dark:border-slate-800 pb-3 flex-wrap gap-2">
             <div>
-              <h3 className="text-[16px] font-bold text-gray-900 flex items-center gap-2">
-                <Wheat className="w-5 h-5 text-amber-600" />
+              <h3 className="text-base sm:text-lg font-bold text-gray-900 dark:text-slate-100 flex items-center gap-2">
+                <Wheat className="w-5 h-5 text-amber-600 dark:text-amber-400" />
                 <span>শস্য ও নেপিয়ার ঘাস চাষ ({cropCycles.length})</span>
               </h3>
-              <p className="text-[13px] text-gray-600 mt-0.5">ঘাস চাষ, সার প্রয়োগ, সেচ, ফসল কর্তন ও বিক্রয় ট্র্যাকিং</p>
+              <p className="text-xs sm:text-sm text-gray-500 dark:text-slate-400 mt-0.5">ঘাস চাষ, সার প্রয়োগ, সেচ, ফসল কর্তন ও বিক্রয় ট্র্যাকিং</p>
             </div>
 
             <div className="flex items-center gap-2 flex-wrap">
@@ -3553,14 +3556,14 @@ export const FarmOperationsModule: React.FC<Props> = ({
 
       {/* ===================== TAB 4: INTERNAL FLOWS ===================== */}
       {tab === 'flows' && (
-        <div className="bg-white border border-gray-200 rounded-2xl p-4 sm:p-5 shadow-xs space-y-4">
-          <div className="flex items-center justify-between border-b border-gray-100 pb-3 flex-wrap gap-2">
+        <div className="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 rounded-2xl p-4 sm:p-5 shadow-xs space-y-4">
+          <div className="flex items-center justify-between border-b border-gray-100 dark:border-slate-800 pb-3 flex-wrap gap-2">
             <div>
-              <h3 className="text-[16px] font-bold text-gray-900 flex items-center gap-2">
-                <ArrowRightLeft className="w-5 h-5 text-[#1E5128]" />
+              <h3 className="text-base sm:text-lg font-bold text-gray-900 dark:text-slate-100 flex items-center gap-2">
+                <ArrowRightLeft className="w-5 h-5 text-[#1E5128] dark:text-emerald-400" />
                 <span>অভ্যন্তরীণ সমন্বিত সম্পদ স্থানান্তর (Circular Bio-Flows)</span>
               </h3>
-              <p className="text-[13px] text-gray-600 mt-0.5">
+              <p className="text-xs sm:text-sm text-gray-500 dark:text-slate-400 mt-0.5">
                 গোবর পুকুর বা ফসলে প্রয়োগ, কিংবা উৎপাদিত নেপিয়ার ঘাস গরুকে খাওয়ানো (ডাবল-কাউন্টিং মুক্ত)
               </p>
             </div>
@@ -3697,7 +3700,8 @@ export const FarmOperationsModule: React.FC<Props> = ({
               <button
                 type="button"
                 onClick={() => setShowAddReminderModal(false)}
-                className="p-1 rounded-lg hover:bg-gray-100 text-gray-500 hover:text-gray-800 cursor-pointer"
+                aria-label="বন্ধ করুন (Close)"
+                className="p-1 rounded-lg hover:bg-gray-100 text-gray-500 hover:text-gray-800 cursor-pointer min-h-[44px] min-w-[44px] flex items-center justify-center focus-visible:ring-2 focus-visible:ring-[#1E5128]"
               >
                 <X className="w-5 h-5" />
               </button>
@@ -3798,7 +3802,8 @@ export const FarmOperationsModule: React.FC<Props> = ({
               <button
                 type="button"
                 onClick={() => setEditingAnimal(null)}
-                className="text-gray-400 hover:text-gray-600 p-1 rounded-lg cursor-pointer"
+                aria-label="বন্ধ করুন (Close)"
+                className="text-gray-400 hover:text-gray-600 p-1 rounded-lg cursor-pointer min-h-[44px] min-w-[44px] flex items-center justify-center focus-visible:ring-2 focus-visible:ring-[#1E5128]"
               >
                 <X className="w-5 h-5" />
               </button>
@@ -3942,7 +3947,8 @@ export const FarmOperationsModule: React.FC<Props> = ({
               <button
                 type="button"
                 onClick={() => setDuplicateTagWarning(null)}
-                className="text-gray-400 hover:text-gray-600 p-1 rounded-lg cursor-pointer"
+                aria-label="বন্ধ করুন (Close)"
+                className="text-gray-400 hover:text-gray-600 p-1 rounded-lg cursor-pointer min-h-[44px] min-w-[44px] flex items-center justify-center focus-visible:ring-2 focus-visible:ring-amber-600"
               >
                 <X className="w-5 h-5" />
               </button>
@@ -3999,7 +4005,8 @@ export const FarmOperationsModule: React.FC<Props> = ({
               <button
                 type="button"
                 onClick={() => !isSubmittingFishHarvest && setHarvestFishBatch(null)}
-                className="text-gray-400 hover:text-gray-600 dark:hover:text-slate-200 p-1 rounded-lg cursor-pointer"
+                aria-label="বন্ধ করুন (Close)"
+                className="text-gray-400 hover:text-gray-600 dark:hover:text-slate-200 p-1 rounded-lg cursor-pointer min-h-[44px] min-w-[44px] flex items-center justify-center focus-visible:ring-2 focus-visible:ring-[#1E5128]"
               >
                 <X className="w-5 h-5" />
               </button>
@@ -4304,7 +4311,8 @@ export const FarmOperationsModule: React.FC<Props> = ({
               <button
                 type="button"
                 onClick={() => !isSubmittingCropHarvest && setHarvestCropCycle(null)}
-                className="text-gray-400 hover:text-gray-600 dark:hover:text-slate-200 p-1 rounded-lg cursor-pointer"
+                aria-label="বন্ধ করুন (Close)"
+                className="text-gray-400 hover:text-gray-600 dark:hover:text-slate-200 p-1 rounded-lg cursor-pointer min-h-[44px] min-w-[44px] flex items-center justify-center focus-visible:ring-2 focus-visible:ring-[#1E5128]"
               >
                 <X className="w-5 h-5" />
               </button>
@@ -4552,7 +4560,8 @@ export const FarmOperationsModule: React.FC<Props> = ({
               <button
                 type="button"
                 onClick={() => !submittingFishCost && setFishCostBatch(null)}
-                className="text-gray-400 hover:text-gray-600 dark:hover:text-slate-200 p-1 rounded-lg cursor-pointer"
+                aria-label="বন্ধ করুন (Close)"
+                className="text-gray-400 hover:text-gray-600 dark:hover:text-slate-200 p-1 rounded-lg cursor-pointer min-h-[44px] min-w-[44px] flex items-center justify-center focus-visible:ring-2 focus-visible:ring-[#1E5128]"
               >
                 <X className="w-5 h-5" />
               </button>
@@ -4735,7 +4744,8 @@ export const FarmOperationsModule: React.FC<Props> = ({
               <button
                 type="button"
                 onClick={() => !submittingCropCost && setCropCostCycle(null)}
-                className="text-gray-400 hover:text-gray-600 dark:hover:text-slate-200 p-1 rounded-lg cursor-pointer"
+                aria-label="বন্ধ করুন (Close)"
+                className="text-gray-400 hover:text-gray-600 dark:hover:text-slate-200 p-1 rounded-lg cursor-pointer min-h-[44px] min-w-[44px] flex items-center justify-center focus-visible:ring-2 focus-visible:ring-[#1E5128]"
               >
                 <X className="w-5 h-5" />
               </button>

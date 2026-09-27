@@ -428,7 +428,8 @@ export const LoginScreen: React.FC<Props> = ({ onLoginSuccess }) => {
                   <button
                     type="button"
                     onClick={() => setShowPin(!showPin)}
-                    className="absolute inset-y-0 right-0 pr-3.5 flex items-center text-gray-500 hover:text-gray-800 cursor-pointer min-h-[44px] min-w-[44px] justify-center"
+                    aria-label={showPin ? 'গোপন পিন লুকান (Hide PIN)' : 'গোপন পিন প্রদর্শন করুন (Show PIN)'}
+                    className="absolute inset-y-0 right-0 pr-3.5 flex items-center text-gray-500 hover:text-gray-800 cursor-pointer min-h-[44px] min-w-[44px] justify-center focus-visible:ring-2 focus-visible:ring-[#1E5128] rounded-r-xl"
                   >
                     {showPin ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
                   </button>
@@ -450,7 +451,7 @@ export const LoginScreen: React.FC<Props> = ({ onLoginSuccess }) => {
                 id="btn-submit-login"
                 type="submit"
                 disabled={loading || !email.trim() || !pin.trim()}
-                className="w-full py-3.5 px-4 rounded-xl bg-[#1E5128] hover:bg-[#173F1F] active:scale-98 disabled:opacity-50 text-white font-bold text-[15px] transition-all flex items-center justify-center gap-2 shadow-xs cursor-pointer min-h-[48px] mt-5"
+                className="w-full py-3.5 px-4 rounded-xl bg-[#1E5128] hover:bg-[#173F1F] active:scale-98 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold text-[15px] transition-all flex items-center justify-center gap-2 shadow-xs cursor-pointer min-h-[48px] mt-5"
               >
                 {loading ? (
                   <>
@@ -483,7 +484,8 @@ export const LoginScreen: React.FC<Props> = ({ onLoginSuccess }) => {
           <div className="bg-white rounded-3xl p-6 sm:p-7 max-w-md w-full shadow-2xl border border-gray-200 relative animate-in fade-in zoom-in duration-150">
             <button
               onClick={() => setShowForgotModal(false)}
-              className="absolute top-5 right-5 p-2 rounded-full text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition cursor-pointer"
+              aria-label="বন্ধ করুন (Close)"
+              className="absolute top-4 right-4 p-2 rounded-full text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition cursor-pointer min-h-[44px] min-w-[44px] flex items-center justify-center focus-visible:ring-2 focus-visible:ring-[#1E5128]"
             >
               <X className="w-5 h-5" />
             </button>
@@ -546,7 +548,7 @@ export const LoginScreen: React.FC<Props> = ({ onLoginSuccess }) => {
                 <button
                   type="submit"
                   disabled={forgotLoading || !forgotEmail}
-                  className="w-full py-3 px-4 rounded-xl bg-[#1E5128] hover:bg-[#173F1F] active:scale-98 disabled:opacity-50 text-white font-bold text-[14px] transition-all flex items-center justify-center gap-2 shadow-xs cursor-pointer min-h-[44px]"
+                  className="w-full py-3 px-4 rounded-xl bg-[#1E5128] hover:bg-[#173F1F] active:scale-98 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold text-[14px] transition-all flex items-center justify-center gap-2 shadow-xs cursor-pointer min-h-[44px]"
                 >
                   {forgotLoading ? (
                     <>
@@ -623,7 +625,8 @@ export const LoginScreen: React.FC<Props> = ({ onLoginSuccess }) => {
                     <button
                       type="button"
                       onClick={() => setShowNewResetPin(!showNewResetPin)}
-                      className="absolute inset-y-0 right-0 pr-3 flex items-center text-gray-500 hover:text-gray-800 cursor-pointer min-h-[44px] min-w-[44px] justify-center"
+                      aria-label={showNewResetPin ? 'নতুন পিন লুকান (Hide PIN)' : 'নতুন পিন প্রদর্শন করুন (Show PIN)'}
+                      className="absolute inset-y-0 right-0 pr-3 flex items-center text-gray-500 hover:text-gray-800 cursor-pointer min-h-[44px] min-w-[44px] justify-center focus-visible:ring-2 focus-visible:ring-[#1E5128] rounded-r-xl"
                     >
                       {showNewResetPin ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                     </button>
@@ -658,7 +661,7 @@ export const LoginScreen: React.FC<Props> = ({ onLoginSuccess }) => {
                       setForgotError(null);
                     }}
                     disabled={forgotLoading}
-                    className="py-2.5 px-3 rounded-xl border border-gray-300 text-gray-700 hover:bg-gray-100 font-semibold text-[13px] transition flex items-center gap-1 cursor-pointer"
+                    className="py-2.5 px-3 rounded-xl border border-gray-300 text-gray-700 hover:bg-gray-100 font-semibold text-[13px] transition flex items-center gap-1 cursor-pointer min-h-[44px]"
                   >
                     <ArrowLeft className="w-4 h-4" />
                     <span>{t('btn.back')}</span>
@@ -667,7 +670,7 @@ export const LoginScreen: React.FC<Props> = ({ onLoginSuccess }) => {
                   <button
                     type="submit"
                     disabled={forgotLoading || !resetCode || !newResetPin || !confirmResetPin}
-                    className="flex-1 py-2.5 px-4 rounded-xl bg-[#1E5128] hover:bg-[#173F1F] active:scale-98 disabled:opacity-50 text-white font-bold text-[14px] transition-all flex items-center justify-center gap-2 shadow-xs cursor-pointer min-h-[44px]"
+                    className="flex-1 py-2.5 px-4 rounded-xl bg-[#1E5128] hover:bg-[#173F1F] active:scale-98 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold text-[14px] transition-all flex items-center justify-center gap-2 shadow-xs cursor-pointer min-h-[44px]"
                   >
                     {forgotLoading ? (
                       <>

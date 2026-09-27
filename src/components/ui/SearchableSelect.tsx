@@ -207,6 +207,10 @@ export const SearchableSelect: React.FC<SearchableSelectProps> = ({
         <input
           ref={inputRef}
           id={id}
+          role="combobox"
+          aria-expanded={isOpen}
+          aria-autocomplete="list"
+          aria-controls={id ? `${id}-listbox` : undefined}
           type="text"
           value={searchQuery}
           onChange={(e) => {
@@ -268,6 +272,8 @@ export const SearchableSelect: React.FC<SearchableSelectProps> = ({
       {isOpen && (
         <div
           ref={listRef}
+          id={id ? `${id}-listbox` : undefined}
+          role="listbox"
           className={`absolute left-0 right-0 z-[70] bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 rounded-xl shadow-xl overflow-hidden max-h-64 sm:max-h-72 overflow-y-auto ${
             openUpward ? 'bottom-full mb-1.5' : 'top-full mt-1.5'
           }`}
@@ -284,6 +290,8 @@ export const SearchableSelect: React.FC<SearchableSelectProps> = ({
                 return (
                   <div
                     key={opt.value}
+                    role="option"
+                    aria-selected={isSelected}
                     onMouseDown={(e) => {
                       e.preventDefault(); // prevents blur before selection
                       handleSelect(opt.value);

@@ -614,10 +614,10 @@ export const Dashboard: React.FC<Props> = ({ role, onNavigate, regressionTestRes
                 <AlertTriangle className="w-5 h-5 text-rose-700 dark:text-rose-300" />
               </div>
               <div>
-                <h4 className="font-bold text-[15px] sm:text-base text-rose-950 dark:text-rose-100 leading-snug">
+                <h4 className="font-bold text-base text-rose-950 dark:text-rose-100 leading-snug">
                   নগদ সতর্কতা সীমা সতর্কতা (Low Cash Balance Alert)
                 </h4>
-                <p className="text-xs sm:text-[13px] text-rose-800 dark:text-rose-200 mt-0.5 font-medium">
+                <p className="text-xs sm:text-sm text-rose-800 dark:text-rose-200 mt-0.5 font-medium">
                   সম্মিলিত নগদ ও ব্যাংক জমার ব্যালেন্স নির্ধারিত সতর্কতা সীমার নিচে নেমে গেছে। জরুরি পরিচালন ব্যয়ের জন্য তহবিল বৃদ্ধি করুন।
                 </p>
               </div>
@@ -628,7 +628,7 @@ export const Dashboard: React.FC<Props> = ({ role, onNavigate, regressionTestRes
                 type="button"
                 id="btn-nav-to-banking"
                 onClick={() => onNavigate('finance')}
-                className="px-3.5 py-2 rounded-xl bg-rose-700 hover:bg-rose-800 text-white text-xs sm:text-[13px] font-bold transition-all shadow-xs cursor-pointer flex items-center gap-1.5 min-h-[38px]"
+                className="px-3.5 py-2 rounded-xl bg-rose-700 hover:bg-rose-800 text-white text-xs sm:text-sm font-bold transition-all shadow-xs cursor-pointer flex items-center gap-1.5 min-h-[40px]"
               >
                 <Wallet className="w-4 h-4" />
                 <span>তহবিল ও ব্যাংক হিসাব দেখুন</span>
@@ -672,10 +672,10 @@ export const Dashboard: React.FC<Props> = ({ role, onNavigate, regressionTestRes
                 <AlertTriangle className="w-5 h-5 text-amber-700 dark:text-amber-300" />
               </div>
               <div>
-                <h4 className="font-bold text-[15px] sm:text-base text-amber-950 dark:text-amber-100 leading-snug">
+                <h4 className="font-bold text-base text-amber-950 dark:text-amber-100 leading-snug">
                   ফিড স্টক কমতির সতর্কতা (Low Feed Stock Warning)
                 </h4>
-                <p className="text-xs sm:text-[13px] text-amber-800 dark:text-amber-200 mt-0.5 font-medium">
+                <p className="text-xs sm:text-sm text-amber-800 dark:text-amber-200 mt-0.5 font-medium">
                   {lowFeedItems.length}টি ফিড আইটেমের বর্তমান মজুদ নির্ধারিত সতর্কতার সীমার নিচে নেমে গেছে।
                 </p>
               </div>
@@ -686,7 +686,7 @@ export const Dashboard: React.FC<Props> = ({ role, onNavigate, regressionTestRes
                 type="button"
                 id="btn-nav-to-commerce-inventory"
                 onClick={() => onNavigate('commerce')}
-                className="px-3.5 py-2 rounded-xl bg-[#1E5128] hover:bg-[#173F1F] text-white text-xs sm:text-[13px] font-bold transition-all shadow-xs cursor-pointer flex items-center gap-1.5 min-h-[38px]"
+                className="px-3.5 py-2 rounded-xl bg-[#1E5128] hover:bg-[#173F1F] text-white text-xs sm:text-sm font-bold transition-all shadow-xs cursor-pointer flex items-center gap-1.5 min-h-[40px]"
               >
                 <span>ইনভেন্টরিতে স্টক যুক্ত করুন</span>
                 <ChevronRight className="w-4 h-4" />
@@ -712,18 +712,18 @@ export const Dashboard: React.FC<Props> = ({ role, onNavigate, regressionTestRes
 
                 <div className="flex items-end justify-between gap-2 pt-2 border-t border-gray-100 dark:border-slate-800 text-xs">
                   <div>
-                    <div className="text-[11px] text-gray-500 dark:text-slate-400">বর্তমান স্টক:</div>
+                    <div className="text-xs text-gray-600 dark:text-slate-300 font-medium">বর্তমান স্টক:</div>
                     <div className="text-base font-extrabold text-rose-600 dark:text-rose-400">
                       {currentStock} {unit}
                     </div>
                   </div>
                   <div className="text-right">
-                    <div className="text-[11px] text-gray-500 dark:text-slate-400">
+                    <div className="text-xs text-gray-600 dark:text-slate-300 font-medium">
                       সতর্কতা সীমা:{' '}
-                      <strong className="text-gray-900 dark:text-slate-200 font-bold">
+                      <strong className="text-gray-900 dark:text-slate-100 font-bold">
                         {threshold} {unit}
                       </strong>
-                      <span className="text-[10px] text-gray-400 block">
+                      <span className="text-[11px] text-gray-500 dark:text-slate-400 block font-normal">
                         {isCustomThreshold ? '(কাস্টম সীমা)' : '(রিস্টকের ২০%)'}
                       </span>
                     </div>
@@ -758,10 +758,10 @@ export const Dashboard: React.FC<Props> = ({ role, onNavigate, regressionTestRes
               <HardDriveDownload className="w-5 h-5 text-amber-800" />
             </div>
             <div>
-              <h4 className="font-bold text-[15px] sm:text-base text-amber-950 leading-snug">
+              <h4 className="font-bold text-base text-amber-950 leading-snug">
                 {t('dashboard.backupReminder')}
               </h4>
-              <p className="text-xs sm:text-[13px] text-amber-800 mt-1 font-medium">
+              <p className="text-xs sm:text-sm text-amber-800 mt-1 font-medium">
                 {t('dashboard.backupReminderSub')} • 
                 {isSyncOverdue && ` ${t('dashboard.syncOverdue')}`}
                 {isSyncOverdue && isExportOverdue && ' • '}
@@ -775,7 +775,7 @@ export const Dashboard: React.FC<Props> = ({ role, onNavigate, regressionTestRes
               id="btn-reminder-sync"
               onClick={handleTriggerCloudSync}
               disabled={syncingNow}
-              className="px-3.5 py-2 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white text-xs sm:text-[13px] font-bold flex items-center gap-1.5 transition-all shadow-xs cursor-pointer min-h-[40px] active:scale-95 disabled:opacity-60"
+              className="px-3.5 py-2 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white text-xs sm:text-sm font-bold flex items-center gap-1.5 transition-all shadow-xs cursor-pointer min-h-[40px] active:scale-95 disabled:opacity-60"
             >
               <RefreshCw className={`w-3.5 h-3.5 ${syncingNow ? 'animate-spin' : ''}`} />
               <span>{syncingNow ? t('dashboard.syncing') : t('btn.sync')}</span>
@@ -784,7 +784,7 @@ export const Dashboard: React.FC<Props> = ({ role, onNavigate, regressionTestRes
               id="btn-reminder-download-backup"
               onClick={handleTriggerManualDownload}
               disabled={exportingNow}
-              className="px-3.5 py-2 rounded-xl bg-amber-200 hover:bg-amber-300 text-amber-950 border border-amber-400 text-xs sm:text-[13px] font-bold flex items-center gap-1.5 transition-all shadow-2xs cursor-pointer min-h-[40px] active:scale-95 disabled:opacity-60"
+              className="px-3.5 py-2 rounded-xl bg-amber-200 hover:bg-amber-300 text-amber-950 border border-amber-400 text-xs sm:text-sm font-bold flex items-center gap-1.5 transition-all shadow-2xs cursor-pointer min-h-[40px] active:scale-95 disabled:opacity-60"
             >
               <Download className="w-3.5 h-3.5 text-amber-800" />
               <span>{exportingNow ? t('dashboard.downloading') : t('btn.downloadBackup')}</span>
@@ -809,10 +809,10 @@ export const Dashboard: React.FC<Props> = ({ role, onNavigate, regressionTestRes
             <div className="flex items-center gap-2.5">
               <AlertTriangle className="w-5 h-5 text-amber-700 dark:text-amber-400 shrink-0 animate-pulse" />
               <div>
-                <h4 className="font-bold text-[15px] text-amber-950 dark:text-amber-100">
+                <h4 className="font-bold text-base text-amber-950 dark:text-amber-100">
                   সিস্টেম পরীক্ষায় সমস্যা পাওয়া গেছে, বিস্তারিত দেখতে ট্যাপ করুন
                 </h4>
-                <p className="text-xs text-amber-800 dark:text-amber-300 font-medium mt-0.5">
+                <p className="text-xs sm:text-sm text-amber-800 dark:text-amber-300 font-medium mt-0.5">
                   (System check found an issue, tap for details) • {testResult.failures.length}টি পরীক্ষা ব্যর্থ হয়েছে
                 </p>
               </div>
@@ -821,7 +821,7 @@ export const Dashboard: React.FC<Props> = ({ role, onNavigate, regressionTestRes
               type="button"
               id="btn-dashboard-test-failures"
               onClick={() => setShowTestModal(true)}
-              className="px-3.5 py-1.5 rounded-xl bg-amber-200 hover:bg-amber-300 text-amber-950 border border-amber-400 text-xs font-bold transition-all cursor-pointer min-h-[36px]"
+              className="px-3.5 py-2 rounded-xl bg-amber-200 hover:bg-amber-300 text-amber-950 border border-amber-400 text-xs sm:text-sm font-bold transition-all cursor-pointer min-h-[38px]"
             >
               বিস্তারিত দেখুন →
             </button>
@@ -831,7 +831,7 @@ export const Dashboard: React.FC<Props> = ({ role, onNavigate, regressionTestRes
 
       {alerts.length > 0 && (
         <div className="p-4 rounded-2xl bg-amber-50/90 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-700 text-amber-900 dark:text-amber-200 shadow-xs space-y-2">
-          <div className="flex items-center gap-2 font-bold text-[15px] text-amber-900 dark:text-amber-200">
+          <div className="flex items-center gap-2 font-bold text-base text-amber-900 dark:text-amber-200">
             <AlertTriangle className="w-5 h-5 text-amber-700 dark:text-amber-400 shrink-0" />
             <span>{t('dashboard.alerts')} ({alerts.length} {t('dashboard.unitPieces')})</span>
           </div>
@@ -1304,7 +1304,7 @@ export const Dashboard: React.FC<Props> = ({ role, onNavigate, regressionTestRes
                       type="button"
                       onClick={(e) => handleMarkDone(rem.id, e)}
                       title="Mark as done"
-                      className="inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg bg-[#15803D] hover:bg-[#166534] text-white text-[12px] font-bold shadow-xs active:scale-95 transition-all cursor-pointer min-h-[36px]"
+                      className="inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg bg-[#15803D] hover:bg-[#166534] text-white text-xs font-bold shadow-xs active:scale-95 transition-all cursor-pointer min-h-[38px]"
                     >
                       <Check className="w-3.5 h-3.5 shrink-0 stroke-[3]" />
                       <span>{t('btn.done')}</span>
@@ -1314,7 +1314,7 @@ export const Dashboard: React.FC<Props> = ({ role, onNavigate, regressionTestRes
                       type="button"
                       onClick={(e) => handleSkip(rem.id, e)}
                       title="Skip this item"
-                      className="inline-flex items-center justify-center gap-1 px-2.5 py-2 rounded-lg bg-white hover:bg-gray-100 text-gray-700 border border-gray-300 text-[12px] font-semibold active:scale-95 transition-all cursor-pointer min-h-[36px]"
+                      className="inline-flex items-center justify-center gap-1 px-2.5 py-2 rounded-lg bg-white hover:bg-gray-100 text-gray-700 border border-gray-300 text-xs font-semibold active:scale-95 transition-all cursor-pointer min-h-[38px]"
                     >
                       <SkipForward className="w-3.5 h-3.5 shrink-0 text-gray-500" />
                       <span>{t('btn.skip')}</span>
@@ -1332,15 +1332,15 @@ export const Dashboard: React.FC<Props> = ({ role, onNavigate, regressionTestRes
         <div className="flex items-center justify-between mb-3.5 pb-2 border-b border-gray-100 dark:border-slate-800">
           <div className="flex items-center gap-2">
             <Clock className="w-5 h-5 text-gray-500 dark:text-slate-400" />
-            <h3 className="text-[16px] sm:text-[17px] font-bold text-gray-900 dark:text-slate-100">
+            <h3 className="text-base sm:text-lg font-bold text-gray-900 dark:text-slate-100">
               {t('dashboard.recentTx')}
             </h3>
           </div>
           <button
             onClick={() => onNavigate('accounting')}
-            className="text-[14px] text-[#1E5128] dark:text-emerald-400 hover:underline font-bold cursor-pointer py-1 px-2"
+            className="text-xs sm:text-sm text-[#1E5128] dark:text-emerald-400 hover:underline font-bold cursor-pointer py-1 px-2"
           >
-            {t('dashboard.allJournals')}
+            {t('dashboard.allJournals')} →
           </button>
         </div>
 
@@ -1380,10 +1380,10 @@ export const Dashboard: React.FC<Props> = ({ role, onNavigate, regressionTestRes
               >
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2 flex-wrap">
-                    <span className="font-mono text-[#1E5128] dark:text-emerald-400 font-bold text-[13px] sm:text-[14px]">
+                    <span className="font-mono text-[#1E5128] dark:text-emerald-400 font-bold text-xs sm:text-sm">
                       {tx.voucherNumber}
                     </span>
-                    <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-md border ${
+                    <span className={`text-[11px] font-semibold px-2.5 py-0.5 rounded-full border ${
                       tx.voucherType === 'RECEIPT'
                         ? 'bg-emerald-50 dark:bg-emerald-950/60 border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-300'
                         : tx.voucherType === 'PAYMENT'
@@ -1448,7 +1448,8 @@ export const Dashboard: React.FC<Props> = ({ role, onNavigate, regressionTestRes
               <button
                 type="button"
                 onClick={() => setShowTestModal(false)}
-                className="p-1.5 rounded-lg text-gray-500 hover:text-gray-700 hover:bg-amber-100 transition-colors cursor-pointer"
+                className="p-1.5 rounded-lg text-gray-500 hover:text-gray-700 hover:bg-amber-100 transition-colors cursor-pointer min-h-[44px] min-w-[44px] flex items-center justify-center focus-visible:ring-2 focus-visible:ring-amber-700"
+                aria-label="বন্ধ করুন (Close)"
                 title="বন্ধ করুন"
               >
                 <X className="w-5 h-5" />
@@ -1520,7 +1521,8 @@ export const Dashboard: React.FC<Props> = ({ role, onNavigate, regressionTestRes
               <button
                 type="button"
                 onClick={() => setEditingThresholdItem(null)}
-                className="text-gray-400 hover:text-gray-600 dark:hover:text-slate-300"
+                aria-label="বন্ধ করুন (Close)"
+                className="p-1 rounded-lg text-gray-400 hover:text-gray-600 dark:hover:text-slate-300 min-h-[44px] min-w-[44px] flex items-center justify-center focus-visible:ring-2 focus-visible:ring-[#1E5128] cursor-pointer"
               >
                 <X className="w-5 h-5" />
               </button>
@@ -1545,19 +1547,20 @@ export const Dashboard: React.FC<Props> = ({ role, onNavigate, regressionTestRes
               <button
                 type="button"
                 onClick={() => setEditingThresholdItem(null)}
-                className="px-3.5 py-2 text-xs font-semibold text-gray-700 dark:text-slate-300 bg-gray-100 dark:bg-slate-800 hover:bg-gray-200 rounded-lg cursor-pointer"
+                className="px-3.5 py-2 min-h-[40px] text-xs font-semibold text-gray-700 dark:text-slate-300 bg-gray-100 dark:bg-slate-800 hover:bg-gray-200 dark:hover:bg-slate-700 rounded-lg cursor-pointer focus-visible:ring-2 focus-visible:ring-gray-400"
               >
                 বাতিল
               </button>
               <button
                 type="button"
+                disabled={!editThresholdValue || isNaN(parseFloat(editThresholdValue)) || parseFloat(editThresholdValue) < 0}
                 onClick={() => {
                   const val = parseFloat(editThresholdValue);
                   if (!isNaN(val) && val >= 0) {
                     handleSaveThreshold(editingThresholdItem, val);
                   }
                 }}
-                className="px-4 py-2 text-xs font-bold text-white bg-[#1E5128] hover:bg-[#173F1F] rounded-lg cursor-pointer"
+                className="px-4 py-2 min-h-[40px] text-xs font-bold text-white bg-[#1E5128] hover:bg-[#173F1F] rounded-lg cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed focus-visible:ring-2 focus-visible:ring-[#1E5128]"
               >
                 সংরক্ষণ করুন
               </button>

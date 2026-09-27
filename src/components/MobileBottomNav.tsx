@@ -59,8 +59,8 @@ export const MobileBottomNav: React.FC<Props> = ({ activeTab, onChangeTab }) => 
       id: 'commerce',
       labelKey: 'nav.commerce',
       icon: Package,
-      activeTextColor: 'text-amber-700 dark:text-amber-400',
-      activeBgColor: 'bg-amber-50 dark:bg-amber-950/70 text-amber-700 dark:text-amber-400'
+      activeTextColor: 'text-amber-800 dark:text-amber-300',
+      activeBgColor: 'bg-amber-50 dark:bg-amber-950/70 text-amber-800 dark:text-amber-300'
     },
     {
       id: 'finance',
@@ -95,7 +95,9 @@ export const MobileBottomNav: React.FC<Props> = ({ activeTab, onChangeTab }) => 
             <button
               key={tab.id}
               onClick={() => onChangeTab(tab.id)}
-              className={`flex flex-col items-center justify-center flex-1 max-w-[54px] sm:max-w-none min-w-[42px] min-h-[52px] py-1 px-0.5 rounded-xl transition-all cursor-pointer active:scale-95 ${
+              aria-label={t(tab.labelKey, language)}
+              aria-current={isActive ? 'page' : undefined}
+              className={`flex flex-col items-center justify-center flex-1 max-w-[54px] sm:max-w-none min-w-[42px] min-h-[52px] py-1 px-0.5 rounded-xl transition-all cursor-pointer active:scale-95 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[#1E5128] dark:focus-visible:ring-emerald-400 ${
                 isActive
                   ? `${tab.activeTextColor} font-bold`
                   : 'text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-slate-100 font-medium'

@@ -76,6 +76,16 @@
   -webkit-overflow-scrolling: touch;
 }
 
+/* Accessibility: visible focus indicators across all keyboards / assistive tech */
+:focus-visible {
+  outline: 2px solid var(--color-brand-moss, #1E5128);
+  outline-offset: 2px;
+}
+
+.dark :focus-visible {
+  outline-color: #34D399;
+}
+
 /* Tabular figures for scannable numerical & accounting alignment */
 .font-mono,
 .tabular-nums,

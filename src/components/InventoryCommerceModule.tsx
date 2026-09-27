@@ -2084,7 +2084,7 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
             <Package className="w-5 h-5 text-[#1E5128] dark:text-emerald-400" />
             <span>ক্রয়-বিক্রয়, মজুদ ও পক্ষসমূহ (Commerce & Inventory)</span>
           </h2>
-          <p className="text-[14px] text-gray-600 dark:text-slate-400 mt-0.5">
+          <p className="text-xs sm:text-sm text-gray-500 dark:text-slate-400 mt-0.5">
             ফিড, সার, ওষুধ মজুদ, ক্রয় চালান, বিক্রয় ও দেনাদার-পাওনাদার খতিয়ান
           </p>
         </div>
@@ -2190,13 +2190,13 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
         <div className="space-y-4">
           <div className="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 rounded-2xl p-4 sm:p-5 shadow-xs space-y-4">
 
-          <div className="flex items-center justify-between border-b border-gray-100 pb-3 flex-wrap gap-2">
+          <div className="flex items-center justify-between border-b border-gray-100 dark:border-slate-800 pb-3 flex-wrap gap-2">
             <div>
-              <h3 className="text-[16px] font-bold text-gray-900 flex items-center gap-2">
-                <Package className="w-5 h-5 text-amber-700" />
+              <h3 className="text-base sm:text-lg font-bold text-gray-900 dark:text-slate-100 flex items-center gap-2">
+                <Package className="w-5 h-5 text-amber-700 dark:text-amber-400" />
                 <span>মজুদ পণ্যের তালিকা ও মূল্যায়ন ({items.length})</span>
               </h3>
-              <p className="text-[13px] text-gray-600 mt-0.5">গড় ক্রয়মূল্য (Weighted Average Cost) ভিত্তিতে মূল্যায়ন</p>
+              <p className="text-xs sm:text-sm text-gray-500 dark:text-slate-400 mt-0.5">গড় ক্রয়মূল্য (Weighted Average Cost) ভিত্তিতে মূল্যায়ন</p>
             </div>
 
             <div className="flex items-center gap-2">
@@ -2733,13 +2733,13 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
         <div className="space-y-4">
           <div className="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 rounded-2xl p-4 sm:p-5 shadow-xs space-y-4">
 
-          <div className="flex items-center justify-between border-b border-gray-100 pb-3 flex-wrap gap-2">
+          <div className="flex items-center justify-between border-b border-gray-100 dark:border-slate-800 pb-3 flex-wrap gap-2">
             <div>
-              <h3 className="text-[16px] font-bold text-gray-900 flex items-center gap-2">
-                <TrendingUp className="w-5 h-5 text-amber-700" />
+              <h3 className="text-base sm:text-lg font-bold text-gray-900 dark:text-slate-100 flex items-center gap-2">
+                <TrendingUp className="w-5 h-5 text-amber-700 dark:text-amber-400" />
                 <span>বিক্রয় চালান ও রাজস্ব (Sales Invoices)</span>
               </h3>
-              <p className="text-[13px] text-gray-600 mt-0.5">স্বয়ংক্রিয় জাবেদা (নগদ: 1010, ব্যাংক: 1030, বাকি: 1040 AR)</p>
+              <p className="text-xs sm:text-sm text-gray-500 dark:text-slate-400 mt-0.5">স্বয়ংক্রিয় জাবেদা (নগদ: 1010, ব্যাংক: 1030, বাকি: 1040 AR)</p>
             </div>
 
             {role === 'OWNER' && (
@@ -3538,14 +3538,14 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
 
       {/* ===================== TAB 3: PURCHASES ===================== */}
       {tab === 'purchases' && (
-        <div className="bg-white border border-gray-200 rounded-2xl p-4 sm:p-5 shadow-xs space-y-4">
-          <div className="flex items-center justify-between border-b border-gray-100 pb-3 flex-wrap gap-2">
+        <div className="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 rounded-2xl p-4 sm:p-5 shadow-xs space-y-4">
+          <div className="flex items-center justify-between border-b border-gray-100 dark:border-slate-800 pb-3 flex-wrap gap-2">
             <div>
-              <h3 className="text-[16px] font-bold text-gray-900 flex items-center gap-2">
-                <ShoppingCart className="w-5 h-5 text-sky-600" />
+              <h3 className="text-base sm:text-lg font-bold text-gray-900 dark:text-slate-100 flex items-center gap-2">
+                <ShoppingCart className="w-5 h-5 text-sky-600 dark:text-sky-400" />
                 <span>ক্রয় চালান ও সরবরাহকারী খরচ (Purchase Invoices)</span>
               </h3>
-              <p className="text-[13px] text-gray-600 mt-0.5">পণ্য ক্রয়: Dr ইনভেন্টরি (1051-1056), নগদ: Cr 1010, ব্যাংক: Cr 1030, বাকি: Cr 2010 AP</p>
+              <p className="text-xs sm:text-sm text-gray-500 dark:text-slate-400 mt-0.5">পণ্য ক্রয়: Dr ইনভেন্টরি (1051-1056), নগদ: Cr 1010, ব্যাংক: Cr 1030, বাকি: Cr 2010 AP</p>
             </div>
 
             {role === 'OWNER' && (
@@ -5026,14 +5026,14 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
           </div>
         ) : (
           /* Parties Directory List */
-          <div className="bg-white border border-gray-200 rounded-2xl p-4 sm:p-5 shadow-xs space-y-4">
-            <div className="flex items-center justify-between border-b border-gray-100 pb-3 flex-wrap gap-2">
+          <div className="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 rounded-2xl p-4 sm:p-5 shadow-xs space-y-4">
+            <div className="flex items-center justify-between border-b border-gray-100 dark:border-slate-800 pb-3 flex-wrap gap-2">
               <div>
-                <h3 className="text-[16px] font-bold text-gray-900 flex items-center gap-2">
-                  <Users className="w-5 h-5 text-amber-700" />
+                <h3 className="text-base sm:text-lg font-bold text-gray-900 dark:text-slate-100 flex items-center gap-2">
+                  <Users className="w-5 h-5 text-amber-700 dark:text-amber-400" />
                   <span>গ্রাহক ও সরবরাহকারী তালিকা (Parties Directory)</span>
                 </h3>
-                <p className="text-[13px] text-gray-600 mt-0.5">যেকোনো পক্ষে ট্যাপ করে বিস্তারিত স্টেটমেন্ট ও চালানের ইতিহাস দেখুন</p>
+                <p className="text-xs sm:text-sm text-gray-500 dark:text-slate-400 mt-0.5">যেকোনো পক্ষে ট্যাপ করে বিস্তারিত স্টেটমেন্ট ও চালানের ইতিহাস দেখুন</p>
               </div>
 
               {role === 'OWNER' && (

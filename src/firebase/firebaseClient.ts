@@ -9,6 +9,7 @@ import {
 } from 'firebase/auth';
 import {
   getFirestore,
+  initializeFirestore,
   doc,
   getDoc,
   collection,
@@ -73,14 +74,27 @@ try {
   console.warn('Firebase persistence initialization error:', e);
 }
 
-// Initialize Firestore
-export const firestore = getFirestore(app, firebaseConfig.firestoreDatabaseId || '(default)');
+// Initialize Firestore with robust auto-detect long polling and ignoreUndefinedProperties
+export const firestore = (() => {
+  const databaseId = firebaseConfig.firestoreDatabaseId || '(default)';
+  try {
+    return initializeFirestore(app, {
+      experimentalAutoDetectLongPolling: true,
+      ignoreUndefinedProperties: true
+    }, databaseId);
+  } catch {
+    return getFirestore(app, databaseId);
+  }
+})();
 
 // Test connection on boot
 export async function testFirestoreConnection(): Promise<boolean> {
+  if (!navigator.onLine || !auth.currentUser) {
+    return false;
+  }
   try {
-    await getDocFromServer(doc(firestore, 'system', 'config'));
-    return true;
+    const snap = await getDoc(doc(firestore, 'system', 'config'));
+    return snap.exists();
   } catch (error) {
     console.warn('Firestore connection check notice:', error);
     return false;
@@ -149,7 +163,7 @@ export async function seedSystemConfigIfNecessary(authorizedEmails?: string[]): 
 
   await db.systemConfig.put(targetConfig);
 
-  if (navigator.onLine) {
+  if (navigator.onLine && auth.currentUser) {
     try {
       const snap = await getDoc(doc(firestore, 'system', 'config'));
       if (!snap.exists()) {
@@ -706,7 +720,7 @@ export async function synchronizePendingData(): Promise<{ syncedCount: number; e
 export async function fetchSystemConfig(): Promise<SystemConfig | null> {
   const local = await db.systemConfig.toArray();
   if (local.length > 0) return local[0];
-  if (navigator.onLine) {
+  if (navigator.onLine && auth.currentUser) {
     try {
       const snap = await getDoc(doc(firestore, 'system', 'config'));
       if (snap.exists()) {

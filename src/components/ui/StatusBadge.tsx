@@ -1,4 +1,11 @@
 import React from 'react';
+import {
+  AlertTriangle,
+  AlertCircle,
+  CheckCircle2,
+  Clock,
+  Info
+} from 'lucide-react';
 
 export type BadgeStatus =
   | 'overdue'
@@ -58,6 +65,7 @@ const STATUS_CONFIG: Record<
     border: string;
     dot: string;
     defaultLabel: string;
+    defaultIcon?: React.ComponentType<{ className?: string }>;
   }
 > = {
   overdue: {
@@ -66,6 +74,7 @@ const STATUS_CONFIG: Record<
     border: 'border-rose-200 dark:border-rose-900/60',
     dot: 'bg-rose-600 dark:bg-rose-400',
     defaultLabel: 'Overdue',
+    defaultIcon: AlertTriangle,
   },
   danger: {
     bg: 'bg-rose-50 dark:bg-rose-950/40',
@@ -73,6 +82,7 @@ const STATUS_CONFIG: Record<
     border: 'border-rose-200 dark:border-rose-900/60',
     dot: 'bg-rose-600 dark:bg-rose-400',
     defaultLabel: 'Critical',
+    defaultIcon: AlertCircle,
   },
   error: {
     bg: 'bg-rose-50 dark:bg-rose-950/40',
@@ -80,6 +90,7 @@ const STATUS_CONFIG: Record<
     border: 'border-rose-200 dark:border-rose-900/60',
     dot: 'bg-rose-600 dark:bg-rose-400',
     defaultLabel: 'Error',
+    defaultIcon: AlertCircle,
   },
   'due-soon': {
     bg: 'bg-amber-50 dark:bg-amber-950/40',
@@ -87,6 +98,7 @@ const STATUS_CONFIG: Record<
     border: 'border-amber-200 dark:border-amber-900/60',
     dot: 'bg-amber-500 dark:bg-amber-400',
     defaultLabel: 'Due Soon',
+    defaultIcon: Clock,
   },
   warning: {
     bg: 'bg-amber-50 dark:bg-amber-950/40',
@@ -94,6 +106,7 @@ const STATUS_CONFIG: Record<
     border: 'border-amber-200 dark:border-amber-900/60',
     dot: 'bg-amber-500 dark:bg-amber-400',
     defaultLabel: 'Warning',
+    defaultIcon: AlertTriangle,
   },
   pending: {
     bg: 'bg-amber-50 dark:bg-amber-950/40',
@@ -101,6 +114,7 @@ const STATUS_CONFIG: Record<
     border: 'border-amber-200 dark:border-amber-900/60',
     dot: 'bg-amber-500 dark:bg-amber-400',
     defaultLabel: 'Pending',
+    defaultIcon: Clock,
   },
   done: {
     bg: 'bg-emerald-50 dark:bg-emerald-950/40',
@@ -108,6 +122,7 @@ const STATUS_CONFIG: Record<
     border: 'border-emerald-200 dark:border-emerald-900/60',
     dot: 'bg-emerald-600 dark:bg-emerald-400',
     defaultLabel: 'Done',
+    defaultIcon: CheckCircle2,
   },
   success: {
     bg: 'bg-emerald-50 dark:bg-emerald-950/40',
@@ -115,6 +130,7 @@ const STATUS_CONFIG: Record<
     border: 'border-emerald-200 dark:border-emerald-900/60',
     dot: 'bg-emerald-600 dark:bg-emerald-400',
     defaultLabel: 'Success',
+    defaultIcon: CheckCircle2,
   },
   info: {
     bg: 'bg-blue-50 dark:bg-blue-950/40',
@@ -122,6 +138,7 @@ const STATUS_CONFIG: Record<
     border: 'border-blue-200 dark:border-blue-900/60',
     dot: 'bg-blue-600 dark:bg-blue-400',
     defaultLabel: 'Info',
+    defaultIcon: Info,
   },
   report: {
     bg: 'bg-purple-50 dark:bg-purple-950/40',
@@ -129,6 +146,7 @@ const STATUS_CONFIG: Record<
     border: 'border-purple-200 dark:border-purple-900/60',
     dot: 'bg-purple-600 dark:bg-purple-400',
     defaultLabel: 'Report',
+    defaultIcon: Info,
   },
   analytics: {
     bg: 'bg-purple-50 dark:bg-purple-950/40',
@@ -136,6 +154,7 @@ const STATUS_CONFIG: Record<
     border: 'border-purple-200 dark:border-purple-900/60',
     dot: 'bg-purple-600 dark:bg-purple-400',
     defaultLabel: 'Analytics',
+    defaultIcon: Info,
   },
   purple: {
     bg: 'bg-purple-50 dark:bg-purple-950/40',
@@ -143,6 +162,7 @@ const STATUS_CONFIG: Record<
     border: 'border-purple-200 dark:border-purple-900/60',
     dot: 'bg-purple-600 dark:bg-purple-400',
     defaultLabel: 'Report',
+    defaultIcon: Info,
   },
   neutral: {
     bg: 'bg-slate-100 dark:bg-slate-800',
@@ -175,13 +195,15 @@ export const StatusBadge: React.FC<StatusBadgeProps> = ({
       ? 'px-3 py-1 text-[13px] gap-1.5'
       : 'px-2.5 py-0.5 text-xs gap-1.5';
 
+  const EffectiveIcon = icon || config.defaultIcon;
+
   const renderIcon = () => {
-    if (!icon) return null;
-    if (React.isValidElement(icon)) {
-      return icon;
+    if (!EffectiveIcon) return null;
+    if (React.isValidElement(EffectiveIcon)) {
+      return EffectiveIcon;
     }
-    const IconComponent = icon as React.ComponentType<{ className?: string }>;
-    return <IconComponent className={size === 'md' ? 'w-3.5 h-3.5' : 'w-3 h-3'} />;
+    const IconComponent = EffectiveIcon as React.ComponentType<{ className?: string }>;
+    return <IconComponent className={size === 'md' ? 'w-3.5 h-3.5 shrink-0' : 'w-3 h-3 shrink-0'} aria-hidden="true" />;
   };
 
   return (
@@ -189,7 +211,7 @@ export const StatusBadge: React.FC<StatusBadgeProps> = ({
       id={id}
       className={`inline-flex items-center font-medium rounded-full border whitespace-nowrap select-none transition-colors ${config.bg} ${config.text} ${config.border} ${sizeClasses} ${className}`}
     >
-      {dot && !icon && (
+      {dot && !EffectiveIcon && (
         <span
           className={`w-1.5 h-1.5 rounded-full shrink-0 ${config.dot}`}
           aria-hidden="true"

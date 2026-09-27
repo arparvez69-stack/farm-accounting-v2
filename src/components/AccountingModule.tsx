@@ -923,7 +923,7 @@ export const AccountingModule: React.FC<Props> = ({
               <BookOpen className="w-5 h-5 text-[#1E5128] dark:text-emerald-400" />
               <span>দ্বৈত-দাখিলা হিসাবরক্ষণ</span>
             </h2>
-            <p className="text-[14px] text-gray-600 dark:text-slate-400 mt-0.5">
+            <p className="text-xs sm:text-sm text-gray-500 dark:text-slate-400 mt-0.5">
               রশিদ, পরিশোধ, কন্ট্রা, সাধারণ জাবেদা, খতিয়ান ও স্বয়ংক্রিয় রেওয়ামিল
             </p>
           </div>
@@ -1049,10 +1049,10 @@ export const AccountingModule: React.FC<Props> = ({
 
       {/* SUBTAB 1: NEW VOUCHER FORM */}
       {subTab === 'vouchers' && (
-        <div className="bg-white border border-gray-200 rounded-2xl p-4 sm:p-6 shadow-xs space-y-4">
-          <div className="flex items-center justify-between flex-wrap gap-2 pb-3 border-b border-gray-100">
-            <h3 className="text-base font-bold text-gray-900 flex items-center gap-2">
-              <PlusCircle className="w-5 h-5 text-blue-700" />
+        <div className="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 rounded-2xl p-4 sm:p-5 shadow-xs space-y-4">
+          <div className="flex items-center justify-between flex-wrap gap-2 pb-3 border-b border-gray-100 dark:border-slate-800">
+            <h3 className="text-base sm:text-lg font-bold text-gray-900 dark:text-slate-100 flex items-center gap-2">
+              <PlusCircle className="w-5 h-5 text-blue-700 dark:text-blue-400" />
               <span>নতুন আর্থিক লেনদেন লিপিবদ্ধ করুন (New Balanced Voucher)</span>
             </h3>
             {/* Live Balanced indicator */}
@@ -1560,9 +1560,9 @@ export const AccountingModule: React.FC<Props> = ({
             </div>
           ) : (
             <>
-              <div className="flex items-center justify-between mb-4 pb-2 border-b border-gray-100">
-            <h3 className="text-[16px] font-bold text-gray-900 flex items-center gap-2">
-              <FileText className="w-5 h-5 text-blue-700" />
+              <div className="flex items-center justify-between mb-4 pb-2 border-b border-gray-100 dark:border-slate-800">
+            <h3 className="text-base sm:text-lg font-bold text-gray-900 dark:text-slate-100 flex items-center gap-2">
+              <FileText className="w-5 h-5 text-blue-700 dark:text-blue-400" />
               <span>লিপিবদ্ধ জাবেদা ভাউচারসমূহ ({journals.length})</span>
             </h3>
             <button
@@ -1570,7 +1570,7 @@ export const AccountingModule: React.FC<Props> = ({
                 resetVoucherForm();
                 setSubTab('vouchers');
               }}
-              className="text-[13px] text-blue-700 hover:underline font-bold cursor-pointer py-1 px-2"
+              className="text-xs sm:text-sm text-blue-700 dark:text-blue-400 hover:underline font-bold cursor-pointer py-1 px-2"
             >
               + নতুন ভাউচার
             </button>
@@ -1586,7 +1586,7 @@ export const AccountingModule: React.FC<Props> = ({
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 placeholder="বিবরণ, টাকার পরিমাণ, তারিখ (YYYY-MM-DD), বা ভাউচার দিয়ে খুঁজুন..."
-                className="w-full pl-10 pr-9 py-2 bg-[#F8FAFC] border border-gray-200 rounded-xl text-[14px] text-gray-900 focus:outline-none focus:border-blue-600 focus:bg-white transition-all min-h-[42px]"
+                className="w-full pl-10 pr-9 py-2 bg-[#F8FAFC] dark:bg-slate-850 border border-gray-200 dark:border-slate-700 rounded-xl text-sm text-gray-900 dark:text-slate-100 focus:outline-none focus:border-[#1E5128] focus:ring-1 focus:ring-[#1E5128] focus:bg-white dark:focus:bg-slate-800 transition-all min-h-[42px]"
               />
               {searchQuery && (
                 <button
@@ -1889,14 +1889,14 @@ export const AccountingModule: React.FC<Props> = ({
 
       {/* SUBTAB 3: GENERAL LEDGER */}
       {subTab === 'ledger' && (
-        <div className="bg-white border border-gray-200 rounded-2xl p-4 sm:p-5 shadow-xs space-y-4">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-gray-100">
+        <div className="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 rounded-2xl p-4 sm:p-5 shadow-xs space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-gray-100 dark:border-slate-800">
             <div>
-              <h3 className="text-[16px] font-bold text-gray-900 flex items-center gap-2">
-                <ArrowRightLeft className="w-5 h-5 text-blue-700" />
+              <h3 className="text-base sm:text-lg font-bold text-gray-900 dark:text-slate-100 flex items-center gap-2">
+                <ArrowRightLeft className="w-5 h-5 text-blue-700 dark:text-blue-400" />
                 <span>সাধারণ খতিয়ান (General Ledger)</span>
               </h3>
-              <p className="text-[13px] text-gray-600 mt-0.5">নির্দিষ্ট হিসাবের সমস্ত লেনদেন ও রানিং ব্যালেন্স</p>
+              <p className="text-xs sm:text-sm text-gray-500 dark:text-slate-400 mt-0.5">নির্দিষ্ট হিসাবের সমস্ত লেনদেন ও রানিং ব্যালেন্স</p>
             </div>
 
             {/* Account Selector */}
@@ -2167,14 +2167,14 @@ export const AccountingModule: React.FC<Props> = ({
 
       {/* SUBTAB 4: TRIAL BALANCE */}
       {subTab === 'trialBalance' && (
-        <div className="bg-white border border-gray-200 rounded-2xl p-4 sm:p-5 shadow-xs space-y-4">
-          <div className="flex items-center justify-between flex-wrap gap-2 pb-3 border-b border-gray-100">
+        <div className="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 rounded-2xl p-4 sm:p-5 shadow-xs space-y-4">
+          <div className="flex items-center justify-between flex-wrap gap-2 pb-3 border-b border-gray-100 dark:border-slate-800">
             <div>
-              <h3 className="text-[16px] font-bold text-gray-900 flex items-center gap-2">
-                <CheckCircle2 className="w-5 h-5 text-blue-700" />
+              <h3 className="text-base sm:text-lg font-bold text-gray-900 dark:text-slate-100 flex items-center gap-2">
+                <CheckCircle2 className="w-5 h-5 text-blue-700 dark:text-blue-400" />
                 <span>রেওয়ামিল (Trial Balance)</span>
               </h3>
-              <p className="text-[13px] text-gray-600 mt-0.5">সকল খতিয়ান স্থিতির সমতা ও নির্ভুলতা যাচাই</p>
+              <p className="text-xs sm:text-sm text-gray-500 dark:text-slate-400 mt-0.5">সকল খতিয়ান স্থিতির সমতা ও নির্ভুলতা যাচাই</p>
             </div>
 
             <div
@@ -2284,20 +2284,20 @@ export const AccountingModule: React.FC<Props> = ({
 
       {/* SUBTAB 5: CHART OF ACCOUNTS EXPLORER */}
       {subTab === 'chart' && (
-        <div className="bg-white border border-gray-200 rounded-2xl p-4 sm:p-5 shadow-xs space-y-4">
-          <div className="flex items-center justify-between flex-wrap gap-2 pb-3 border-b border-gray-100">
+        <div className="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 rounded-2xl p-4 sm:p-5 shadow-xs space-y-4">
+          <div className="flex items-center justify-between flex-wrap gap-2 pb-3 border-b border-gray-100 dark:border-slate-800">
             <div>
-              <h3 className="text-[16px] font-bold text-gray-900 flex items-center gap-2">
-                <Layers className="w-5 h-5 text-blue-700" />
+              <h3 className="text-base sm:text-lg font-bold text-gray-900 dark:text-slate-100 flex items-center gap-2">
+                <Layers className="w-5 h-5 text-blue-700 dark:text-blue-400" />
                 <span>হিসাবের চার্ট (Chart of Accounts Master)</span>
               </h3>
-              <p className="text-[13px] text-gray-600 mt-0.5">হিসাবসমূহের কাঠামো ও শ্রেণীবিভাগ</p>
+              <p className="text-xs sm:text-sm text-gray-500 dark:text-slate-400 mt-0.5">হিসাবসমূহের কাঠামো ও শ্রেণীবিভাগ</p>
             </div>
 
             {role === 'OWNER' && (
               <button
                 onClick={handleOpenAddAccount}
-                className="px-3.5 py-2 rounded-xl bg-blue-700 hover:bg-blue-800 text-white text-[13px] font-bold shadow-xs transition-all cursor-pointer min-h-[40px]"
+                className="px-3.5 py-2 rounded-xl bg-blue-700 hover:bg-blue-800 text-white text-xs sm:text-sm font-bold shadow-xs transition-all cursor-pointer min-h-[40px]"
               >
                 + নতুন হিসাব কোড যোগ করুন
               </button>
@@ -2405,14 +2405,14 @@ export const AccountingModule: React.FC<Props> = ({
 
       {/* RECURRING EXPENSES SUBTAB */}
       {subTab === 'recurring' && (
-        <div className="bg-white border border-gray-200 rounded-2xl p-4 sm:p-5 shadow-xs space-y-5">
-          <div className="flex items-center justify-between flex-wrap gap-3 pb-4 border-b border-gray-100">
+        <div className="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 rounded-2xl p-4 sm:p-5 shadow-xs space-y-4">
+          <div className="flex items-center justify-between flex-wrap gap-3 pb-4 border-b border-gray-100 dark:border-slate-800">
             <div>
-              <h3 className="text-[16px] font-bold text-gray-900 flex items-center gap-2">
-                <Repeat className="w-5 h-5 text-blue-700" />
+              <h3 className="text-base sm:text-lg font-bold text-gray-900 dark:text-slate-100 flex items-center gap-2">
+                <Repeat className="w-5 h-5 text-blue-700 dark:text-blue-400" />
                 <span>পুনরাবৃত্ত খরচ টেমপ্লেট (Recurring Expense Templates)</span>
               </h3>
-              <p className="text-[13px] text-gray-600 mt-0.5">
+              <p className="text-xs sm:text-sm text-gray-500 dark:text-slate-400 mt-0.5">
                 মাসিক নিয়মিত খরচসমূহ (যেমন দোকান ভাড়া, খামার বিদ্যুৎ বিল, কর্মচারীর বেতন) যা প্রতি মাসের নির্দিষ্ট দিনে স্বয়ংক্রিয়ভাবে দাখিলা হয়
               </p>
             </div>
@@ -2421,7 +2421,7 @@ export const AccountingModule: React.FC<Props> = ({
               id="btn-add-recurring-template"
               type="button"
               onClick={handleOpenCreateRecurring}
-              className="px-4 py-2 rounded-xl bg-blue-700 hover:bg-blue-800 text-white text-[13px] font-bold shadow-xs transition-all cursor-pointer min-h-[40px] flex items-center gap-2"
+              className="px-4 py-2 rounded-xl bg-blue-700 hover:bg-blue-800 text-white text-xs sm:text-sm font-bold shadow-xs transition-all cursor-pointer min-h-[40px] flex items-center gap-2"
             >
               <PlusCircle className="w-4 h-4" />
               <span>+ নতুন পুনরাবৃত্ত খরচ</span>
