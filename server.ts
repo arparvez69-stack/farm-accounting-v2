@@ -53,7 +53,7 @@ export function getRawEmailsEnv(): string {
 
 // Helper to read initial PIN secrets from environment variables (supports standard or lowercase aliases)
 export function getRawPinEnv(): string {
-  return (
+  const pin =
     process.env.INITIAL_PIN?.trim() ||
     process.env.MASTER_PIN?.trim() ||
     process.env.INITIAL_MASTER_PIN?.trim() ||
@@ -61,8 +61,15 @@ export function getRawPinEnv(): string {
     process.env.MASTERPIN?.trim() ||
     process.env.PIN?.trim() ||
     process.env.pin?.trim() ||
-    '123456'
-  );
+    '';
+
+  if (!pin && process.env.NODE_ENV === 'production') {
+    throw new Error(
+      'FATAL: Initial PIN / secret is not configured in production environment (INITIAL_PIN or PIN must be provided).'
+    );
+  }
+
+  return pin;
 }
 
 const ALLOW_LIST_FILE = path.resolve(process.cwd(), 'data', 'owner_allow_list.json');
@@ -133,7 +140,15 @@ export function isOwnerEmail(email: string | null | undefined): boolean {
 
 // Checks if required authentication secrets are configured
 export function isSetupComplete(): boolean {
-  return getApprovedOwnerEmails().length > 0;
+  const hasApprovedOwners = getApprovedOwnerEmails().length > 0;
+  let pinSecret = '';
+  try {
+    pinSecret = getRawPinEnv();
+  } catch {
+    pinSecret = '';
+  }
+  const hasPinSecret = Boolean(pinSecret && pinSecret.trim().length > 0);
+  return hasApprovedOwners && hasPinSecret;
 }
 
 // In-memory record of access events for dashboard & audit

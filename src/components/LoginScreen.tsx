@@ -416,7 +416,7 @@ export const LoginScreen: React.FC<Props> = ({ onLoginSuccess }) => {
                     inputMode="numeric"
                     maxLength={12}
                     required
-                    placeholder={t('login.pinPlaceholder')}
+                    placeholder={lang === 'bn' ? 'গোপন পিন দিন...' : 'Enter secret PIN...'}
                     value={pin}
                     onChange={(e) => {
                       setPin(e.target.value);
@@ -432,16 +432,6 @@ export const LoginScreen: React.FC<Props> = ({ onLoginSuccess }) => {
                     className="absolute inset-y-0 right-0 pr-3.5 flex items-center text-gray-500 hover:text-gray-800 cursor-pointer min-h-[44px] min-w-[44px] justify-center focus-visible:ring-2 focus-visible:ring-[#1E5128] rounded-r-xl"
                   >
                     {showPin ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
-                  </button>
-                </div>
-                <div className="flex items-center justify-between text-xs text-gray-500 pt-1.5 px-0.5">
-                  <span>{t('login.defaultPinLabel')} <strong className="font-mono text-gray-800 font-semibold">123456</strong></span>
-                  <button
-                    type="button"
-                    onClick={() => setPin('123456')}
-                    className="text-[#1E5128] hover:text-[#173F1F] font-semibold cursor-pointer underline"
-                  >
-                    {t('login.autoFillPin')}
                   </button>
                 </div>
               </div>
