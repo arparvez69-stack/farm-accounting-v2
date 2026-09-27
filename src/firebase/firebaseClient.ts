@@ -23,17 +23,32 @@ import { DEFAULT_CHART_OF_ACCOUNTS } from '../accounting/defaultAccounts';
 import { migrateLegacyAccounts } from '../accounting/accountingEngine';
 import { SyncState, SystemConfig, UserProfile } from '../types';
 import { recordSyncTime } from '../services/exportService';
+import ownerAllowListData from '../../data/owner_allow_list.json';
 
-export const AUTHORIZED_OWNER_EMAILS: readonly string[] = Object.freeze([
-  'arparvez111@gmail.com',
-  'arparvez69@gmail.com',
-  'arparvez4@gmail.com',
-  'lubaiyatasnum111@gmail.com',
-  'atikurrahman00021@gmail.com'
-]);
+// Authoritative default owner emails loaded from single source of truth (data/owner_allow_list.json)
+export const AUTHORIZED_OWNER_EMAILS: readonly string[] = Object.freeze(
+  (ownerAllowListData.authorizedOwners || []).map((e: string) => e.trim().toLowerCase())
+);
+
+// Dynamic in-memory store for authorized owner emails received from authenticated server
+let receivedServerOwnerEmails: string[] = [];
+
+export function setServerAuthorizedEmails(emails: string[]): void {
+  if (Array.isArray(emails) && emails.length > 0) {
+    receivedServerOwnerEmails = emails
+      .map((e: any) => (typeof e === 'string' ? e.trim().toLowerCase() : ''))
+      .filter((e: string) => e.length > 0 && e.includes('@'));
+  }
+}
 
 // Helper to retrieve authorized owner emails received via authenticated API response
 export function getStoredOwnerEmails(): string[] {
+  // 1. Check in-memory list received from authenticated server
+  if (receivedServerOwnerEmails.length > 0) {
+    return [...receivedServerOwnerEmails];
+  }
+
+  // 2. Check session state received from authenticated server login response
   try {
     const raw = typeof window !== 'undefined' ? localStorage.getItem('goted_owner_session') : null;
     if (raw) {
@@ -43,12 +58,29 @@ export function getStoredOwnerEmails(): string[] {
           .map((e: any) => (typeof e === 'string' ? e.trim().toLowerCase() : ''))
           .filter((e: string) => e.length > 0 && e.includes('@'));
         if (valid.length > 0) {
+          receivedServerOwnerEmails = valid;
           return valid;
         }
       }
     }
   } catch {}
+
+  // 3. Fallback to authoritative source (data/owner_allow_list.json)
   return [...AUTHORIZED_OWNER_EMAILS];
+}
+
+export async function syncAuthorizedEmailsFromServer(): Promise<string[]> {
+  try {
+    const res = await fetch('/api/farm-info');
+    if (res.ok) {
+      const data = await res.json();
+      if (Array.isArray(data.authorizedEmails) && data.authorizedEmails.length > 0) {
+        setServerAuthorizedEmails(data.authorizedEmails);
+        return getStoredOwnerEmails();
+      }
+    }
+  } catch {}
+  return getStoredOwnerEmails();
 }
 
 export const DEFAULT_SYSTEM_CONFIG: SystemConfig = {

@@ -4,17 +4,14 @@ import {
   browserLocalPersistence,
   signOut
 } from 'firebase/auth';
-import { auth, resolveUserRole, seedSystemConfigIfNecessary } from '../firebase/firebaseClient';
+import { auth, resolveUserRole, seedSystemConfigIfNecessary, setServerAuthorizedEmails } from '../firebase/firebaseClient';
 import { UserProfile, AppAccessLog } from '../types';
 import { db } from '../db/indexedDb';
+import ownerAllowListData from '../../data/owner_allow_list.json';
 
-export const AUTHORIZED_OWNER_EMAILS: readonly string[] = Object.freeze([
-  'arparvez111@gmail.com',
-  'arparvez69@gmail.com',
-  'arparvez4@gmail.com',
-  'lubaiyatasnum111@gmail.com',
-  'atikurrahman00021@gmail.com'
-]);
+export const AUTHORIZED_OWNER_EMAILS: readonly string[] = Object.freeze(
+  (ownerAllowListData.authorizedOwners || []).map((e: string) => e.trim().toLowerCase())
+);
 
 /**
  * Retrieve authorized owner emails received from authenticated server API response
@@ -160,7 +157,10 @@ export async function verifyOwnerSecretPin(
     if (data.customToken) customToken = data.customToken;
     if (data.sessionToken) serverSessionToken = data.sessionToken;
     if (data.uid) uid = data.uid;
-    if (Array.isArray(data.authorizedEmails)) serverAuthorizedEmails = data.authorizedEmails;
+    if (Array.isArray(data.authorizedEmails) && data.authorizedEmails.length > 0) {
+      serverAuthorizedEmails = data.authorizedEmails;
+      setServerAuthorizedEmails(data.authorizedEmails);
+    }
   } catch (networkErr) {
     // If request fails or server is offline, show "Cannot verify login while offline" — NEVER fall back to a client-side check
     console.warn('Authentication server network error:', networkErr);

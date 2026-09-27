@@ -10,6 +10,7 @@ import { initializeApp, cert, getApps } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 import { getFirestore } from 'firebase-admin/firestore';
 import firebaseConfig from './firebase-applet-config.json';
+import ownerAllowListData from './data/owner_allow_list.json';
 import { validateBalancedLines } from './src/accounting/accountingEngine';
 import { calculateHistoricalInventoryValuation } from './src/accounting/reconciliationService';
 import { CANONICAL_ACCOUNTS } from './src/accounting/accountMapping';
@@ -74,13 +75,9 @@ export function getRawPinEnv(): string {
 
 const ALLOW_LIST_FILE = path.resolve(process.cwd(), 'data', 'owner_allow_list.json');
 
-export const AUTHORIZED_OWNER_EMAILS: readonly string[] = Object.freeze([
-  'arparvez111@gmail.com',
-  'arparvez69@gmail.com',
-  'arparvez4@gmail.com',
-  'lubaiyatasnum111@gmail.com',
-  'atikurrahman00021@gmail.com'
-]);
+export const AUTHORIZED_OWNER_EMAILS: readonly string[] = Object.freeze(
+  (ownerAllowListData.authorizedOwners || []).map((e: string) => e.trim().toLowerCase())
+);
 
 let testApprovedOwnerEmailsOverride: string[] | null | undefined = undefined;
 
@@ -1512,15 +1509,21 @@ app.post('/api/verify-login-code', async (req, res) => {
       return res.status(400).json({ error: 'ইমেইল এবং গোপন পিন উভয়ই আবশ্যক।' });
     }
 
+    const email = rawEmail.trim().toLowerCase();
+    const code = rawCode.trim();
+
+    if (!isOwnerEmail(email)) {
+      return res.status(401).json({
+        error: 'অবৈধ ইমেইল অথবা গোপন পিন (Invalid email or secret PIN)।'
+      });
+    }
+
     // 0. Ensure Server Setup is complete with secrets
     if (!isSetupComplete()) {
       return res.status(503).json({
         error: 'সেটআপ অসম্পূর্ণ (Setup incomplete): অনুগ্রহ করে AI Studio-র Secrets প্যানেলে আপনার ইমেইল ও পিন যোগ করুন।'
       });
     }
-
-    const email = rawEmail.trim().toLowerCase();
-    const code = rawCode.trim();
     const ip = req.headers['x-forwarded-for']?.toString() || req.socket.remoteAddress || 'unknown';
     const userAgent = req.headers['user-agent'] || 'unknown';
 
@@ -3899,11 +3902,13 @@ app.get('/api/health', (req, res) => {
 // Farm status endpoint
 app.get('/api/farm-info', (req, res) => {
   const setupComplete = isSetupComplete();
+  const authorizedEmails = getApprovedOwnerEmails();
   res.json({
     farmName: 'The Goated Farm',
     mode: 'single-tenant',
     setupComplete,
-    authorizedOwnersCount: getApprovedOwnerEmails().length
+    authorizedOwnersCount: authorizedEmails.length,
+    authorizedEmails
   });
 });
 
