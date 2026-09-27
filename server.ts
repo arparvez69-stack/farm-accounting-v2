@@ -27,7 +27,7 @@ if (process.env.NODE_ENV !== 'production' && process.env.PORT === '8080') {
 }
 
 export const app = express();
-const PORT = Number(process.env.PORT) || 3000;
+const PORT = process.env.PORT || 3000;
 
 app.use(express.json({ limit: '25mb' }));
 app.use(express.urlencoded({ extended: true, limit: '25mb' }));
@@ -3965,7 +3965,7 @@ async function startServer() {
     });
   }
 
-  app.listen(PORT, '0.0.0.0', () => {
+  app.listen(Number(PORT), '0.0.0.0', () => {
     console.log(`[The Goated Farm] Server running on http://0.0.0.0:${PORT}`);
   });
 }
