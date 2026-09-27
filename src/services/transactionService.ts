@@ -828,6 +828,16 @@ export async function executeSaleTransaction(
     throw new Error('বিক্রয় পণ্যের বিবরণ দেওয়া হয়নি (No items provided in sale transaction).');
   }
 
+  // Service/API boundary validation: Reject non-positive line quantity or unit price
+  for (const line of lineInputs) {
+    if (line.quantity === undefined || line.quantity === null || isNaN(Number(line.quantity)) || Number(line.quantity) <= 0) {
+      throw new Error(`বিক্রয় পণ্যের পরিমাণ অবশ্যই ০ এর বেশি হতে হবে (Sale line quantity must be strictly greater than 0). Invalid quantity: ${line.quantity}`);
+    }
+    if (line.unitPrice === undefined || line.unitPrice === null || isNaN(Number(line.unitPrice)) || Number(line.unitPrice) <= 0) {
+      throw new Error(`বিক্রয় পণ্যের ইউনিট মূল্য অবশ্যই ০ এর বেশি হতে হবে (Sale line unit price must be strictly greater than 0). Invalid unit price: ${line.unitPrice}`);
+    }
+  }
+
   const primaryItem = lineInputs[0].item;
   const primaryQty = lineInputs[0].quantity;
   const primaryPrice = lineInputs[0].unitPrice;
@@ -926,6 +936,12 @@ export async function executeSaleTransaction(
         for (const line of lineInputs) {
           if (!line.item || !line.item.id) {
             throw new Error('বিক্রয় পণ্যের বিবরণ সঠিক নয় (Item missing in sale line).');
+          }
+          if (line.quantity === undefined || line.quantity === null || isNaN(Number(line.quantity)) || Number(line.quantity) <= 0) {
+            throw new Error(`বিক্রয় পণ্যের পরিমাণ অবশ্যই ০ এর বেশি হতে হবে (Sale line quantity must be strictly greater than 0). Invalid quantity: ${line.quantity}`);
+          }
+          if (line.unitPrice === undefined || line.unitPrice === null || isNaN(Number(line.unitPrice)) || Number(line.unitPrice) <= 0) {
+            throw new Error(`বিক্রয় পণ্যের ইউনিট মূল্য অবশ্যই ০ এর বেশি হতে হবে (Sale line unit price must be strictly greater than 0). Invalid unit price: ${line.unitPrice}`);
           }
           const freshItem = await dbInstance.inventoryItems.get(line.item.id);
           if (!freshItem) {
@@ -1475,6 +1491,16 @@ export async function executePurchaseTransaction(
     throw new Error('ক্রয় পণ্যের বিবরণ দেওয়া হয়নি (No items provided in purchase transaction).');
   }
 
+  // Service/API boundary validation: Reject non-positive line quantity or unit price
+  for (const line of lineInputs) {
+    if (line.quantity === undefined || line.quantity === null || isNaN(Number(line.quantity)) || Number(line.quantity) <= 0) {
+      throw new Error(`ক্রয় পণ্যের পরিমাণ অবশ্যই ০ এর বেশি হতে হবে (Purchase line quantity must be strictly greater than 0). Invalid quantity: ${line.quantity}`);
+    }
+    if (line.unitPrice === undefined || line.unitPrice === null || isNaN(Number(line.unitPrice)) || Number(line.unitPrice) <= 0) {
+      throw new Error(`ক্রয় পণ্যের একক মূল্য অবশ্যই ০ এর বেশি হতে হবে (Purchase line unit price must be strictly greater than 0). Invalid unit price: ${line.unitPrice}`);
+    }
+  }
+
   const primaryItem = lineInputs[0].item;
   const primaryQty = lineInputs[0].quantity;
   const primaryPrice = lineInputs[0].unitPrice;
@@ -1570,6 +1596,12 @@ export async function executePurchaseTransaction(
         for (const line of lineInputs) {
           if (!line.item || !line.item.id) {
             throw new Error('ক্রয় পণ্যের বিবরণ সঠিক নয় (Item missing in purchase line).');
+          }
+          if (line.quantity === undefined || line.quantity === null || isNaN(Number(line.quantity)) || Number(line.quantity) <= 0) {
+            throw new Error(`ক্রয় পণ্যের পরিমাণ অবশ্যই ০ এর বেশি হতে হবে (Purchase line quantity must be strictly greater than 0). Invalid quantity: ${line.quantity}`);
+          }
+          if (line.unitPrice === undefined || line.unitPrice === null || isNaN(Number(line.unitPrice)) || Number(line.unitPrice) <= 0) {
+            throw new Error(`ক্রয় পণ্যের একক মূল্য অবশ্যই ০ এর বেশি হতে হবে (Purchase line unit price must be strictly greater than 0). Invalid unit price: ${line.unitPrice}`);
           }
           const freshItem = await dbInstance.inventoryItems.get(line.item.id);
           if (!freshItem) {

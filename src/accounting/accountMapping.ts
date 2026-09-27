@@ -145,8 +145,9 @@ export function getPaymentAccount(
   method: 'CASH' | 'BANK' | 'CREDIT' | string,
   type: 'SALE' | 'PURCHASE'
 ): string {
+  const normMethod = typeof method === 'string' ? method.trim().toUpperCase() : method;
   if (type === 'SALE') {
-    switch (method) {
+    switch (normMethod) {
       case 'CASH':
         return CANONICAL_ACCOUNTS.CASH; // 1010
       case 'BANK':
@@ -155,10 +156,12 @@ export function getPaymentAccount(
       case 'RECEIVABLE':
         return CANONICAL_ACCOUNTS.ACCOUNTS_RECEIVABLE; // 1040 AR
       default:
-        return CANONICAL_ACCOUNTS.CASH;
+        throw new Error(
+          `অজানা বা অনির্ধারিত পেমেন্ট পদ্ধতি: "${method}" (Unrecognized payment method: "${method}"). Acceptable methods for SALE: CASH, BANK, CREDIT.`
+        );
     }
   } else {
-    switch (method) {
+    switch (normMethod) {
       case 'CASH':
         return CANONICAL_ACCOUNTS.CASH; // 1010
       case 'BANK':
@@ -167,7 +170,9 @@ export function getPaymentAccount(
       case 'PAYABLE':
         return CANONICAL_ACCOUNTS.ACCOUNTS_PAYABLE; // 2010 AP
       default:
-        return CANONICAL_ACCOUNTS.CASH;
+        throw new Error(
+          `অজানা বা অনির্ধারিত পেমেন্ট পদ্ধতি: "${method}" (Unrecognized payment method: "${method}"). Acceptable methods for PURCHASE: CASH, BANK, CREDIT.`
+        );
     }
   }
 }
@@ -194,7 +199,9 @@ export function getCashBankAccountGLCode(accountType: 'CASH' | 'BANK' | 'MOBILE_
  */
 export function getInventoryAssetAccount(category?: string): string {
   if (!category) {
-    return CANONICAL_ACCOUNTS.FINISHED_GOODS; // 1055 default
+    throw new Error(
+      'ইনভেন্টরি ক্যাটাগরি অনুপস্থিত (Inventory category is required). Acceptable categories: FEED, SEED, FERTILIZER, RAW_MATERIALS, WIP, FINISHED_GOODS, PACKAGING.'
+    );
   }
   const cat = String(category).trim().toUpperCase();
 
@@ -268,7 +275,9 @@ export function getInventoryAssetAccount(category?: string): string {
     return CANONICAL_ACCOUNTS.FINISHED_GOODS; // 1055
   }
 
-  return CANONICAL_ACCOUNTS.FINISHED_GOODS; // 1055 fallback
+  throw new Error(
+    `অজানা বা অনির্ধারিত ইনভেন্টরি ক্যাটাগরি: "${category}" (Unrecognized inventory category: "${category}"). Acceptable categories: FEED, SEED, FERTILIZER, RAW_MATERIALS, WIP, FINISHED_GOODS, PACKAGING.`
+  );
 }
 
 /**

@@ -1335,7 +1335,7 @@ async function initializeAuthSecrets(): Promise<void> {
   }
 }
 
-async function getStoredHash(email: string): Promise<string | null> {
+export async function getStoredHash(email: string): Promise<string | null> {
   if (!isSetupComplete()) {
     return null;
   }
@@ -1350,23 +1350,13 @@ async function getStoredHash(email: string): Promise<string | null> {
           return hash;
         }
       }
-    } catch {
-      // Fall through to memory cache if Firestore query fails
+    } catch (err: any) {
+      console.warn('[The Goated Farm] Firestore system/authSecrets query failed:', err.message);
     }
   }
 
-  if (!cachedAuthSecrets[email]) {
-    if (isOwnerEmail(email)) {
-      const initialPin = getRawPinEnv();
-      if (initialPin) {
-        const defaultHash = await bcrypt.hash(initialPin.trim(), 12);
-        cachedAuthSecrets[email] = defaultHash;
-        return defaultHash;
-      }
-    }
-  }
-
-  return cachedAuthSecrets[email] || null;
+  // Fallback path removed: If Firestore-stored hash is unavailable, fail closed.
+  return null;
 }
 
 async function updateStoredHash(email: string, newHash: string): Promise<void> {
@@ -1446,7 +1436,7 @@ async function clearStoredResetCode(email: string): Promise<void> {
   }
 }
 
-async function sendResetEmail(toEmail: string, resetCode: string): Promise<boolean> {
+export async function sendResetEmail(toEmail: string, resetCode: string): Promise<boolean> {
   const host = process.env.SMTP_HOST;
   const user = process.env.SMTP_USER;
   const pass = process.env.SMTP_PASS;
@@ -1485,8 +1475,8 @@ async function sendResetEmail(toEmail: string, resetCode: string): Promise<boole
       return false;
     }
   } else {
-    console.log(`[The Goated Farm] SMTP credentials not fully configured. PIN Reset code for ${toEmail}: [${resetCode}]`);
-    return true;
+    console.error(`[The Goated Farm] Email delivery not configured: SMTP credentials (SMTP_HOST, SMTP_USER, SMTP_PASS) are missing. Cannot deliver PIN reset email to ${toEmail}.`);
+    return false;
   }
 }
 
@@ -1692,15 +1682,20 @@ app.post('/api/request-pin-reset', async (req, res) => {
       return res.status(400).json({ error: 'এই ইমেইলটি অনুমোদিত মালিকের তালিকায় নেই (Unauthorized email)।' });
     }
 
-    // Generate random 6-digit code
-    const resetCode = Math.floor(100000 + Math.random() * 900000).toString();
+    // Generate cryptographically secure random 6-digit code
+    const resetCode = crypto.randomInt(100000, 1000000).toString();
     const expiresAt = Date.now() + 15 * 60 * 1000; // 15 minutes
 
     // Store in system/authSecrets with 15-minute expiry
     await setStoredResetCode(email, resetCode, expiresAt);
 
-    // Send email via nodemailer (or logs if SMTP credentials not fully configured)
-    await sendResetEmail(email, resetCode);
+    // Send email via nodemailer
+    const emailSent = await sendResetEmail(email, resetCode);
+    if (!emailSent) {
+      return res.status(503).json({
+        error: 'ইমেইল ডেলিভারি সেবা কনফিগার করা নেই অথবা ইমেইল পাঠাতে ব্যর্থ হয়েছে (Email delivery is not configured or failed to deliver code).'
+      });
+    }
 
     return res.json({
       success: true,
