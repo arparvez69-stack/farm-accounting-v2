@@ -386,6 +386,31 @@ export async function createFullJsonBackup(targetDb: any = db): Promise<string> 
   return jsonStr;
 }
 
+let _lastPreflightRestoreSnapshot: string | null = null;
+
+export function getLastPreflightRestoreSnapshot(): string | null {
+  if (_lastPreflightRestoreSnapshot) return _lastPreflightRestoreSnapshot;
+  if (typeof localStorage !== 'undefined') {
+    try {
+      return localStorage.getItem('goted_backup_preflight_snapshot');
+    } catch {
+      // ignore
+    }
+  }
+  return null;
+}
+
+export async function restorePreflightSnapshot(
+  currentUserUid = 'owner',
+  targetDb: any = db
+): Promise<{ success: boolean; message: string }> {
+  const snapshotStr = getLastPreflightRestoreSnapshot();
+  if (!snapshotStr) {
+    return { success: false, message: 'কোনো সংরক্ষিত প্রিফ্লাইট স্ন্যাপশট পাওয়া যায়নি (No preflight snapshot found).' };
+  }
+  return await restoreFromJsonBackup(snapshotStr, currentUserUid, targetDb);
+}
+
 /**
  * Validated Database Restore
  * Verifies that malformed, incomplete, or incompatible backups are rejected BEFORE
@@ -556,6 +581,23 @@ export async function restoreFromJsonBackup(
     // -------------------------------------------------------------
 
     const activeDb = targetDb || db;
+
+    // STABILITY TASK 30: Create a recoverable local snapshot of the current database before any restore writes
+    try {
+      const preflightSnapshotStr = await createFullJsonBackup(activeDb);
+      if (preflightSnapshotStr) {
+        _lastPreflightRestoreSnapshot = preflightSnapshotStr;
+        if (typeof localStorage !== 'undefined') {
+          try {
+            localStorage.setItem('goted_backup_preflight_snapshot', preflightSnapshotStr);
+          } catch {
+            // Ignore localStorage quota limits
+          }
+        }
+      }
+    } catch (snapshotErr) {
+      console.warn('[Restore Preflight Snapshot] Note creating preflight snapshot:', snapshotErr);
+    }
 
     // Helper to safely clear and restore table
     const restoreTable = async (table: any, items: any[] | undefined) => {

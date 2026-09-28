@@ -825,7 +825,7 @@ export interface AuditLogEntry {
   synced?: boolean;
 }
 
-export type SyncState = 'ONLINE' | 'OFFLINE' | 'SYNCING' | 'SYNCED' | 'PENDING' | 'SYNC_FAILED' | 'IDLE' | 'ERROR';
+export type SyncState = 'ONLINE' | 'OFFLINE' | 'SYNCING' | 'SYNCED' | 'PENDING' | 'RETRYING' | 'SYNC_FAILED' | 'IDLE' | 'ERROR';
 
 export interface VaccineTemplate {
   id: string;

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { WifiOff, RefreshCw, CheckCircle2, AlertCircle } from 'lucide-react';
+import { WifiOff, RefreshCw, CheckCircle2, AlertCircle, Clock } from 'lucide-react';
 import { SyncState } from '../types';
 import { listenToOnlineSync, synchronizePendingData } from '../firebase/firebaseClient';
 
@@ -36,10 +36,14 @@ export const SyncStatusBadge: React.FC<Props> = ({
   const isOnline = typeof navigator !== 'undefined' ? navigator.onLine : true;
   const isOffline = !isOnline || currentSyncState === 'OFFLINE';
   const isSyncing = currentSyncState === 'SYNCING';
+  const isRetrying = currentSyncState === 'RETRYING';
   const isFailed = currentSyncState === 'SYNC_FAILED' || currentSyncState === 'ERROR';
+  const isPending =
+    currentSyncState === 'PENDING' ||
+    (!isFailed && !isSyncing && !isRetrying && !isOffline && currentPendingCount > 0);
 
   const handleSyncClick = async () => {
-    if (isSyncing || isOffline) return;
+    if (isSyncing || isRetrying || isOffline) return;
     if (propOnSyncNow) {
       propOnSyncNow();
     } else {
@@ -62,14 +66,18 @@ export const SyncStatusBadge: React.FC<Props> = ({
       id="sync-status-badge"
       type="button"
       onClick={handleSyncClick}
-      disabled={isSyncing || isOffline}
+      disabled={isSyncing || isRetrying || isOffline}
       title={
         isOffline
           ? 'বর্তমানে অফলাইন — সংযোগ এলে স্বয়ংক্রিয়ভাবে সিঙ্ক হবে'
           : isSyncing
           ? 'সার্ভারে ডেটা সিঙ্ক হচ্ছে...'
+          : isRetrying
+          ? 'পুনরায় সিঙ্কের চেষ্টা করা হচ্ছে...'
           : isFailed
           ? 'ক্লাউড পারসিস্টেন্স ব্যর্থ হয়েছে। ডেটা ডিভাইসে নিরাপদে আছে (ট্যাপ করে পুনরায় চেষ্টা করুন)'
+          : isPending
+          ? `${currentPendingCount}টি লেনদেন ক্লাউডে পাঠানোর অপেক্ষায় রয়েছে (ট্যাপ করে সিঙ্ক করুন)`
           : 'সিঙ্ক সম্পন্ন (ট্যাপ করে পুনরায় যাচাই করুন)'
       }
       className={`inline-flex items-center gap-1.5 px-2.5 sm:px-3 py-1 sm:py-1.5 rounded-full text-xs sm:text-[13px] font-medium border transition-all cursor-pointer min-h-[34px] sm:min-h-[36px] shadow-xs active:scale-95 shrink-0 ${
@@ -77,8 +85,12 @@ export const SyncStatusBadge: React.FC<Props> = ({
           ? 'bg-amber-50 text-amber-900 border-amber-300 hover:bg-amber-100'
           : isSyncing
           ? 'bg-blue-50 text-blue-900 border-blue-300 animate-pulse'
+          : isRetrying
+          ? 'bg-amber-50 text-amber-900 border-amber-300 animate-pulse'
           : isFailed
           ? 'bg-rose-50 text-rose-800 border-rose-300 hover:bg-rose-100'
+          : isPending
+          ? 'bg-amber-50/80 text-amber-800 border-amber-300 hover:bg-amber-100'
           : 'bg-[#F0FDF4] text-[#15803D] border-[#BBF7D0] hover:bg-emerald-100/60'
       }`}
     >
@@ -92,11 +104,25 @@ export const SyncStatusBadge: React.FC<Props> = ({
           <RefreshCw className="w-3.5 h-3.5 animate-spin text-blue-600 shrink-0" />
           <span className="whitespace-nowrap font-medium text-xs">সিঙ্ক হচ্ছে</span>
         </>
+      ) : isRetrying ? (
+        <>
+          <RefreshCw className="w-3.5 h-3.5 animate-spin text-amber-600 shrink-0" />
+          <span className="whitespace-nowrap font-medium text-xs">
+            {currentPendingCount > 0 ? `পুনরায় চেষ্টা (${currentPendingCount})` : 'পুনরায় চেষ্টা...'}
+          </span>
+        </>
       ) : isFailed ? (
         <>
           <AlertCircle className="w-3.5 h-3.5 text-rose-600 shrink-0" />
           <span className="whitespace-nowrap font-medium text-xs">
             {currentPendingCount > 0 ? `সিঙ্ক ব্যর্থ (${currentPendingCount})` : 'সিঙ্ক ব্যর্থ'}
+          </span>
+        </>
+      ) : isPending ? (
+        <>
+          <Clock className="w-3.5 h-3.5 text-amber-700 shrink-0" />
+          <span className="whitespace-nowrap font-medium text-xs">
+            অপেক্ষমাণ ({currentPendingCount || 1})
           </span>
         </>
       ) : (

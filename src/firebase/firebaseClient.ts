@@ -318,27 +318,66 @@ async function syncRecordToServer(collection: string, data: any): Promise<any> {
       ? `http://localhost:${process.env.PORT}`
       : 'http://localhost:3000';
   const endpoint = `${baseUrl}/api/sync/${collection}`;
-  const res = await fetch(endpoint, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(token ? { Authorization: `Bearer ${token}` } : {})
-    },
-    body: JSON.stringify(data)
-  });
 
-  if (!res.ok) {
-    const errorData = await res.json().catch(() => ({}));
-    throw new Error(errorData.error || `Server returned ${res.status}: Cloud persistence failed`);
+  const maxRetries = 2;
+  let attempt = 0;
+  let lastError: any = null;
+
+  while (attempt <= maxRetries) {
+    try {
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {})
+        },
+        body: JSON.stringify(data)
+      });
+
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        const errMessage = errorData.error || `Server returned ${res.status}: Cloud persistence failed`;
+
+        // Only retry on temporary network or server failures (5xx, 429, 408)
+        const isTemporary = res.status >= 500 || res.status === 429 || res.status === 408;
+        if (!isTemporary || attempt === maxRetries) {
+          throw new Error(errMessage);
+        }
+        lastError = new Error(errMessage);
+      } else {
+        const json = await res.json().catch(() => ({ success: false, persisted: false }));
+        // F7: Never claim cloud sync success without confirmed durable persistence
+        if (!json || json.success !== true || json.persisted === false) {
+          const errMessage = json?.error || 'ক্লাউড পারসিস্টেন্স নিশ্চিত হয়নি (Cloud persistence was not confirmed)';
+          if (attempt === maxRetries) {
+            throw new Error(errMessage);
+          }
+          lastError = new Error(errMessage);
+        } else {
+          return json;
+        }
+      }
+    } catch (networkErr: any) {
+      lastError = networkErr;
+      if (
+        attempt >= maxRetries ||
+        networkErr?.message?.includes('Validation') ||
+        networkErr?.message?.includes('অতিরিক্ত') ||
+        networkErr?.message?.includes('ব্যর্থ')
+      ) {
+        throw networkErr;
+      }
+    }
+
+    attempt++;
+    if (attempt <= maxRetries) {
+      // Safe bounded backoff: 80ms, 160ms
+      const delayMs = Math.min(80 * Math.pow(2, attempt - 1), 300);
+      await new Promise((r) => setTimeout(r, delayMs));
+    }
   }
 
-  const json = await res.json().catch(() => ({ success: false, persisted: false }));
-  // F7: Never claim cloud sync success without confirmed durable persistence
-  if (!json || json.success !== true || json.persisted === false) {
-    throw new Error(json?.error || 'ক্লাউড পারসিস্টেন্স নিশ্চিত হয়নি (Cloud persistence was not confirmed)');
-  }
-
-  return json;
+  throw lastError || new Error('Cloud persistence failed after bounded retries');
 }
 
 /**
