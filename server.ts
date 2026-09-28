@@ -3920,8 +3920,13 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'ok' });
 });
 
+let isShuttingDown = false;
+
 // Safe readiness check: indicates whether the server has completed required startup initialization
 app.get('/api/ready', (req, res) => {
+  if (isShuttingDown) {
+    return res.status(503).json({ ready: false, status: 'shutting_down' });
+  }
   if (!isStartupComplete) {
     return res.status(503).json({ ready: false, status: 'initializing' });
   }
@@ -3938,6 +3943,50 @@ app.get('/api/farm-info', (req, res) => {
     setupComplete,
     authorizedOwnersCount: authorizedEmails.length,
     authorizedEmails
+  });
+});
+
+// Normalized global API error handler
+// Ensures all unexpected API route errors return a consistent JSON shape with safe messages
+// and never leak stack traces, secrets, filesystem paths, or internal configuration.
+app.use('/api', (err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
+  if (res.headersSent) {
+    return next(err);
+  }
+
+  const status =
+    typeof err?.status === 'number' && err.status >= 400 && err.status < 600
+      ? err.status
+      : typeof err?.statusCode === 'number' && err.statusCode >= 400 && err.statusCode < 600
+      ? err.statusCode
+      : 500;
+
+  const safeMessage =
+    status === 400
+      ? (err?.message && !err.message.includes('/') && err.message.length < 150 ? err.message : 'অনুরোধটি সঠিক নয় (Bad Request).')
+      : status === 401
+      ? 'অননুমোদিত অ্যাক্সেস (Unauthorized).'
+      : status === 403
+      ? 'এই কার্যক্রমে আপনার অনুমতি নেই (Forbidden).'
+      : status === 404
+      ? 'অনুরোধকৃত রিসোর্স পাওয়া যায়নি (Not Found).'
+      : status === 413
+      ? 'পে-লোড সীমা অতিক্রম করেছে (Payload Too Large).'
+      : status === 429
+      ? (err?.message && err.message.length < 150 ? err.message : 'অতিরিক্ত অনুরোধ করা হয়েছে (Too Many Requests).')
+      : 'সার্ভারে একটি অপ্রত্যাশিত অভ্যন্তরীণ সমস্যা হয়েছে (Internal Server Error).';
+
+  const errorCode =
+    err?.code && typeof err.code === 'string' && !err.code.includes('/') && err.code.length < 40
+      ? err.code
+      : status === 500
+      ? 'INTERNAL_SERVER_ERROR'
+      : 'REQUEST_ERROR';
+
+  return res.status(status).json({
+    success: false,
+    error: safeMessage,
+    code: errorCode
   });
 });
 
@@ -3964,10 +4013,51 @@ async function startServer() {
     });
   }
 
-  app.listen(Number(PORT), '0.0.0.0', () => {
+  const server = app.listen(Number(PORT), '0.0.0.0', () => {
     console.log(`[The Goated Farm] Server running on http://0.0.0.0:${PORT}`);
   });
+
+  // Graceful shutdown handling for SIGTERM and SIGINT
+  const handleGracefulShutdown = (signal: string) => {
+    if (isShuttingDown) return;
+    isShuttingDown = true;
+    console.log(`[The Goated Farm] Received ${signal}. Starting graceful shutdown...`);
+
+    // Stop accepting new connections
+    server.close((err) => {
+      if (err) {
+        console.error('[The Goated Farm] Error during HTTP server close:', err.message);
+        process.exit(1);
+      }
+      console.log('[The Goated Farm] HTTP server closed cleanly. Exiting.');
+      process.exit(0);
+    });
+
+    // Allow active requests a short graceful period (10 seconds timeout)
+    const forceExitTimeout = setTimeout(() => {
+      console.warn('[The Goated Farm] Forceful exit triggered after shutdown timeout.');
+      process.exit(1);
+    }, 10000);
+    forceExitTimeout.unref();
+  };
+
+  process.once('SIGTERM', () => handleGracefulShutdown('SIGTERM'));
+  process.once('SIGINT', () => handleGracefulShutdown('SIGINT'));
 }
+
+// Server-level unhandled rejection and exception safety: prevent silent failures
+process.on('unhandledRejection', (reason: any) => {
+  const errMsg = reason instanceof Error ? reason.message : String(reason);
+  console.error('[The Goated Farm] FATAL: Unhandled Promise Rejection encountered:', errMsg);
+  if (process.env.NODE_ENV === 'production') {
+    process.exit(1);
+  }
+});
+
+process.on('uncaughtException', (err: Error) => {
+  console.error('[The Goated Farm] FATAL: Uncaught Exception encountered:', err.message);
+  process.exit(1);
+});
 
 const isDirectRun =
   Boolean(process.argv[1]) &&
