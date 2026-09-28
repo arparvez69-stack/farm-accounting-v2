@@ -1476,10 +1476,18 @@ export async function sendResetEmail(toEmail: string, resetCode: string): Promis
   }
 }
 
+// Startup initialization tracking
+let isStartupComplete = false;
+
 // Seed on startup
-initializeAuthSecrets().catch((err) => {
-  console.warn('[The Goated Farm] initializeAuthSecrets error:', err);
-});
+initializeAuthSecrets()
+  .then(() => {
+    isStartupComplete = true;
+  })
+  .catch((err) => {
+    console.warn('[The Goated Farm] initializeAuthSecrets error:', err);
+    isStartupComplete = true;
+  });
 
 // ==========================================
 // API Route: POST /api/verify-login-code
@@ -3910,6 +3918,14 @@ app.get('/api/access-logs', async (req, res) => {
 
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok' });
+});
+
+// Safe readiness check: indicates whether the server has completed required startup initialization
+app.get('/api/ready', (req, res) => {
+  if (!isStartupComplete) {
+    return res.status(503).json({ ready: false, status: 'initializing' });
+  }
+  return res.json({ ready: true, status: 'ready' });
 });
 
 // Farm status endpoint
