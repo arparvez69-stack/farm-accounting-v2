@@ -59,6 +59,23 @@ app.use((err: any, req: express.Request, res: express.Response, next: express.Ne
   next(err);
 });
 
+// Request timeout protection: prevent permanently hanging HTTP connections
+app.use((req, res, next) => {
+  const isHeavy = req.path.startsWith('/api/sync') || req.path.startsWith('/api/wipe-all-data');
+  const timeoutMs = isHeavy ? 180000 : 60000;
+
+  res.setTimeout(timeoutMs, () => {
+    if (!res.headersSent) {
+      res.status(504).json({
+        success: false,
+        error: 'অনুরোধের সময়সীমা উত্তীর্ণ হয়েছে (Request Gateway Timeout).',
+        code: 'GATEWAY_TIMEOUT'
+      });
+    }
+  });
+  next();
+});
+
 // Helper to read owner email secrets from environment variables (supports standard or lowercase aliases)
 export function getRawEmailsEnv(): string {
   return (
@@ -179,6 +196,7 @@ interface RateLimitRecord {
   lockedUntil?: number;
 }
 const failedLoginAttempts = new Map<string, RateLimitRecord>();
+const failedResetAttempts = new Map<string, RateLimitRecord>();
 const MAX_FAILED_ATTEMPTS = 5;
 const WINDOW_MS = 15 * 60 * 1000; // 15 minutes
 const LOCKOUT_MS = 15 * 60 * 1000; // 15 minutes
@@ -1736,22 +1754,45 @@ app.post('/api/confirm-pin-reset', async (req, res) => {
       return res.status(400).json({ error: 'নতুন পিন কমপক্ষে ৬ ডিজিটের হতে হবে (New PIN must be 6+ digits)।' });
     }
 
+    const now = Date.now();
+    const rateLimit = failedResetAttempts.get(email);
+    if (rateLimit?.lockedUntil) {
+      if (now < rateLimit.lockedUntil) {
+        const remainingMinutes = Math.max(1, Math.ceil((rateLimit.lockedUntil - now) / 60000));
+        return res.status(429).json({
+          error: `অতিরিক্ত ব্যর্থ চেষ্টার কারণে এই অ্যাকাউন্টটি ১৫ মিনিটের জন্য সাময়িকভাবে লক করা হয়েছে। আরও ${remainingMinutes} মিনিট পর পুনরায় চেষ্টা করুন (Too many failed reset attempts. Locked for ${remainingMinutes} more minutes).`
+        });
+      } else {
+        failedResetAttempts.delete(email);
+      }
+    }
+
     const storedReset = await getStoredResetCode(email);
 
     // Invalidate reset code after use (one attempt only)
     await clearStoredResetCode(email);
 
-    if (!storedReset) {
-      return res.status(400).json({ error: 'কোনো সক্রিয় রিসেট কোড পাওয়া যায়নি। পুনরায় কোড অনুরোধ করুন।' });
+    if (!storedReset || storedReset.code !== code) {
+      const existing = failedResetAttempts.get(email);
+      if (!existing || now - existing.firstAttemptAt > WINDOW_MS) {
+        failedResetAttempts.set(email, {
+          attempts: 1,
+          firstAttemptAt: now
+        });
+      } else {
+        existing.attempts += 1;
+        if (existing.attempts >= MAX_FAILED_ATTEMPTS) {
+          existing.lockedUntil = now + LOCKOUT_MS;
+          return res.status(429).json({
+            error: 'অতিরিক্ত ৫ বার ভুল রিসেট কোড দেওয়ার কারণে এই অ্যাকাউন্টটি ১৫ মিনিটের জন্য সাময়িকভাবে লক করা হয়েছে (Too many failed reset attempts. Account locked for 15 minutes).'
+          });
+        }
+      }
+      return res.status(400).json({ error: 'ভুল অথবা মেয়াদোত্তীর্ণ রিসেট কোড প্রদান করা হয়েছে (Invalid reset code)। পুনরায় অনুরোধ করুন।' });
     }
 
-    const now = Date.now();
     if (now > storedReset.expiresAt) {
       return res.status(400).json({ error: 'রিসেট কোডের মেয়াদ (১৫ মিনিট) শেষ হয়ে গেছে। পুনরায় কোড অনুরোধ করুন।' });
-    }
-
-    if (storedReset.code !== code) {
-      return res.status(400).json({ error: 'ভুল রিসেট কোড প্রদান করা হয়েছে (Invalid reset code)। পুনরায় অনুরোধ করুন।' });
     }
 
     // Code is valid! Hash new PIN and store
@@ -1760,6 +1801,7 @@ app.post('/api/confirm-pin-reset', async (req, res) => {
 
     // Clear any previous rate-limit lockouts on this account
     failedLoginAttempts.delete(email);
+    failedResetAttempts.delete(email);
 
     console.log(`[The Goated Farm] 🔑 PIN reset completed successfully for ${email}`);
     return res.json({
