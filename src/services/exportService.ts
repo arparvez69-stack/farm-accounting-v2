@@ -457,17 +457,88 @@ export async function restoreFromJsonBackup(
       return { success: false, message: 'অবৈধ ব্যাকআপ ফাইল (Missing or invalid backup timestamp).' };
     }
 
-    // 4. Validate manifest & expected table structure
+    // 4. Validate manifest & schema version compatibility (STABILITY TASK 31 & 33)
+    const hasManifestBlock =
+      (data.manifest && typeof data.manifest === 'object' && !Array.isArray(data.manifest)) ||
+      (data.metadata && typeof data.metadata === 'object' && !Array.isArray(data.metadata)) ||
+      (Array.isArray(data.expectedTables) && data.expectedTables.length > 0);
+
+    if (data.manifest !== undefined && (typeof data.manifest !== 'object' || data.manifest === null || Array.isArray(data.manifest))) {
+      return { success: false, message: 'অবৈধ ব্যাকআপ ফাইল (Malformed manifest structure in backup: expected object).' };
+    }
+    if (data.metadata !== undefined && (typeof data.metadata !== 'object' || data.metadata === null || Array.isArray(data.metadata))) {
+      return { success: false, message: 'অবৈধ ব্যাকআপ ফাইল (Malformed metadata structure in backup: expected object).' };
+    }
+    if (!hasManifestBlock) {
+      return { success: false, message: 'অসম্পূর্ণ ব্যাকআপ ফাইল (Incomplete backup: missing required manifest or metadata block).' };
+    }
+
+    const activeDb = targetDb || db;
+    const dbSchemaVersion = typeof activeDb?.verno === 'number' ? activeDb.verno : 12;
+    const backupSchemaVersion = data.schemaVersion ?? data.manifest?.schemaVersion ?? data.metadata?.schemaVersion;
+
+    if (backupSchemaVersion !== undefined) {
+      if (typeof backupSchemaVersion !== 'number' || isNaN(backupSchemaVersion) || !Number.isInteger(backupSchemaVersion) || backupSchemaVersion <= 0) {
+        return {
+          success: false,
+          message: `অবৈধ ব্যাকআপ স্কিমা সংস্করণ (Invalid schemaVersion in backup: "${backupSchemaVersion}").`
+        };
+      }
+      if (backupSchemaVersion > dbSchemaVersion) {
+        return {
+          success: false,
+          message: `অসামঞ্জস্যপূর্ণ ডাটাবেজ স্কিমা সংস্করণ (Incompatible future schema version: ${backupSchemaVersion}. Current database schema version is ${dbSchemaVersion}).`
+        };
+      }
+    }
+
+    // 5. Determine expected table structure for current or migrated older schema (STABILITY TASK 33)
     const manifestTables: string[] = (Array.isArray(data.expectedTables) && data.expectedTables.length > 0)
       ? data.expectedTables
       : ((Array.isArray(data.metadata?.expectedTables) && data.metadata.expectedTables.length > 0)
         ? data.metadata.expectedTables
         : ((Array.isArray(data.manifest?.tables) && data.manifest.tables.length > 0)
           ? data.manifest.tables
-          : CANONICAL_PERSISTENT_TABLES));
+          : []));
 
-    // Combine canonical tables with any tables explicitly specified in manifest
-    const requiredTables = new Set<string>([...CANONICAL_PERSISTENT_TABLES, ...manifestTables]);
+    // For known compatible older schema versions, determine base required tables
+    let requiredTables: Set<string>;
+    if (backupSchemaVersion !== undefined && backupSchemaVersion < dbSchemaVersion) {
+      // Known older schema migration:
+      // Base schema (v1-v4): 24 persistent tables
+      const baseTables = [
+        'systemConfig', 'accounts', 'journalEntries', 'animals', 'animalEvents',
+        'reminders', 'ponds', 'fishBatches', 'plots', 'cropCycles', 'internalFlows',
+        'processingRuns', 'inventoryItems', 'stockMovements', 'parties', 'purchases',
+        'sales', 'cashBankAccounts', 'bankTransfers', 'loans', 'investors',
+        'fixedAssets', 'auditLogs', 'accessLogs'
+      ];
+      if (backupSchemaVersion >= 5) baseTables.push('payments');
+      if (backupSchemaVersion >= 6) baseTables.push('closedPeriods');
+      if (backupSchemaVersion >= 9) baseTables.push('recurringExpenseTemplates');
+      if (backupSchemaVersion >= 10) baseTables.push('salesReturns', 'purchaseReturns');
+      if (backupSchemaVersion >= 11) baseTables.push('advancePayments');
+
+      requiredTables = new Set<string>([...baseTables, ...manifestTables]);
+
+      // Safe migration: initialize tables introduced in later versions if missing
+      const laterTables = [
+        { v: 5, name: 'payments' },
+        { v: 6, name: 'closedPeriods' },
+        { v: 9, name: 'recurringExpenseTemplates' },
+        { v: 10, name: 'salesReturns' },
+        { v: 10, name: 'purchaseReturns' },
+        { v: 11, name: 'advancePayments' }
+      ];
+      for (const lt of laterTables) {
+        if (backupSchemaVersion < lt.v && getTableDataFromBackup(data, lt.name) === undefined) {
+          data[lt.name] = [];
+        }
+      }
+    } else {
+      // Current schema: all 30 canonical persistent tables required
+      requiredTables = new Set<string>([...CANONICAL_PERSISTENT_TABLES, ...manifestTables]);
+    }
 
     for (const tableName of requiredTables) {
       const rawTableData = getTableDataFromBackup(data, tableName);
@@ -479,7 +550,7 @@ export async function restoreFromJsonBackup(
       }
     }
 
-    // 5. Validate table data types: systemConfig must be object/array; all others must be arrays
+    // 6. Validate table data types: systemConfig must be object/array; all others must be arrays
     for (const tableName of requiredTables) {
       const rawTableData = getTableDataFromBackup(data, tableName);
       if (tableName === 'systemConfig') {
@@ -508,7 +579,7 @@ export async function restoreFromJsonBackup(
       return undefined;
     };
 
-    // 6. Validate record-level integrity across all tables
+    // 7. Validate record-level integrity and reject obviously corrupted data across all tables
     for (const tableName of requiredTables) {
       const rawTableData = getTableDataFromBackup(data, tableName);
       const items = normalizeItems(rawTableData);
@@ -523,14 +594,15 @@ export async function restoreFromJsonBackup(
           };
         }
         if (tableName === 'systemConfig') {
-          if (!item.ownerUid && !item.id) {
+          const ownerKey = item.ownerUid || item.id;
+          if (!ownerKey || typeof ownerKey !== 'string' || ownerKey.trim() === '') {
             return {
               success: false,
               message: `বিকৃত ব্যাকআপ রেকর্ড (Malformed record at index ${i} in "systemConfig": missing primary key ownerUid/id).`
             };
           }
         } else {
-          if (!item.id || typeof item.id !== 'string') {
+          if (!item.id || typeof item.id !== 'string' || item.id.trim() === '') {
             return {
               success: false,
               message: `বিকৃত ব্যাকআপ রেকর্ড (Malformed record at index ${i} in table "${tableName}": missing string primary key id).`
@@ -538,21 +610,72 @@ export async function restoreFromJsonBackup(
           }
         }
         if (tableName === 'journalEntries') {
-          if (!Array.isArray(item.lines)) {
+          if (!Array.isArray(item.lines) || item.lines.length === 0) {
             return {
               success: false,
-              message: `বিকৃত ব্যাকআপ রেকর্ড (Malformed journal entry "${item.id}": missing lines array).`
+              message: `বিকৃত ব্যাকআপ রেকর্ড (Malformed journal entry "${item.id}": missing or empty lines array).`
+            };
+          }
+          let totalDebit = 0;
+          let totalCredit = 0;
+          for (let lineIdx = 0; lineIdx < item.lines.length; lineIdx++) {
+            const line = item.lines[lineIdx];
+            if (!line || typeof line !== 'object' || Array.isArray(line)) {
+              return {
+                success: false,
+                message: `বিকৃত ব্যাকআপ রেকর্ড (Malformed line at index ${lineIdx} in journal entry "${item.id}").`
+              };
+            }
+            if (!line.accountCode || typeof line.accountCode !== 'string' || line.accountCode.trim() === '') {
+              return {
+                success: false,
+                message: `বিকৃত ব্যাকআপ রেকর্ড (Malformed line in journal entry "${item.id}": missing accountCode).`
+              };
+            }
+            const debit = Number(line.debit ?? 0);
+            const credit = Number(line.credit ?? 0);
+            if (!Number.isFinite(debit) || debit < 0 || !Number.isFinite(credit) || credit < 0) {
+              return {
+                success: false,
+                message: `বিকৃত ব্যাকআপ রেকর্ড (Malformed amounts in journal entry "${item.id}": negative or non-numeric debit/credit).`
+              };
+            }
+            totalDebit += debit;
+            totalCredit += credit;
+          }
+          // Enforce balanced lines in accounting records
+          if (Math.abs(totalDebit - totalCredit) > 0.01) {
+            return {
+              success: false,
+              message: `বিকৃত ব্যাকআপ রেকর্ড (Corrupted journal entry "${item.id}": debit and credit lines are unbalanced: Debit=${totalDebit}, Credit=${totalCredit}).`
+            };
+          }
+        }
+        if (tableName === 'accounts') {
+          if (!item.code || typeof item.code !== 'string' || item.code.trim() === '') {
+            return {
+              success: false,
+              message: `বিকৃত ব্যাকআপ রেকর্ড (Malformed account record "${item.id}": missing account code).`
             };
           }
         }
       }
     }
 
-    // 7. Validate dataset completeness against manifest recordCounts if present
-    const manifestCounts: Record<string, number> | undefined = data.recordCounts || data.metadata?.recordCounts || data.manifest?.recordCounts;
-    if (manifestCounts && typeof manifestCounts === 'object') {
-      for (const [tableName, expectedCount] of Object.entries(manifestCounts)) {
-        if (typeof expectedCount === 'number') {
+    // 8. Validate dataset completeness against manifest recordCounts if present
+    const countSources = [data.recordCounts, data.manifest?.recordCounts, data.metadata?.recordCounts].filter(
+      (cs) => cs && typeof cs === 'object' && !Array.isArray(cs)
+    );
+
+    for (const counts of countSources) {
+      for (const [tableName, expectedCount] of Object.entries(counts)) {
+        if (expectedCount !== undefined) {
+          if (typeof expectedCount !== 'number' || isNaN(expectedCount) || !Number.isInteger(expectedCount) || expectedCount < 0) {
+            return {
+              success: false,
+              message: `বিকৃত ব্যাকআপ ম্যানিফেস্ট (Corrupted record count for table "${tableName}" in manifest: expected non-negative integer).`
+            };
+          }
           const rawTableData = getTableDataFromBackup(data, tableName);
           if (rawTableData === undefined) {
             return {
@@ -580,8 +703,6 @@ export async function restoreFromJsonBackup(
     // PHASE 2: ATOMIC RESTORATION WITH ID & RELATIONSHIP PRESERVATION
     // -------------------------------------------------------------
 
-    const activeDb = targetDb || db;
-
     // STABILITY TASK 30: Create a recoverable local snapshot of the current database before any restore writes
     try {
       const preflightSnapshotStr = await createFullJsonBackup(activeDb);
@@ -599,9 +720,62 @@ export async function restoreFromJsonBackup(
       console.warn('[Restore Preflight Snapshot] Note creating preflight snapshot:', snapshotErr);
     }
 
-    // Helper to safely clear and restore table
+    const tablesToLock = (
+      Array.isArray(activeDb.tables) && activeDb.tables.length > 0
+        ? activeDb.tables
+        : [
+            activeDb.systemConfig,
+            activeDb.accounts,
+            activeDb.journalEntries,
+            activeDb.closedPeriods,
+            activeDb.recurringExpenseTemplates,
+            activeDb.animals,
+            activeDb.animalEvents,
+            activeDb.reminders,
+            activeDb.ponds,
+            activeDb.fishBatches,
+            activeDb.plots,
+            activeDb.cropCycles,
+            activeDb.internalFlows,
+            activeDb.processingRuns,
+            activeDb.inventoryItems,
+            activeDb.stockMovements,
+            activeDb.parties,
+            activeDb.purchases,
+            activeDb.sales,
+            activeDb.salesReturns,
+            activeDb.purchaseReturns,
+            activeDb.advancePayments,
+            activeDb.payments,
+            activeDb.cashBankAccounts,
+            activeDb.bankTransfers,
+            activeDb.loans,
+            activeDb.investors,
+            activeDb.fixedAssets,
+            activeDb.accessLogs,
+            activeDb.auditLogs,
+            ...((activeDb as any).investorTransactions ? [(activeDb as any).investorTransactions] : [])
+          ]
+    ).filter(Boolean);
+
+    // Safe pre-restore table snapshots for automatic rollback (STABILITY TASK 32)
+    const preRestoreSnapshots: Map<any, any[]> = new Map();
+    for (const t of tablesToLock) {
+      if (typeof t.toArray === 'function') {
+        try {
+          preRestoreSnapshots.set(t, await t.toArray());
+        } catch {
+          // Ignore snapshot read error
+        }
+      }
+    }
+
+    let mutationStarted = false;
+
+    // Helper to safely clear and restore table with mutation tracking
     const restoreTable = async (table: any, items: any[] | undefined) => {
       if (!table || items === undefined) return;
+      mutationStarted = true;
       if (typeof table.clear === 'function') {
         await table.clear();
       }
@@ -653,44 +827,6 @@ export async function restoreFromJsonBackup(
       }
       return null;
     };
-
-    const tablesToLock = (
-      Array.isArray(activeDb.tables) && activeDb.tables.length > 0
-        ? activeDb.tables
-        : [
-            activeDb.systemConfig,
-            activeDb.accounts,
-            activeDb.journalEntries,
-            activeDb.closedPeriods,
-            activeDb.recurringExpenseTemplates,
-            activeDb.animals,
-            activeDb.animalEvents,
-            activeDb.reminders,
-            activeDb.ponds,
-            activeDb.fishBatches,
-            activeDb.plots,
-            activeDb.cropCycles,
-            activeDb.internalFlows,
-            activeDb.processingRuns,
-            activeDb.inventoryItems,
-            activeDb.stockMovements,
-            activeDb.parties,
-            activeDb.purchases,
-            activeDb.sales,
-            activeDb.salesReturns,
-            activeDb.purchaseReturns,
-            activeDb.advancePayments,
-            activeDb.payments,
-            activeDb.cashBankAccounts,
-            activeDb.bankTransfers,
-            activeDb.loans,
-            activeDb.investors,
-            activeDb.fixedAssets,
-            activeDb.accessLogs,
-            activeDb.auditLogs,
-            ...((activeDb as any).investorTransactions ? [(activeDb as any).investorTransactions] : [])
-          ]
-    ).filter(Boolean);
 
     const recordCounts: Record<string, number> = {};
 
@@ -896,39 +1032,38 @@ export async function restoreFromJsonBackup(
       }
     };
 
-    if (typeof activeDb.transaction === 'function' && tablesToLock.length > 0) {
-      await activeDb.transaction('rw', tablesToLock, performRestores);
-    } else {
-      // In non-transactional environments, snapshot in-memory to prevent destructive partial state on failure
-      const preRestoreSnapshots: Map<any, any[]> = new Map();
-      for (const t of tablesToLock) {
-        if (typeof t.toArray === 'function') {
-          try {
-            preRestoreSnapshots.set(t, await t.toArray());
-          } catch {
-            // Ignore snapshot read error
-          }
-        }
-      }
-      try {
-        await performRestores();
-      } catch (restoreErr: any) {
-        // Rollback snapshot on failure to ensure no partial overwrite/destructive loss
-        for (const [table, records] of preRestoreSnapshots.entries()) {
-          try {
-            if (typeof table.clear === 'function') await table.clear();
-            if (records.length > 0) {
-              if (typeof table.bulkPut === 'function') await table.bulkPut(records);
-              else if (typeof table.put === 'function') {
-                for (const r of records) await table.put(r);
-              }
+    const rollbackToPreRestoreSnapshot = async () => {
+      console.warn('[Restore Rollback] Mutation failed after starting. Rolling back to pre-restore snapshot...');
+      for (const [table, records] of preRestoreSnapshots.entries()) {
+        try {
+          if (typeof table.clear === 'function') await table.clear();
+          if (records && records.length > 0) {
+            if (typeof table.bulkPut === 'function') await table.bulkPut(records);
+            else if (typeof table.put === 'function') {
+              for (const r of records) await table.put(r);
             }
-          } catch {
-            // Ignore rollback individual error
           }
+        } catch (rollbackErr) {
+          console.error('[Restore Rollback] Failed restoring table during rollback:', rollbackErr);
         }
-        throw restoreErr;
       }
+    };
+
+    try {
+      if (typeof activeDb.transaction === 'function' && tablesToLock.length > 0) {
+        await activeDb.transaction('rw', tablesToLock, performRestores);
+      } else {
+        await performRestores();
+      }
+    } catch (restoreErr: any) {
+      if (mutationStarted) {
+        await rollbackToPreRestoreSnapshot();
+        return {
+          success: false,
+          message: `রিস্টোর ব্যর্থ হয়েছে (ডাটাবেজ স্বয়ংক্রিয়ভাবে পূর্বাবস্থায় ফিরিয়ে আনা হয়েছে): ${restoreErr.message || restoreErr}`
+        };
+      }
+      throw restoreErr;
     }
 
     return {
