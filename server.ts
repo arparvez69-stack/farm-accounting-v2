@@ -76,6 +76,93 @@ app.use((req, res, next) => {
   next();
 });
 
+// Hardened CORS Configuration
+// Development remains flexible to accommodate local tools and testing.
+// Production strictly enforces allowed origins: same-origin and explicitly configured frontend origins.
+function getProductionAllowedOrigins(): Set<string> {
+  const allowed = new Set<string>();
+  const envOrigins = [
+    process.env.ALLOWED_ORIGINS,
+    process.env.FRONTEND_URL,
+    process.env.APP_URL,
+    process.env.VITE_APP_URL,
+    'https://ais-dev-sr3loqxb5zmdg3bwg6zekt-302025970149.asia-southeast1.run.app',
+    'https://ais-pre-sr3loqxb5zmdg3bwg6zekt-302025970149.asia-southeast1.run.app'
+  ];
+  for (const item of envOrigins) {
+    if (!item) continue;
+    for (const origin of item.split(',')) {
+      const trimmed = origin.trim();
+      if (trimmed) {
+        try {
+          const parsed = new URL(trimmed);
+          allowed.add(parsed.origin.toLowerCase());
+        } catch {
+          allowed.add(trimmed.toLowerCase());
+        }
+      }
+    }
+  }
+  return allowed;
+}
+
+app.use((req, res, next) => {
+  const originHeader = req.headers.origin;
+
+  // Requests without an Origin header (same-origin navigations or direct server calls)
+  if (!originHeader) {
+    return next();
+  }
+
+  const isProduction = process.env.NODE_ENV === 'production';
+  let isAllowed = false;
+
+  if (!isProduction) {
+    // Development remains flexible
+    isAllowed = true;
+  } else {
+    try {
+      const parsedOrigin = new URL(originHeader);
+      const originOnly = parsedOrigin.origin.toLowerCase();
+      const hostHeader = req.headers.host?.toLowerCase();
+
+      // Check 1: Same origin (Origin host matches Host header)
+      if (hostHeader && (parsedOrigin.host.toLowerCase() === hostHeader || parsedOrigin.hostname.toLowerCase() === hostHeader.split(':')[0])) {
+        isAllowed = true;
+      } else {
+        // Check 2: Configured production allowed origins
+        const allowedOrigins = getProductionAllowedOrigins();
+        if (allowedOrigins.has(originOnly)) {
+          isAllowed = true;
+        }
+      }
+    } catch {
+      isAllowed = false;
+    }
+  }
+
+  if (isAllowed) {
+    res.setHeader('Access-Control-Allow-Origin', originHeader);
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With');
+    res.setHeader('Access-Control-Max-Age', '86400');
+  }
+
+  if (req.method === 'OPTIONS') {
+    if (isAllowed) {
+      return res.sendStatus(204);
+    } else {
+      return res.status(403).json({
+        success: false,
+        error: 'CORS নীতি অনুসারে এই অরিজিন থেকে অনুরোধ অনুমোদিত নয় (Origin not allowed by CORS).',
+        code: 'CORS_FORBIDDEN'
+      });
+    }
+  }
+
+  next();
+});
+
 // Helper to read owner email secrets from environment variables (supports standard or lowercase aliases)
 export function getRawEmailsEnv(): string {
   return (
