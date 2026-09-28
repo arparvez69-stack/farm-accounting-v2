@@ -86,6 +86,8 @@ function getProductionAllowedOrigins(): Set<string> {
     process.env.FRONTEND_URL,
     process.env.APP_URL,
     process.env.VITE_APP_URL,
+    'https://ais-dev-45kx2ob3kg2z4xfqm6bqjk-425671667112.asia-east1.run.app',
+    'https://ais-pre-45kx2ob3kg2z4xfqm6bqjk-425671667112.asia-east1.run.app',
     'https://ais-dev-sr3loqxb5zmdg3bwg6zekt-302025970149.asia-southeast1.run.app',
     'https://ais-pre-sr3loqxb5zmdg3bwg6zekt-302025970149.asia-southeast1.run.app'
   ];
@@ -133,6 +135,9 @@ app.use((req, res, next) => {
         // Check 2: Configured production allowed origins
         const allowedOrigins = getProductionAllowedOrigins();
         if (allowedOrigins.has(originOnly)) {
+          isAllowed = true;
+        } else if (parsedOrigin.hostname.endsWith('.run.app')) {
+          // Check 3: AI Studio Google Cloud Run preview and staging domains
           isAllowed = true;
         }
       }
