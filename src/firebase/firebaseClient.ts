@@ -969,12 +969,21 @@ if (typeof window !== 'undefined') {
 export async function restoreRemoteDataIfLocalEmpty(
   userEmail?: string,
   force?: boolean,
-  options?: { mockRemoteCollections?: Record<string, any[]> }
+  options?: {
+    mockRemoteCollections?: Record<string, any[]>;
+    simulateFailureAfterMutation?: boolean;
+    simulateFailureErrorMessage?: string;
+  }
 ): Promise<{
   restored: boolean;
   count: number;
   offlineEmptyWarning: boolean;
+  rollbackPerformed?: boolean;
 }> {
+  let mutationStarted = false;
+  let rollbackPerformed = false;
+  let rollbackToPreRestoreSnapshot: () => Promise<void> = async () => {};
+
   try {
     const localOperationalCounts = await Promise.all([
       db.animals.count(),
@@ -1022,6 +1031,32 @@ export async function restoreRemoteDataIfLocalEmpty(
     }
 
     let restoredCount = 0;
+
+    // STABILITY TASK 44: Pre-restore snapshot for atomic rollback on failure
+    const preRestoreSnapshots = new Map<string, any[]>();
+    for (const tbl of db.tables) {
+      try {
+        preRestoreSnapshots.set(tbl.name, await tbl.toArray());
+      } catch {}
+    }
+
+    rollbackToPreRestoreSnapshot = async () => {
+      console.warn('[Cloud Restore Rollback] Mutation failed after starting. Rolling back to pre-restore snapshot to prevent half-restored state...');
+      rollbackPerformed = true;
+      for (const tbl of db.tables) {
+        const records = preRestoreSnapshots.get(tbl.name);
+        if (records !== undefined) {
+          try {
+            await tbl.clear();
+            if (records.length > 0) {
+              await tbl.bulkPut(records);
+            }
+          } catch (rbErr) {
+            console.error(`[Cloud Restore Rollback] Failed restoring table ${tbl.name}:`, rbErr);
+          }
+        }
+      }
+    };
 
     /**
      * Intelligent, non-destructive restore helper:
@@ -1161,57 +1196,100 @@ export async function restoreRemoteDataIfLocalEmpty(
     };
 
     const applyCollectionsRestore = async (c: Record<string, any[]>): Promise<number> => {
-      let applied = 0;
-      applied += await restoreTableItemsWithDiff(db.systemConfig, c.systemConfig || c.system, 'systemConfig');
-      applied += await restoreTableItemsWithDiff(db.accounts, c.accounts, 'accounts');
-      applied += await restoreTableItemsWithDiff(db.animals, c.animals);
-      applied += await restoreTableItemsWithDiff(db.animalEvents, c.animalEvents);
-      applied += await restoreTableItemsWithDiff(db.journalEntries, c.journalEntries);
-      applied += await restoreTableItemsWithDiff(db.sales, c.sales);
-      applied += await restoreTableItemsWithDiff(db.purchases, c.purchases);
-      applied += await restoreTableItemsWithDiff(db.payments, c.payments);
-      applied += await restoreTableItemsWithDiff(db.salesReturns, c.salesReturns);
-      applied += await restoreTableItemsWithDiff(db.purchaseReturns, c.purchaseReturns);
-      applied += await restoreTableItemsWithDiff(db.advancePayments, c.advancePayments);
-      applied += await restoreTableItemsWithDiff(db.cropCycles, c.cropCycles);
-      applied += await restoreTableItemsWithDiff(db.fishBatches, c.fishBatches);
-      applied += await restoreTableItemsWithDiff(db.ponds, c.ponds);
-      applied += await restoreTableItemsWithDiff(db.plots, c.plots);
-      const invList = (Array.isArray(c.inventory) && c.inventory.length > 0) ? c.inventory : ((Array.isArray(c.inventoryItems) && c.inventoryItems.length > 0) ? c.inventoryItems : []);
-      applied += await restoreTableItemsWithDiff(db.inventoryItems, invList);
-      applied += await restoreTableItemsWithDiff(db.stockMovements, c.stockMovements);
-      applied += await restoreTableItemsWithDiff(db.parties, c.parties);
-      applied += await restoreTableItemsWithDiff(db.fixedAssets, c.fixedAssets);
-      applied += await restoreTableItemsWithDiff(db.loans, c.loans);
-      applied += await restoreTableItemsWithDiff(db.investors, c.investors);
-      applied += await restoreTableItemsWithDiff(db.cashBankAccounts, c.cashBankAccounts);
-      applied += await restoreTableItemsWithDiff(db.bankTransfers, c.bankTransfers);
-      applied += await restoreTableItemsWithDiff(db.reminders, c.reminders);
-      applied += await restoreTableItemsWithDiff(db.internalFlows, c.internalFlows);
-      applied += await restoreTableItemsWithDiff(db.processingRuns, c.processingRuns);
-      applied += await restoreTableItemsWithDiff(db.recurringExpenseTemplates, c.recurringExpenseTemplates);
-      applied += await restoreTableItemsWithDiff(db.accessLogs, c.accessLogs);
-      applied += await restoreTableItemsWithDiff(db.auditLogs, c.auditLogs);
-      applied += await restoreTableItemsWithDiff(db.closedPeriods, c.closedPeriods);
+      if (!c || typeof c !== 'object') {
+        throw new Error('Invalid cloud restore collections payload');
+      }
 
-      // Universal persistent Dexie table sweep
-      const standardKnown = new Set([
-        'systemConfig', 'accounts', 'animals', 'animalEvents', 'journalEntries', 'sales', 'purchases',
-        'payments', 'salesReturns', 'purchaseReturns', 'advancePayments', 'cropCycles', 'fishBatches',
-        'ponds', 'plots', 'inventoryItems', 'stockMovements', 'parties', 'fixedAssets', 'loans',
-        'investors', 'cashBankAccounts', 'bankTransfers', 'reminders', 'internalFlows', 'processingRuns',
-        'recurringExpenseTemplates', 'accessLogs', 'auditLogs', 'closedPeriods'
-      ]);
-      for (const tbl of db.tables) {
-        const tblName = tbl.name;
-        if (!standardKnown.has(tblName)) {
-          const items = c[tblName];
-          if (Array.isArray(items) && items.length > 0) {
-            applied += await restoreTableItemsWithDiff(tbl, items, tblName);
+      // STABILITY TASK 44: Pre-validation staging check: ensure accounting integrity before touching Dexie
+      if (Array.isArray(c.journalEntries)) {
+        for (const j of c.journalEntries) {
+          if (Array.isArray(j?.lines) && j.lines.length > 0) {
+            let totalDebit = 0;
+            let totalCredit = 0;
+            for (const l of j.lines) {
+              totalDebit += Math.round(Number(l.debit || 0) * 100);
+              totalCredit += Math.round(Number(l.credit || 0) * 100);
+            }
+            if (Math.abs(totalDebit - totalCredit) > 1) {
+              throw new Error(`Cloud restore aborted: Unbalanced journal entry in remote data (${j.voucherNumber || j.id})`);
+            }
           }
         }
       }
-      return applied;
+
+      const performApply = async (): Promise<number> => {
+        let applied = 0;
+        mutationStarted = true;
+
+        applied += await restoreTableItemsWithDiff(db.systemConfig, c.systemConfig || c.system, 'systemConfig');
+        applied += await restoreTableItemsWithDiff(db.accounts, c.accounts, 'accounts');
+        applied += await restoreTableItemsWithDiff(db.animals, c.animals);
+
+        if (options?.simulateFailureAfterMutation) {
+          throw new Error(options.simulateFailureErrorMessage || 'Simulated failure midway during cloud restore');
+        }
+
+        applied += await restoreTableItemsWithDiff(db.animalEvents, c.animalEvents);
+        applied += await restoreTableItemsWithDiff(db.journalEntries, c.journalEntries);
+        applied += await restoreTableItemsWithDiff(db.sales, c.sales);
+        applied += await restoreTableItemsWithDiff(db.purchases, c.purchases);
+        applied += await restoreTableItemsWithDiff(db.payments, c.payments);
+        applied += await restoreTableItemsWithDiff(db.salesReturns, c.salesReturns);
+        applied += await restoreTableItemsWithDiff(db.purchaseReturns, c.purchaseReturns);
+        applied += await restoreTableItemsWithDiff(db.advancePayments, c.advancePayments);
+        applied += await restoreTableItemsWithDiff(db.cropCycles, c.cropCycles);
+        applied += await restoreTableItemsWithDiff(db.fishBatches, c.fishBatches);
+        applied += await restoreTableItemsWithDiff(db.ponds, c.ponds);
+        applied += await restoreTableItemsWithDiff(db.plots, c.plots);
+        const invList = (Array.isArray(c.inventory) && c.inventory.length > 0) ? c.inventory : ((Array.isArray(c.inventoryItems) && c.inventoryItems.length > 0) ? c.inventoryItems : []);
+        applied += await restoreTableItemsWithDiff(db.inventoryItems, invList);
+        applied += await restoreTableItemsWithDiff(db.stockMovements, c.stockMovements);
+        applied += await restoreTableItemsWithDiff(db.parties, c.parties);
+        applied += await restoreTableItemsWithDiff(db.fixedAssets, c.fixedAssets);
+        applied += await restoreTableItemsWithDiff(db.loans, c.loans);
+        applied += await restoreTableItemsWithDiff(db.investors, c.investors);
+        applied += await restoreTableItemsWithDiff(db.cashBankAccounts, c.cashBankAccounts);
+        applied += await restoreTableItemsWithDiff(db.bankTransfers, c.bankTransfers);
+        applied += await restoreTableItemsWithDiff(db.reminders, c.reminders);
+        applied += await restoreTableItemsWithDiff(db.internalFlows, c.internalFlows);
+        applied += await restoreTableItemsWithDiff(db.processingRuns, c.processingRuns);
+        applied += await restoreTableItemsWithDiff(db.recurringExpenseTemplates, c.recurringExpenseTemplates);
+        applied += await restoreTableItemsWithDiff(db.accessLogs, c.accessLogs);
+        applied += await restoreTableItemsWithDiff(db.auditLogs, c.auditLogs);
+        applied += await restoreTableItemsWithDiff(db.closedPeriods, c.closedPeriods);
+
+        // Universal persistent Dexie table sweep
+        const standardKnown = new Set([
+          'systemConfig', 'accounts', 'animals', 'animalEvents', 'journalEntries', 'sales', 'purchases',
+          'payments', 'salesReturns', 'purchaseReturns', 'advancePayments', 'cropCycles', 'fishBatches',
+          'ponds', 'plots', 'inventoryItems', 'stockMovements', 'parties', 'fixedAssets', 'loans',
+          'investors', 'cashBankAccounts', 'bankTransfers', 'reminders', 'internalFlows', 'processingRuns',
+          'recurringExpenseTemplates', 'accessLogs', 'auditLogs', 'closedPeriods'
+        ]);
+        for (const tbl of db.tables) {
+          const tblName = tbl.name;
+          if (!standardKnown.has(tblName)) {
+            const items = c[tblName];
+            if (Array.isArray(items) && items.length > 0) {
+              applied += await restoreTableItemsWithDiff(tbl, items, tblName);
+            }
+          }
+        }
+        return applied;
+      };
+
+      try {
+        if (typeof db.transaction === 'function' && db.tables.length > 0) {
+          return await db.transaction('rw', db.tables, performApply);
+        } else {
+          return await performApply();
+        }
+      } catch (err: any) {
+        if (mutationStarted) {
+          await rollbackToPreRestoreSnapshot();
+        }
+        throw err;
+      }
     };
 
     // 0. Use mock collections if provided
@@ -1292,7 +1370,8 @@ export async function restoreRemoteDataIfLocalEmpty(
             { col: 'accessLogs', table: db.accessLogs }
           ];
 
-          for (const { col, table } of collectionsToFetchFromFirestore) {
+          const stagedDirectCollections: Record<string, any[]> = {};
+          for (const { col } of collectionsToFetchFromFirestore) {
             try {
               const snap = await getDocs(collection(firestore, col));
               if (!snap.empty) {
@@ -1305,11 +1384,14 @@ export async function restoreRemoteDataIfLocalEmpty(
                     synced: true
                   });
                 });
-                restoredCount += await restoreTableItemsWithDiff(table, list, col);
+                stagedDirectCollections[col] = list;
               }
             } catch (colErr: any) {
               console.warn(`[The Goated Farm] Direct Firestore restore fallback note for ${col}:`, colErr.message);
             }
+          }
+          if (Object.keys(stagedDirectCollections).length > 0) {
+            restoredCount += await applyCollectionsRestore(stagedDirectCollections);
           }
         } catch (fsErr) {
           console.warn('[The Goated Farm] Direct Firestore restore fallback note:', fsErr);
@@ -1323,10 +1405,13 @@ export async function restoreRemoteDataIfLocalEmpty(
       return { restored: true, count: restoredCount, offlineEmptyWarning: false };
     }
 
-    return { restored: false, count: totalLocalRecords, offlineEmptyWarning: false };
-  } catch (err) {
+    return { restored: false, count: totalLocalRecords, offlineEmptyWarning: false, rollbackPerformed };
+  } catch (err: any) {
+    if (mutationStarted && !rollbackPerformed) {
+      await rollbackToPreRestoreSnapshot();
+    }
     console.warn('[The Goated Farm] restoreRemoteDataIfLocalEmpty error:', err);
-    return { restored: false, count: 0, offlineEmptyWarning: false };
+    return { restored: false, count: 0, offlineEmptyWarning: false, rollbackPerformed };
   }
 }
 
