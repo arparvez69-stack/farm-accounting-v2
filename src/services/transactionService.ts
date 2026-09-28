@@ -1081,7 +1081,7 @@ export async function executeSaleTransaction(
 
         const saleId = targetSaleId || generateUniqueId('sal');
         const invoiceNumber = paramInvoiceNumber || generateTransactionNumber('SAL');
-        const displayNumber = await generateDisplayNumber('SAL', dateStr);
+        const displayNumber = await generateDisplayNumber('SAL', dateStr, dbInstance);
 
         // Canonical account mappings:
         // Credit sale -> 1040 AR
@@ -1240,7 +1240,7 @@ export async function executeSaleTransaction(
             createdBy: currentUserId,
             createdAt: new Date().toISOString()
           },
-          { accounts, skipDbPut: true }
+          { accounts, skipDbPut: true, dbInstance }
         );
 
         if (idempotencyKey) {

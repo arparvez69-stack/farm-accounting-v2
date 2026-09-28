@@ -183,6 +183,12 @@ export function validateProductionEnvironment(options?: ValidationOptions): EnvV
     warnings.push("Partial SMTP configuration detected: 'SMTP_HOST', 'SMTP_USER', and 'SMTP_PASS' should all be configured together for reliable password reset delivery.");
   }
 
+  // 6. Check Firebase Admin credentials for durable cloud persistence (warning only; keeps valid=true for existing tests)
+  const hasCloudKey = Boolean(env.FIREBASE_SERVICE_ACCOUNT_KEY?.trim() || env.GOOGLE_APPLICATION_CREDENTIALS?.trim());
+  if (!hasCloudKey && isProduction) {
+    warnings.push("Firebase Admin credentials (FIREBASE_SERVICE_ACCOUNT_KEY or GOOGLE_APPLICATION_CREDENTIALS) are not configured. Durable cloud persistence endpoints will fail safely with 503 instead of pretending cloud persistence succeeded.");
+  }
+
   return {
     valid: errors.length === 0,
     errors,

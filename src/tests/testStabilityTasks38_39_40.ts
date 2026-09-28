@@ -12,6 +12,7 @@ import {
   executeContraTransferTransaction
 } from '../services/transactionService';
 import { Party, InventoryItem } from '../types';
+import { DEFAULT_CHART_OF_ACCOUNTS } from '../accounting/defaultAccounts';
 
 export interface AssertionResult {
   total: number;
@@ -53,23 +54,15 @@ export async function runStabilityTasks38_39_40Tests(): Promise<AssertionResult>
   // Seed baseline accounts for tests
   await db.accounts.clear();
   await db.accounts.bulkPut([
-    { id: 'acc_1010', code: '1010', name: 'Cash', accountClass: 'ASSET', normalBalance: 'DEBIT', isSystem: true, synced: true },
-    { id: 'acc_1020', code: '1020', name: 'Bank Account 1', accountClass: 'ASSET', normalBalance: 'DEBIT', isSystem: true, synced: true },
-    { id: 'acc_1021', code: '1021', name: 'Bank Account 2', accountClass: 'ASSET', normalBalance: 'DEBIT', isSystem: true, synced: true },
-    { id: 'acc_1030', code: '1030', name: 'Accounts Receivable', accountClass: 'ASSET', normalBalance: 'DEBIT', isSystem: true, synced: true },
-    { id: 'acc_1040', code: '1040', name: 'Inventory', accountClass: 'ASSET', normalBalance: 'DEBIT', isSystem: true, synced: true },
-    { id: 'acc_2010', code: '2010', name: 'Accounts Payable', accountClass: 'LIABILITY', normalBalance: 'CREDIT', isSystem: true, synced: true },
-    { id: 'acc_3010', code: '3010', name: 'Owner Capital', accountClass: 'EQUITY', normalBalance: 'CREDIT', isSystem: true, synced: true },
-    { id: 'acc_4010', code: '4010', name: 'Livestock Sales Revenue', accountClass: 'REVENUE', normalBalance: 'CREDIT', isSystem: true, synced: true },
-    { id: 'acc_5010', code: '5010', name: 'Cost of Goods Sold', accountClass: 'EXPENSE', normalBalance: 'DEBIT', isSystem: true, synced: true },
-    { id: 'acc_5040', code: '5040', name: 'Feed Expense', accountClass: 'EXPENSE', normalBalance: 'DEBIT', isSystem: true, synced: true }
+    ...DEFAULT_CHART_OF_ACCOUNTS.map((a) => ({ ...a, synced: true })),
+    { id: 'acc_1021', code: '1021', nameEn: 'Bank Account 2', nameBn: 'ব্যাংক হিসাব ২', accountClass: 'ASSET', normalBalance: 'DEBIT', isSystem: true, synced: true }
   ]);
 
   await db.cashBankAccounts.clear();
   await db.cashBankAccounts.bulkPut([
-    { id: 'cash_01', accountName: 'Petty Cash', accountNumber: 'CASH-01', accountType: 'CASH', balance: 50000, currentBalance: 50000, glAccountId: 'acc_1010', isDefault: true, synced: true },
-    { id: 'bank_01', accountName: 'City Bank', accountNumber: '12345678', accountType: 'BANK', branch: 'Main', balance: 100000, currentBalance: 100000, glAccountId: 'acc_1020', isDefault: false, synced: true },
-    { id: 'bank_02', accountName: 'Dutch Bangla Bank', accountNumber: '87654321', accountType: 'BANK', branch: 'Gulshan', balance: 50000, currentBalance: 50000, glAccountId: 'acc_1021', isDefault: false, synced: true }
+    { id: 'cash_01', name: 'Petty Cash', accountName: 'Petty Cash', accountNumber: 'CASH-01', accountType: 'CASH', balance: 50000, currentBalance: 50000, code: '1010', synced: true },
+    { id: 'bank_01', name: 'City Bank', accountName: 'City Bank', accountNumber: '12345678', accountType: 'BANK', branch: 'Main', balance: 100000, currentBalance: 100000, code: '1020', synced: true },
+    { id: 'bank_02', name: 'Dutch Bangla Bank', accountName: 'Dutch Bangla Bank', accountNumber: '87654321', accountType: 'BANK', branch: 'Gulshan', balance: 50000, currentBalance: 50000, code: '1021', synced: true }
   ]);
 
   // =========================================================================
@@ -138,6 +131,7 @@ export async function runStabilityTasks38_39_40Tests(): Promise<AssertionResult>
       voucherNumber: `JV-${Date.now().toString().slice(-4)}`,
       voucherType: 'JOURNAL',
       date: new Date().toISOString().split('T')[0],
+      createdAt: new Date().toISOString(),
       narration: 'Test financial transaction to verify immutability',
       lines: [
         { accountId: 'acc_1010', accountCode: '1010', accountName: 'Cash', debit: 2500, credit: 0 },
@@ -213,6 +207,7 @@ export async function runStabilityTasks38_39_40Tests(): Promise<AssertionResult>
       voucherNumber: `JV-IDEM-01`,
       voucherType: 'JOURNAL',
       date: todayStr,
+      createdAt: new Date().toISOString(),
       narration: 'Idempotency test entry',
       lines: [
         { accountId: 'acc_1010', accountCode: '1010', accountName: 'Cash', debit: 1200, credit: 0 },
@@ -229,6 +224,7 @@ export async function runStabilityTasks38_39_40Tests(): Promise<AssertionResult>
       voucherNumber: `JV-IDEM-01`,
       voucherType: 'JOURNAL',
       date: todayStr,
+      createdAt: new Date().toISOString(),
       narration: 'Idempotency test entry',
       lines: [
         { accountId: 'acc_1010', accountCode: '1010', accountName: 'Cash', debit: 1200, credit: 0 },
@@ -253,6 +249,7 @@ export async function runStabilityTasks38_39_40Tests(): Promise<AssertionResult>
     voucherNumber: 'JV-IDEM-01',
     voucherType: 'JOURNAL' as const,
     date: todayStr,
+    createdAt: new Date().toISOString(),
     narration: 'Duplicate insert attempt',
     totalDebit: 1200,
     totalCredit: 1200,
@@ -274,19 +271,22 @@ export async function runStabilityTasks38_39_40Tests(): Promise<AssertionResult>
     name: 'Idempotent Test Customer',
     type: 'CUSTOMER',
     phone: '01700000000',
-    currentBalance: 0,
+    balance: 0,
     synced: true
   };
   await db.parties.put(sampleCustomer);
 
   const sampleItem: InventoryItem = {
     id: `inv_item_${Date.now()}`,
-    name: 'Test Milk',
+    code: 'INV-MILK-01',
+    nameBn: 'টেস্ট দুধ',
+    nameEn: 'Test Milk',
     category: 'FINISHED_GOODS',
     unit: 'LITER',
-    quantity: 100,
-    averageCost: 50,
-    totalValue: 5000,
+    currentStock: 100,
+    reorderLevel: 10,
+    avgCostPrice: 50,
+    sellingPrice: 80,
     synced: true
   };
   await db.inventoryItems.put(sampleItem);
@@ -339,8 +339,8 @@ export async function runStabilityTasks38_39_40Tests(): Promise<AssertionResult>
   const transferIdempotencyKey = `contra_idempotency_${Date.now()}`;
   const firstTransfer = await executeContraTransferTransaction({
     idempotencyKey: transferIdempotencyKey,
-    fromAccountId: 'acc_1020',
-    toAccountId: 'acc_1021',
+    fromAccountId: 'bank_01',
+    toAccountId: 'bank_02',
     amount: 5000,
     narration: 'Interbank transfer for idempotency test',
     currentUserId: 'system_owner',
@@ -354,8 +354,8 @@ export async function runStabilityTasks38_39_40Tests(): Promise<AssertionResult>
   try {
     await executeContraTransferTransaction({
       idempotencyKey: transferIdempotencyKey,
-      fromAccountId: 'acc_1020',
-      toAccountId: 'acc_1021',
+      fromAccountId: 'bank_01',
+      toAccountId: 'bank_02',
       amount: 5000,
       narration: 'Interbank transfer for idempotency test',
       currentUserId: 'system_owner',

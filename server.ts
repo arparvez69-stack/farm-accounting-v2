@@ -291,30 +291,44 @@ const LOCKOUT_MS = 15 * 60 * 1000; // 15 minutes
 // Initialize Firebase Admin SDK
 let adminInitialized = false;
 const hasServiceAccountKey = Boolean(
-  process.env.FIREBASE_SERVICE_ACCOUNT_KEY || process.env.GOOGLE_APPLICATION_CREDENTIALS
+  (process.env.FIREBASE_SERVICE_ACCOUNT_KEY && process.env.FIREBASE_SERVICE_ACCOUNT_KEY.trim().length > 0) ||
+  (process.env.GOOGLE_APPLICATION_CREDENTIALS && process.env.GOOGLE_APPLICATION_CREDENTIALS.trim().length > 0)
 );
 
 try {
   if (getApps().length === 0) {
-    if (process.env.FIREBASE_SERVICE_ACCOUNT_KEY) {
+    if (process.env.FIREBASE_SERVICE_ACCOUNT_KEY && process.env.FIREBASE_SERVICE_ACCOUNT_KEY.trim().length > 0) {
       try {
-        const parsedKey = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_KEY);
+        const rawKey = process.env.FIREBASE_SERVICE_ACCOUNT_KEY.trim();
+        const parsedKey = JSON.parse(rawKey);
         initializeApp({
           credential: cert(parsedKey),
           projectId: firebaseConfig.projectId
         });
         adminInitialized = true;
-      } catch {
-        initializeApp({
-          credential: cert(process.env.FIREBASE_SERVICE_ACCOUNT_KEY),
-          projectId: firebaseConfig.projectId
-        });
-        adminInitialized = true;
+      } catch (parseErr: any) {
+        try {
+          initializeApp({
+            credential: cert(process.env.FIREBASE_SERVICE_ACCOUNT_KEY.trim()),
+            projectId: firebaseConfig.projectId
+          });
+          adminInitialized = true;
+        } catch (certErr: any) {
+          // CRITICAL: NEVER print the service-account secret in logs
+          console.error('[The Goated Farm] Failed to initialize Firebase Admin with FIREBASE_SERVICE_ACCOUNT_KEY: Invalid service account format.');
+        }
       }
-    } else if (process.env.GOOGLE_APPLICATION_CREDENTIALS) {
-      initializeApp();
-      adminInitialized = true;
+    } else if (process.env.GOOGLE_APPLICATION_CREDENTIALS && process.env.GOOGLE_APPLICATION_CREDENTIALS.trim().length > 0) {
+      try {
+        initializeApp();
+        adminInitialized = true;
+      } catch (gacErr: any) {
+        console.error('[The Goated Farm] Failed to initialize Firebase Admin with GOOGLE_APPLICATION_CREDENTIALS.');
+      }
     } else {
+      if (process.env.NODE_ENV === 'production') {
+        console.warn('[The Goated Farm] Production notice: Required Firebase Admin credentials (FIREBASE_SERVICE_ACCOUNT_KEY or GOOGLE_APPLICATION_CREDENTIALS) are not configured. Durable cloud persistence cannot be initialized.');
+      }
       initializeApp({
         projectId: firebaseConfig.projectId
       });
@@ -324,7 +338,8 @@ try {
     adminInitialized = true;
   }
 } catch (err: any) {
-  console.warn('[The Goated Farm] Firebase Admin initialization note:', err.message);
+  // CRITICAL: NEVER print service-account secret
+  console.warn('[The Goated Farm] Firebase Admin initialization note: Failed to initialize Firebase Admin SDK.');
 }
 
 // Initialize Firestore Admin
@@ -334,9 +349,29 @@ try {
     adminDb = firebaseConfig.firestoreDatabaseId
       ? getFirestore(firebaseConfig.firestoreDatabaseId)
       : getFirestore();
+  } else if (process.env.NODE_ENV === 'production') {
+    adminDb = null;
+    console.warn('[The Goated Farm] Production notice: Firestore Admin DB is disabled due to missing service account credentials. Cloud sync endpoints will fail safely with 503 instead of pretending cloud persistence succeeded.');
   }
 } catch (err: any) {
-  console.warn('[The Goated Farm] Admin Firestore init note:', err.message);
+  adminDb = null;
+  console.warn('[The Goated Farm] Admin Firestore init note: Failed to initialize Firestore Admin.');
+}
+
+export function getFirebaseAdminStatus(): {
+  adminInitialized: boolean;
+  hasServiceAccountKey: boolean;
+  hasAdminDb: boolean;
+  isProduction: boolean;
+  persistenceAvailable: boolean;
+} {
+  return {
+    adminInitialized,
+    hasServiceAccountKey,
+    hasAdminDb: Boolean(adminDb),
+    isProduction: process.env.NODE_ENV === 'production',
+    persistenceAvailable: isFirestorePersistenceAvailable()
+  };
 }
 
 // ==========================================
@@ -951,7 +986,11 @@ export function getEffectiveAdminDb(req?: express.Request): FirebaseFirestore.Fi
     return createFailingAdminDb(simulateFirestoreWriteErrorMessage) as any;
   }
 
-  if (!hasServiceAccountKey) {
+  if (!hasServiceAccountKey || !adminDb) {
+    // In production, NEVER silently fall back to an in-memory mock that pretends cloud persistence exists!
+    if (process.env.NODE_ENV === 'production') {
+      return null;
+    }
     return getSharedMockAdminDb();
   }
 
@@ -4126,6 +4165,9 @@ async function startServer() {
       sessionSecretOverride: getSessionSecretForTest(),
       approvedOwnerEmailsOverride: testApprovedOwnerEmailsOverride,
     });
+    if (!hasServiceAccountKey || !adminDb) {
+      console.warn('[The Goated Farm] PRODUCTION CONFIGURATION NOTICE: Firebase Admin service account is not configured. Cloud sync endpoints will safely reject sync writes with HTTP 503 instead of pretending cloud persistence succeeded.');
+    }
   }
 
   if (process.env.NODE_ENV !== 'production') {
