@@ -3495,6 +3495,15 @@ async function handleSyncWrite(
         });
       }
 
+      // Security/Audit log records immutability:
+      // Audit logs and access logs record factual historical events and must be append-only.
+      // Once created, they can never be modified or altered.
+      if (targetCol === 'auditLogs' || targetCol === 'accessLogs') {
+        return res.status(400).json({
+          error: 'নিরাপত্তা সীমাবদ্ধতা: অডিট বা অ্যাক্সেস লগ সংশোধন করা যাবে না (Audit and access log records are immutable and cannot be modified).'
+        });
+      }
+
       // 6. Universal Version and Timestamp Conflict Protection (F6)
       // A. Explicit Version Comparison
       if (existingDoc.version !== undefined && data.version !== undefined) {
@@ -4193,7 +4202,36 @@ async function startServer() {
     app.use(vite.middlewares);
   } else {
     const distPath = path.join(process.cwd(), 'dist');
-    app.use(express.static(distPath));
+
+    // Task 47: Protect production debug and source code exposure.
+    // Disallow public access to source maps (.map), server bundles, and source files.
+    // If legitimate debugging is required, access is kept strictly controlled under authorized owner authentication.
+    app.use(async (req, res, next) => {
+      const normalizedPath = req.path.toLowerCase();
+      const isSensitiveDebugOrSource =
+        normalizedPath.endsWith('.map') ||
+        normalizedPath.endsWith('.ts') ||
+        normalizedPath.endsWith('.tsx') ||
+        normalizedPath.includes('server.cjs') ||
+        normalizedPath.includes('owner_allow_list');
+
+      if (isSensitiveDebugOrSource) {
+        try {
+          const owner = await authenticateOwnerRequest(req);
+          if (!owner) {
+            return res.status(404).send('Not Found');
+          }
+        } catch {
+          return res.status(404).send('Not Found');
+        }
+      }
+      next();
+    });
+
+    app.use(express.static(distPath, {
+      dotfiles: 'ignore',
+      index: 'index.html',
+    }));
     app.get('*', (req, res) => {
       res.sendFile(path.join(distPath, 'index.html'));
     });
