@@ -1,5 +1,5 @@
 import Dexie from 'dexie';
-import { db } from '../db/indexedDb';
+import { db, isStorageFailure, formatStorageErrorMessage } from '../db/indexedDb';
 import { Account, AccountClass, ClosedPeriod, JournalEntry, JournalLine, NormalBalance, VoucherType, Sale, Purchase, AnimalEvent, PaymentRecord, Loan, Investor, FixedAsset, FishBatch, CropCycle, StockMovement } from '../types';
 import { generateTransactionNumber, generateUniqueId, safeInsert } from '../utils/idGenerator';
 import { DEFAULT_CHART_OF_ACCOUNTS } from './defaultAccounts';
@@ -316,6 +316,19 @@ export async function postJournalEntry(
     throw new Error('লেনদেনের পরিমাণ শূন্য বা ঋণাত্মক হতে পারে না (Zero or negative amount not allowed).');
   }
 
+  // STABILITY TASK 40: Post-save error recovery without duplicate posting
+  // If an entry with this explicit ID was already durably posted, return it idempotently.
+  if (entry.id && !options?.skipDbPut && targetDb.journalEntries?.get) {
+    try {
+      const existing = await targetDb.journalEntries.get(entry.id);
+      if (existing) {
+        return existing;
+      }
+    } catch {
+      // Proceed to safe insert
+    }
+  }
+
   const fullEntry: JournalEntry = {
     ...entry,
     id: entry.id || generateUniqueId('j'),
@@ -325,10 +338,28 @@ export async function postJournalEntry(
   };
 
   if (!options?.skipDbPut) {
-    await safeInsert(targetDb.journalEntries, fullEntry, { idPrefix: 'j' });
+    try {
+      await safeInsert(targetDb.journalEntries, fullEntry, { idPrefix: 'j', idempotent: true });
+    } catch (err: any) {
+      if (isStorageFailure(err)) {
+        throw new Error(formatStorageErrorMessage(err));
+      }
+      throw err;
+    }
   }
 
   return fullEntry;
+}
+
+/**
+ * STABILITY TASK 39: Protect Posted Financial Records
+ * Enforces the accounting boundary that posted journal entries can NEVER be deleted.
+ * Modifications must strictly follow the immutable contra-entry reversal path.
+ */
+export function forbidJournalEntryDeletion(recordId: string): never {
+  throw new Error(
+    `হিসাবরক্ষণ নীতি লঙ্ঘন: পোস্ট করা কোনো জাবেদা ভাউচার (ID: ${recordId}) স্থায়ীভাবে মোছা নিষিদ্ধ। সংশোধনের জন্য রিভার্সাল দাখিলা ব্যবহার করুন। (Deletion of posted journal entries is strictly forbidden by accounting policy. Use reverseJournalEntry instead).`
+  );
 }
 
 /**

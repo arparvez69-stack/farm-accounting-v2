@@ -208,6 +208,8 @@ export const AccountingModule: React.FC<Props> = ({
   const [reference, setReference] = useState('');
   const [correctionOf, setCorrectionOf] = useState<string | null>(null);
   const [correctingOriginal, setCorrectingOriginal] = useState<JournalEntry | null>(null);
+  // STABILITY TASK 36: Double-submit prevention
+  const [isSubmittingVoucher, setIsSubmittingVoucher] = useState(false);
   const [lines, setLines] = useState<JournalLine[]>([
     { accountId: '', accountCode: '', accountName: '', debit: 0, credit: 0, memo: '' },
     { accountId: '', accountCode: '', accountName: '', debit: 0, credit: 0, memo: '' }
@@ -626,6 +628,8 @@ export const AccountingModule: React.FC<Props> = ({
   }
 
   const executeSaveVoucher = async () => {
+    if (isSubmittingVoucher) return;
+    setIsSubmittingVoucher(true);
     try {
       const linesToSave = getEffectiveLines();
       validateBalancedLines(linesToSave, accounts);
@@ -680,11 +684,14 @@ export const AccountingModule: React.FC<Props> = ({
       setSubTab('daybook');
     } catch (err: any) {
       setMsg({ type: 'error', text: err.message || 'ভাউচার সংরক্ষণ করতে ব্যর্থ হয়েছে।' });
+    } finally {
+      setIsSubmittingVoucher(false);
     }
   };
 
   const handleSubmitVoucher = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSubmittingVoucher) return;
     setMsg(null);
 
     if (role !== 'OWNER') {
@@ -1397,12 +1404,19 @@ export const AccountingModule: React.FC<Props> = ({
 
             <button
               type="submit"
-              disabled={role !== 'OWNER' || !balanceCheck.isBalanced || balanceCheck.totalDebit <= 0}
-              className="w-full py-3.5 px-4 rounded-xl bg-blue-700 hover:bg-blue-800 disabled:bg-gray-200 disabled:text-gray-400 text-white font-bold text-[15px] transition-all cursor-pointer shadow-xs min-h-[48px] active:scale-98"
+              disabled={isSubmittingVoucher || role !== 'OWNER' || !balanceCheck.isBalanced || balanceCheck.totalDebit <= 0}
+              className="w-full py-3.5 px-4 rounded-xl bg-blue-700 hover:bg-blue-800 disabled:bg-gray-200 disabled:text-gray-400 text-white font-bold text-[15px] transition-all cursor-pointer shadow-xs min-h-[48px] active:scale-98 flex items-center justify-center gap-2"
             >
-              {correctionOf
-                ? 'সংশোধিত ভাউচার নিশ্চিত ও পোস্ট করুন (Post Corrected Voucher)'
-                : 'ভাউচার নিশ্চিত ও পোস্ট করুন (Post Balanced Voucher)'}
+              {isSubmittingVoucher ? (
+                <>
+                  <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                  <span>ভাউচার পোস্ট করা হচ্ছে...</span>
+                </>
+              ) : correctionOf ? (
+                'সংশোধিত ভাউচার নিশ্চিত ও পোস্ট করুন (Post Corrected Voucher)'
+              ) : (
+                'ভাউচার নিশ্চিত ও পোস্ট করুন (Post Balanced Voucher)'
+              )}
             </button>
           </form>
         </div>

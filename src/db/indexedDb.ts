@@ -151,10 +151,64 @@ export class AgroDatabase extends Dexie {
     this.version(12).stores({
       accounts: 'id, code, accountClass, isSystem, synced'
     });
+
+    // STABILITY TASK 34: Safe version upgrades and conflict handling
+    this.on('versionchange', () => {
+      // If another tab or worker initiates a schema migration, safely close this connection
+      // so the migration does not get blocked or abort with AbortError.
+      console.warn('[Dexie] Database version change detected from another connection. Closing active connection to allow safe upgrade.');
+      this.close();
+    });
+
+    this.on('blocked', () => {
+      console.warn('[Dexie] Database schema upgrade is blocked by another open tab or connection.');
+    });
   }
 }
 
 export const db = new AgroDatabase();
+
+/**
+ * STABILITY TASK 35: Detects whether an error is caused by browser storage unavailability,
+ * quota exhaustion, database closure, or disk failure.
+ */
+export function isStorageFailure(err: any): boolean {
+  if (!err) return false;
+  const name = err.name || err.constructor?.name || '';
+  const msg = (err.message || '').toLowerCase();
+  return (
+    name === 'QuotaExceededError' ||
+    name === 'NS_ERROR_DOM_QUOTA_REACHED' ||
+    name === 'DatabaseClosedError' ||
+    name === 'OpenFailedError' ||
+    name === 'MissingAPIError' ||
+    name === 'AbortError' ||
+    msg.includes('quota') ||
+    msg.includes('storage') ||
+    msg.includes('indexeddb') ||
+    msg.includes('disk full') ||
+    msg.includes('out of memory') ||
+    msg.includes('database is closed')
+  );
+}
+
+/**
+ * STABILITY TASK 35: Formats a human-readable recovery message for browser storage failure.
+ * Ensures the transaction failure is never claimed as a success and guides the user.
+ */
+export function formatStorageErrorMessage(err: any): string {
+  if (!err) return 'অজানা ডাটাবেজ সংরক্ষণ ত্রুটি (Unknown database error).';
+  const name = err.name || err.constructor?.name || '';
+  const msg = (err.message || '').toLowerCase();
+
+  if (name === 'QuotaExceededError' || name === 'NS_ERROR_DOM_QUOTA_REACHED' || msg.includes('quota')) {
+    return 'ব্রাউজার স্টোরেজ কোটা পূর্ণ হয়ে গেছে (Browser storage quota exceeded)। অনুগ্রহ করে অপ্রয়োজনীয় ফাইল বা ব্রাউজার ক্যাশ পরিষ্কার করুন অথবা ক্লাউডে ডাটা ব্যাকআপ নিন।';
+  }
+  if (name === 'DatabaseClosedError' || name === 'OpenFailedError' || msg.includes('database is closed')) {
+    return 'ব্রাউজার ডাটাবেজ অনুপলব্ধ বা বন্ধ হয়ে গেছে (Local storage connection unavailable)। অনুগ্রহ করে পেজটি রিফ্রেশ করুন এবং ব্রাউজার স্টোরেজ অনুমতি পরীক্ষা করুন।';
+  }
+  return `স্থানীয় স্টোরেজে ডাটা সংরক্ষণ ব্যর্থ হয়েছে (${err.message || name})। লেনদেনটি সম্পন্ন হয়নি।`;
+}
 
 /**
  * Request browser Notification permission on login and fire a one-time Notification()

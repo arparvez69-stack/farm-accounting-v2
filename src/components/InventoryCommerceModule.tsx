@@ -41,6 +41,7 @@ import {
   getPartyAvailableAdvance
 } from '../services/transactionService';
 import { generateTransactionNumber, generateUniqueId, safeInsert } from '../utils/idGenerator';
+import { registerUnsavedChecker } from '../services/navigationService';
 import {
   InventoryItem,
   Party,

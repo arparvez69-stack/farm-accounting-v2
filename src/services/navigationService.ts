@@ -245,4 +245,13 @@ if (typeof window !== 'undefined') {
 
     notifySubscribers();
   });
+
+  // STABILITY TASK 37: Browser reload/navigation protection against accidental data loss
+  window.addEventListener('beforeunload', (e) => {
+    if (hasUnsavedChanges()) {
+      e.preventDefault();
+      e.returnValue = '';
+      return '';
+    }
+  });
 }

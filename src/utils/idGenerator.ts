@@ -132,6 +132,7 @@ export async function safeInsert<T extends { id: string }>(
     idPrefix?: string;
     maxRetries?: number;
     onRegenerateId?: (newId: string, current: T) => T;
+    idempotent?: boolean;
   }
 ): Promise<T> {
   const maxRetries = options?.maxRetries ?? 5;
@@ -150,6 +151,17 @@ export async function safeInsert<T extends { id: string }>(
         err?.name === 'ConstraintError' ||
         err?.message?.includes('Key already exists') ||
         err?.message?.includes('constraint');
+
+      if (isConstraintError && options?.idempotent && typeof table.get === 'function') {
+        try {
+          const existing = await table.get(currentRecord.id);
+          if (existing) {
+            return existing;
+          }
+        } catch {
+          // ignore read error and proceed
+        }
+      }
 
       if (isConstraintError && attempt < maxRetries) {
         const newId = generateUniqueId(options?.idPrefix);
