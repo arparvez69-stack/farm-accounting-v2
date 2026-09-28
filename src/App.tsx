@@ -24,7 +24,12 @@ import { ReportsModule } from './components/ReportsModule';
 import { MoreModule } from './components/MoreModule';
 import { AnimalEvent, SyncState, SystemConfig, UserProfile } from './types';
 import { getLatestRegressionTestResult, TestResult } from './utils/regressionTests';
-import { triggerForegroundDueTodayNotification, checkHasAnyFarmData } from './db/indexedDb';
+import {
+  triggerForegroundDueTodayNotification,
+  checkHasAnyFarmData,
+  isStorageFailure,
+  formatStorageErrorMessage
+} from './db/indexedDb';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { subscribeToUndo, executeUndo, UndoableAction } from './services/undoService';
 import { PatternBackground } from './components/ui/PatternBackground';
@@ -66,6 +71,8 @@ export default function App() {
     eventType?: AnimalEvent['eventType'];
   } | null>(null);
   const [offlineEmptyWarning, setOfflineEmptyWarning] = useState<boolean>(false);
+  // STABILITY TASK 35: Clear recovery message when browser storage fails
+  const [storageError, setStorageError] = useState<string | null>(null);
 
   // Subscribe to contextual navigation changes
   useEffect(() => {
@@ -297,8 +304,13 @@ export default function App() {
         (st) => setSyncState(st),
         (cnt) => setPendingCount(cnt)
       );
-    } catch (err) {
+    } catch (err: any) {
       console.error('Initialization error:', err);
+      if (isStorageFailure(err)) {
+        setStorageError(formatStorageErrorMessage(err));
+      } else {
+        setStorageError(`ডাটাবেজ লোড করতে সমস্যা হয়েছে: ${err.message || 'অজানা ত্রুটি'}। অনুগ্রহ করে রিফ্রেশ করুন।`);
+      }
     } finally {
       setLoading(false);
     }
@@ -324,6 +336,31 @@ export default function App() {
       setSyncState('SYNC_FAILED');
     }
   };
+
+  if (storageError) {
+    return (
+      <div className="min-h-screen bg-[#F8F9FA] dark:bg-slate-950 flex flex-col items-center justify-center p-6 text-slate-800">
+        <div className="max-w-md w-full bg-white dark:bg-slate-900 border border-amber-300 dark:border-amber-700/60 rounded-2xl p-6 shadow-xl text-center space-y-4">
+          <div className="w-14 h-14 bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-400 rounded-full flex items-center justify-center mx-auto">
+            <AlertTriangle className="w-8 h-8" />
+          </div>
+          <h2 className="text-lg font-bold text-gray-900 dark:text-white">ব্রাউজার স্টোরেজ সমস্যা (Storage Failure)</h2>
+          <p className="text-sm text-gray-700 dark:text-slate-300 leading-relaxed font-medium">
+            {storageError}
+          </p>
+          <div className="pt-2">
+            <button
+              type="button"
+              onClick={() => window.location.reload()}
+              className="w-full py-3 px-4 rounded-xl bg-[#1E5128] hover:bg-[#163e1e] text-white font-bold text-sm cursor-pointer shadow-sm transition-all"
+            >
+              পুনরায় পৃষ্ঠা লোড করুন (Reload & Retry)
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   if (loading) {
     return (

@@ -24,7 +24,8 @@ import {
   CheckSquare,
   Square
 } from 'lucide-react';
-import { db } from '../db/indexedDb';
+import { db, isStorageFailure, formatStorageErrorMessage } from '../db/indexedDb';
+import { registerUnsavedChecker } from '../services/navigationService';
 import {
   executeContraTransferTransaction,
   executeInvestorTransaction,
@@ -122,6 +123,10 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
   const [repaymentDate, setRepaymentDate] = useState(new Date().toISOString().split('T')[0]);
   const [repaymentNote, setRepaymentNote] = useState('');
   const [submittingRepayment, setSubmittingRepayment] = useState(false);
+  // STABILITY TASK 36: Double-submit prevention for transfers, loans, and investors
+  const [submittingTransfer, setSubmittingTransfer] = useState(false);
+  const [submittingLoan, setSubmittingLoan] = useState(false);
+  const [submittingInvestor, setSubmittingInvestor] = useState(false);
 
   // New Investor Modal
   const [showNewInvestor, setShowNewInvestor] = useState(false);
@@ -151,6 +156,77 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
   const [capitalReturnDate, setCapitalReturnDate] = useState(new Date().toISOString().split('T')[0]);
   const [capitalReturnNotes, setCapitalReturnNotes] = useState('');
   const [submittingCapitalReturn, setSubmittingCapitalReturn] = useState(false);
+
+  // STABILITY TASK 37: Accidental data loss protection for banking & investor forms
+  useEffect(() => {
+    return registerUnsavedChecker(() => {
+      // 1. Transfer Form
+      if (showTransfer && (transferAmount.trim() || transferNarration.trim())) {
+        return true;
+      }
+      // 2. Loan Form
+      if (showNewLoan && (loanLenderName.trim() || loanPrincipal.trim())) {
+        return true;
+      }
+      // 3. Investor Form
+      if (showNewInvestor && (investorName.trim() || investorAmount.trim())) {
+        return true;
+      }
+      // 4. Repayment Modal
+      if (showRepaymentModal && (repaymentPrincipal.trim() || repaymentInterest.trim())) {
+        return true;
+      }
+      // 5. Profit Allocation Modal
+      if (allocatingInvestor && finalizedFarmProfit.trim()) {
+        return true;
+      }
+      // 6. Profit Payment Modal
+      if (payingInvestor && paymentAmount.trim()) {
+        return true;
+      }
+      // 7. Capital Return Modal
+      if (returningCapitalInvestor && capitalReturnAmount.trim()) {
+        return true;
+      }
+      // 8. Owner Capital / Drawing Modals
+      if (showAddCapitalModal && capitalAmount.trim()) {
+        return true;
+      }
+      if (showDrawingModal && drawingAmount.trim()) {
+        return true;
+      }
+      // 9. New Bank Account Form
+      if (showAddAccount && accName.trim()) {
+        return true;
+      }
+      return false;
+    });
+  }, [
+    showTransfer,
+    transferAmount,
+    transferNarration,
+    showNewLoan,
+    loanLenderName,
+    loanPrincipal,
+    showNewInvestor,
+    investorName,
+    investorAmount,
+    showRepaymentModal,
+    repaymentPrincipal,
+    repaymentInterest,
+    allocatingInvestor,
+    finalizedFarmProfit,
+    payingInvestor,
+    paymentAmount,
+    returningCapitalInvestor,
+    capitalReturnAmount,
+    showAddCapitalModal,
+    capitalAmount,
+    showDrawingModal,
+    drawingAmount,
+    showAddAccount,
+    accName
+  ]);
 
   // Manual Bank & Cash Reconciliation State (Read / Tracking Only)
   const [selectedReconcileAccount, setSelectedReconcileAccount] = useState<CashBankAccount | null>(null);
@@ -295,6 +371,7 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
   // EXECUTE CONTRA TRANSFER
   const handleExecuteTransfer = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (submittingTransfer) return;
     if (!fromAccId || !toAccId) {
       setMsg({ type: 'error', text: 'উৎস ও গন্তব্য হিসাব নির্বাচন করুন।' });
       return;
@@ -305,6 +382,7 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
       return;
     }
 
+    setSubmittingTransfer(true);
     try {
       const res = await executeContraTransferTransaction({
         fromAccountId: fromAccId,
@@ -323,13 +401,16 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
       });
       loadFinanceData();
     } catch (err: any) {
-      setMsg({ type: 'error', text: err.message || 'স্থানান্তর ব্যর্থ হয়েছে।' });
+      setMsg({ type: 'error', text: isStorageFailure(err) ? formatStorageErrorMessage(err) : (err.message || 'স্থানান্তর ব্যর্থ হয়েছে।') });
+    } finally {
+      setSubmittingTransfer(false);
     }
   };
 
   // EXECUTE LOAN RECEIPT
   const handleCreateLoan = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (submittingLoan) return;
     const principal = parseFloat(loanPrincipal) || 0;
     const rate = parseFloat(annualInterestRatePercent) || 0;
     const months = parseInt(termMonths) || 12;
@@ -344,6 +425,7 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
       return;
     }
 
+    setSubmittingLoan(true);
     try {
       const res = await executeLoanTransaction({
         lenderName: loanLenderName.trim(),
@@ -371,7 +453,9 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
       });
       loadFinanceData();
     } catch (err: any) {
-      setMsg({ type: 'error', text: err.message || 'ঋণ গ্রহণ প্রক্রিয়া ব্যর্থ হয়েছে।' });
+      setMsg({ type: 'error', text: isStorageFailure(err) ? formatStorageErrorMessage(err) : (err.message || 'ঋণ গ্রহণ প্রক্রিয়া ব্যর্থ হয়েছে।') });
+    } finally {
+      setSubmittingLoan(false);
     }
   };
 
@@ -435,6 +519,7 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
   // EXECUTE INVESTOR CONTRIBUTION
   const handleCreateInvestor = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (submittingInvestor) return;
     const amt = parseFloat(investorAmount) || 0;
     const share = parseFloat(investorSharePct) || 0;
 
@@ -469,6 +554,7 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
       return;
     }
 
+    setSubmittingInvestor(true);
     try {
       const res = await executeInvestorTransaction({
         investorName: investorName.trim(),
@@ -492,7 +578,9 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
       });
       loadFinanceData();
     } catch (err: any) {
-      setMsg({ type: 'error', text: err.message || 'বিনিয়োগ সংরক্ষণ ব্যর্থ হয়েছে।' });
+      setMsg({ type: 'error', text: isStorageFailure(err) ? formatStorageErrorMessage(err) : (err.message || 'বিনিয়োগ সংরক্ষণ ব্যর্থ হয়েছে।') });
+    } finally {
+      setSubmittingInvestor(false);
     }
   };
 
@@ -1510,9 +1598,17 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
                 </button>
                 <button
                   type="submit"
-                  className="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-[#1E5128] text-white text-[13px] font-bold cursor-pointer min-h-[44px] shadow-sm hover:bg-[#173F1F] transition-colors"
+                  disabled={submittingTransfer}
+                  className="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-[#1E5128] hover:bg-[#173F1F] disabled:bg-gray-400 text-white text-[13px] font-bold cursor-pointer disabled:cursor-not-allowed min-h-[44px] shadow-sm transition-colors flex items-center justify-center gap-2"
                 >
-                  স্থানান্তর সম্পন্ন করুন
+                  {submittingTransfer ? (
+                    <>
+                      <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                      <span>স্থানান্তর হচ্ছে...</span>
+                    </>
+                  ) : (
+                    'স্থানান্তর সম্পন্ন করুন'
+                  )}
                 </button>
               </div>
             </form>
@@ -1696,9 +1792,17 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
                 </button>
                 <button
                   type="submit"
-                  className="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-[#1E5128] text-white text-[13px] font-bold cursor-pointer min-h-[44px] shadow-sm hover:bg-[#173F1F] transition-colors"
+                  disabled={submittingLoan}
+                  className="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-[#1E5128] hover:bg-[#173F1F] disabled:bg-gray-400 text-white text-[13px] font-bold cursor-pointer disabled:cursor-not-allowed min-h-[44px] shadow-sm transition-colors flex items-center justify-center gap-2"
                 >
-                  ঋণ নিশ্চিত ও পোস্ট করুন
+                  {submittingLoan ? (
+                    <>
+                      <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                      <span>সংরক্ষণ হচ্ছে...</span>
+                    </>
+                  ) : (
+                    'ঋণ নিশ্চিত ও পোস্ট করুন'
+                  )}
                 </button>
               </div>
             </form>
@@ -2054,9 +2158,17 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
                 </button>
                 <button
                   type="submit"
-                  className="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-[#1E5128] text-white text-[13px] font-bold cursor-pointer min-h-[44px] hover:bg-[#173F1F] shadow-sm transition-colors"
+                  disabled={submittingInvestor}
+                  className="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-[#1E5128] hover:bg-[#173F1F] disabled:bg-gray-400 text-white text-[13px] font-bold cursor-pointer disabled:cursor-not-allowed min-h-[44px] shadow-sm transition-colors flex items-center justify-center gap-2"
                 >
-                  মূলধন হিসাবভুক্ত করুন
+                  {submittingInvestor ? (
+                    <>
+                      <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                      <span>সংরক্ষণ হচ্ছে...</span>
+                    </>
+                  ) : (
+                    'মূলধন হিসাবভুক্ত করুন'
+                  )}
                 </button>
               </div>
             </form>

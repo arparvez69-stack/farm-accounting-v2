@@ -32,7 +32,8 @@ import {
   ShoppingCart
 } from 'lucide-react';
 import jsQR from 'jsqr';
-import { db } from '../db/indexedDb';
+import { db, isStorageFailure, formatStorageErrorMessage } from '../db/indexedDb';
+import { registerUnsavedChecker } from '../services/navigationService';
 import {
   Animal,
   AnimalEvent,
@@ -316,6 +317,37 @@ export const FarmOperationsModule: React.FC<Props> = ({
   const [cropCostInvItemId, setCropCostInvItemId] = useState<string>('');
   const [cropCostNotes, setCropCostNotes] = useState<string>('');
   const [submittingCropCost, setSubmittingCropCost] = useState<boolean>(false);
+
+  // STABILITY TASK 37: Accidental data loss protection for farm operations forms
+  useEffect(() => {
+    return registerUnsavedChecker(() => {
+      if (showAddAnimal && tagId.trim()) return true;
+      if (showAddCrop && cropName.trim() !== 'সুপার নেপিয়ার ঘাস') return true;
+      if (harvestFishBatch && (harvestFishPrice.trim() || harvestFishWeight.trim())) return true;
+      if (harvestCropCycle && (harvestCropPrice.trim() || harvestCropYield.trim())) return true;
+      if (fishCostBatch && fishCostAmount.trim()) return true;
+      if (cropCostCycle && cropCostAmount.trim()) return true;
+      if (showAddReminderModal && reminderTitle.trim()) return true;
+      return false;
+    });
+  }, [
+    showAddAnimal,
+    tagId,
+    showAddCrop,
+    cropName,
+    harvestFishBatch,
+    harvestFishPrice,
+    harvestFishWeight,
+    harvestCropCycle,
+    harvestCropPrice,
+    harvestCropYield,
+    fishCostBatch,
+    fishCostAmount,
+    cropCostCycle,
+    cropCostAmount,
+    showAddReminderModal,
+    reminderTitle
+  ]);
 
   useEffect(() => {
     loadOpsData();

@@ -29,7 +29,7 @@ import {
 } from 'lucide-react';
 import { jsPDF } from 'jspdf';
 import QRCode from 'qrcode';
-import { db } from '../db/indexedDb';
+import { db, isStorageFailure, formatStorageErrorMessage } from '../db/indexedDb';
 import {
   executePurchaseTransaction,
   executeSaleTransaction,
@@ -734,6 +734,9 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
   const [paymentBankAccountId, setPaymentBankAccountId] = useState<string>('');
   const [cashBankAccounts, setCashBankAccounts] = useState<CashBankAccount[]>([]);
   const [isSubmittingPayment, setIsSubmittingPayment] = useState(false);
+  // STABILITY TASK 36: Double-submit prevention for sales and purchases
+  const [isSubmittingSale, setIsSubmittingSale] = useState(false);
+  const [isSubmittingPurchase, setIsSubmittingPurchase] = useState(false);
 
   // Advance Feature States
   const [advancePayments, setAdvancePayments] = useState<AdvancePayment[]>([]);
@@ -994,6 +997,58 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
   const [returnDate, setReturnDate] = useState<string>(() => new Date().toISOString().split('T')[0]);
   const [isSubmittingReturn, setIsSubmittingReturn] = useState<boolean>(false);
 
+  // STABILITY TASK 37: Accidental data loss protection for commerce forms
+  useEffect(() => {
+    return registerUnsavedChecker(() => {
+      // 1. Sale Form: customer selected, lines typed, or discount entered
+      if (showNewSale) {
+        const hasCustomer = Boolean(saleCustomerId);
+        const hasLines = saleLines.some((l) => Boolean(l.itemId || (parseFloat(l.quantity) || 0) > 1 || (parseFloat(l.unitPrice) || 0) > 0));
+        const hasDiscount = Boolean(saleDiscount.trim());
+        if (hasCustomer || hasLines || hasDiscount) return true;
+      }
+      // 2. Purchase Form: supplier selected, lines typed, or discount/transport entered
+      if (showNewPurchase) {
+        const hasSupplier = Boolean(purchSupplierId);
+        const hasLines = purchLines.some((l) => Boolean(l.itemId || (parseFloat(l.quantity) || 0) > 1 || (parseFloat(l.unitPrice) || 0) > 0));
+        const hasDiscount = Boolean(purchDiscount.trim());
+        const hasTransport = parseFloat(purchTransportCost) > 0;
+        if (hasSupplier || hasLines || hasDiscount || hasTransport) return true;
+      }
+      // 3. Payment Modal: amount entered
+      if (paymentModal && paymentAmount.trim()) {
+        return true;
+      }
+      // 4. Return Modal: quantity or reason entered
+      if (returnModal && (returnQuantity.trim() || returnReason.trim())) {
+        return true;
+      }
+      // 5. Advance Modal: party selected or amount entered
+      if (showAdvanceModal && (advPartyId || advAmount.trim())) {
+        return true;
+      }
+      return false;
+    });
+  }, [
+    showNewSale,
+    saleCustomerId,
+    saleLines,
+    saleDiscount,
+    showNewPurchase,
+    purchSupplierId,
+    purchLines,
+    purchDiscount,
+    purchTransportCost,
+    paymentModal,
+    paymentAmount,
+    returnModal,
+    returnQuantity,
+    returnReason,
+    showAdvanceModal,
+    advPartyId,
+    advAmount
+  ]);
+
   // Available customer advance for the selected sale customer
   const availableCustomerAdvance = React.useMemo(() => {
     if (!saleCustomerId) return 0;
@@ -1247,6 +1302,8 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
     const discountAmount = Math.min(subtotal, Math.max(0, calcSaleDiscountAmount(subtotal, saleDiscount, saleDiscountType)));
     const advanceApplied = parseFloat(saleAdvanceApplied) || 0;
 
+    if (isSubmittingSale) return;
+    setIsSubmittingSale(true);
     try {
       const res = await executeSaleTransaction({
         customer,
@@ -1281,14 +1338,17 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
       }
       loadCommerceData();
     } catch (err: any) {
-      const errText = err.message || 'বিক্রয় লেনদেন ব্যর্থ হয়েছে।';
+      const errText = isStorageFailure(err) ? formatStorageErrorMessage(err) : (err.message || 'বিক্রয় লেনদেন ব্যর্থ হয়েছে।');
       setMsg({ type: 'error', text: errText });
       setSaleFormError(errText);
+    } finally {
+      setIsSubmittingSale(false);
     }
   };
 
   const handleCreateSale = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSubmittingSale) return;
     setSaleFormError(null);
     if (!saleCustomerId) {
       const errText = 'অনুগ্রহ করে একজন ক্রেতা নির্বাচন করুন।';
@@ -1451,6 +1511,8 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
     const discountAmount = Math.min(itemsTotal + transport, Math.max(0, calcPurchDiscountAmount(itemsTotal, purchDiscount, purchDiscountType)));
     const advanceApplied = parseFloat(purchAdvanceApplied) || 0;
 
+    if (isSubmittingPurchase) return;
+    setIsSubmittingPurchase(true);
     try {
       const res = await executePurchaseTransaction({
         supplier,
@@ -1486,12 +1548,16 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
       }
       loadCommerceData();
     } catch (err: any) {
-      setMsg({ type: 'error', text: err.message || 'ক্রয় লেনদেন ব্যর্থ হয়েছে।' });
+      const errText = isStorageFailure(err) ? formatStorageErrorMessage(err) : (err.message || 'ক্রয় লেনদেন ব্যর্থ হয়েছে।');
+      setMsg({ type: 'error', text: errText });
+    } finally {
+      setIsSubmittingPurchase(false);
     }
   };
 
   const handleCreatePurchase = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSubmittingPurchase) return;
     if (!purchSupplierId) {
       setMsg({ type: 'error', text: 'সরবরাহকারী নির্বাচন করুন।' });
       return;
@@ -1597,6 +1663,7 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
   // HANDLE ADVANCE RECEIPT / PAYMENT SUBMIT
   const handleAdvanceSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSubmittingAdvance) return;
     if (!advPartyId) {
       setMsg({ type: 'error', text: 'অনুগ্রহ করে পক্ষ (Party) নির্বাচন করুন।' });
       return;
@@ -3116,9 +3183,17 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                 </button>
                 <button
                   type="submit"
-                  className="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-amber-700 hover:bg-amber-800 text-white text-[13px] font-bold cursor-pointer min-h-[44px] shadow-sm"
+                  disabled={isSubmittingSale || loading}
+                  className="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-amber-700 hover:bg-amber-800 disabled:bg-gray-400 text-white text-[13px] font-bold cursor-pointer disabled:cursor-not-allowed min-h-[44px] shadow-sm flex items-center justify-center gap-2"
                 >
-                  চালান পোস্ট করুন
+                  {isSubmittingSale ? (
+                    <>
+                      <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                      <span>পোস্ট হচ্ছে...</span>
+                    </>
+                  ) : (
+                    'চালান পোস্ট করুন'
+                  )}
                 </button>
               </div>
             </form>
@@ -3934,9 +4009,17 @@ export const InventoryCommerceModule: React.FC<Props> = ({ role, currentUserId }
                 </button>
                 <button
                   type="submit"
-                  className="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-amber-700 hover:bg-amber-800 text-white text-[13px] font-bold cursor-pointer min-h-[44px] shadow-sm"
+                  disabled={isSubmittingPurchase || loading}
+                  className="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-amber-700 hover:bg-amber-800 disabled:bg-gray-400 text-white text-[13px] font-bold cursor-pointer disabled:cursor-not-allowed min-h-[44px] shadow-sm flex items-center justify-center gap-2"
                 >
-                  চালান সংরক্ষণ করুন
+                  {isSubmittingPurchase ? (
+                    <>
+                      <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                      <span>সংরক্ষণ হচ্ছে...</span>
+                    </>
+                  ) : (
+                    'চালান সংরক্ষণ করুন'
+                  )}
                 </button>
               </div>
             </form>

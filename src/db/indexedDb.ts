@@ -131,9 +131,22 @@ export class AgroDatabase extends Dexie {
       closedPeriods: 'id, endDate, closedAt, synced'
     });
 
-    this.version(8).stores({
-      journalEntries: 'id, voucherNumber, voucherType, date, reversedBy, reversalOf, correctionOf, synced'
-    });
+    this.version(8)
+      .stores({
+        journalEntries: 'id, voucherNumber, voucherType, date, reversedBy, reversalOf, correctionOf, synced'
+      })
+      .upgrade(async (tx) => {
+        try {
+          // STABILITY TASK 34: Safely preserve existing fields during schema index migration
+          await tx.table('journalEntries').toCollection().modify((entry: any) => {
+            if (entry.reversedBy === undefined) entry.reversedBy = null;
+            if (entry.reversalOf === undefined) entry.reversalOf = null;
+            if (entry.correctionOf === undefined) entry.correctionOf = null;
+          });
+        } catch (err: any) {
+          throw new Error(`ডাটাবেজ সংস্করণ ৮ আপগ্রেড ব্যর্থ হয়েছে: ${err?.message || err}। পূর্ববর্তী তথ্য সুরক্ষিত রাখা হয়েছে।`);
+        }
+      });
 
     this.version(9).stores({
       recurringExpenseTemplates: 'id, accountCode, dayOfMonth, active'
@@ -148,9 +161,20 @@ export class AgroDatabase extends Dexie {
       advancePayments: 'id, partyId, direction, date, synced'
     });
 
-    this.version(12).stores({
-      accounts: 'id, code, accountClass, isSystem, synced'
-    });
+    this.version(12)
+      .stores({
+        accounts: 'id, code, accountClass, isSystem, synced'
+      })
+      .upgrade(async (tx) => {
+        try {
+          // STABILITY TASK 34: Ensure existing accounts preserve synced flag without data loss
+          await tx.table('accounts').toCollection().modify((acc: any) => {
+            if (acc.synced === undefined) acc.synced = true;
+          });
+        } catch (err: any) {
+          throw new Error(`ডাটাবেজ সংস্করণ ১২ আপগ্রেড ব্যর্থ হয়েছে: ${err?.message || err}। পূর্ববর্তী তথ্য সুরক্ষিত রাখা হয়েছে।`);
+        }
+      });
 
     // STABILITY TASK 34: Safe version upgrades and conflict handling
     this.on('versionchange', () => {
@@ -183,6 +207,8 @@ export function isStorageFailure(err: any): boolean {
     name === 'OpenFailedError' ||
     name === 'MissingAPIError' ||
     name === 'AbortError' ||
+    name === 'UnknownError' ||
+    name === 'VersionError' ||
     msg.includes('quota') ||
     msg.includes('storage') ||
     msg.includes('indexeddb') ||
@@ -197,17 +223,20 @@ export function isStorageFailure(err: any): boolean {
  * Ensures the transaction failure is never claimed as a success and guides the user.
  */
 export function formatStorageErrorMessage(err: any): string {
-  if (!err) return 'অজানা ডাটাবেজ সংরক্ষণ ত্রুটি (Unknown database error).';
+  if (!err) return 'অজানা ডাটাবেজ সংরক্ষণ ত্রুটি (Unknown database error)। লেনদেনটি বাতিল করা হয়েছে।';
   const name = err.name || err.constructor?.name || '';
   const msg = (err.message || '').toLowerCase();
 
   if (name === 'QuotaExceededError' || name === 'NS_ERROR_DOM_QUOTA_REACHED' || msg.includes('quota')) {
-    return 'ব্রাউজার স্টোরেজ কোটা পূর্ণ হয়ে গেছে (Browser storage quota exceeded)। অনুগ্রহ করে অপ্রয়োজনীয় ফাইল বা ব্রাউজার ক্যাশ পরিষ্কার করুন অথবা ক্লাউডে ডাটা ব্যাকআপ নিন।';
+    return 'ব্রাউজার স্টোরেজ কোটা পূর্ণ হয়ে গেছে (Browser storage quota exceeded)। অনুগ্রহ করে অপ্রয়োজনীয় ব্রাউজার ক্যাশ পরিষ্কার করুন অথবা ক্লাউডে ব্যাকআপ নিন। লেনদেনটি বাতিল করা হয়েছে এবং কোনো তথ্য পরিবর্তন হয়নি।';
   }
   if (name === 'DatabaseClosedError' || name === 'OpenFailedError' || msg.includes('database is closed')) {
-    return 'ব্রাউজার ডাটাবেজ অনুপলব্ধ বা বন্ধ হয়ে গেছে (Local storage connection unavailable)। অনুগ্রহ করে পেজটি রিফ্রেশ করুন এবং ব্রাউজার স্টোরেজ অনুমতি পরীক্ষা করুন।';
+    return 'ব্রাউজার ডাটাবেজ সংযোগ বিচ্ছিন্ন বা বন্ধ হয়ে গেছে (Local storage connection unavailable)। অনুগ্রহ করে পেজটি রিফ্রেশ করুন এবং স্টোরেজ অনুমতি যাচাই করুন। লেনদেনটি বাতিল করা হয়েছে।';
   }
-  return `স্থানীয় স্টোরেজে ডাটা সংরক্ষণ ব্যর্থ হয়েছে (${err.message || name})। লেনদেনটি সম্পন্ন হয়নি।`;
+  if (name === 'VersionError' || msg.includes('version')) {
+    return 'ডাটাবেজ সংস্করণ অসামঞ্জস্যতা (Database version mismatch)। অনুগ্রহ করে অন্য ট্যাবে খোলা পেজ বন্ধ করে রিফ্রেশ করুন। লেনদেনটি বাতিল করা হয়েছে।';
+  }
+  return `স্থানীয় স্টোরেজে ডাটা সংরক্ষণ ব্যর্থ হয়েছে (${err.message || name})। লেনদেনটি বাতিল করা হয়েছে এবং কোনো তথ্য কাটা বা জমা হয়নি।`;
 }
 
 /**

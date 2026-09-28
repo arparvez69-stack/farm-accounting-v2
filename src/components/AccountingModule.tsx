@@ -23,7 +23,7 @@ import {
   ArrowLeft,
   Eye
 } from 'lucide-react';
-import { db } from '../db/indexedDb';
+import { db, isStorageFailure, formatStorageErrorMessage } from '../db/indexedDb';
 import {
   generateTrialBalance,
   getGeneralLedger,
@@ -237,6 +237,7 @@ export const AccountingModule: React.FC<Props> = ({
   const [searchQuery, setSearchQuery] = useState(searchFilter || '');
   const [daybookVisibleCount, setDaybookVisibleCount] = useState(25);
   const [reversingEntry, setReversingEntry] = useState<JournalEntry | null>(null);
+  const [isSubmittingReversal, setIsSubmittingReversal] = useState(false);
 
   useEffect(() => {
     if (searchFilter !== undefined && searchFilter !== searchQuery) {
@@ -683,7 +684,7 @@ export const AccountingModule: React.FC<Props> = ({
       resetVoucherForm();
       setSubTab('daybook');
     } catch (err: any) {
-      setMsg({ type: 'error', text: err.message || 'ভাউচার সংরক্ষণ করতে ব্যর্থ হয়েছে।' });
+      setMsg({ type: 'error', text: isStorageFailure(err) ? formatStorageErrorMessage(err) : (err.message || 'ভাউচার সংরক্ষণ করতে ব্যর্থ হয়েছে।') });
     } finally {
       setIsSubmittingVoucher(false);
     }
@@ -753,6 +754,7 @@ export const AccountingModule: React.FC<Props> = ({
   };
 
   const handleReverseAndCorrect = async (originalEntry: JournalEntry) => {
+    if (isSubmittingReversal) return;
     if (role !== 'OWNER') {
       setMsg({ type: 'error', text: 'শুধুমাত্র অনুমোদিত মালিক ভাউচার সংশোধন বা রিভার্স করতে পারেন।' });
       return;
@@ -764,6 +766,7 @@ export const AccountingModule: React.FC<Props> = ({
       return;
     }
 
+    setIsSubmittingReversal(true);
     try {
       setLoading(true);
       const fresh = await db.journalEntries.get(originalEntry.id);
@@ -822,8 +825,9 @@ export const AccountingModule: React.FC<Props> = ({
       // Open the voucher form immediately
       setSubTab('vouchers');
     } catch (err: any) {
-      setMsg({ type: 'error', text: err.message || 'এন্ট্রি সংশোধন করতে ব্যর্থ হয়েছে।' });
+      setMsg({ type: 'error', text: isStorageFailure(err) ? formatStorageErrorMessage(err) : (err.message || 'এন্ট্রি সংশোধন করতে ব্যর্থ হয়েছে।') });
     } finally {
+      setIsSubmittingReversal(false);
       setLoading(false);
       setReversingEntry(null);
     }
@@ -2976,11 +2980,18 @@ export const AccountingModule: React.FC<Props> = ({
               </button>
               <button
                 type="button"
-                disabled={loading}
+                disabled={isSubmittingReversal || loading}
                 onClick={() => handleReverseAndCorrect(reversingEntry)}
-                className="px-5 py-2.5 rounded-xl bg-blue-700 hover:bg-blue-800 disabled:bg-gray-300 text-white text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 shadow-xs"
+                className="px-5 py-2.5 rounded-xl bg-blue-700 hover:bg-blue-800 disabled:bg-gray-400 text-white text-xs font-bold transition-all cursor-pointer disabled:cursor-not-allowed flex items-center gap-1.5 shadow-xs"
               >
-                {loading ? 'প্রক্রিয়াকরণ হচ্ছে...' : 'বিপরীত দাখিলা নিশ্চিত ও সংশোধন করুন'}
+                {isSubmittingReversal || loading ? (
+                  <>
+                    <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                    <span>প্রক্রিয়াকরণ হচ্ছে...</span>
+                  </>
+                ) : (
+                  'বিপরীত দাখিলা নিশ্চিত ও সংশোধন করুন'
+                )}
               </button>
             </div>
           </div>

@@ -1,5 +1,5 @@
 import type { Table } from 'dexie';
-import { db } from '../db/indexedDb';
+import { db, isStorageFailure, formatStorageErrorMessage } from '../db/indexedDb';
 
 /**
  * Reliable Collision-Resistant ID and Transaction Reference Generator
@@ -146,6 +146,9 @@ export async function safeInsert<T extends { id: string }>(
       await table.add(currentRecord);
       return currentRecord;
     } catch (err: any) {
+      if (isStorageFailure(err)) {
+        throw new Error(formatStorageErrorMessage(err));
+      }
       // Dexie ConstraintError when key already exists
       const isConstraintError =
         err?.name === 'ConstraintError' ||
