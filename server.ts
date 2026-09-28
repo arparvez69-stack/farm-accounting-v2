@@ -163,6 +163,23 @@ app.use((req, res, next) => {
   next();
 });
 
+// Helper to redact personal email addresses in operational logs while preserving diagnostics
+export function maskEmail(email: string | null | undefined): string {
+  if (!email || typeof email !== 'string') return '***';
+  const trimmed = email.trim().toLowerCase();
+  const atIdx = trimmed.indexOf('@');
+  if (atIdx <= 1) {
+    const parts = trimmed.split('@');
+    return `*@${parts[1] || '***'}`;
+  }
+  const username = trimmed.substring(0, atIdx);
+  const domain = trimmed.substring(atIdx);
+  if (username.length <= 2) {
+    return `${username[0]}***${domain}`;
+  }
+  return `${username[0]}***${username[username.length - 1]}${domain}`;
+}
+
 // Helper to read owner email secrets from environment variables (supports standard or lowercase aliases)
 export function getRawEmailsEnv(): string {
   return (
@@ -1399,7 +1416,7 @@ async function ensureEmailAuthorized(email: string): Promise<void> {
       emails: emails,
       updatedAt: new Date().toISOString()
     });
-    console.log(`[The Goated Farm] Registered verified owner ${normalized} in system/authorizedEmails`);
+    console.log(`[The Goated Farm] Registered verified owner in system/authorizedEmails: ${maskEmail(normalized)}`);
   } catch (err: any) {
     console.warn('[The Goated Farm] Note on ensuring email in system/authorizedEmails:', err.message);
   }
@@ -1434,7 +1451,7 @@ async function initializeAuthSecrets(): Promise<void> {
       cachedAuthSecrets[email] = defaultHash;
     }
   }
-  console.log('[The Goated Farm] Seeded in-memory auth secrets for authorized owners:', emails);
+  console.log(`[The Goated Farm] Seeded in-memory auth secrets for ${emails.length} authorized owner(s)`);
 
   const effectiveDb = getEffectiveAdminDb();
   if (effectiveDb) {
@@ -1504,7 +1521,7 @@ async function updateStoredHash(email: string, newHash: string): Promise<void> {
         [email]: newHash,
         hashes: { [email]: newHash }
       }, { merge: true });
-      console.log(`[The Goated Farm] Stored updated PIN hash for ${email}`);
+      console.log(`[The Goated Farm] Stored updated PIN hash for ${maskEmail(email)}`);
     } catch (err: any) {
       console.warn('[The Goated Farm] Note on persisting new hash in system/authSecrets:', err.message);
     }
@@ -1549,7 +1566,7 @@ async function setStoredResetCode(email: string, code: string, expiresAt: number
           [email]: record
         }
       }, { merge: true });
-      console.log(`[The Goated Farm] Stored reset code for ${email}`);
+      console.log(`[The Goated Farm] Stored reset code for ${maskEmail(email)}`);
     } catch (err: any) {
       console.warn('[The Goated Farm] Note on storing reset code in system/authSecrets:', err.message);
     }
@@ -1608,14 +1625,14 @@ export async function sendResetEmail(toEmail: string, resetCode: string): Promis
           </div>
         `
       });
-      console.log(`[The Goated Farm] Reset PIN email sent via SMTP to ${toEmail}`);
+      console.log(`[The Goated Farm] Reset PIN email sent via SMTP to ${maskEmail(toEmail)}`);
       return true;
     } catch (err: any) {
       console.error('[The Goated Farm] Failed to send email via SMTP:', err.message);
       return false;
     }
   } else {
-    console.error(`[The Goated Farm] Email delivery not configured: SMTP credentials (SMTP_HOST, SMTP_USER, SMTP_PASS) are missing. Cannot deliver PIN reset email to ${toEmail}.`);
+    console.error(`[The Goated Farm] Email delivery not configured: SMTP credentials (SMTP_HOST, SMTP_USER, SMTP_PASS) are missing. Cannot deliver PIN reset email to ${maskEmail(toEmail)}.`);
     return false;
   }
 }
@@ -1714,14 +1731,14 @@ app.post('/api/verify-login-code', async (req, res) => {
         existing.attempts += 1;
         if (existing.attempts >= MAX_FAILED_ATTEMPTS) {
           existing.lockedUntil = now + LOCKOUT_MS;
-          console.warn(`[The Goated Farm] ⛔ Account ${email} locked for 15 minutes after 5 failed attempts.`);
+          console.warn(`[The Goated Farm] ⛔ Account ${maskEmail(email)} locked for 15 minutes after 5 failed attempts.`);
           return res.status(429).json({
             error: 'অতিরিক্ত ৫ বার ভুল পিন দেওয়ার কারণে এই অ্যাকাউন্টটি ১৫ মিনিটের জন্য লক করা হয়েছে। অনুগ্রহ করে পরে চেষ্টা করুন (Too many failed login attempts. Account locked for 15 minutes).'
           });
         }
       }
 
-      console.warn(`[The Goated Farm] ❌ Failed login attempt for email: ${email} (Attempt ${failedLoginAttempts.get(email)?.attempts || 1}/${MAX_FAILED_ATTEMPTS})`);
+      console.warn(`[The Goated Farm] ❌ Failed login attempt for email: ${maskEmail(email)} (Attempt ${failedLoginAttempts.get(email)?.attempts || 1}/${MAX_FAILED_ATTEMPTS})`);
       return res.status(401).json({
         error: 'অবৈধ ইমেইল অথবা গোপন পিন (Invalid email or secret PIN)।'
       });
@@ -1729,7 +1746,7 @@ app.post('/api/verify-login-code', async (req, res) => {
 
     // 4. Successful login - Reset rate limit counter on success
     failedLoginAttempts.delete(email);
-    console.log(`[The Goated Farm] ✅ Successful login for: ${email}`);
+    console.log(`[The Goated Farm] ✅ Successful login for: ${maskEmail(email)}`);
 
     // Ensure verified owner is registered in Firestore system/authorizedEmails
     await ensureEmailAuthorized(email);
@@ -1746,7 +1763,7 @@ app.post('/api/verify-login-code', async (req, res) => {
           role: 'OWNER',
           email: email
         });
-        console.log(`[The Goated Farm] Custom token issued for user: ${email}`);
+        console.log(`[The Goated Farm] Custom token issued for user: ${maskEmail(email)}`);
       } catch {
         // Fall back gracefully if custom token creation fails
         customToken = null;
@@ -1803,7 +1820,7 @@ app.post('/api/change-pin', async (req, res) => {
     const newHash = await bcrypt.hash(newPin.trim(), 12);
     await updateStoredHash(email, newHash);
 
-    console.log(`[The Goated Farm] 🔑 PIN changed successfully for ${email}`);
+    console.log(`[The Goated Farm] 🔑 PIN changed successfully for ${maskEmail(email)}`);
     return res.json({
       success: true,
       message: 'গোপন পিন সফলভাবে পরিবর্তন করা হয়েছে (PIN changed successfully)।'
@@ -1929,7 +1946,7 @@ app.post('/api/confirm-pin-reset', async (req, res) => {
     failedLoginAttempts.delete(email);
     failedResetAttempts.delete(email);
 
-    console.log(`[The Goated Farm] 🔑 PIN reset completed successfully for ${email}`);
+    console.log(`[The Goated Farm] 🔑 PIN reset completed successfully for ${maskEmail(email)}`);
     return res.json({
       success: true,
       message: 'নতুন গোপন পিন সফলভাবে সংরক্ষিত হয়েছে। এখন নতুন পিন দিয়ে লগইন করুন।'
@@ -3570,9 +3587,7 @@ async function handleSyncWrite(
         req.headers['x-test-firestore-mode'] === 'write_failure' ||
         process.env.NODE_ENV === 'test';
 
-      if (isSimulatedOrTest) {
-        console.log(`[The Goated Farm] [Simulated Test] Handled write rejection for ${collectionName}: ${adminErr.message}`);
-      } else {
+      if (!isSimulatedOrTest) {
         console.warn(`[The Goated Farm] Cloud write notice for ${collectionName}: ${adminErr.message}`);
       }
       return res.status(503).json({
@@ -3957,7 +3972,7 @@ app.get('/api/sync/restore', async (req, res) => {
       totalCount += docs.length;
     }
 
-    console.log(`[The Goated Farm] Restore served for ${owner.email}: ${totalCount} records retrieved.`);
+    console.log(`[The Goated Farm] Restore served for ${maskEmail(owner.email)}: ${totalCount} records retrieved.`);
     return res.json({
       success: true,
       count: totalCount,
@@ -4060,7 +4075,7 @@ app.post('/api/wipe-all-data', async (req, res) => {
     status: 'SUCCESS'
   });
 
-  console.log(`[The Goated Farm] DANGER ZONE: All farm records wiped by ${owner.email} (${deletedTotal} cloud documents removed).`);
+  console.log(`[The Goated Farm] DANGER ZONE: All farm records wiped by ${maskEmail(owner.email)} (${deletedTotal} cloud documents removed).`);
 
   return res.json({
     success: true,

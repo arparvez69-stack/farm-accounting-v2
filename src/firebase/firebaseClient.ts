@@ -1410,7 +1410,9 @@ export async function restoreRemoteDataIfLocalEmpty(
     if (mutationStarted && !rollbackPerformed) {
       await rollbackToPreRestoreSnapshot();
     }
-    console.warn('[The Goated Farm] restoreRemoteDataIfLocalEmpty error:', err);
+    if (!options?.simulateFailureAfterMutation && !options?.mockRemoteCollections) {
+      console.warn('[The Goated Farm] restoreRemoteDataIfLocalEmpty note:', err?.message || err);
+    }
     return { restored: false, count: 0, offlineEmptyWarning: false, rollbackPerformed };
   }
 }
