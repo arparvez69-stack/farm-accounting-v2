@@ -16,6 +16,24 @@ import { calculateHistoricalInventoryValuation } from './src/accounting/reconcil
 import { CANONICAL_ACCOUNTS } from './src/accounting/accountMapping';
 import { DEFAULT_CHART_OF_ACCOUNTS } from './src/accounting/defaultAccounts';
 import { Account, ClosedPeriod } from './src/types';
+import {
+  validateProductionEnvironment,
+  assertProductionEnvironmentValid,
+  isStrongSessionSecret,
+  extractRawPinFromEnv,
+  EnvValidationResult,
+  ValidationOptions
+} from './src/server/envValidation';
+
+export {
+  validateProductionEnvironment,
+  assertProductionEnvironmentValid,
+  isStrongSessionSecret
+};
+export type {
+  EnvValidationResult,
+  ValidationOptions
+};
 
 dotenv.config();
 
@@ -52,15 +70,7 @@ export function getRawEmailsEnv(): string {
 
 // Helper to read initial PIN secrets from environment variables (supports standard or lowercase aliases)
 export function getRawPinEnv(): string {
-  const pin =
-    process.env.INITIAL_PIN?.trim() ||
-    process.env.MASTER_PIN?.trim() ||
-    process.env.INITIAL_MASTER_PIN?.trim() ||
-    process.env.masterpin?.trim() ||
-    process.env.MASTERPIN?.trim() ||
-    process.env.PIN?.trim() ||
-    process.env.pin?.trim() ||
-    '';
+  const pin = extractRawPinFromEnv(process.env);
 
   if (!pin && process.env.NODE_ENV === 'production') {
     throw new Error(
@@ -228,43 +238,6 @@ try {
 // Hardened Owner Session-Token Authentication (F8)
 // ==========================================
 
-const INSECURE_DEFAULT_SECRETS = [
-  'the-goated-farm-session-secret-salt-2025',
-  'the-goated-farm-session-secret',
-  'change-this-to-a-secure-secret-key',
-  'session-secret',
-  'secret',
-  'password',
-  'default',
-  '12345678901234567890123456789012',
-  'abcdefghijklmnopqrstuvwxyz123456'
-];
-
-/**
- * Validates whether a given session secret meets strict cryptographic strength:
- * - Must be non-empty string
- * - Length >= 32 characters (256 bits minimum)
- * - Must not match or contain known insecure default strings
- * - Must have adequate character entropy (at least 8 distinct characters)
- */
-export function isStrongSessionSecret(secret: string | undefined | null): boolean {
-  if (!secret || typeof secret !== 'string') return false;
-  const trimmed = secret.trim();
-  if (trimmed.length < 32) return false;
-
-  const lower = trimmed.toLowerCase();
-  for (const insecure of INSECURE_DEFAULT_SECRETS) {
-    if (lower === insecure || lower.includes(insecure)) {
-      return false;
-    }
-  }
-
-  const uniqueChars = new Set(trimmed);
-  if (uniqueChars.size < 8) return false;
-
-  return true;
-}
-
 // Scoped test override mechanism
 let testSecretOverride: string | null | undefined = undefined;
 
@@ -331,9 +304,12 @@ export function assertStrongSecretConfigured(): void {
   }
 }
 
-// Requirement 1 & 2: In production, immediately fail server startup if strong secret is not configured
+// In production, immediately fail server startup if required production secrets or configuration are missing
 if (process.env.NODE_ENV === 'production') {
-  assertStrongSecretConfigured();
+  assertProductionEnvironmentValid({
+    sessionSecretOverride: getSessionSecretForTest(),
+    approvedOwnerEmailsOverride: testApprovedOwnerEmailsOverride,
+  });
 }
 
 /**
@@ -3951,6 +3927,13 @@ app.get('/api/farm-info', (req, res) => {
 
 // Vite middleware or static serving
 async function startServer() {
+  if (process.env.NODE_ENV === 'production') {
+    assertProductionEnvironmentValid({
+      sessionSecretOverride: getSessionSecretForTest(),
+      approvedOwnerEmailsOverride: testApprovedOwnerEmailsOverride,
+    });
+  }
+
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
       server: { middlewareMode: true },

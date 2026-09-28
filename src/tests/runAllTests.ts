@@ -31,6 +31,7 @@ import { runCropCycleCostIsolationTest } from './testCropCycleCostIsolation';
 import { runLivestockCostIsolationTest } from './testLivestockCostIsolation';
 import { runProductionReceiptCostProtectionTests } from './testProductionReceiptCostProtection';
 import { runHarvestQuantityControlTest } from './testHarvestQuantityControl';
+import { runProductionEnvironmentValidationTests } from './testProductionEnvironmentValidation';
 
 interface SuiteResult {
   total: number;
@@ -79,6 +80,7 @@ async function main() {
   suiteResults.push(await runLivestockCostIsolationTest());
   suiteResults.push(await runProductionReceiptCostProtectionTests());
   suiteResults.push(await runHarvestQuantityControlTest());
+  suiteResults.push(await runProductionEnvironmentValidationTests());
 
   // Strictly aggregate actual executed assertions — no manual +10 or phantom counts
   const total = suiteResults.reduce((s, r) => s + (r.total || 0), 0);
