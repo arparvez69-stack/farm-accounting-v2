@@ -1,5 +1,5 @@
 // Service Worker for The Goated Farm (Offline-First Agro ERP)
-const CACHE_NAME = 'the-goated-farm-shell-v2';
+const CACHE_NAME = 'the-goated-farm-shell-v3';
 
 // Core app shell assets to precache on install
 const APP_SHELL_ASSETS = [
@@ -21,10 +21,11 @@ self.addEventListener('install', (event) => {
       });
     })
   );
+  // Force activating the newly installed service worker without waiting for old clients to close
   self.skipWaiting();
 });
 
-// 2. Activate: Clean up legacy caches and claim active clients
+// 2. Activate: Clean up legacy caches and immediately claim active clients
 self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches.keys().then((keys) => {
@@ -33,11 +34,21 @@ self.addEventListener('activate', (event) => {
       );
     })
   );
+  // Take control of all open client tabs immediately
   self.clients.claim();
 });
 
-// 3. Fetch: Stale-While-Revalidate for static assets & app shell
-// STRICT RULE: Never cache POST requests or any /api/* responses — only static assets.
+// 3. Message: Allow client pages to trigger immediate activation
+self.addEventListener('message', (event) => {
+  if (event.data && event.data.type === 'SKIP_WAITING') {
+    self.skipWaiting();
+  }
+});
+
+// 4. Fetch: Safe strategy ensuring new deployments activate without trapping users
+// STRICT RULE 1: Never cache POST/PUT/DELETE requests or any /api/* responses.
+// STRICT RULE 2: Navigation requests (HTML pages) use Network-First to guarantee latest version.
+// STRICT RULE 3: Offline IndexedDB data is never altered or cleared by the service worker.
 self.addEventListener('fetch', (event) => {
   // Never intercept non-GET requests (e.g. POST, PUT, DELETE)
   if (event.request.method !== 'GET') {
@@ -77,18 +88,52 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Stale-While-Revalidate caching strategy for app shell and static assets
+  // Strategy A: Navigation requests (HTML documents)
+  // NETWORK-FIRST with CACHE FALLBACK:
+  // Guarantees newly deployed code is received immediately without trapping users on stale bundles.
+  // Falls back seamlessly to cached index.html when offline so the ERP works without an internet connection.
+  if (event.request.mode === 'navigate') {
+    event.respondWith(
+      (async () => {
+        try {
+          const networkResponse = await fetch(event.request);
+          if (networkResponse && networkResponse.status === 200) {
+            const cache = await caches.open(CACHE_NAME);
+            cache.put(event.request, networkResponse.clone());
+            cache.put('/index.html', networkResponse.clone());
+            return networkResponse;
+          }
+        } catch {
+          // Network unavailable: fall back to cached shell
+        }
+
+        const cache = await caches.open(CACHE_NAME);
+        const cachedResponse =
+          (await cache.match(event.request)) ||
+          (await cache.match('/index.html')) ||
+          (await cache.match('/'));
+
+        if (cachedResponse) {
+          return cachedResponse;
+        }
+
+        return new Response('Offline - The Goated Farm', {
+          status: 503,
+          statusText: 'Service Unavailable',
+          headers: { 'Content-Type': 'text/plain; charset=utf-8' }
+        });
+      })()
+    );
+    return;
+  }
+
+  // Strategy B: Static assets (scripts, styles, icons, fonts, illustrations)
+  // STALE-WHILE-REVALIDATE:
+  // Serves instant cached assets while revalidating in background for lightning-fast loads.
   event.respondWith(
     caches.open(CACHE_NAME).then(async (cache) => {
-      // 1. Look for matching resource in cache
-      let cachedResponse = await cache.match(event.request);
+      const cachedResponse = await cache.match(event.request);
 
-      // If navigation request and not directly cached, fall back to cached /index.html
-      if (!cachedResponse && event.request.mode === 'navigate') {
-        cachedResponse = (await cache.match('/index.html')) || (await cache.match('/'));
-      }
-
-      // 2. Network revalidation promise to update cache in the background
       const fetchPromise = fetch(event.request)
         .then((networkResponse) => {
           if (networkResponse && (networkResponse.status === 200 || networkResponse.type === 'opaque')) {
@@ -96,35 +141,18 @@ self.addEventListener('fetch', (event) => {
           }
           return networkResponse;
         })
-        .catch(async () => {
-          // If network fetch fails and this is a navigation request, serve cached shell
-          if (event.request.mode === 'navigate') {
-            const fallback = (await cache.match('/index.html')) || (await cache.match('/'));
-            if (fallback) return fallback;
-          }
-          return null;
-        });
+        .catch(() => null);
 
-      // 3. If cached response exists, return it immediately (stale)
-      // and revalidate cache in background
       if (cachedResponse) {
         event.waitUntil(fetchPromise);
         return cachedResponse;
       }
 
-      // 4. If not yet in cache, await the network fetch
       const networkResponse = await fetchPromise;
       if (networkResponse) {
         return networkResponse;
       }
 
-      // 5. Final fallback for navigation requests when completely offline
-      if (event.request.mode === 'navigate') {
-        const fallback = (await cache.match('/index.html')) || (await cache.match('/'));
-        if (fallback) return fallback;
-      }
-
-      // 6. Return offline status for missing assets
       return new Response('Offline', {
         status: 503,
         statusText: 'Service Unavailable',

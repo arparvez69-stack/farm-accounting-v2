@@ -27,10 +27,42 @@ if (typeof window !== 'undefined' && 'serviceWorker' in navigator) {
       .register('/sw.js')
       .then((registration) => {
         console.log('[SW] Service worker registered successfully with scope:', registration.scope);
+
+        // Check for updates on load
+        registration.update().catch(() => {});
+
+        // Check for updates whenever user returns to the tab
+        document.addEventListener('visibilitychange', () => {
+          if (document.visibilityState === 'visible') {
+            registration.update().catch(() => {});
+          }
+        });
+
+        // If a new worker is waiting, message it to skip waiting immediately
+        if (registration.waiting) {
+          registration.waiting.postMessage({ type: 'SKIP_WAITING' });
+        }
+
+        registration.addEventListener('updatefound', () => {
+          const installingWorker = registration.installing;
+          if (installingWorker) {
+            installingWorker.addEventListener('statechange', () => {
+              if (installingWorker.state === 'installed' && navigator.serviceWorker.controller) {
+                // New deployment ready; message worker to skip waiting
+                installingWorker.postMessage({ type: 'SKIP_WAITING' });
+              }
+            });
+          }
+        });
       })
       .catch((error) => {
         console.warn('[SW] Service worker registration failed:', error);
       });
+
+    // Seamlessly log when the new service worker takes control
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      console.log('[SW] New service worker took control.');
+    });
   }
 }
 

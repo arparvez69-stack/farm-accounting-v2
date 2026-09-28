@@ -4231,6 +4231,15 @@ async function startServer() {
     app.use(express.static(distPath, {
       dotfiles: 'ignore',
       index: 'index.html',
+      setHeaders: (res, filePath) => {
+        // Task 48: Service worker script must NEVER be cached by browser HTTP cache
+        // to ensure immediate detection and activation of new application releases
+        if (filePath.endsWith('sw.js')) {
+          res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+          res.setHeader('Pragma', 'no-cache');
+          res.setHeader('Expires', '0');
+        }
+      }
     }));
     app.get('*', (req, res) => {
       res.sendFile(path.join(distPath, 'index.html'));
