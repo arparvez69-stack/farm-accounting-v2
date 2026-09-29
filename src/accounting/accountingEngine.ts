@@ -2128,14 +2128,16 @@ export async function generateTrialBalance(
  */
 export async function generateProfitLoss(
   dateRange?: DateRangeFilter | { fromDate?: string; toDate?: string; from?: string; to?: string; start?: string; end?: string; startDate?: string; endDate?: string } | string,
-  options?: { includeClosingEntries?: boolean },
+  options?: { includeClosingEntries?: boolean } | any,
   dbInstance: any = db
 ): Promise<ProfitLossReport> {
-  const rawAccounts = await dbInstance.accounts.toArray();
-  let entries = await dbInstance.journalEntries.toArray();
+  const actualDb = (options && (options.accounts || options.journalEntries)) ? options : dbInstance;
+  const actualOptions = (options && (options.accounts || options.journalEntries)) ? undefined : options;
+  const rawAccounts = await actualDb.accounts.toArray();
+  let entries = await actualDb.journalEntries.toArray();
 
   // Exclude Year-End Closing entries unless explicitly requested so that P&L reports reflect actual period operations
-  if (!options?.includeClosingEntries) {
+  if (!actualOptions?.includeClosingEntries) {
     entries = entries.filter((e) => !e.reference?.startsWith('YEC-') && !e.voucherNumber?.startsWith('YEC'));
   }
 

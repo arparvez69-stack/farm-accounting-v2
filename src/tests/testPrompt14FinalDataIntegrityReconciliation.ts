@@ -1167,8 +1167,8 @@ export async function runPrompt14FinalDataIntegrityReconciliation(): Promise<Pro
   console.log('--- AUDIT 8: Revenue - legitimate expenses/COGS = Profit ---');
   const pl = await generateProfitLoss(undefined, undefined, dbInstance);
   const indepRevenue = calculateGlBalanceForAccounts(allJournals, ['4010', '4020', '4030', '4040', '4050'], 'CREDIT');
-  const indepCogs = calculateGlBalanceForAccounts(allJournals, ['5010', '5020', '5030', '5040', '5050'], 'DEBIT');
-  const indepOpex = calculateGlBalanceForAccounts(allJournals, ['6010', '6020', '6030', '6040', '6050', '6060', '6070', '6080'], 'DEBIT');
+  const indepCogs = calculateGlBalanceForAccounts(allJournals, ['5010', '5020', '5030', '5040', '5050', '5090'], 'DEBIT');
+  const indepOpex = calculateGlBalanceForAccounts(allJournals, ['6010', '6020', '6030', '6040', '6050', '6060', '6070', '6080', '6140'], 'DEBIT');
   const indepOtherInc = calculateGlBalanceForAccounts(allJournals, ['7010'], 'CREDIT');
   const indepOtherExp = calculateGlBalanceForAccounts(allJournals, ['8010'], 'DEBIT');
 

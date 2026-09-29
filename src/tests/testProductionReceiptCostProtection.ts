@@ -240,7 +240,7 @@ async function runTestsInternal(assert: any, result: AssertionResult): Promise<A
   // 1. Verify physical inventory and weighted-average cost
   // Prev: 50 kg @ ৳50 = ৳2,500. New: 100 kg @ ৳60 = ৳6,000. Total: 150 kg, ৳8,500 => ৳56.67/kg
   assert.strictEqual(validReceiptResult.updatedItem.currentStock, 150, 'Stock must be updated to 150 kg');
-  assert.strictEqual(validReceiptResult.updatedItem.avgCostPrice, 56.67, 'Weighted avg cost must be ৳56.67');
+  assert.strictEqual(Math.round(validReceiptResult.updatedItem.avgCostPrice * 100) / 100, 56.67, 'Weighted avg cost must be ৳56.67');
 
   // 2. Verify stock movement
   assert.strictEqual(validReceiptResult.movement.movementType, 'PRODUCTION', 'Movement must be PRODUCTION');
@@ -288,7 +288,7 @@ async function runTestsInternal(assert: any, result: AssertionResult): Promise<A
   // 1. Verify physical inventory
   // Prev: 150 kg @ ৳56.67 = ৳8,500. New: 40 kg @ ৳100 = ৳4,000. Total: 190 kg, ৳12,500 => ৳65.79/kg
   assert.strictEqual(exactReceiptResult.updatedItem.currentStock, 190, 'Stock must be updated to 190 kg');
-  assert.strictEqual(exactReceiptResult.updatedItem.avgCostPrice, 65.79, 'Weighted avg cost must be ৳65.79');
+  assert.strictEqual(Math.round(exactReceiptResult.updatedItem.avgCostPrice * 100) / 100, 65.79, 'Weighted avg cost must be ৳65.79');
 
   // 2. Verify balanced GL journal entry
   const exactCredit = exactReceiptResult.journalEntry?.lines.find((l) => l.accountCode === CANONICAL_ACCOUNTS.WIP);

@@ -55,6 +55,7 @@ export const CANONICAL_ACCOUNTS = {
   LIVESTOCK_COGS: '5020',
   CROP_COGS: '5030',
   PROCESSED_COGS: '5040',
+  COGS_EGGS: '5020',
   OTHER_COGS: '5090',
 
   // 6000 Operating Expenses

@@ -45,6 +45,7 @@ import { runOfflineReloadOnlineSyncRecoveryTests } from './testPrompt09OfflineSy
 import { runBrowserInterruptionSafetyTests } from './testPrompt10BrowserInterruptionSafety';
 import { runProductionSmokeTests } from './testPrompt12ProductionSmokeTest';
 import { runRealDeviceRegressionTests } from './testPrompt13RealDeviceRegression';
+import { runPrompt14FinalDataIntegrityReconciliation } from './testPrompt14FinalDataIntegrityReconciliation';
 
 interface SuiteResult {
   total: number;
@@ -107,6 +108,7 @@ async function main() {
   suiteResults.push(await runBrowserInterruptionSafetyTests());
   suiteResults.push(await runProductionSmokeTests());
   suiteResults.push(await runRealDeviceRegressionTests());
+  suiteResults.push(await runPrompt14FinalDataIntegrityReconciliation());
 
   // Strictly aggregate actual executed assertions — no manual +10 or phantom counts
   const total = suiteResults.reduce((s, r) => s + (r.total || 0), 0);

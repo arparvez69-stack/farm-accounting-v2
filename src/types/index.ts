@@ -343,8 +343,9 @@ export interface ProcessingRun {
 export interface InventoryItem {
   id: string;
   code: string;
-  nameBn: string;
-  nameEn: string;
+  name?: string;
+  nameBn?: string;
+  nameEn?: string;
   category:
     | 'FEED'
     | 'FEED_STOCK'
@@ -361,13 +362,16 @@ export interface InventoryItem {
     | 'PACKAGING';
   unit: string;
   currentStock: number;
-  reorderLevel: number;
+  reorderLevel?: number;
   avgCostPrice: number;
-  sellingPrice: number;
+  costPrice?: number;
+  sellingPrice?: number;
   lastRestockAmount?: number;
   lowStockThreshold?: number;
   photoUrl?: string;
   journalEntryId?: string;
+  isActive?: boolean;
+  createdAt?: string;
   synced?: boolean;
 }
 
@@ -407,10 +411,12 @@ export interface Party {
   name: string;
   phone: string;
   address?: string;
-  balance: number;
+  balance?: number;
+  currentBalance?: number;
   creditLimit?: number;
   isActive?: boolean;
   synced?: boolean;
+  createdAt?: string;
 }
 
 export interface PurchaseItem {
@@ -457,6 +463,7 @@ export interface Purchase {
   advanceAppliedAmount?: number;
   journalEntryId?: string;
   status?: 'PAID' | 'DUE' | 'PARTIAL' | string;
+  paymentStatus?: 'PAID' | 'DUE' | 'PARTIAL' | string;
   createdAt?: string;
   idempotencyKey?: string;
   synced?: boolean;
@@ -508,6 +515,7 @@ export interface Sale {
   totalCogs?: number;
   journalEntryId?: string;
   status?: 'PAID' | 'DUE' | 'PARTIAL' | string;
+  paymentStatus?: 'PAID' | 'DUE' | 'PARTIAL' | string;
   createdAt?: string;
   idempotencyKey?: string;
   synced?: boolean;
@@ -792,6 +800,7 @@ export interface FixedAsset {
   purchaseDate: string;
   originalCost: number;
   usefulLifeYears: number;
+  usefulLifeMonths?: number;
   salvageValue: number;
   accumulatedDepreciation: number;
   currentBookValue: number;

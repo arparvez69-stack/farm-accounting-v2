@@ -778,17 +778,20 @@ export async function executeSaleTransaction(
     saleId?: string;
     idempotencyKey?: string;
     invoiceNumber?: string;
-    customer: Party;
+    customer?: Party;
+    customerId?: string;
+    customerName?: string;
     item?: InventoryItem;
     quantity?: number;
     unitPrice?: number;
     vatRatePercent?: number;
     items?: SaleLineInput[];
+    lines?: SaleLineInput[];
     discount?: number;
-    paymentMethod: 'CASH' | 'BANK' | 'CREDIT';
+    paymentMethod?: 'CASH' | 'BANK' | 'CREDIT';
     bankAccountId?: string;
     cashBankAccountId?: string;
-    currentUserId: string;
+    currentUserId?: string;
     date?: string;
     note?: string;
     advancePaymentId?: string;
@@ -800,16 +803,19 @@ export async function executeSaleTransaction(
   dbInstance: any = db
 ): Promise<{ sale: Sale; journalEntryId: string; advanceJournalEntryId?: string }> {
   const {
-    customer,
+    customer: paramCustomer,
+    customerId,
+    customerName,
     item,
     quantity,
     unitPrice,
     vatRatePercent,
     items: paramItems,
+    lines: paramLines,
     discount = 0,
-    paymentMethod,
+    paymentMethod = 'CASH',
     bankAccountId,
-    currentUserId,
+    currentUserId = 'system',
     date,
     idempotencyKey,
     id: paramId,
@@ -818,8 +824,18 @@ export async function executeSaleTransaction(
     isVatRegistered
   } = params;
 
+  const customer: Party | undefined = paramCustomer || (customerId ? {
+    id: customerId,
+    name: customerName || 'খুচরা ক্রেতা',
+    type: 'CUSTOMER',
+    phone: '',
+    balance: 0
+  } : undefined);
+
   const lineInputs: SaleLineInput[] = paramItems && paramItems.length > 0
     ? paramItems
+    : paramLines && paramLines.length > 0
+    ? paramLines
     : item && quantity !== undefined && unitPrice !== undefined
     ? [{ item, quantity, unitPrice, vatRatePercent }]
     : [];
@@ -1349,6 +1365,7 @@ export async function executeSaleTransaction(
           bankAccountId,
           journalEntryId: journalEntry.id,
           status: effectiveDue <= 0 ? 'PAID' : (effectiveDue < totalAmount ? 'PARTIAL' : 'DUE'),
+          paymentStatus: effectiveDue <= 0 ? 'PAID' : (effectiveDue < totalAmount ? 'PARTIAL' : 'DUE'),
           createdAt: new Date().toISOString(),
           ...(idempotencyKey ? { idempotencyKey } : {}),
           synced: false
@@ -1440,18 +1457,21 @@ export async function executePurchaseTransaction(
     purchaseId?: string;
     idempotencyKey?: string;
     invoiceNumber?: string;
-    supplier: Party;
+    supplier?: Party;
+    supplierId?: string;
+    supplierName?: string;
     item?: InventoryItem;
     quantity?: number;
     unitPrice?: number;
     vatRatePercent?: number;
     items?: PurchaseLineInput[];
+    lines?: PurchaseLineInput[];
     transportCost?: number;
     discount?: number;
-    paymentMethod: 'CASH' | 'BANK' | 'CREDIT';
+    paymentMethod?: 'CASH' | 'BANK' | 'CREDIT';
     bankAccountId?: string;
     cashBankAccountId?: string;
-    currentUserId: string;
+    currentUserId?: string;
     date?: string;
     note?: string;
     advancePaymentId?: string;
@@ -1463,17 +1483,20 @@ export async function executePurchaseTransaction(
   dbInstance: any = db
 ): Promise<{ purchase: Purchase; journalEntryId: string; stockMovement: StockMovement; advanceJournalEntryId?: string }> {
   const {
-    supplier,
+    supplier: paramSupplier,
+    supplierId,
+    supplierName,
     item,
     quantity,
     unitPrice,
     vatRatePercent,
     items: paramItems,
+    lines: paramLines,
     transportCost = 0,
     discount = 0,
-    paymentMethod,
+    paymentMethod = 'CASH',
     bankAccountId,
-    currentUserId,
+    currentUserId = 'system',
     date,
     idempotencyKey,
     id: paramId,
@@ -1482,8 +1505,18 @@ export async function executePurchaseTransaction(
     isVatRegistered
   } = params;
 
+  const supplier: Party | undefined = paramSupplier || (supplierId ? {
+    id: supplierId,
+    name: supplierName || 'খুচরা বিক্রেতা',
+    type: 'SUPPLIER',
+    phone: '',
+    balance: 0
+  } : undefined);
+
   const lineInputs: PurchaseLineInput[] = paramItems && paramItems.length > 0
     ? paramItems
+    : paramLines && paramLines.length > 0
+    ? paramLines
     : item && quantity !== undefined && unitPrice !== undefined
     ? [{ item, quantity, unitPrice, vatRatePercent }]
     : [];
@@ -1982,6 +2015,7 @@ export async function executePurchaseTransaction(
           bankAccountId,
           journalEntryId: journalEntry.id,
           status: effectiveDue <= 0 ? 'PAID' : (effectiveDue < grandTotal ? 'PARTIAL' : 'DUE'),
+          paymentStatus: effectiveDue <= 0 ? 'PAID' : (effectiveDue < grandTotal ? 'PARTIAL' : 'DUE'),
           createdAt: new Date().toISOString(),
           ...(idempotencyKey ? { idempotencyKey } : {}),
           synced: false
@@ -1998,7 +2032,7 @@ export async function executePurchaseTransaction(
         for (const line of processedLines) {
           const newStock = Math.round((line.freshItem.currentStock + line.quantity) * 100) / 100;
           const prevTotalCost = (line.freshItem.currentStock || 0) * (line.freshItem.avgCostPrice || 0);
-          const newAvgCost = newStock > 0 ? Math.round(((prevTotalCost + line.netCost) / newStock) * 100) / 100 : line.unitPrice;
+          const newAvgCost = newStock > 0 ? ((prevTotalCost + line.netCost) / newStock) : line.unitPrice;
 
           await dbInstance.inventoryItems.update(line.freshItem.id, {
             currentStock: newStock,
@@ -3003,6 +3037,7 @@ export async function executeLoanTransaction(
     termMonths?: number;
     startDate?: string;
     loanType?: 'BANK' | 'NGO' | 'INDIVIDUAL';
+    notes?: string;
   },
   dbInstance: any = db
 ): Promise<{ loan: Loan; journalEntryId: string }> {
@@ -4512,7 +4547,7 @@ export async function executeLoanRepaymentTransaction(
     loanId: string;
     sourceAccountId: string; // Cash or Bank account ID
     principalAmount: number;
-    interestAmount: number;
+    interestAmount?: number;
     installmentNumber?: number;
     repaymentDate?: string;
     note?: string;
@@ -4521,7 +4556,7 @@ export async function executeLoanRepaymentTransaction(
   },
   dbInstance: any = db
 ): Promise<{ journalEntryId: string; updatedLoan: Loan }> {
-  const { loanId, installmentNumber, idempotencyKey, principalAmount, interestAmount, sourceAccountId } = params;
+  const { loanId, installmentNumber, idempotencyKey, principalAmount, interestAmount = 0, sourceAccountId } = params;
   const lockKey = installmentNumber !== undefined && installmentNumber !== null && Number(installmentNumber) > 0
     ? `${loanId}_inst_${installmentNumber}`
     : (idempotencyKey ? `${loanId}_key_${idempotencyKey}` : `${loanId}_repay_${principalAmount}_${interestAmount}_${sourceAccountId}`);
@@ -6336,6 +6371,7 @@ export interface AnimalPurchaseParams {
     species?: Animal['species'];
     breed?: string;
     gender?: Animal['gender'];
+    status?: Animal['status'];
     birthDate?: string;
     purchaseDate?: string;
     currentWeightKg?: number;
@@ -6917,7 +6953,8 @@ export interface InventoryItemCreationParams {
   itemData: {
     id?: string;
     code?: string;
-    nameBn: string;
+    name?: string;
+    nameBn?: string;
     nameEn?: string;
     category?: InventoryItem['category'];
     unit?: string;
@@ -6955,6 +6992,8 @@ export async function executeInventoryItemCreationTransaction(
       const costNum = Math.max(0, itemData.avgCostPrice || 0);
       const totalOpeningValue = Math.round(stockNum * costNum * 100) / 100;
       const category: InventoryItem['category'] = itemData.category || 'FEED';
+      const resolvedNameBn = (itemData.nameBn || itemData.name || 'পণ্য').trim();
+      const resolvedNameEn = (itemData.nameEn || itemData.name || resolvedNameBn).trim();
 
       let postedJournalEntryId: string | undefined = undefined;
       let stockMovementId: string | undefined = undefined;
@@ -6979,7 +7018,7 @@ export async function executeInventoryItemCreationTransaction(
             accountName: invAccountName,
             debit: totalOpeningValue,
             credit: 0,
-            memo: `প্রারম্ভিক মজুদ: ${itemData.nameBn.trim()} (${stockNum} ${itemData.unit?.trim() || 'কেজি'} @ ৳${costNum})`
+            memo: `প্রারম্ভিক মজুদ: ${resolvedNameBn} (${stockNum} ${itemData.unit?.trim() || 'কেজি'} @ ৳${costNum})`
           },
           {
             accountId: CANONICAL_ACCOUNTS.RETAINED_EARNINGS,
@@ -7002,7 +7041,7 @@ export async function executeInventoryItemCreationTransaction(
             voucherNumber: generateTransactionNumber('JV'),
             voucherType: 'JOURNAL',
             date: todayStr,
-            narration: `প্রারম্ভিক মজুদ পণ্য দাখিলা: ${itemData.nameBn.trim()} (${stockNum} ${itemData.unit?.trim() || 'কেজি'} @ ৳${costNum})`,
+            narration: `প্রারম্ভিক মজুদ পণ্য দাখিলা: ${resolvedNameBn} (${stockNum} ${itemData.unit?.trim() || 'কেজি'} @ ৳${costNum})`,
             reference: 'OPENING_STOCK',
             lines,
             createdBy: currentUserId || 'system',
@@ -7021,8 +7060,9 @@ export async function executeInventoryItemCreationTransaction(
       const item: InventoryItem = {
         id: itemId,
         code: itemCode,
-        nameBn: itemData.nameBn.trim(),
-        nameEn: itemData.nameEn?.trim() || itemData.nameBn.trim(),
+        name: (itemData as any).name || resolvedNameEn,
+        nameBn: resolvedNameBn,
+        nameEn: resolvedNameEn,
         category,
         unit: itemData.unit?.trim() || 'কেজি',
         currentStock: stockNum,
@@ -12713,7 +12753,8 @@ export async function executePaymentTransaction(
  */
 export interface StockAdjustmentParams {
   itemId: string;
-  adjustmentType: 'INCREASE' | 'DECREASE';
+  adjustmentType?: 'INCREASE' | 'DECREASE';
+  type?: 'IN' | 'OUT';
   quantity: number;
   reason?: string;
   date?: string;
@@ -12744,12 +12785,13 @@ export async function executeStockAdjustmentTransaction(
     async () => {
       const {
         itemId,
-        adjustmentType,
         quantity,
         reason,
         date,
         currentUserId = 'system'
       } = params;
+      const adjustmentType: 'INCREASE' | 'DECREASE' =
+        params.adjustmentType || (params.type === 'OUT' ? 'DECREASE' : 'INCREASE');
 
       const cleanQty = Math.max(0, quantity);
       if (cleanQty <= 0) {
@@ -13308,8 +13350,8 @@ export async function executeProductionReceiptTransaction(
       const prevStock = Math.max(0, item.currentStock || 0);
       const prevCost = item.avgCostPrice || 0;
       const totalQty = prevStock + cleanQty;
-      const totalCostVal = Math.round((prevStock * prevCost + cleanQty * unitCost) * 100) / 100;
-      const newAvgCost = totalQty > 0 ? Math.round((totalCostVal / totalQty) * 100) / 100 : unitCost;
+      const totalCostVal = prevStock * prevCost + cleanQty * unitCost;
+      const newAvgCost = totalQty > 0 ? (totalCostVal / totalQty) : unitCost;
 
       // Update physical inventory subledger
       await dbInstance.inventoryItems.update(item.id, {
