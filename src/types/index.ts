@@ -679,7 +679,9 @@ export interface AmortizationScheduleItem {
   principalPortion: number;
   interestPortion: number;
   totalPayment: number;
+  paymentAmount?: number;
   remainingBalance: number;
+  endingBalance?: number;
   isPaid?: boolean;
   paidDate?: string;
   repaymentJournalId?: string;

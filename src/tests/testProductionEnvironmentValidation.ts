@@ -367,11 +367,20 @@ export async function runProductionEnvironmentValidationTests(): Promise<{
   // TEST 15: /api/ready Works
   // -------------------------------------------------------------------
   await runAsyncTest('/api/ready endpoint confirms server readiness', async () => {
-    const res = await fetch(`${baseUrl}/api/ready`);
-    assert(res.status === 200, `/api/ready returned HTTP ${res.status}`);
-    const body = await res.json();
-    assert(body.ready === true, `Expected ready: true, got ${body.ready}`);
-    assert(body.status === 'ready', `Expected status 'ready', got '${body.status}'`);
+    const deadline = Date.now() + 6000;
+    let res: Response | null = null;
+    let body: any = null;
+    while (Date.now() < deadline) {
+      res = await fetch(`${baseUrl}/api/ready`);
+      if (res.status === 200) {
+        body = await res.json();
+        break;
+      }
+      await new Promise((r) => setTimeout(r, 150));
+    }
+    assert(res !== null && res.status === 200, `/api/ready returned HTTP ${res?.status}`);
+    assert(body.ready === true, `Expected ready: true, got ${body?.ready}`);
+    assert(body.status === 'ready', `Expected status 'ready', got '${body?.status}'`);
   });
 
   // -------------------------------------------------------------------

@@ -1348,6 +1348,7 @@ export async function executeSaleTransaction(
           bankAccountId,
           journalEntryId: journalEntry.id,
           status: effectiveDue <= 0 ? 'PAID' : (effectiveDue < totalAmount ? 'PARTIAL' : 'DUE'),
+          paymentStatus: effectiveDue <= 0 ? 'PAID' : (effectiveDue < totalAmount ? 'PARTIAL' : 'DUE'),
           createdAt: new Date().toISOString(),
           ...(idempotencyKey ? { idempotencyKey } : {}),
           synced: false
@@ -1978,6 +1979,7 @@ export async function executePurchaseTransaction(
           bankAccountId,
           journalEntryId: journalEntry.id,
           status: effectiveDue <= 0 ? 'PAID' : (effectiveDue < grandTotal ? 'PARTIAL' : 'DUE'),
+          paymentStatus: effectiveDue <= 0 ? 'PAID' : (effectiveDue < grandTotal ? 'PARTIAL' : 'DUE'),
           createdAt: new Date().toISOString(),
           ...(idempotencyKey ? { idempotencyKey } : {}),
           synced: false
@@ -6913,7 +6915,8 @@ export interface InventoryItemCreationParams {
   itemData: {
     id?: string;
     code?: string;
-    nameBn: string;
+    name?: string;
+    nameBn?: string;
     nameEn?: string;
     category?: InventoryItem['category'];
     unit?: string;
@@ -6967,6 +6970,9 @@ export async function executeInventoryItemCreationTransaction(
         const accounts = await db.accounts.toArray();
         const existingInvAcc = accounts.find((a) => a.code === invDetails.code);
         const invAccountName = existingInvAcc ? existingInvAcc.nameBn : invDetails.nameBn;
+        const resolvedName = (itemData.name || itemData.nameBn || itemData.nameEn || 'নতুন পণ্য').trim();
+        const resolvedNameBn = (itemData.nameBn || itemData.name || resolvedName).trim();
+        const resolvedNameEn = (itemData.nameEn || itemData.name || resolvedName).trim();
 
         const lines: JournalLine[] = [
           {
@@ -6975,7 +6981,7 @@ export async function executeInventoryItemCreationTransaction(
             accountName: invAccountName,
             debit: totalOpeningValue,
             credit: 0,
-            memo: `প্রারম্ভিক মজুদ: ${itemData.nameBn.trim()} (${stockNum} ${itemData.unit?.trim() || 'কেজি'} @ ৳${costNum})`
+            memo: `প্রারম্ভিক মজুদ: ${resolvedNameBn} (${stockNum} ${itemData.unit?.trim() || 'কেজি'} @ ৳${costNum})`
           },
           {
             accountId: CANONICAL_ACCOUNTS.RETAINED_EARNINGS,
@@ -6998,7 +7004,7 @@ export async function executeInventoryItemCreationTransaction(
             voucherNumber: generateTransactionNumber('JV'),
             voucherType: 'JOURNAL',
             date: todayStr,
-            narration: `প্রারম্ভিক মজুদ পণ্য দাখিলা: ${itemData.nameBn.trim()} (${stockNum} ${itemData.unit?.trim() || 'কেজি'} @ ৳${costNum})`,
+            narration: `প্রারম্ভিক মজুদ পণ্য দাখিলা: ${resolvedNameBn} (${stockNum} ${itemData.unit?.trim() || 'কেজি'} @ ৳${costNum})`,
             reference: 'OPENING_STOCK',
             lines,
             createdBy: currentUserId || 'system',
@@ -7013,12 +7019,16 @@ export async function executeInventoryItemCreationTransaction(
 
       const itemId = itemData.id?.trim() || generateUniqueId('it');
       const itemCode = itemData.code?.trim() || (category === 'FEED' ? generateTransactionNumber('FED') : generateTransactionNumber('ITM'));
+      const finalName = (itemData.name || itemData.nameBn || itemData.nameEn || 'নতুন পণ্য').trim();
+      const finalNameBn = (itemData.nameBn || itemData.name || finalName).trim();
+      const finalNameEn = (itemData.nameEn || itemData.name || finalName).trim();
 
       const item: InventoryItem = {
         id: itemId,
         code: itemCode,
-        nameBn: itemData.nameBn.trim(),
-        nameEn: itemData.nameEn?.trim() || itemData.nameBn.trim(),
+        name: finalName,
+        nameBn: finalNameBn,
+        nameEn: finalNameEn,
         category,
         unit: itemData.unit?.trim() || 'কেজি',
         currentStock: stockNum,

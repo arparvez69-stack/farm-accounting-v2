@@ -3774,7 +3774,7 @@ app.post('/api/sync/:collection', (req, res) => {
 
 // Security: Block test and debug endpoints in production environments at route level
 app.use('/api/test', (req, res, next) => {
-  if (process.env.NODE_ENV === 'production') {
+  if (process.env.NODE_ENV === 'production' || req.headers['x-enforce-production'] === 'true') {
     return res.status(403).json({
       error: 'টেস্ট ও ডিবাগিং রুট প্রোডাকশনে সম্পূর্ণ নিষ্ক্রিয় (Test and debug routes are disabled in production).'
     });
@@ -3900,10 +3900,10 @@ app.post('/api/logout', (req, res) => {
   return res.json({ success: true, message: 'সফলভাবে লগআউট হয়েছে।' });
 });
 
-// API Route: GET /api/sync/restore
+// API Route: GET /api/sync/restore & /api/restore
 // Allows an authenticated owner to pull down all existing cloud Firestore records
 // when logging into a new browser, device, or cleared storage.
-app.get('/api/sync/restore', async (req, res) => {
+app.get(['/api/sync/restore', '/api/restore'], async (req, res) => {
   const owner = await authenticateOwnerRequest(req);
   if (!owner) {
     return res.status(401).json({ error: 'অননুমোদিত অ্যাক্সেস। অনুগ্রহ করে প্রথমে লগইন করুন।' });
@@ -3990,7 +3990,8 @@ app.get('/api/sync/restore', async (req, res) => {
     return res.json({
       success: true,
       count: totalCount,
-      collections: result
+      collections: result,
+      data: result
     });
   } catch (err: any) {
     console.error('[The Goated Farm] Restore error:', err);
@@ -4143,6 +4144,14 @@ app.get('/api/farm-info', (req, res) => {
   });
 });
 
+// 404 handler for unhandled /api/* routes
+app.all('/api/*', (req, res) => {
+  return res.status(404).json({
+    success: false,
+    error: 'API রুট পাওয়া যায়নি (API route not found).'
+  });
+});
+
 // Normalized global API error handler
 // Ensures all unexpected API route errors return a consistent JSON shape with safe messages
 // and never leak stack traces, secrets, filesystem paths, or internal configuration.
@@ -4285,7 +4294,7 @@ async function startServer() {
 
 // Server-level unhandled rejection and exception safety: prevent silent failures
 process.on('unhandledRejection', (reason: any) => {
-  const errMsg = reason instanceof Error ? reason.message : String(reason);
+  const errMsg = reason instanceof Error ? (reason.stack || reason.message) : String(reason);
   console.error('[The Goated Farm] FATAL: Unhandled Promise Rejection encountered:', errMsg);
   if (process.env.NODE_ENV === 'production') {
     process.exit(1);

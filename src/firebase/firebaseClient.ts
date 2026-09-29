@@ -167,6 +167,38 @@ export async function initializeLocalDatabase(): Promise<void> {
     }
   }
 
+  // Ensure default Cash and Bank accounts in local IndexedDB
+  const hasCash = await db.cashBankAccounts.where('accountType').equals('CASH').first();
+  if (!hasCash) {
+    await db.cashBankAccounts.put({
+      id: 'cash_default',
+      name: 'প্রধান নগদ ড্রয়ার (Cash Drawer)',
+      accountName: 'প্রধান নগদ ড্রয়ার (Cash Drawer)',
+      accountType: 'CASH',
+      openingBalance: 0,
+      currentBalance: 0,
+      code: '1010',
+      isActive: true,
+      synced: true
+    });
+  }
+  const hasBank = await db.cashBankAccounts.where('accountType').equals('BANK').first();
+  if (!hasBank) {
+    await db.cashBankAccounts.put({
+      id: 'bank_default',
+      name: 'প্রধান ব্যাংক হিসাব (Main Bank Account)',
+      accountName: 'প্রধান ব্যাংক হিসাব (Main Bank Account)',
+      accountType: 'BANK',
+      openingBalance: 0,
+      currentBalance: 0,
+      bankName: 'Sonali Bank PLC',
+      accountNumber: '0000000000',
+      code: '1030',
+      isActive: true,
+      synced: true
+    });
+  }
+
   // Automatically migrate legacy journal entries referencing discontinued accounts (e.g. 1050)
   // Only runs when the required migration has not already been completed.
   try {

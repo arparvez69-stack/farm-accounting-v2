@@ -98,7 +98,9 @@ export function generateAmortizationSchedule(
       principalPortion,
       interestPortion,
       totalPayment,
+      paymentAmount: totalPayment,
       remainingBalance: remaining,
+      endingBalance: remaining,
       isPaid: false
     });
   }

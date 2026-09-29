@@ -373,7 +373,7 @@ export const LoginScreen: React.FC<Props> = ({ onLoginSuccess }) => {
                       if (error) setError(null);
                     }}
                     disabled={loading}
-                    className="w-full pl-11 pr-3.5 py-3 rounded-xl bg-[#F8FAFC] border border-gray-300 focus:border-[#1E5128] focus:ring-2 focus:ring-[#1E5128]/20 text-gray-900 placeholder-gray-400 text-[15px] transition outline-none"
+                    className="w-full pl-11 pr-3.5 py-3 rounded-xl bg-[#F8FAFC] border border-gray-300 focus:border-[#1E5128] focus:ring-2 focus:ring-[#1E5128]/20 text-gray-900 placeholder-gray-400 text-[16px] sm:text-[15px] transition outline-none"
                   />
                 </div>
               </div>
@@ -610,7 +610,7 @@ export const LoginScreen: React.FC<Props> = ({ onLoginSuccess }) => {
                         if (forgotError) setForgotError(null);
                       }}
                       disabled={forgotLoading}
-                      className="w-full px-3.5 pr-10 py-2.5 rounded-xl bg-[#F8FAFC] border border-gray-300 focus:border-[#1E5128] text-gray-900 font-mono text-[15px] tracking-wider outline-none"
+                      className="w-full px-3.5 pr-10 py-2.5 rounded-xl bg-[#F8FAFC] border border-gray-300 focus:border-[#1E5128] text-gray-900 font-mono text-[16px] sm:text-[15px] tracking-wider outline-none"
                     />
                     <button
                       type="button"
@@ -639,7 +639,7 @@ export const LoginScreen: React.FC<Props> = ({ onLoginSuccess }) => {
                       if (forgotError) setForgotError(null);
                     }}
                     disabled={forgotLoading}
-                    className="w-full px-3.5 py-2.5 rounded-xl bg-[#F8FAFC] border border-gray-300 focus:border-[#1E5128] text-gray-900 font-mono text-[15px] tracking-wider outline-none"
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-[#F8FAFC] border border-gray-300 focus:border-[#1E5128] text-gray-900 font-mono text-[16px] sm:text-[15px] tracking-wider outline-none"
                   />
                 </div>
 
