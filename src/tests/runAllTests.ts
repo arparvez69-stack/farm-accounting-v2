@@ -39,6 +39,7 @@ import { runStabilityTasks41_42Tests } from './testStabilityTasks41_42';
 import { runStabilityTasks43_44Tests } from './testStabilityTasks43_44';
 import { runCompleteAccountingGoldenLifecycleTests } from './testCompleteAccountingGoldenLifecycle';
 import { runCompleteDataRecoveryDrillTests } from './testCompleteDataRecoveryDrill';
+import { runCorruptedBackupSafeRejectionTests } from './testCorruptedBackupSafeRejection';
 
 interface SuiteResult {
   total: number;
@@ -95,6 +96,7 @@ async function main() {
   suiteResults.push(await runStabilityTasks43_44Tests());
   suiteResults.push(await runCompleteAccountingGoldenLifecycleTests());
   suiteResults.push(await runCompleteDataRecoveryDrillTests());
+  suiteResults.push(await runCorruptedBackupSafeRejectionTests());
 
   // Strictly aggregate actual executed assertions — no manual +10 or phantom counts
   const total = suiteResults.reduce((s, r) => s + (r.total || 0), 0);
