@@ -367,13 +367,13 @@ export async function executeAdvancePaymentTransaction(
 
         const advanceId = targetAdvId || generateUniqueId('adv');
         const advanceNumber = paramAdvNumber || generateTransactionNumber('ADV');
-        const displayNumber = await generateDisplayNumber('ADV', dateStr);
+        const displayNumber = await generateDisplayNumber('ADV', dateStr, dbInstance);
         const voucherType = direction === 'RECEIVED' ? 'RECEIPT' : 'PAYMENT';
 
         const journalEntry = await postJournalEntry(
           {
             id: generateUniqueId('j_adv'),
-            voucherNumber: await generateDisplayNumber(direction === 'RECEIVED' ? 'RCT' : 'PMT', dateStr),
+            voucherNumber: await generateDisplayNumber(direction === 'RECEIVED' ? 'RCT' : 'PMT', dateStr, dbInstance),
             voucherType,
             date: dateStr,
             narration: narration || (direction === 'RECEIVED'
@@ -582,7 +582,7 @@ export async function executeApplyAdvanceTransaction(
         const journalEntry = await postJournalEntry(
           {
             id: generateUniqueId('j_adv_app'),
-            voucherNumber: await generateDisplayNumber('JRN', dateStr),
+            voucherNumber: await generateDisplayNumber('JRN', dateStr, dbInstance),
             voucherType: 'JOURNAL',
             date: dateStr,
             narration: `অগ্রিম সমন্বয় (Advance Application): বিক্রয় চালান ${sale.invoiceNumber} এ গ্রাহক অগ্রিম সমন্বয়`,
@@ -688,7 +688,7 @@ export async function executeApplyAdvanceTransaction(
         const journalEntry = await postJournalEntry(
           {
             id: generateUniqueId('j_adv_app'),
-            voucherNumber: await generateDisplayNumber('JRN', dateStr),
+            voucherNumber: await generateDisplayNumber('JRN', dateStr, dbInstance),
             voucherType: 'JOURNAL',
             date: dateStr,
             narration: `অগ্রিম সমন্বয় (Advance Application): ক্রয় চালান ${purchase.invoiceNumber} এ সরবরাহকারী অগ্রিম সমন্বয়`,
@@ -1253,7 +1253,7 @@ export async function executeSaleTransaction(
         // Advance Application Journal Entry (if advance applied)
         let advanceJournalEntry: JournalEntry | undefined;
         if (appliedAdvanceAmount > 0 && targetAdvance) {
-          const advVoucherNumber = await generateDisplayNumber('JRN', dateStr);
+          const advVoucherNumber = await generateDisplayNumber('JRN', dateStr, dbInstance);
           const advanceJournalLines: JournalLine[] = [
             {
               accountId: CANONICAL_ACCOUNTS.CUSTOMER_ADVANCES,
@@ -1780,7 +1780,7 @@ export async function executePurchaseTransaction(
 
         const purchaseId = targetPurchaseId || generateUniqueId('pur');
         const invoiceNumber = paramInvoiceNumber || generateTransactionNumber('PUR');
-        const displayNumber = await generateDisplayNumber('PUR', dateStr);
+        const displayNumber = await generateDisplayNumber('PUR', dateStr, dbInstance);
 
         const paymentAccountCode = getPaymentAccount(paymentMethod, 'PURCHASE');
 
@@ -1869,7 +1869,7 @@ export async function executePurchaseTransaction(
             createdBy: currentUserId,
             createdAt: new Date().toISOString()
           },
-          { accounts, skipDbPut: true }
+          { accounts, skipDbPut: true, dbInstance }
         );
 
         if (idempotencyKey) {
@@ -1883,7 +1883,7 @@ export async function executePurchaseTransaction(
         // Debit Accounts Payable (2010), Credit Supplier Advance (1070)
         let advanceJournalEntry: JournalEntry | undefined;
         if (appliedAdvanceAmount > 0 && targetAdvance) {
-          const advVoucherNumber = await generateDisplayNumber('JRN', dateStr);
+          const advVoucherNumber = await generateDisplayNumber('JRN', dateStr, dbInstance);
           const advanceJournalLines: JournalLine[] = [
             {
               accountId: CANONICAL_ACCOUNTS.ACCOUNTS_PAYABLE,
@@ -3099,7 +3099,7 @@ export async function executeLoanTransaction(
           createdBy: currentUserId,
           createdAt: new Date().toISOString()
         },
-        { accounts, skipDbPut: true }
+        { accounts, skipDbPut: true, dbInstance }
       );
 
       // 1. Safe insert journal entry
@@ -4805,7 +4805,7 @@ export async function executeLoanRepaymentTransaction(
             createdBy: currentUserId,
             createdAt: new Date().toISOString()
           },
-          { accounts, skipDbPut: true }
+          { accounts, skipDbPut: true, dbInstance }
         );
 
         (journalEntry as any).loanId = loan.id;
