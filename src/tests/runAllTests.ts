@@ -54,6 +54,25 @@ interface SuiteResult {
   failures: string[];
 }
 
+import fs from 'fs';
+import path from 'path';
+
+// Ensure test runner has a valid session secret and pin configured
+if (!process.env.SESSION_SECRET) {
+  try {
+    const durableSecretPath = path.join(process.cwd(), 'data', '.session_secret');
+    if (fs.existsSync(durableSecretPath)) {
+      process.env.SESSION_SECRET = fs.readFileSync(durableSecretPath, 'utf8').trim();
+    }
+  } catch {}
+  if (!process.env.SESSION_SECRET) {
+    process.env.SESSION_SECRET = '49eb6b423fa27ff07a76d80cb34211be0dc45f1a136712335e24ba649d086599';
+  }
+}
+if (!process.env.INITIAL_PIN) {
+  process.env.INITIAL_PIN = '849201';
+}
+
 async function main() {
   console.log('====================================================');
   console.log('RUNNING COMPLETE REGRESSION & AUDIT TEST SUITE');
