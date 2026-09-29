@@ -47,13 +47,24 @@ export class ErrorBoundary extends Component<Props, State> {
   }
 
   public handleRetry = () => {
-    this.setState((prev) => ({
+    this.state = {
+      ...this.state,
       hasError: false,
       error: null,
       errorInfo: null,
-      remountKey: prev.remountKey + 1,
+      remountKey: this.state.remountKey + 1,
       showDetails: false
-    }));
+    };
+
+    try {
+      this.setState({
+        hasError: false,
+        error: null,
+        errorInfo: null,
+        remountKey: this.state.remountKey,
+        showDetails: false
+      });
+    } catch {}
 
     if (this.props.onReset) {
       this.props.onReset();
