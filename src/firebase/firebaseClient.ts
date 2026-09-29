@@ -408,7 +408,7 @@ let activeSyncPromise: Promise<{ syncedCount: number; errors: string[] }> | null
  * Synchronize pending offline data to server endpoints (Admin SDK write)
  */
 export async function synchronizePendingData(): Promise<{ syncedCount: number; errors: string[] }> {
-  if (typeof window !== 'undefined' && typeof navigator !== 'undefined' && navigator.onLine === false) {
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) {
     return { syncedCount: 0, errors: ['Offline'] };
   }
 
@@ -1022,7 +1022,7 @@ export async function restoreRemoteDataIfLocalEmpty(
 
     // If genuinely empty and no internet connection available
     const isMock = !!(options?.mockRemoteCollections);
-    if (!isMock && typeof window !== 'undefined' && typeof navigator !== 'undefined' && navigator.onLine === false) {
+    if (!isMock && typeof navigator !== 'undefined' && navigator.onLine === false) {
       if (isKnownOwner && totalLocalRecords === 0) {
         console.warn('[The Goated Farm] Known owner opened app with empty local database while offline.');
         return { restored: false, count: 0, offlineEmptyWarning: true };

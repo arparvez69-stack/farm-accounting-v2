@@ -41,6 +41,7 @@ import { runCompleteAccountingGoldenLifecycleTests } from './testCompleteAccount
 import { runCompleteDataRecoveryDrillTests } from './testCompleteDataRecoveryDrill';
 import { runCorruptedBackupSafeRejectionTests } from './testCorruptedBackupSafeRejection';
 import { runInterruptedTransactionSafetyTests } from './testInterruptedTransactionSafety';
+import { runOfflineReloadOnlineSyncRecoveryTests } from './testPrompt09OfflineSyncRecovery';
 
 interface SuiteResult {
   total: number;
@@ -99,6 +100,7 @@ async function main() {
   suiteResults.push(await runCompleteDataRecoveryDrillTests());
   suiteResults.push(await runCorruptedBackupSafeRejectionTests());
   suiteResults.push(await runInterruptedTransactionSafetyTests());
+  suiteResults.push(await runOfflineReloadOnlineSyncRecoveryTests());
 
   // Strictly aggregate actual executed assertions — no manual +10 or phantom counts
   const total = suiteResults.reduce((s, r) => s + (r.total || 0), 0);
