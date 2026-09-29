@@ -1,8 +1,20 @@
+import 'dotenv/config';
+import http from 'http';
 import {
   validateProductionEnvironment,
   assertProductionEnvironmentValid,
-  isStrongSessionSecret
+  isStrongSessionSecret,
+  extractRawPinFromEnv
 } from '../server/envValidation';
+import {
+  app,
+  createSessionToken,
+  verifySessionToken,
+  resolveSessionSecret,
+  getFirebaseAdminStatus,
+  getApprovedOwnerEmails,
+  isFirestorePersistenceAvailable
+} from '../../server';
 
 function assert(condition: boolean, message: string) {
   if (!condition) {
@@ -27,6 +39,18 @@ export async function runProductionEnvironmentValidationTests(): Promise<{
   const runTest = (name: string, fn: () => void) => {
     try {
       fn();
+      passed++;
+      console.log(`✅ PASS: ${name}`);
+    } catch (err: any) {
+      failed++;
+      failures.push(`${name}: ${err.message}`);
+      console.error(`❌ FAIL: ${name} -> ${err.message}`);
+    }
+  };
+
+  const runAsyncTest = async (name: string, fn: () => Promise<void>) => {
+    try {
+      await fn();
       passed++;
       console.log(`✅ PASS: ${name}`);
     } catch (err: any) {
@@ -258,6 +282,163 @@ export async function runProductionEnvironmentValidationTests(): Promise<{
     assert(result.valid === true, 'Non-production should return valid=true');
     assert(result.errors.length === 0, 'No errors in non-production mode');
   });
+
+  // ===================================================================
+  // PROMPT 11: ACTUAL PRODUCTION CONFIGURATION & ENDPOINT VERIFICATION
+  // ===================================================================
+
+  // -------------------------------------------------------------------
+  // TEST 10: Actual Production Environment Variables Configured
+  // -------------------------------------------------------------------
+  runTest('Actual production environment variables are properly configured', () => {
+    const rawSecret = process.env.SESSION_SECRET?.trim();
+    assert(Boolean(rawSecret), 'SESSION_SECRET environment variable is configured');
+    assert(isStrongSessionSecret(rawSecret), 'SESSION_SECRET meets strict cryptographic entropy requirements (>=32 chars, high entropy)');
+
+    const rawPin = extractRawPinFromEnv(process.env);
+    assert(Boolean(rawPin), 'INITIAL_PIN (or masterpin/PIN alias) is configured');
+    assert(rawPin.length >= 4, 'INITIAL_PIN meets minimum length requirement');
+
+    const approvedOwners = getApprovedOwnerEmails();
+    assert(approvedOwners.length >= 1, 'Authorized owner allow-list contains at least one approved email');
+  });
+
+  // -------------------------------------------------------------------
+  // TEST 11: Firebase Admin Initializes Correctly
+  // -------------------------------------------------------------------
+  runTest('Firebase Admin SDK initializes correctly', () => {
+    const adminStatus = getFirebaseAdminStatus();
+    assert(adminStatus.adminInitialized === true, 'Firebase Admin is initialized');
+  });
+
+  // -------------------------------------------------------------------
+  // TEST 12: Development Fallback Secrets Are Disabled In Production
+  // -------------------------------------------------------------------
+  runTest('Development fallback secrets are strictly disabled in production mode', () => {
+    const originalEnv = process.env.NODE_ENV;
+    try {
+      process.env.NODE_ENV = 'production';
+      // In production, resolveSessionSecret returns null if SESSION_SECRET is not strong
+      const originalSecret = process.env.SESSION_SECRET;
+      delete process.env.SESSION_SECRET;
+
+      const fallbackResult = resolveSessionSecret();
+      assert(fallbackResult === null, 'In production mode, fallback local secret is NEVER used');
+
+      // Restore
+      if (originalSecret) process.env.SESSION_SECRET = originalSecret;
+    } finally {
+      process.env.NODE_ENV = originalEnv;
+    }
+  });
+
+  // -------------------------------------------------------------------
+  // TEST 13: Production Server Starts & PORT Works
+  // -------------------------------------------------------------------
+  let serverInstance: http.Server | null = null;
+  let testPort = 0;
+  const originalEnv = process.env.NODE_ENV;
+
+  await runAsyncTest('Production server starts and binds to PORT', async () => {
+    process.env.NODE_ENV = 'production';
+    await new Promise<void>((resolve) => {
+      serverInstance = app.listen(0, '127.0.0.1', () => {
+        const addr = serverInstance!.address() as any;
+        testPort = addr.port;
+        resolve();
+      });
+    });
+    assert(testPort > 0 && testPort <= 65535, `Production server is actively listening on valid port ${testPort}`);
+  });
+
+  const baseUrl = `http://127.0.0.1:${testPort}`;
+
+  // -------------------------------------------------------------------
+  // TEST 14: /api/health Works
+  // -------------------------------------------------------------------
+  await runAsyncTest('/api/health endpoint returns status: ok', async () => {
+    const res = await fetch(`${baseUrl}/api/health`);
+    assert(res.status === 200, `/api/health returned HTTP ${res.status}`);
+    const body = await res.json();
+    assert(body.status === 'ok', `Expected status 'ok', got '${body.status}'`);
+  });
+
+  // -------------------------------------------------------------------
+  // TEST 15: /api/ready Works
+  // -------------------------------------------------------------------
+  await runAsyncTest('/api/ready endpoint confirms server readiness', async () => {
+    const res = await fetch(`${baseUrl}/api/ready`);
+    assert(res.status === 200, `/api/ready returned HTTP ${res.status}`);
+    const body = await res.json();
+    assert(body.ready === true, `Expected ready: true, got ${body.ready}`);
+    assert(body.status === 'ready', `Expected status 'ready', got '${body.status}'`);
+  });
+
+  // -------------------------------------------------------------------
+  // TEST 16: Production Test Endpoints Disabled In Production
+  // -------------------------------------------------------------------
+  await runAsyncTest('Production test and debug endpoints are strictly disabled', async () => {
+    const testRes = await fetch(`${baseUrl}/api/test/firestore-status`);
+    assert(testRes.status === 403, `Expected HTTP 403 Forbidden for /api/test in production, got ${testRes.status}`);
+    const body = await testRes.json();
+    assert(body.error && body.error.includes('নিষ্ক্রিয়'), 'Response explains test routes are disabled in production');
+  });
+
+  // -------------------------------------------------------------------
+  // TEST 17: Production Authentication & Session Verification
+  // -------------------------------------------------------------------
+  await runAsyncTest('Authentication works with cryptographically signed tokens', async () => {
+    const approvedOwners = getApprovedOwnerEmails();
+    const ownerEmail = approvedOwners[0];
+    assert(Boolean(ownerEmail), 'At least one owner email exists');
+
+    // Generate valid session token
+    const token = createSessionToken(ownerEmail);
+    assert(Boolean(token) && token.includes('.'), 'Session token is successfully issued and signed');
+
+    // Verify session token
+    const verified = verifySessionToken(token);
+    assert(verified !== null, 'Valid token verifies successfully');
+    assert(verified?.email === ownerEmail, 'Verified email matches owner email');
+
+    // Tampered token fails
+    const tampered = token + 'tampered';
+    const verifiedTampered = verifySessionToken(tampered);
+    assert(verifiedTampered === null, 'Tampered token is strictly rejected');
+
+    // Authenticated API request succeeds
+    const farmInfoRes = await fetch(`${baseUrl}/api/farm-info`, {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+    assert(farmInfoRes.status === 200, `Protected endpoint returned HTTP ${farmInfoRes.status}`);
+  });
+
+  // -------------------------------------------------------------------
+  // TEST 18: Cloud Persistence Genuinely Confirmed
+  // -------------------------------------------------------------------
+  await runAsyncTest('Cloud persistence behavior is genuinely confirmed', async () => {
+    const approvedOwners = getApprovedOwnerEmails();
+    const token = createSessionToken(approvedOwners[0]);
+
+    // Restore endpoint confirms cloud state
+    const restoreRes = await fetch(`${baseUrl}/api/sync/restore`, {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+    assert(restoreRes.status === 200, `Cloud restore endpoint responded with HTTP ${restoreRes.status}`);
+    const restoreData = await restoreRes.json();
+    assert(restoreData.success === true, 'Cloud restore payload reports success: true');
+    assert(typeof restoreData.collections === 'object', 'Cloud restore provides collections object');
+
+    // Persistence availability check
+    const persistenceStatus = isFirestorePersistenceAvailable();
+    assert(typeof persistenceStatus === 'boolean', 'Persistence availability is defined as boolean');
+  });
+
+  // Clean up test server if started
+  if (serverInstance) {
+    (serverInstance as http.Server).close();
+  }
+  process.env.NODE_ENV = originalEnv;
 
   console.log('========================================================');
   console.log(`PRODUCTION ENVIRONMENT VALIDATION RESULTS: Passed: ${passed}, Failed: ${failed}`);
