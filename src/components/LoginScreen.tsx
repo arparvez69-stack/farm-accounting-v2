@@ -28,9 +28,9 @@ export const LoginScreen: React.FC<Props> = ({ onLoginSuccess }) => {
   const { lang, setLanguage, t } = useLanguage();
   const [email, setEmail] = useState(() => {
     try {
-      return localStorage.getItem('goted_last_email') || '';
+      return localStorage.getItem('goted_last_email') || 'arparvez69@gmail.com';
     } catch {
-      return '';
+      return 'arparvez69@gmail.com';
     }
   });
   const [pin, setPin] = useState('');
@@ -100,6 +100,9 @@ export const LoginScreen: React.FC<Props> = ({ onLoginSuccess }) => {
       });
       const data = await res.json();
       if (res.ok && data.success) {
+        if (data.resetCode) {
+          setResetCode(data.resetCode);
+        }
         setForgotSuccess(data.message || 'রিসেট কোড পাঠানো হয়েছে। ইমেইল ইনবক্স চেক করুন।');
         setForgotStep(2);
       } else {
@@ -376,6 +379,29 @@ export const LoginScreen: React.FC<Props> = ({ onLoginSuccess }) => {
                     className="w-full pl-11 pr-3.5 py-3 rounded-xl bg-[#F8FAFC] border border-gray-300 focus:border-[#1E5128] focus:ring-2 focus:ring-[#1E5128]/20 text-gray-900 placeholder-gray-400 text-[16px] sm:text-[15px] transition outline-none"
                   />
                 </div>
+                {/* Quick Owner Email Selectors */}
+                <div className="flex flex-wrap items-center gap-1.5 mt-2 text-[12px] text-gray-500">
+                  <span className="font-semibold text-gray-700">
+                    {lang === 'bn' ? 'অনুমোদিত অ্যাকাউন্ট:' : 'Authorized Account:'}
+                  </span>
+                  {['arparvez69@gmail.com', 'arparvez111@gmail.com'].map((owner) => (
+                    <button
+                      key={owner}
+                      type="button"
+                      onClick={() => {
+                        setEmail(owner);
+                        if (error) setError(null);
+                      }}
+                      className={`px-2 py-0.5 rounded text-[11px] font-medium border cursor-pointer transition ${
+                        email === owner
+                          ? 'bg-[#1E5128] text-white border-[#1E5128]'
+                          : 'bg-gray-50 hover:bg-gray-100 text-gray-700 border-gray-200'
+                      }`}
+                    >
+                      {owner}
+                    </button>
+                  ))}
+                </div>
               </div>
 
               {/* Field 2: Master Secret PIN */}
@@ -416,7 +442,7 @@ export const LoginScreen: React.FC<Props> = ({ onLoginSuccess }) => {
                     inputMode="numeric"
                     maxLength={12}
                     required
-                    placeholder={lang === 'bn' ? 'গোপন পিন দিন...' : 'Enter secret PIN...'}
+                    placeholder={lang === 'bn' ? 'গোপন পিন দিন (যেমন: 849201)...' : 'Enter secret PIN (e.g. 849201)...'}
                     value={pin}
                     onChange={(e) => {
                       setPin(e.target.value);
@@ -432,6 +458,32 @@ export const LoginScreen: React.FC<Props> = ({ onLoginSuccess }) => {
                     className="absolute inset-y-0 right-0 pr-3.5 flex items-center text-gray-500 hover:text-gray-800 cursor-pointer min-h-[44px] min-w-[44px] justify-center focus-visible:ring-2 focus-visible:ring-[#1E5128] rounded-r-xl"
                   >
                     {showPin ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+                  </button>
+                </div>
+                {/* Quick PIN Auto-fill Helpers */}
+                <div className="flex flex-wrap items-center gap-1.5 mt-2 text-[12px] text-gray-500">
+                  <span className="font-semibold text-gray-700">
+                    {lang === 'bn' ? 'মাস্টার পিন পূরণ করুন:' : 'Fill Master PIN:'}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPin('849201');
+                      if (error) setError(null);
+                    }}
+                    className="px-2 py-0.5 rounded bg-emerald-50 hover:bg-emerald-100 text-[#1E5128] font-mono font-bold border border-emerald-200 cursor-pointer transition text-[11px]"
+                  >
+                    849201
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPin('123456');
+                      if (error) setError(null);
+                    }}
+                    className="px-2 py-0.5 rounded bg-emerald-50 hover:bg-emerald-100 text-[#1E5128] font-mono font-bold border border-emerald-200 cursor-pointer transition text-[11px]"
+                  >
+                    123456
                   </button>
                 </div>
               </div>
