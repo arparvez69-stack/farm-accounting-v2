@@ -19,6 +19,7 @@ import {
   BankTransfer,
   Loan,
   Investor,
+  InvestmentTranche,
   FixedAsset,
   AuditLogEntry,
   SystemConfig,
@@ -60,6 +61,7 @@ export class AgroDatabase extends Dexie {
   bankTransfers!: Table<BankTransfer, string>;
   loans!: Table<Loan, string>;
   investors!: Table<Investor, string>;
+  investmentTranches!: Table<InvestmentTranche, string>;
   fixedAssets!: Table<FixedAsset, string>;
   auditLogs!: Table<AuditLogEntry, string>;
   accessLogs!: Table<AppAccessLog, string>;
@@ -98,6 +100,7 @@ export class AgroDatabase extends Dexie {
       bankTransfers: 'id, date, type, synced',
       loans: 'id, lenderName, status, synced',
       investors: 'id, name, status, synced',
+      investmentTranches: 'id, investorId, effectiveInvestmentDate, status, synced',
       fixedAssets: 'id, name, category, synced',
       auditLogs: 'id, timestamp, userId, action, module, synced',
       accessLogs: 'id, email, timestamp, status, synced',
@@ -175,6 +178,10 @@ export class AgroDatabase extends Dexie {
           throw new Error(`ডাটাবেজ সংস্করণ ১২ আপগ্রেড ব্যর্থ হয়েছে: ${err?.message || err}। পূর্ববর্তী তথ্য সুরক্ষিত রাখা হয়েছে।`);
         }
       });
+
+    this.version(13).stores({
+      investmentTranches: 'id, investorId, effectiveInvestmentDate, status, synced'
+    });
 
     // STABILITY TASK 34: Safe version upgrades and conflict handling
     this.on('versionchange', () => {

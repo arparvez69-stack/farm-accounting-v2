@@ -2207,6 +2207,15 @@ export function validateRecordShape(targetCol: string, data: any): { valid: bool
       }
       break;
     }
+    case 'investmentTranches': {
+      if (!isNonEmptyStr(data.investorId)) {
+        return { valid: false, error: 'বিনিয়োগকারী আইডি আবশ্যক (Investor ID is required for investment tranche).' };
+      }
+      if (typeof data.investmentAmount !== 'number' || data.investmentAmount <= 0) {
+        return { valid: false, error: 'বিনিয়োগের পরিমাণ অবশ্যই ০ থেকে বেশি হতে হবে (Investment amount must be > 0).' };
+      }
+      break;
+    }
     case 'fixedAssets': {
       if (!isNonEmptyStr(data.name)) {
         return { valid: false, error: 'স্থায়ী সম্পদের নাম আবশ্যক (Fixed asset name is required).' };
@@ -2369,6 +2378,8 @@ async function handleSyncWrite(
         ? 'loans'
         : collectionName === 'investor' || collectionName === 'investors'
         ? 'investors'
+        : collectionName === 'investmentTranche' || collectionName === 'investmentTranches'
+        ? 'investmentTranches'
         : collectionName === 'fixedAsset' || collectionName === 'fixedAssets'
         ? 'fixedAssets'
         : collectionName === 'party' || collectionName === 'parties' || collectionName === 'customer' || collectionName === 'customers' || collectionName === 'supplier' || collectionName === 'suppliers'
@@ -3702,6 +3713,8 @@ app.post('/api/sync/loan', (req, res) => handleSyncWrite('loans', req, res));
 app.post('/api/sync/loans', (req, res) => handleSyncWrite('loans', req, res));
 app.post('/api/sync/investor', (req, res) => handleSyncWrite('investors', req, res));
 app.post('/api/sync/investors', (req, res) => handleSyncWrite('investors', req, res));
+app.post('/api/sync/investmentTranche', (req, res) => handleSyncWrite('investmentTranches', req, res));
+app.post('/api/sync/investmentTranches', (req, res) => handleSyncWrite('investmentTranches', req, res));
 app.post('/api/sync/fixedAsset', (req, res) => handleSyncWrite('fixedAssets', req, res));
 app.post('/api/sync/fixedAssets', (req, res) => handleSyncWrite('fixedAssets', req, res));
 app.post('/api/sync/party', (req, res) => handleSyncWrite('parties', req, res));
@@ -3760,6 +3773,8 @@ app.post('/api/sync/:collection', (req, res) => {
     col !== 'bankTransfer' &&
     col !== 'loan' &&
     col !== 'investor' &&
+    col !== 'investmentTranche' &&
+    col !== 'investmentTranches' &&
     col !== 'fixedAsset' &&
     col !== 'party' &&
     col !== 'customer' &&
@@ -3955,6 +3970,7 @@ app.get(['/api/sync/restore', '/api/restore'], async (req, res) => {
       'bankTransfers',
       'loans',
       'investors',
+      'investmentTranches',
       'fixedAssets',
       'auditLogs',
       'accessLogs',

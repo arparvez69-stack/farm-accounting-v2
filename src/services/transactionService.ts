@@ -24,6 +24,8 @@ import {
   Purchase,
   Loan,
   Investor,
+  InvestmentTranche,
+  UnattributedRecordAudit,
   CashBankAccount,
   VoucherType,
   JournalEntry,
@@ -3196,6 +3198,226 @@ export async function executeLoanTransaction(
 }
 
 /**
+ * Strict Prohibited Placeholder Investor Names
+ * Investor attribution can NEVER be silently defaulted to these values.
+ */
+export const PROHIBITED_DEFAULT_INVESTOR_NAMES = [
+  'unknown',
+  'default',
+  'unknown investor',
+  'default investor',
+  'anonymous',
+  'anonymous investor',
+  'system',
+  'system investor',
+  'unassigned',
+  'unattributed',
+  'none',
+  'n/a',
+  'null',
+  'undefined'
+];
+
+/**
+ * Validates Investor Attribution independently at the backend/service layer.
+ * - Every new investor capital transaction must identify the exact investor.
+ * - Do not allow an investor capital transaction to be saved without a valid investor reference.
+ * - Never infer an investor from the currently logged-in user.
+ * - Never silently assign an unknown/default investor.
+ */
+export async function validateInvestorAttribution(
+  params: {
+    investorId?: string;
+    investorName?: string;
+    currentUserId?: string;
+  },
+  dbInstance: any = db
+): Promise<{
+  investorId: string;
+  investorName: string;
+  isExisting: boolean;
+  existingInvestor?: Investor;
+}> {
+  const { investorId, investorName, currentUserId } = params;
+
+  const cleanInvId = typeof investorId === 'string' ? investorId.trim() : '';
+  const cleanInvName = typeof investorName === 'string' ? investorName.trim() : '';
+
+  // 1. Strict absence check: neither id nor name provided
+  if (!cleanInvId && !cleanInvName) {
+    throw new Error(
+      'Valid investor reference is required: every investor capital transaction must identify the exact investor.'
+    );
+  }
+
+  // 2. Strict prevention: NEVER infer investor from currently logged-in user
+  if (currentUserId && typeof currentUserId === 'string' && currentUserId.trim()) {
+    const cleanUserId = currentUserId.trim().toLowerCase();
+    if (cleanInvId && cleanInvId.toLowerCase() === cleanUserId) {
+      const existingUserInv = dbInstance.investors?.get ? await dbInstance.investors.get(cleanInvId) : null;
+      if (!existingUserInv) {
+        throw new Error(
+          `Investor cannot be inferred from the currently logged-in user (${currentUserId}). Every capital transaction must explicitly identify an exact investor.`
+        );
+      }
+    }
+    if (cleanInvName && cleanInvName.toLowerCase() === cleanUserId) {
+      throw new Error(
+        `Investor cannot be inferred from the currently logged-in user (${currentUserId}). Every capital transaction must explicitly identify an exact investor.`
+      );
+    }
+  }
+
+  // 3. Strict prevention: NEVER silently assign an unknown/default investor
+  if (cleanInvId) {
+    const lowerId = cleanInvId.toLowerCase();
+    if (
+      PROHIBITED_DEFAULT_INVESTOR_NAMES.includes(lowerId) ||
+      lowerId.startsWith('default_') ||
+      lowerId.startsWith('unknown_')
+    ) {
+      throw new Error(
+        `Cannot silently assign an unknown or default investor ("${cleanInvId}"). Exact investor attribution is required.`
+      );
+    }
+  }
+
+  if (cleanInvName) {
+    const lowerName = cleanInvName.toLowerCase();
+    if (
+      PROHIBITED_DEFAULT_INVESTOR_NAMES.includes(lowerName) ||
+      lowerName.startsWith('default_') ||
+      lowerName.startsWith('unknown_')
+    ) {
+      throw new Error(
+        `Cannot silently assign an unknown or default investor ("${cleanInvName}"). Exact investor attribution is required.`
+      );
+    }
+  }
+
+  // 4. Verify existing investor reference if investorId is specified
+  if (cleanInvId) {
+    const existingInvestor = dbInstance.investors?.get ? await dbInstance.investors.get(cleanInvId) : null;
+    if (!existingInvestor) {
+      throw new Error(
+        `Investor reference "${cleanInvId}" not found. Cannot save capital transaction without a valid investor reference.`
+      );
+    }
+    return {
+      investorId: existingInvestor.id,
+      investorName: cleanInvName || existingInvestor.name,
+      isExisting: true,
+      existingInvestor
+    };
+  }
+
+  // 5. New investor admission alongside capital contribution
+  if (!cleanInvName) {
+    throw new Error('Valid investor reference is required: investor name cannot be empty.');
+  }
+
+  const generatedId = generateUniqueId('inv');
+  return {
+    investorId: generatedId,
+    investorName: cleanInvName,
+    isExisting: false
+  };
+}
+
+/**
+ * Audits and flags historical records with missing investor attribution.
+ * Historical records are strictly preserved without guessing or reassignment.
+ */
+export async function detectAndFlagHistoricalUnattributedRecords(
+  dbInstance: any = db
+): Promise<UnattributedRecordAudit[]> {
+  const flaggedList: UnattributedRecordAudit[] = [];
+
+  // 1. Audit Investment Tranches
+  if (dbInstance.investmentTranches) {
+    const tranches: InvestmentTranche[] = await dbInstance.investmentTranches.toArray();
+    const investors: Investor[] = await dbInstance.investors.toArray();
+    const validInvestorIds = new Set(investors.map((i) => i.id));
+
+    for (const tr of tranches) {
+      const cleanInvId = (tr.investorId || '').trim();
+      const hasMissingId = !cleanInvId;
+      const isPlaceholder = cleanInvId && PROHIBITED_DEFAULT_INVESTOR_NAMES.includes(cleanInvId.toLowerCase());
+      const investorNotFound = cleanInvId && !validInvestorIds.has(cleanInvId);
+
+      if (hasMissingId || isPlaceholder || investorNotFound) {
+        const flagReason = hasMissingId
+          ? 'Tranche missing investor ID reference'
+          : isPlaceholder
+          ? `Tranche assigned to prohibited placeholder investor "${cleanInvId}"`
+          : `Tranche references non-existent investor ID "${cleanInvId}"`;
+
+        if (!tr.missingAttribution || tr.attributionStatus !== 'MISSING_ATTRIBUTION') {
+          await dbInstance.investmentTranches.update(tr.id, {
+            missingAttribution: true,
+            attributionStatus: 'MISSING_ATTRIBUTION',
+            attributionFlagReason: flagReason
+          });
+        }
+
+        flaggedList.push({
+          id: tr.id,
+          recordType: 'INVESTMENT_TRANCHE',
+          date: tr.effectiveInvestmentDate,
+          amount: tr.investmentAmount,
+          description: `Tranche ${tr.trancheNumber || tr.id}: ৳${tr.investmentAmount}`,
+          flagReason,
+          isFlagged: true
+        });
+      }
+    }
+  }
+
+  // 2. Audit Journal Entries for account 3020 (Investor Capital)
+  if (dbInstance.journalEntries) {
+    const entries: JournalEntry[] = await dbInstance.journalEntries.toArray();
+
+    for (const je of entries) {
+      const capLines = (je.lines || []).filter(
+        (l: any) => l.accountCode === CANONICAL_ACCOUNTS.INVESTOR_CAPITAL && (Number(l.credit) > 0 || Number(l.debit) > 0)
+      );
+
+      if (capLines.length > 0) {
+        const invId = (je.investorId || (je as any).relatedPerson || '').trim();
+        const hasMissingAttribution = !invId;
+        const isPlaceholder = invId && PROHIBITED_DEFAULT_INVESTOR_NAMES.includes(invId.toLowerCase());
+
+        if (hasMissingAttribution || isPlaceholder) {
+          const flagReason = hasMissingAttribution
+            ? 'Journal entry affecting 3020 Investor Capital lacks investor attribution'
+            : `Journal entry assigned to prohibited placeholder investor "${invId}"`;
+
+          if (!je.missingAttribution || je.attributionStatus !== 'MISSING_ATTRIBUTION') {
+            await dbInstance.journalEntries.update(je.id, {
+              missingAttribution: true,
+              attributionStatus: 'MISSING_ATTRIBUTION',
+              attributionFlagReason: flagReason
+            });
+          }
+
+          flaggedList.push({
+            id: je.id,
+            recordType: 'JOURNAL_ENTRY',
+            date: je.date,
+            amount: capLines.reduce((s: number, l: any) => s + (Number(l.credit) || Number(l.debit) || 0), 0),
+            description: `Voucher ${je.voucherNumber || je.id}: ${je.narration}`,
+            flagReason,
+            isFlagged: true
+          });
+        }
+      }
+    }
+  }
+
+  return flaggedList;
+}
+
+/**
  * Atomic Execution of Investor Capital Contribution
  */
 /**
@@ -3208,7 +3430,7 @@ export async function executeLoanTransaction(
 export async function executeInvestorTransaction(
   params: {
     investorId?: string;
-    investorName: string;
+    investorName?: string;
     contribution: number;
     profitShare?: number;
     profitSharingRatio?: number;
@@ -3219,14 +3441,21 @@ export async function executeInvestorTransaction(
     termMonths?: number; // legacy ignored in non-interest model
     date?: string;
     notes?: string;
+    allowExceedingGlobal100?: boolean;
+    trancheId?: string;
+    trancheNumber?: string;
+    valuationEventId?: string;
+    preMoneyValuation?: number;
+    postMoneyValuation?: number;
   },
   dbInstance: any = db
-): Promise<{ investor: Investor; journalEntryId: string }> {
+): Promise<{ investor: Investor; journalEntryId: string; tranche?: InvestmentTranche }> {
   return await dbInstance.transaction(
     'rw',
     [
       dbInstance.journalEntries,
       dbInstance.investors,
+      ...((dbInstance as any).investmentTranches ? [(dbInstance as any).investmentTranches] : []),
       dbInstance.cashBankAccounts,
       dbInstance.accounts,
       dbInstance.auditLogs,
@@ -3243,21 +3472,45 @@ export async function executeInvestorTransaction(
         currentUserId,
         phone,
         date,
-        notes
+        notes,
+        allowExceedingGlobal100,
+        trancheId,
+        trancheNumber,
+        valuationEventId,
+        preMoneyValuation,
+        postMoneyValuation
       } = params;
 
       if (contribution <= 0) {
         throw new Error('Contribution amount must be strictly greater than 0.');
       }
 
+      // Independent Investor Attribution Validation (Targeted Investor Attribution Task)
+      const {
+        investorId: validatedInvId,
+        investorName: validatedInvName,
+        existingInvestor: fetchedExistingInvestor
+      } = await validateInvestorAttribution(
+        {
+          investorId,
+          investorName,
+          currentUserId
+        },
+        dbInstance
+      );
+
       const agreedRatio = profitSharingRatio !== undefined ? profitSharingRatio : profitShare;
       if (typeof agreedRatio !== 'number' || isNaN(agreedRatio) || agreedRatio <= 0 || agreedRatio > 100) {
         throw new Error('অংশীদারিত্ব/মুনাফা বণ্টন অনুপাত (Profit-sharing ratio) অবশ্যই ০ এর বেশি এবং সর্বোচ্চ ১০০% হতে হবে (> 0 এবং <= 100)।');
       }
 
-      const invId = investorId || generateUniqueId('inv');
+      const invId = validatedInvId;
 
-      // Validate total profit-sharing ratio among active investors does not exceed 100%
+      // Check existing investor
+      const existingInvestor =
+        fetchedExistingInvestor || (investorId ? await dbInstance.investors.get(investorId) : undefined);
+
+      // Validate total profit-sharing ratio among active investors
       const allInvestors = await dbInstance.investors.toArray();
       const otherActiveRatios = allInvestors
         .filter((inv: any) => inv.id !== invId && inv.status !== 'EXITED')
@@ -3266,7 +3519,9 @@ export async function executeInvestorTransaction(
           return sum + r;
         }, 0);
 
-      if (otherActiveRatios + agreedRatio > 100) {
+      // In the contractual tranche model, each investor's percentage applies to their allocated economic profit.
+      // We enforce the 100% check only when not adding an additional tranche to an existing investor and not bypassed.
+      if (!existingInvestor && !allowExceedingGlobal100 && otherActiveRatios + agreedRatio > 100) {
         throw new Error(
           `মোট লভ্যাংশ বণ্টন অনুপাত ১০০% অতিক্রম করতে পারে না (Total investor profit-sharing ratio cannot exceed 100%)। অন্যান্য সক্রিয় বিনিয়োগকারীদের বিদ্যমান অনুপাত: ${otherActiveRatios}%, প্রস্তাবিত অনুপাত: ${agreedRatio}% (সর্বমোট: ${otherActiveRatios + agreedRatio}%)।`
         );
@@ -3341,7 +3596,8 @@ export async function executeInvestorTransaction(
           accountName: equityAcc.nameBn,
           debit: 0,
           credit: contribution,
-          memo: `${investorName} মূলধন সংযোজন`
+          memo: `${validatedInvName} মূলধন সংযোজন [Investor ID: ${invId}]`,
+          investorId: invId
         }
       ];
 
@@ -3352,8 +3608,12 @@ export async function executeInvestorTransaction(
           voucherNumber,
           voucherType: 'RECEIPT',
           date: dateStr,
-          narration: `বিনিয়োগকারীর মূলধন জমা: ${investorName} এর বিনিয়োগ ৳${contribution}`,
+          narration: `বিনিয়োগকারীর মূলধন জমা: ${validatedInvName} এর বিনিয়োগ ৳${contribution}`,
           reference: invRef,
+          relatedPerson: validatedInvName,
+          investorId: invId,
+          attributionStatus: 'VERIFIED',
+          missingAttribution: false,
           lines: journalLines,
           createdBy: currentUserId,
           createdAt: new Date().toISOString()
@@ -3364,8 +3624,7 @@ export async function executeInvestorTransaction(
       // 1. Safe insert journal entry
       await safeInsert(dbInstance.journalEntries, journalEntry, { idPrefix: 'j' });
 
-      // 2. Fetch or initialize investor record
-      const existingInvestor = investorId ? await dbInstance.investors.get(investorId) : undefined;
+      // 2. Initialize or update investor record
       const totalActiveRatio = Math.round((otherActiveRatios + agreedRatio) * 100) / 100;
       const farmWorkingPartnerRatio = Math.max(0, Math.round((100 - totalActiveRatio) * 100) / 100);
 
@@ -3375,7 +3634,7 @@ export async function executeInvestorTransaction(
 
       const investorRecord: Investor = {
         id: invId,
-        name: investorName.trim(),
+        name: validatedInvName,
         phone: phone?.trim() || existingInvestor?.phone || undefined,
         capitalAmount: totalContributed,
         initialCapital: existingInvestor?.initialCapital ?? contribution,
@@ -3419,7 +3678,41 @@ export async function executeInvestorTransaction(
         currentBalance: Math.round(((targetAcc.currentBalance || 0) + contribution) * 100) / 100
       });
 
-      // 4. Audit Log
+      // 4. Create and persist distinct Investment Tranche
+      const tId = trancheId || generateUniqueId('tranche');
+      const tNum = trancheNumber || generateTransactionNumber('TR');
+      const trancheRecord: InvestmentTranche = {
+        id: tId,
+        trancheNumber: tNum,
+        investorId: invId,
+        investorName: validatedInvName,
+        investmentAmount: contribution,
+        effectiveInvestmentDate: dateStr,
+        contractualProfitSharePercentage: agreedRatio,
+        currency: 'BDT',
+        status: 'ACTIVE',
+        attributionStatus: 'VERIFIED',
+        missingAttribution: false,
+        creationTimestamp: new Date().toISOString(),
+        currentCapitalBalance: contribution,
+        totalCapitalReturned: 0,
+        createdBy: currentUserId,
+        createdAt: new Date().toISOString(),
+        valuationEventId: valuationEventId || undefined,
+        preMoneyValuation: preMoneyValuation !== undefined ? preMoneyValuation : undefined,
+        postMoneyValuation: postMoneyValuation !== undefined ? postMoneyValuation : undefined,
+        notes: notes || undefined,
+        journalEntryId: journalEntry.id,
+        targetAccountId: targetAcc.id,
+        reference: invRef,
+        synced: false
+      };
+
+      if ((dbInstance as any).investmentTranches) {
+        await safeInsert((dbInstance as any).investmentTranches, trancheRecord, { idPrefix: 'tranche' });
+      }
+
+      // 5. Audit Log
       await safeInsert(dbInstance.auditLogs, {
         id: generateUniqueId('audit'),
         timestamp: new Date().toISOString(),
@@ -3432,9 +3725,301 @@ export async function executeInvestorTransaction(
         details: `বিনিয়োগকারী ${investorName} এর মূলধন জমা (৳${contribution}) - অংশীদারি অনুপাত ${agreedRatio}%`
       });
 
-      return { investor: investorRecord, journalEntryId: journalEntry.id };
+      return { investor: investorRecord, journalEntryId: journalEntry.id, tranche: trancheRecord };
     }
   );
+}
+
+/**
+ * Atomic Execution of a Separate Investment Tranche
+ * - Each investment is a separate, traceable Investment Tranche.
+ * - Belongs to one specific investor.
+ * - Different investors may have different contractual profit-share percentages.
+ * - Multiple tranches for the same investor remain separately traceable.
+ * - Does not collapse multiple investments into one flat balance where tranche identity is lost.
+ * - Posts standard double-entry: Dr 1010/1030 (Cash/Bank) | Cr 3020 (Investor Capital).
+ */
+export async function executeInvestmentTrancheTransaction(
+  params: {
+    trancheId?: string;
+    trancheNumber?: string;
+    investorId: string;
+    investorName?: string;
+    investmentAmount: number;
+    effectiveInvestmentDate?: string;
+    contractualProfitSharePercentage: number;
+    currency?: string;
+    targetAccountId: string;
+    currentUserId: string;
+    valuationEventId?: string;
+    preMoneyValuation?: number;
+    postMoneyValuation?: number;
+    notes?: string;
+  },
+  dbInstance: any = db
+): Promise<{
+  tranche: InvestmentTranche;
+  investor: Investor;
+  journalEntryId: string;
+}> {
+  return await dbInstance.transaction(
+    'rw',
+    [
+      dbInstance.journalEntries,
+      dbInstance.investors,
+      ...((dbInstance as any).investmentTranches ? [(dbInstance as any).investmentTranches] : []),
+      dbInstance.cashBankAccounts,
+      dbInstance.accounts,
+      dbInstance.auditLogs,
+      dbInstance.closedPeriods
+    ],
+    async () => {
+      const {
+        trancheId,
+        trancheNumber,
+        investorId,
+        investorName,
+        investmentAmount,
+        effectiveInvestmentDate,
+        contractualProfitSharePercentage,
+        currency = 'BDT',
+        targetAccountId,
+        currentUserId,
+        valuationEventId,
+        preMoneyValuation,
+        postMoneyValuation,
+        notes
+      } = params;
+
+      if (investmentAmount <= 0) {
+        throw new Error('Investment tranche amount must be strictly greater than 0.');
+      }
+
+      if (
+        typeof contractualProfitSharePercentage !== 'number' ||
+        isNaN(contractualProfitSharePercentage) ||
+        contractualProfitSharePercentage <= 0 ||
+        contractualProfitSharePercentage > 100
+      ) {
+        throw new Error(
+          'চুক্তিভিত্তিক লভ্যাংশ বণ্টন অনুপাত (Contractual profit-share percentage) অবশ্যই ০ এর বেশি এবং সর্বোচ্চ ১০০% হতে হবে (> 0 এবং <= 100)।'
+        );
+      }
+
+      // Investor validation: must belong to one specific, verified investor
+      const {
+        investorId: validatedInvId,
+        investorName: validatedInvName,
+        existingInvestor
+      } = await validateInvestorAttribution(
+        {
+          investorId,
+          investorName,
+          currentUserId
+        },
+        dbInstance
+      );
+
+      const investor = existingInvestor || (await dbInstance.investors.get(validatedInvId));
+      if (!investor) {
+        throw new Error(`বিনিয়োগকারী পাওয়া যায়নি (Investor not found: ${validatedInvId})।`);
+      }
+
+      const dateStr = effectiveInvestmentDate || new Date().toISOString().split('T')[0];
+
+      // Closed period validation
+      if (dbInstance.closedPeriods) {
+        const closedPeriods = await dbInstance.closedPeriods.toArray();
+        const isClosed = closedPeriods.some((cp: any) => cp.endDate >= dateStr);
+        if (isClosed) {
+          throw new Error(`সীমাবদ্ধতা: ${dateStr} তারিখটি ইতোমধ্যে বন্ধ হিসাবকালের (Closed Period) অন্তর্ভুক্ত।`);
+        }
+      }
+
+      if (!targetAccountId) {
+        throw new Error('Target cash/bank account is required.');
+      }
+      const targetAcc = await dbInstance.cashBankAccounts.get(targetAccountId);
+      if (!targetAcc) {
+        throw new Error(`Target cash/bank account ${targetAccountId} not found.`);
+      }
+
+      const tRef = trancheNumber || generateTransactionNumber('TR');
+      const assetGlCode = getCashBankAccountGLCode(targetAcc.accountType);
+      const equityGlCode = getInvestorCapitalAccount(); // 3020
+
+      const accounts = await dbInstance.accounts.toArray();
+      const assetAcc = accounts.find((a: any) => a.code === assetGlCode) || {
+        id: `acc_${assetGlCode}`,
+        code: assetGlCode,
+        nameBn: targetAcc.accountName || targetAcc.name || 'ব্যাংক/নগদ তহবিল',
+        accountClass: 'ASSET',
+        normalBalance: 'DEBIT',
+        isSystem: true,
+        isActive: true
+      };
+      if (!accounts.some((a: any) => a.code === assetGlCode)) {
+        accounts.push(assetAcc);
+      }
+
+      const equityAcc = accounts.find((a: any) => a.code === equityGlCode) || {
+        id: `acc_${equityGlCode}`,
+        code: equityGlCode,
+        nameBn: 'বিনিয়োগকারীর মূলধন (Investor Capital)',
+        accountClass: 'EQUITY',
+        normalBalance: 'CREDIT',
+        isSystem: true,
+        isActive: true
+      };
+      if (!accounts.some((a: any) => a.code === equityGlCode)) {
+        accounts.push(equityAcc);
+      }
+
+      const journalLines: JournalLine[] = [
+        {
+          accountId: assetAcc.id,
+          accountCode: assetGlCode,
+          accountName: targetAcc.accountName || targetAcc.name || assetAcc.nameBn,
+          debit: investmentAmount,
+          credit: 0,
+          memo: `বিনিয়োগ কিস্তি মূলধন গ্রহণ (${tRef})`
+        },
+        {
+          accountId: equityAcc.id,
+          accountCode: equityGlCode,
+          accountName: equityAcc.nameBn,
+          debit: 0,
+          credit: investmentAmount,
+          memo: `${investor.name} কিস্তি মূলধন সংযোজন (${tRef}) [Investor ID: ${investor.id}]`,
+          investorId: investor.id
+        }
+      ];
+
+      const voucherNumber = generateTransactionNumber('INV-TR-V');
+      const journalEntry = await postJournalEntry(
+        {
+          id: generateUniqueId('j_invest_tranche'),
+          voucherNumber,
+          voucherType: 'RECEIPT',
+          date: dateStr,
+          narration: `বিনিয়োগ কিস্তি জমা: ${investor.name} এর কিস্তি ৳${investmentAmount} (${contractualProfitSharePercentage}%) [${tRef}]`,
+          reference: tRef,
+          relatedPerson: investor.name,
+          investorId: investor.id,
+          attributionStatus: 'VERIFIED',
+          missingAttribution: false,
+          lines: journalLines,
+          createdBy: currentUserId,
+          createdAt: new Date().toISOString()
+        },
+        { accounts, skipDbPut: true }
+      );
+
+      // 1. Safe insert journal entry
+      await safeInsert(dbInstance.journalEntries, journalEntry, { idPrefix: 'j' });
+
+      // 2. Insert InvestmentTranche record
+      const tId = trancheId || generateUniqueId('tranche');
+      const trancheRecord: InvestmentTranche = {
+        id: tId,
+        trancheNumber: tRef,
+        investorId: investor.id,
+        investorName: validatedInvName || investor.name,
+        investmentAmount,
+        effectiveInvestmentDate: dateStr,
+        contractualProfitSharePercentage,
+        currency,
+        status: 'ACTIVE',
+        attributionStatus: 'VERIFIED',
+        missingAttribution: false,
+        creationTimestamp: new Date().toISOString(),
+        currentCapitalBalance: investmentAmount,
+        totalCapitalReturned: 0,
+        createdBy: currentUserId,
+        createdAt: new Date().toISOString(),
+        valuationEventId: valuationEventId || undefined,
+        preMoneyValuation: preMoneyValuation !== undefined ? preMoneyValuation : undefined,
+        postMoneyValuation: postMoneyValuation !== undefined ? postMoneyValuation : undefined,
+        notes: notes || undefined,
+        journalEntryId: journalEntry.id,
+        targetAccountId: targetAcc.id,
+        reference: tRef,
+        synced: false
+      };
+
+      if ((dbInstance as any).investmentTranches) {
+        await safeInsert((dbInstance as any).investmentTranches, trancheRecord, { idPrefix: 'tranche' });
+      }
+
+      // 3. Update investor cumulative summary (preserving historical records and backward compatibility)
+      const prevContributed = investor.capitalContributed ?? investor.capitalAmount ?? 0;
+      const newTotalContributed = Math.round((prevContributed + investmentAmount) * 100) / 100;
+      const returned = investor.totalCapitalReturned || 0;
+      const newCapBal = Math.max(0, newTotalContributed - returned);
+
+      const updatedInvestor: Investor = {
+        ...investor,
+        capitalAmount: newTotalContributed,
+        capitalContributed: newTotalContributed,
+        totalContribution: newTotalContributed,
+        currentCapitalBalance: newCapBal,
+        currentBalance: newCapBal,
+        currentEquityBalance: newCapBal,
+        status: 'ACTIVE',
+        synced: false
+      };
+      await dbInstance.investors.put(updatedInvestor);
+
+      // 4. Update target account balance
+      await dbInstance.cashBankAccounts.update(targetAcc.id, {
+        currentBalance: Math.round(((targetAcc.currentBalance || 0) + investmentAmount) * 100) / 100
+      });
+
+      // 5. Audit Log
+      await safeInsert(dbInstance.auditLogs, {
+        id: generateUniqueId('audit'),
+        timestamp: new Date().toISOString(),
+        userId: currentUserId,
+        role: 'OWNER',
+        action: 'INVESTMENT_TRANCHE_CREATED',
+        module: 'FINANCE',
+        recordId: tRef,
+        status: 'SUCCESS',
+        details: `বিনিয়োগকারী ${investor.name} এর কিস্তি মূলধন গ্রহণ (${tRef}: ৳${investmentAmount}) - চুক্তিভিত্তিক লভ্যাংশ অনুপাত ${contractualProfitSharePercentage}%`
+      });
+
+      return {
+        tranche: trancheRecord,
+        investor: updatedInvestor,
+        journalEntryId: journalEntry.id
+      };
+    }
+  );
+}
+
+/**
+ * Retrieves all investment tranches for a specific investor, ordered by effective date
+ */
+export async function getTranchesForInvestor(
+  investorId: string,
+  dbInstance: any = db
+): Promise<InvestmentTranche[]> {
+  if (!dbInstance.investmentTranches) return [];
+  const tranches = await dbInstance.investmentTranches.toArray();
+  return tranches
+    .filter((t: any) => t.investorId === investorId)
+    .sort((a: any, b: any) => (b.effectiveInvestmentDate || '').localeCompare(a.effectiveInvestmentDate || ''));
+}
+
+/**
+ * Retrieves all investment tranches across the enterprise
+ */
+export async function getAllInvestmentTranches(
+  dbInstance: any = db
+): Promise<InvestmentTranche[]> {
+  if (!dbInstance.investmentTranches) return [];
+  const tranches = await dbInstance.investmentTranches.toArray();
+  return tranches.sort((a: any, b: any) => (b.effectiveInvestmentDate || '').localeCompare(a.effectiveInvestmentDate || ''));
 }
 
 /**

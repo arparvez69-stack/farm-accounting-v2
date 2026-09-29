@@ -622,6 +622,20 @@ export async function synchronizePendingData(): Promise<{ syncedCount: number; e
       }
     }
 
+    // 13b. Sync Investment Tranches
+    if (db.investmentTranches) {
+      const pendingTranches = await db.investmentTranches.filter((t) => !t.synced).toArray();
+      for (const tranche of pendingTranches) {
+        try {
+          const syncRes = await syncRecordToServer('investmentTranches', tranche);
+          await handleSyncedResult(db.investmentTranches, tranche.id, syncRes);
+          count++;
+        } catch (err: any) {
+          errors.push(`Investment Tranche ${tranche.id}: ${err.message}`);
+        }
+      }
+    }
+
     // 14. Sync Fixed Assets
     const pendingAssets = await db.fixedAssets.filter((asset) => !asset.synced).toArray();
     for (const asset of pendingAssets) {
@@ -1280,6 +1294,9 @@ export async function restoreRemoteDataIfLocalEmpty(
         applied += await restoreTableItemsWithDiff(db.fixedAssets, c.fixedAssets);
         applied += await restoreTableItemsWithDiff(db.loans, c.loans);
         applied += await restoreTableItemsWithDiff(db.investors, c.investors);
+        if (db.investmentTranches) {
+          applied += await restoreTableItemsWithDiff(db.investmentTranches, c.investmentTranches);
+        }
         applied += await restoreTableItemsWithDiff(db.cashBankAccounts, c.cashBankAccounts);
         applied += await restoreTableItemsWithDiff(db.bankTransfers, c.bankTransfers);
         applied += await restoreTableItemsWithDiff(db.reminders, c.reminders);

@@ -250,6 +250,32 @@
       },
       "required": ["id", "name"]
     },
+    "investmentTranche": {
+      "title": "Investment Tranche",
+      "description": "Individual investment tranche for an external capital partner",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique tranche ID" },
+        "trancheNumber": { "type": "string", "description": "Human-friendly tranche identifier" },
+        "investorId": { "type": "string", "description": "Investor reference ID" },
+        "investorName": { "type": "string", "description": "Investor name" },
+        "investmentAmount": { "type": "number", "description": "Investment amount" },
+        "effectiveInvestmentDate": { "type": "string", "description": "Effective investment date (YYYY-MM-DD)" },
+        "contractualProfitSharePercentage": { "type": "number", "description": "Contractual profit share % for this tranche" },
+        "currency": { "type": "string", "description": "Currency code" },
+        "status": { "type": "string", "description": "Tranche status" },
+        "creationTimestamp": { "type": "string", "description": "Creation timestamp" },
+        "createdBy": { "type": "string", "description": "User who created the tranche" },
+        "createdAt": { "type": "string", "description": "Creation ISO date" },
+        "valuationEventId": { "type": "string", "description": "Optional valuation event reference" },
+        "preMoneyValuation": { "type": "number", "description": "Optional pre-money valuation" },
+        "postMoneyValuation": { "type": "number", "description": "Optional post-money valuation" },
+        "withdrawalDate": { "type": "string", "description": "Optional withdrawal/closure date" },
+        "notes": { "type": "string", "description": "Notes" },
+        "synced": { "type": "boolean", "description": "Sync status" }
+      },
+      "required": ["id", "investorId", "investmentAmount", "effectiveInvestmentDate", "contractualProfitSharePercentage"]
+    },
     "fixedAsset": {
       "title": "Fixed Asset",
       "description": "Capital equipment, buildings, machinery, land, and ponds",
@@ -426,6 +452,10 @@
     "/investors/{investorId}": {
       "schema": "investor",
       "description": "Farm equity partner and investor profiles"
+    },
+    "/investmentTranches/{trancheId}": {
+      "schema": "investmentTranche",
+      "description": "Separate investment tranches for capital partners"
     },
     "/fixedAssets/{assetId}": {
       "schema": "fixedAsset",

@@ -188,6 +188,7 @@ export function createMockAgroDatabase() {
     bankTransfers: new MockTable<any>(),
     loans: new MockTable<any>(),
     investors: new MockTable<any>(),
+    investmentTranches: new MockTable<any>(),
     fixedAssets: new MockTable<any>(),
     reminders: new MockTable<any>(),
     ponds: new MockTable<any>(),

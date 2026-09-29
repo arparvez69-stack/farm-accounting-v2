@@ -94,6 +94,8 @@ export interface JournalLine {
   credit: number;
   memo?: string;
   legacyMigrated?: boolean;
+  investorId?: string;
+  missingAttribution?: boolean;
 }
 
 export interface JournalEntry {
@@ -114,6 +116,10 @@ export interface JournalEntry {
   reversalOf?: string;
   correctionOf?: string;
   relatedPerson?: string;
+  investorId?: string;
+  missingAttribution?: boolean;
+  attributionStatus?: 'VERIFIED' | 'MISSING_ATTRIBUTION';
+  attributionFlagReason?: string;
   legacyMigrated?: boolean;
   migratedAt?: string;
 }
@@ -780,6 +786,64 @@ export interface Investor {
     | 'CAPITAL_BASED'
     | 'TIME_WEIGHTED'
     | 'AGREEMENT_BASED';
+}
+
+export type TrancheStatus = 'ACTIVE' | 'PARTIALLY_RETURNED' | 'RETURNED' | 'EXITED' | 'CANCELLED';
+
+export interface InvestmentTranche {
+  id: string; // unique tranche ID (e.g. 'tranche_...')
+  trancheNumber?: string; // human-readable identifier (e.g. 'TR-2026-001')
+  investorId: string; // investor reference ID
+  investorName?: string; // denormalized investor name
+  investmentAmount: number; // investment amount strictly > 0
+  effectiveInvestmentDate: string; // YYYY-MM-DD
+  contractualProfitSharePercentage: number; // e.g. 25 (for 25% of that investor's allocated economic profit)
+  currency: string; // currency (e.g. 'BDT')
+  status: TrancheStatus;
+  creationTimestamp: string; // ISO 8601 creation timestamp
+
+  // Capital tracking per tranche (never collapsed into a single lump sum)
+  currentCapitalBalance?: number;
+  totalCapitalReturned?: number;
+
+  // Audit metadata
+  createdBy: string;
+  createdAt: string;
+  updatedAt?: string;
+  notes?: string;
+
+  // Optional valuation-event reference
+  valuationEventId?: string;
+  preMoneyValuation?: number;
+  postMoneyValuation?: number;
+
+  // Optional withdrawal/closure information
+  withdrawalDate?: string;
+  closureDate?: string;
+  closureReason?: string;
+  closureNotes?: string;
+
+  // Linked GL journal & financial transaction metadata
+  journalEntryId?: string;
+  targetAccountId?: string;
+  reference?: string;
+
+  // Investor attribution integrity & historical audit flags
+  missingAttribution?: boolean;
+  attributionStatus?: 'VERIFIED' | 'MISSING_ATTRIBUTION';
+  attributionFlagReason?: string;
+
+  synced?: boolean;
+}
+
+export interface UnattributedRecordAudit {
+  id: string;
+  recordType: 'INVESTMENT_TRANCHE' | 'JOURNAL_ENTRY' | 'INVESTOR';
+  date?: string;
+  amount?: number;
+  description: string;
+  flagReason: string;
+  isFlagged: boolean;
 }
 
 export type SalesInvoice = Sale;

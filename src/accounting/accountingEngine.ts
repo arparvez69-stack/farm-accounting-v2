@@ -316,6 +316,46 @@ export async function postJournalEntry(
     throw new Error('লেনদেনের পরিমাণ শূন্য বা ঋণাত্মক হতে পারে না (Zero or negative amount not allowed).');
   }
 
+  // Strict Investor Attribution check for Capital transactions (3020 Investor Capital)
+  const isInvestorCapitalEntry = entry.lines?.some(
+    (l) => (l.accountCode === '3020' || l.accountCode === 'acc-3020') && (Number(l.credit) || 0) > 0
+  );
+  if (isInvestorCapitalEntry && !entry.legacyMigrated && !entry.missingAttribution) {
+    const invRef = (entry as any).investorId || entry.relatedPerson || (entry as any).investorReference;
+    if (!invRef || typeof invRef !== 'string' || !invRef.trim()) {
+      throw new Error(
+        'Investor attribution required: every investor capital transaction must identify the exact investor.'
+      );
+    }
+    const cleanRef = invRef.trim().toLowerCase();
+    const prohibited = [
+      'unknown',
+      'default',
+      'unknown investor',
+      'default investor',
+      'anonymous',
+      'anonymous investor',
+      'system',
+      'system investor',
+      'unassigned',
+      'unattributed',
+      'none',
+      'n/a',
+      'null',
+      'undefined'
+    ];
+    if (prohibited.includes(cleanRef) || cleanRef.startsWith('default_') || cleanRef.startsWith('unknown_')) {
+      throw new Error(
+        `Cannot silently assign an unknown or default investor ("${invRef}"). Exact investor attribution is required.`
+      );
+    }
+    if ((entry as any).createdBy && cleanRef === (entry as any).createdBy.trim().toLowerCase() && !(entry as any).isExplicitInvestor) {
+      throw new Error(
+        'Investor cannot be inferred from the currently logged-in user. Every capital transaction must explicitly identify an exact investor.'
+      );
+    }
+  }
+
   // STABILITY TASK 40: Post-save error recovery without duplicate posting
   // If an entry with this explicit ID was already durably posted, return it idempotently.
   if (entry.id && !options?.skipDbPut && targetDb.journalEntries?.get) {
