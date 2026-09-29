@@ -71,8 +71,8 @@ export class AgroDatabase extends Dexie {
     return this.purchases;
   }
 
-  constructor() {
-    super('AgroErpLocalDb');
+  constructor(dbName?: string) {
+    super(dbName || 'AgroErpLocalDb');
     this.version(1).stores({
       systemConfig: 'ownerUid',
       accounts: 'id, code, accountClass, isSystem',
