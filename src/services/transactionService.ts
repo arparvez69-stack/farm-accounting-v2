@@ -995,7 +995,7 @@ export async function executeSaleTransaction(
         // 4. Duplicate prevention for identical rapid retry/resubmission
         const now = Date.now();
         const existingSales = await dbInstance.sales
-          .filter((s: any) => s.customerId === customer.id && s.date === dateStr && s.paymentMethod === paymentMethod)
+          .filter((s: any) => s.customerId === (customer?.id || null) && s.date === dateStr && s.paymentMethod === paymentMethod)
           .toArray();
 
         const isDuplicateRecent = existingSales.some((s: any) => {
@@ -1223,9 +1223,10 @@ export async function executeSaleTransaction(
           }
         }
 
+        const customerDisplayName = customer?.name || 'খুচরা ক্রেতা';
         const narrationSummary = processedLines.length === 1
-          ? `${customer.name} কে ${processedLines[0].quantity} ${processedLines[0].freshItem.unit} ${processedLines[0].freshItem.nameBn} বিক্রয়`
-          : `${customer.name} কে ${processedLines.length}টি পণ্য বিক্রয়`;
+          ? `${customerDisplayName} কে ${processedLines[0].quantity} ${processedLines[0].freshItem.unit} ${processedLines[0].freshItem.nameBn} বিক্রয়`
+          : `${customerDisplayName} কে ${processedLines.length}টি পণ্য বিক্রয়`;
 
         const voucherNumber = generateTransactionNumber('SLV');
         const journalEntry = await postJournalEntry(
@@ -1322,8 +1323,8 @@ export async function executeSaleTransaction(
           invoiceNumber,
           displayNumber,
           date: dateStr,
-          customerId: customer.id,
-          customerName: customer.name,
+          customerId: customer?.id || '',
+          customerName: customer?.name || 'খুচরা ক্রেতা',
           items: processedLines.map((l) => ({
             itemId: l.freshItem.id,
             itemName: l.freshItem.nameBn,
@@ -1348,7 +1349,6 @@ export async function executeSaleTransaction(
           bankAccountId,
           journalEntryId: journalEntry.id,
           status: effectiveDue <= 0 ? 'PAID' : (effectiveDue < totalAmount ? 'PARTIAL' : 'DUE'),
-          paymentStatus: effectiveDue <= 0 ? 'PAID' : (effectiveDue < totalAmount ? 'PARTIAL' : 'DUE'),
           createdAt: new Date().toISOString(),
           ...(idempotencyKey ? { idempotencyKey } : {}),
           synced: false
@@ -1376,7 +1376,7 @@ export async function executeSaleTransaction(
             unitCost: line.freshItem.avgCostPrice || line.unitPrice,
             totalValue: line.cogsAmount || Math.round(line.quantity * (line.freshItem.avgCostPrice || line.unitPrice) * 100) / 100,
             referenceId: invoiceNumber,
-            notes: `বিক্রয় চালান ${invoiceNumber}: ${customer.name} কে ${line.quantity} ${line.freshItem.unit} ${line.freshItem.nameBn} বিক্রয়`,
+            notes: `বিক্রয় চালান ${invoiceNumber}: ${customer?.name ? `${customer.name} কে ` : ''}${line.quantity} ${line.freshItem.unit} ${line.freshItem.nameBn} বিক্রয়`,
             synced: false
           };
           if (idempotencyKey) {
@@ -1656,7 +1656,7 @@ export async function executePurchaseTransaction(
         // 4. Duplicate prevention for identical rapid retry/resubmission (same supplier, item, quantity, unit price, date, payment method)
         const now = Date.now();
         const existingPurchases = await dbInstance.purchases
-          .filter((p: any) => p.supplierId === supplier.id && p.date === dateStr && p.paymentMethod === paymentMethod)
+          .filter((p: any) => p.supplierId === (supplier?.id || null) && p.date === dateStr && p.paymentMethod === paymentMethod)
           .toArray();
 
         const isDuplicateRecent = existingPurchases.some((p: any) => {
@@ -1828,7 +1828,7 @@ export async function executePurchaseTransaction(
             accountName: 'সরবরাহকারীর দেনা (Accounts Payable)',
             debit: 0,
             credit: grandTotal,
-            memo: `${supplier.name} থেকে ক্রয়`
+            memo: supplier ? `${supplier.name} থেকে ক্রয়` : 'সরবরাহকারী থেকে ক্রয়'
           });
         } else {
           if (requiredCashBankAmount > 0) {
@@ -1838,7 +1838,9 @@ export async function executePurchaseTransaction(
               accountName: paymentMethod === 'CASH' ? 'নগদ টাকা (Cash on Hand)' : 'ব্যাংক হিসাব (Bank Accounts)',
               debit: 0,
               credit: requiredCashBankAmount,
-              memo: `${supplier.name} কে ${paymentMethod === 'CASH' ? 'নগদে' : 'ব্যাংকে'} পরিশোধ`
+              memo: supplier
+                ? `${supplier.name} কে ${paymentMethod === 'CASH' ? 'নগদে' : 'ব্যাংকে'} পরিশোধ`
+                : `${paymentMethod === 'CASH' ? 'নগদে' : 'ব্যাংকে'} ক্রয় মূল্য পরিশোধ`
             });
           }
           if (appliedAdvanceAmount > 0) {
@@ -1853,9 +1855,10 @@ export async function executePurchaseTransaction(
           }
         }
 
+        const supplierDisplayName = supplier?.name || 'খুচরা বিক্রেতা';
         const narrationSummary = processedLines.length === 1
-          ? `${supplier.name} এর নিকট থেকে ${processedLines[0].quantity} ${processedLines[0].freshItem.unit} ${processedLines[0].freshItem.nameBn} ক্রয়`
-          : `${supplier.name} এর নিকট থেকে ${processedLines.length}টি উপকরণ ক্রয়`;
+          ? `${supplierDisplayName} এর নিকট থেকে ${processedLines[0].quantity} ${processedLines[0].freshItem.unit} ${processedLines[0].freshItem.nameBn} ক্রয়`
+          : `${supplierDisplayName} এর নিকট থেকে ${processedLines.length}টি উপকরণ ক্রয়`;
 
         const voucherNumber = generateTransactionNumber('PRV');
         const journalEntry = await postJournalEntry(
@@ -1953,8 +1956,8 @@ export async function executePurchaseTransaction(
           invoiceNumber,
           displayNumber,
           date: dateStr,
-          supplierId: supplier.id,
-          supplierName: supplier.name,
+          supplierId: supplier?.id || '',
+          supplierName: supplier?.name || 'খুচরা বিক্রেতা',
           items: processedLines.map((l) => ({
             itemId: l.freshItem.id,
             itemName: l.freshItem.nameBn,
@@ -1979,7 +1982,6 @@ export async function executePurchaseTransaction(
           bankAccountId,
           journalEntryId: journalEntry.id,
           status: effectiveDue <= 0 ? 'PAID' : (effectiveDue < grandTotal ? 'PARTIAL' : 'DUE'),
-          paymentStatus: effectiveDue <= 0 ? 'PAID' : (effectiveDue < grandTotal ? 'PARTIAL' : 'DUE'),
           createdAt: new Date().toISOString(),
           ...(idempotencyKey ? { idempotencyKey } : {}),
           synced: false
@@ -2016,7 +2018,7 @@ export async function executePurchaseTransaction(
             unitCost: movementUnitCost,
             totalValue: line.netCost,
             referenceId: invoiceNumber,
-            notes: `ক্রয় চালান ${invoiceNumber}: ${supplier.name} থেকে ${line.quantity} ${line.freshItem.unit} ${line.freshItem.nameBn} ক্রয়${transportCost > 0 ? ' (পরিবহন সমন্বিত)' : ''}`,
+            notes: `ক্রয় চালান ${invoiceNumber}: ${supplier?.name ? `${supplier.name} থেকে ` : ''}${line.quantity} ${line.freshItem.unit} ${line.freshItem.nameBn} ক্রয়${transportCost > 0 ? ' (পরিবহন সমন্বিত)' : ''}`,
             synced: false
           };
           if (idempotencyKey) {
@@ -6915,8 +6917,7 @@ export interface InventoryItemCreationParams {
   itemData: {
     id?: string;
     code?: string;
-    name?: string;
-    nameBn?: string;
+    nameBn: string;
     nameEn?: string;
     category?: InventoryItem['category'];
     unit?: string;
@@ -6970,9 +6971,6 @@ export async function executeInventoryItemCreationTransaction(
         const accounts = await db.accounts.toArray();
         const existingInvAcc = accounts.find((a) => a.code === invDetails.code);
         const invAccountName = existingInvAcc ? existingInvAcc.nameBn : invDetails.nameBn;
-        const resolvedName = (itemData.name || itemData.nameBn || itemData.nameEn || 'নতুন পণ্য').trim();
-        const resolvedNameBn = (itemData.nameBn || itemData.name || resolvedName).trim();
-        const resolvedNameEn = (itemData.nameEn || itemData.name || resolvedName).trim();
 
         const lines: JournalLine[] = [
           {
@@ -6981,7 +6979,7 @@ export async function executeInventoryItemCreationTransaction(
             accountName: invAccountName,
             debit: totalOpeningValue,
             credit: 0,
-            memo: `প্রারম্ভিক মজুদ: ${resolvedNameBn} (${stockNum} ${itemData.unit?.trim() || 'কেজি'} @ ৳${costNum})`
+            memo: `প্রারম্ভিক মজুদ: ${itemData.nameBn.trim()} (${stockNum} ${itemData.unit?.trim() || 'কেজি'} @ ৳${costNum})`
           },
           {
             accountId: CANONICAL_ACCOUNTS.RETAINED_EARNINGS,
@@ -7004,7 +7002,7 @@ export async function executeInventoryItemCreationTransaction(
             voucherNumber: generateTransactionNumber('JV'),
             voucherType: 'JOURNAL',
             date: todayStr,
-            narration: `প্রারম্ভিক মজুদ পণ্য দাখিলা: ${resolvedNameBn} (${stockNum} ${itemData.unit?.trim() || 'কেজি'} @ ৳${costNum})`,
+            narration: `প্রারম্ভিক মজুদ পণ্য দাখিলা: ${itemData.nameBn.trim()} (${stockNum} ${itemData.unit?.trim() || 'কেজি'} @ ৳${costNum})`,
             reference: 'OPENING_STOCK',
             lines,
             createdBy: currentUserId || 'system',
@@ -7019,16 +7017,12 @@ export async function executeInventoryItemCreationTransaction(
 
       const itemId = itemData.id?.trim() || generateUniqueId('it');
       const itemCode = itemData.code?.trim() || (category === 'FEED' ? generateTransactionNumber('FED') : generateTransactionNumber('ITM'));
-      const finalName = (itemData.name || itemData.nameBn || itemData.nameEn || 'নতুন পণ্য').trim();
-      const finalNameBn = (itemData.nameBn || itemData.name || finalName).trim();
-      const finalNameEn = (itemData.nameEn || itemData.name || finalName).trim();
 
       const item: InventoryItem = {
         id: itemId,
         code: itemCode,
-        name: finalName,
-        nameBn: finalNameBn,
-        nameEn: finalNameEn,
+        nameBn: itemData.nameBn.trim(),
+        nameEn: itemData.nameEn?.trim() || itemData.nameBn.trim(),
         category,
         unit: itemData.unit?.trim() || 'কেজি',
         currentStock: stockNum,
