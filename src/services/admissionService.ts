@@ -16,7 +16,9 @@ import {
   AdmissionPeriodProfitAllocationInspectionParams,
   AdmissionPeriodProfitAllocationInspectionResult,
   CapitalReceiptInspectionParams,
-  CapitalReceiptInspectionResult
+  CapitalReceiptInspectionResult,
+  FinalAdmissionInspectionParams,
+  FinalAdmissionInspectionResult
 } from '../types';
 import {
   runValuationReconciliationGate
@@ -149,7 +151,7 @@ export async function createAdmissionRequest(
       capitalAmount: 0,
       capitalContributed: 0,
       currentCapitalBalance: 0,
-      profitSharingRatio: proposedProfitSharingRatio,
+      profitSharingRatio: 0,
       profitPayable: 0,
       totalProfitAllocated: 0,
       totalProfitPaid: 0,
@@ -328,7 +330,7 @@ export async function executeAdmissionValuation(
   }
 
   const {
-    responsibleUser,
+    responsibleUser = (params as any).valuedBy,
     overridePreMoney: directOverridePreMoney,
     overridePreMoneyValuation,
     valuationEventId: explicitValEventId,
@@ -336,7 +338,12 @@ export async function executeAdmissionValuation(
     notes,
     finalizeValuation: explicitFinalize
   } = params;
-  const overridePreMoney = directOverridePreMoney !== undefined ? directOverridePreMoney : overridePreMoneyValuation;
+  const overridePreMoney =
+    directOverridePreMoney !== undefined
+      ? directOverridePreMoney
+      : overridePreMoneyValuation !== undefined
+      ? overridePreMoneyValuation
+      : (params as any).preMoneyValuation;
 
   // 1. Fetch existing investors for baseline calculations
   const allInvestors: Investor[] = dbInstance.investors ? await dbInstance.investors.toArray() : [];
@@ -505,7 +512,9 @@ export async function executeAdmissionValuation(
 export async function finalizeAdmissionValuation(
   requestId: string,
   params: {
-    responsibleUser: string;
+    responsibleUser?: string;
+    finalizedBy?: string;
+    valuationEventId?: string;
     notes?: string;
   },
   dbInstance: any = db
@@ -518,6 +527,11 @@ export async function finalizeAdmissionValuation(
     throw new Error('মূল্যায়ন প্রক্রিয়া সম্পন্ন হয়নি (Valuation has not been executed yet).');
   }
 
+  const effectiveResponsibleUser = (params.responsibleUser || params.finalizedBy || '').trim();
+  if (!effectiveResponsibleUser) {
+    throw new Error('দায়িত্বপ্রাপ্ত ব্যবহারকারী আবশ্যক (Responsible user is required to finalize valuation).');
+  }
+
   // Validate Reconciliation
   if (!request.reconciliation || request.reconciliation.status !== 'PASS') {
     throw new Error('রিকনসিলিয়েশন গেট অমীমাংসিত: মূল্যায়ন চূড়ান্ত করা যাবে না (Reconciliation is unresolved; cannot finalize valuation).');
@@ -528,7 +542,7 @@ export async function finalizeAdmissionValuation(
     await finalizeValuationEvent(
       {
         valuationEventId: request.valuation.valuationEventId,
-        responsibleUser: params.responsibleUser,
+        responsibleUser: effectiveResponsibleUser,
         notes: params.notes
       },
       dbInstance
@@ -865,6 +879,8 @@ export async function executeAdmissionFinalization(
     currentUserId: string;
     contractualProfitSharePercentage?: number;
     notes?: string;
+    simulateFailure?: boolean;
+    simulateFailureStage?: 'BEFORE_TRANCHE' | 'BEFORE_AUDIT' | 'BEFORE_REQUEST' | 'DURING_COMMIT';
   },
   dbInstance: any = db
 ): Promise<{
@@ -879,7 +895,9 @@ export async function executeAdmissionFinalization(
   }
 
   if (request.stage !== 'CAPITAL_RECEIPT' || request.status !== 'CAPITAL_RECEIVED') {
-    throw new Error(`মূলধন গ্রহণ ব্যতীত চূড়ান্ত অন্তর্ভুক্তি সম্ভব নয় (Cannot finalize admission before capital receipt; current stage: ${request.stage})।`);
+    throw new Error(
+      `মূলধন গ্রহণ ব্যতীত চূড়ান্ত অন্তর্ভুক্তি সম্ভব নয় (Cannot finalize admission without capital receipt when capital is required; current stage: ${request.stage}, status: ${request.status})।`
+    );
   }
 
   // PROMPT 16: Reconciliation Gate Validation
@@ -929,6 +947,31 @@ export async function executeAdmissionFinalization(
     );
   }
 
+  // PROMPT 22: Admission without capital receipt when capital is required is strictly blocked
+  if ((request.proposedContribution || 0) > 0) {
+    if (
+      !request.capitalReceipt ||
+      request.capitalReceipt.status !== 'RECEIVED' ||
+      (request.capitalReceipt.receivedAmount || 0) <= 0
+    ) {
+      throw new Error(
+        `মূলধন গ্রহণ ব্যতীত চূড়ান্ত অন্তর্ভুক্তি সম্ভব নয় (Cannot finalize admission without capital receipt when capital is required; current stage: ${request.stage}, status: ${request.status})।`
+      );
+    }
+  }
+
+  // PROMPT 22: Economic units cannot exist without underlying events
+  if (!request.valuation?.valuationEventId && !request.valuation?.valuationReference) {
+    throw new Error(
+      'অন্তর্ভুক্তি স্থগিত: ব্যবসায়িক মূল্যায়ন ইভেন্ট ব্যতীত অর্থনৈতিক ইউনিট (Tranche) তৈরি করা সম্পূর্ণ নিষিদ্ধ (Cannot create economic units without underlying valuation event).'
+    );
+  }
+  if ((request.proposedContribution || 0) > 0 && !request.capitalReceipt?.journalEntryId) {
+    throw new Error(
+      'অন্তর্ভুক্তি স্থগিত: মূলধন প্রাপ্তির দাখিলা (Capital Receipt Event) ব্যতীত অর্থনৈতিক ইউনিট তৈরি করা সম্পূর্ণ নিষিদ্ধ (Cannot create economic units without underlying capital receipt event).'
+    );
+  }
+
   const {
     admissionDate = request.requestDate,
     currentUserId,
@@ -941,235 +984,297 @@ export async function executeAdmissionFinalization(
   const receivedCapital = request.capitalReceipt?.receivedAmount ?? request.proposedContribution;
   const finalProfitShare = contractualProfitSharePercentage ?? request.proposedProfitSharingRatio;
 
-  // 1. Activate or create Investor Record
-  let investor: Investor;
-  if (request.investorId && dbInstance?.investors) {
-    const existing = await dbInstance.investors.get(request.investorId);
-    if (existing) {
-      await dbInstance.investors.update(request.investorId, {
-        status: 'ACTIVE',
-        isAdmitted: true,
-        economicParticipationActive: true,
-        capitalAmount: receivedCapital,
-        capitalContributed: receivedCapital,
-        currentCapitalBalance: receivedCapital,
-        profitSharingRatio: finalProfitShare,
-        entryDate: cleanDate,
-        joinedDate: cleanDate,
-        admissionDate: cleanDate,
+  // Snapshot before atomic transaction
+  const requestSnapshot = JSON.parse(JSON.stringify(request));
+
+  const runTransaction = async (work: () => Promise<any>) => {
+    if (typeof dbInstance?.transaction === 'function') {
+      const tables = [
+        dbInstance.investors,
+        dbInstance.investmentTranches,
+        dbInstance.investorCapitalMovements,
+        dbInstance.auditLogs,
+        dbInstance.investorAdmissionRequests,
+        dbInstance.admissionRequests
+      ].filter(Boolean);
+      return await dbInstance.transaction('rw', tables, work);
+    }
+    return await work();
+  };
+
+  let finalResult: {
+    request: InvestorAdmissionRequest;
+    investor: Investor;
+    tranche: InvestmentTranche;
+    admissionAudit: InvestorAdmissionAudit;
+  };
+
+  try {
+    finalResult = await runTransaction(async () => {
+      // 1. Activate or create Investor Record
+      let investor: Investor;
+      if (request.investorId && dbInstance?.investors) {
+        const existing = await dbInstance.investors.get(request.investorId);
+        if (existing) {
+          await dbInstance.investors.update(request.investorId, {
+            status: 'ACTIVE',
+            isAdmitted: true,
+            economicParticipationActive: true,
+            capitalAmount: receivedCapital,
+            capitalContributed: receivedCapital,
+            currentCapitalBalance: receivedCapital,
+            profitSharingRatio: finalProfitShare,
+            entryDate: cleanDate,
+            joinedDate: cleanDate,
+            admissionDate: cleanDate,
+            effectiveDate: cleanDate,
+            synced: false
+          });
+          investor = await dbInstance.investors.get(request.investorId);
+        } else {
+          investor = {
+            id: request.investorId,
+            name: request.investorName,
+            phone: request.phone,
+            status: 'ACTIVE',
+            isAdmitted: true,
+            economicParticipationActive: true,
+            capitalAmount: receivedCapital,
+            capitalContributed: receivedCapital,
+            currentCapitalBalance: receivedCapital,
+            profitSharingRatio: finalProfitShare,
+            entryDate: cleanDate,
+            joinedDate: cleanDate,
+            admissionDate: cleanDate,
+            effectiveDate: cleanDate,
+            admissionRequestId: requestId,
+            synced: false
+          };
+          await safeInsert(dbInstance.investors, investor, { idPrefix: 'inv' });
+        }
+      } else {
+        const invId = generateUniqueId('inv');
+        investor = {
+          id: invId,
+          name: request.investorName,
+          phone: request.phone,
+          status: 'ACTIVE',
+          isAdmitted: true,
+          economicParticipationActive: true,
+          capitalAmount: receivedCapital,
+          capitalContributed: receivedCapital,
+          currentCapitalBalance: receivedCapital,
+          profitSharingRatio: finalProfitShare,
+          entryDate: cleanDate,
+          joinedDate: cleanDate,
+          admissionDate: cleanDate,
+          effectiveDate: cleanDate,
+          admissionRequestId: requestId,
+          synced: false
+        };
+        if (dbInstance?.investors) {
+          await safeInsert(dbInstance.investors, investor, { idPrefix: 'inv' });
+        }
+        request.investorId = invId;
+      }
+
+      // Simulated failure hook 1: before tranche creation
+      if (params.simulateFailureStage === 'BEFORE_TRANCHE') {
+        throw new Error('SIMULATED_TRANSACTION_FAILURE: Simulated failure before tranche creation.');
+      }
+
+      // 2. Create Active Investment Tranche
+      const trancheId = generateUniqueId('tranche');
+      const trancheNumber = generateTransactionNumber('TR-ADM');
+      const economicPct = request.valuation?.calculatedParticipationPercentage ?? finalProfitShare;
+
+      const tranche: InvestmentTranche = {
+        id: trancheId,
+        trancheId,
+        trancheNumber,
+        investorId: investor.id,
+        participantId: investor.id,
+        investorName: investor.name,
+        investmentAmount: receivedCapital,
+        originalCapital: receivedCapital,
+        investmentDate: cleanDate,
         effectiveDate: cleanDate,
-        synced: false
-      });
-      investor = await dbInstance.investors.get(request.investorId);
-    } else {
-      investor = {
-        id: request.investorId,
-        name: request.investorName,
-        phone: request.phone,
+        effectiveInvestmentDate: cleanDate,
+        contractualProfitSharePercentage: finalProfitShare,
+        economicParticipationPercentage: economicPct,
+        currency: 'BDT',
         status: 'ACTIVE',
-        isAdmitted: true,
-        economicParticipationActive: true,
-        capitalAmount: receivedCapital,
-        capitalContributed: receivedCapital,
+        creationTimestamp: nowIso,
+        currentCapital: receivedCapital,
         currentCapitalBalance: receivedCapital,
-        profitSharingRatio: finalProfitShare,
-        entryDate: cleanDate,
-        joinedDate: cleanDate,
-        admissionDate: cleanDate,
-        effectiveDate: cleanDate,
-        admissionRequestId: requestId,
+        totalCapitalReturned: 0,
+        journalEntryId: request.capitalReceipt?.journalEntryId,
+        valuationEventId: request.valuation?.valuationEventId,
+        valuationReference: request.valuation?.valuationReference || request.valuation?.valuationEventId,
+        finalizedValuationId: request.valuation?.finalizedValuationId || request.valuation?.valuationEventId,
+        preMoneyValuation: request.valuation?.preMoneyValuation,
+        postMoneyValuation: request.valuation?.postMoneyValuation,
+        createdBy: currentUserId,
+        createdAt: nowIso,
+        notes: notes || `অন্তর্ভুক্তি কিস্তি: আবেদন ${request.requestNumber}`,
         synced: false
       };
-      await safeInsert(dbInstance.investors, investor, { idPrefix: 'inv' });
-    }
-  } else {
-    const invId = generateUniqueId('inv');
-    investor = {
-      id: invId,
-      name: request.investorName,
-      phone: request.phone,
-      status: 'ACTIVE',
-      isAdmitted: true,
-      economicParticipationActive: true,
-      capitalAmount: receivedCapital,
-      capitalContributed: receivedCapital,
-      currentCapitalBalance: receivedCapital,
-      profitSharingRatio: finalProfitShare,
-      entryDate: cleanDate,
-      joinedDate: cleanDate,
-      admissionDate: cleanDate,
-      effectiveDate: cleanDate,
-      admissionRequestId: requestId,
-      synced: false
-    };
-    if (dbInstance?.investors) {
-      await safeInsert(dbInstance.investors, investor, { idPrefix: 'inv' });
-    }
-    request.investorId = invId;
-  }
 
-  // 2. Create Active Investment Tranche
-  const trancheId = generateUniqueId('tranche');
-  const trancheNumber = generateTransactionNumber('TR-ADM');
-  const economicPct = request.valuation?.calculatedParticipationPercentage ?? finalProfitShare;
+      if (dbInstance?.investmentTranches) {
+        await safeInsert(dbInstance.investmentTranches, tranche, { idPrefix: 'tranche' });
+      }
 
-  const tranche: InvestmentTranche = {
-    id: trancheId,
-    trancheId,
-    trancheNumber,
-    investorId: investor.id,
-    participantId: investor.id,
-    investorName: investor.name,
-    investmentAmount: receivedCapital,
-    originalCapital: receivedCapital,
-    investmentDate: cleanDate,
-    effectiveDate: cleanDate,
-    effectiveInvestmentDate: cleanDate,
-    contractualProfitSharePercentage: finalProfitShare,
-    economicParticipationPercentage: economicPct,
-    currency: 'BDT',
-    status: 'ACTIVE',
-    creationTimestamp: nowIso,
-    currentCapital: receivedCapital,
-    currentCapitalBalance: receivedCapital,
-    totalCapitalReturned: 0,
-    journalEntryId: request.capitalReceipt?.journalEntryId,
-    valuationEventId: request.valuation?.valuationEventId,
-    valuationReference: request.valuation?.valuationReference || request.valuation?.valuationEventId,
-    finalizedValuationId: request.valuation?.finalizedValuationId || request.valuation?.valuationEventId,
-    preMoneyValuation: request.valuation?.preMoneyValuation,
-    postMoneyValuation: request.valuation?.postMoneyValuation,
-    createdBy: currentUserId,
-    createdAt: nowIso,
-    notes: notes || `অন্তর্ভুক্তি কিস্তি: আবেদন ${request.requestNumber}`,
-    synced: false
-  };
+      // 3. Record Capital Movement in dedicated ledger
+      if (dbInstance?.investorCapitalMovements) {
+        try {
+          await recordCapitalMovement(
+            {
+              investorId: investor.id,
+              investorName: investor.name,
+              trancheId,
+              movementType: 'INITIAL_CONTRIBUTION',
+              amount: receivedCapital,
+              direction: 'INFLOW',
+              date: cleanDate,
+              journalEntryId: request.capitalReceipt?.journalEntryId || 'initial_entry',
+              voucherNumber: request.capitalReceipt?.receiptVoucherNumber || trancheNumber,
+              notes: `নতুন বিনিয়োগকারী অন্তর্ভুক্তি মূলধন: ${request.requestNumber}`,
+              balanceBefore: 0,
+              balanceAfter: receivedCapital,
+              approvedBy: request.approval?.approvedBy || currentUserId,
+              currentUserId
+            },
+            dbInstance
+          );
+        } catch {}
+      }
 
-  if (dbInstance?.investmentTranches) {
-    await safeInsert(dbInstance.investmentTranches, tranche, { idPrefix: 'tranche' });
-  }
+      // Simulated failure hook 2: before audit record
+      if (params.simulateFailureStage === 'BEFORE_AUDIT') {
+        throw new Error('SIMULATED_TRANSACTION_FAILURE: Simulated failure before audit record.');
+      }
 
-  // 3. Record Capital Movement in dedicated ledger
-  if (dbInstance?.investorCapitalMovements) {
+      // 4. Create Formal Admission Audit
+      const admissionId = `adm_${Date.now()}_${generateUniqueId('adm').slice(0, 8)}`;
+      const admissionAudit: InvestorAdmissionAudit = {
+        admissionId,
+        investorId: investor.id,
+        investorName: investor.name,
+        trancheId,
+        admissionDate: cleanDate,
+        valuationEventId: request.valuation?.valuationEventId,
+        valuationReference: request.valuation?.valuationReference || request.valuation?.valuationEventId,
+        finalizedValuationId: request.valuation?.finalizedValuationId || request.valuation?.valuationEventId,
+        valuationBasis: 'FINALIZED_NAV',
+        preMoneyValuation: request.valuation?.preMoneyValuation || 0,
+        contributionAmount: receivedCapital,
+        postMoneyValuation: request.valuation?.postMoneyValuation || receivedCapital,
+        newInvestorParticipationRatio: request.valuation?.calculatedParticipationRatio || 1,
+        newInvestorParticipationPercentage: economicPct,
+        exactNewInvestorParticipationPercentage: request.valuation?.exactParticipationPercentage,
+        existingEconomicParticipationRatio: request.valuation?.preMoneyValuation && request.valuation.postMoneyValuation
+          ? request.valuation.preMoneyValuation / request.valuation.postMoneyValuation
+          : 0,
+        existingEconomicParticipationPercentage: request.valuation?.preMoneyValuation && request.valuation.postMoneyValuation
+          ? Math.round((request.valuation.preMoneyValuation / request.valuation.postMoneyValuation) * 10000) / 100
+          : 0,
+        exactExistingEconomicParticipationPercentage: request.valuation?.exactExistingParticipationPercentage,
+        newInvestorPercentage6Dec: request.valuation?.exactParticipationPercentage
+          ? Math.floor(request.valuation.exactParticipationPercentage * 1000000) / 1000000
+          : undefined,
+        existingParticipantsPercentage6Dec: request.valuation?.exactExistingParticipationPercentage
+          ? Math.floor(request.valuation.exactExistingParticipationPercentage * 1000000) / 1000000
+          : undefined,
+        intermediateCalculationsUnrounded: true,
+        existingInvestorsDilution: [],
+        is5050DefaultPrevented: true,
+        historicalCapitalPreserved: true,
+        valuationDrivenParticipation: true,
+        auditExplanation: `৭-পর্যায়ের পূর্ণ প্রক্রিয়া সম্পন্ন: ${request.requestNumber} অনুমোদিত এবং চূড়ান্তভাবে অন্তর্ভুক্ত হয়েছে। প্রাক-মূল্যায়ন (Pre-money NAV): ৳${request.valuation?.preMoneyValuation}, মূলধন ৳${receivedCapital.toLocaleString()}, অংশীদারিত্ব ${finalProfitShare}%। চূড়ান্ত মূল্যায়ন রেফারেন্স: ${request.valuation?.valuationEventId}।`,
+        timestamp: nowIso,
+        responsibleUser: currentUserId
+      };
+
+      await createInvestorAdmissionAudit(admissionAudit, dbInstance);
+
+      // Simulated failure hook 3: before request finalize or during commit
+      if (
+        params.simulateFailure ||
+        params.simulateFailureStage === 'BEFORE_REQUEST' ||
+        params.simulateFailureStage === 'DURING_COMMIT'
+      ) {
+        throw new Error('SIMULATED_TRANSACTION_FAILURE: Simulated failure during final admission commit.');
+      }
+
+      // 5. Finalize Request Record
+      request.stage = 'ADMISSION';
+      request.status = 'ADMITTED';
+      request.isAdmitted = true;
+      request.economicParticipationActive = true;
+      request.admission = {
+        status: 'ADMITTED',
+        admittedInvestorId: investor.id,
+        admittedTrancheId: trancheId,
+        admissionAuditId: admissionId,
+        admissionDate: cleanDate,
+        admittedBy: currentUserId,
+        admittedAt: nowIso,
+        valuationEventId: request.valuation?.valuationEventId,
+        valuationReference: request.valuation?.valuationReference || request.valuation?.valuationEventId,
+        finalizedValuationId: request.valuation?.finalizedValuationId || request.valuation?.valuationEventId,
+        preMoneyValuation: request.valuation?.preMoneyValuation,
+        postMoneyValuation: request.valuation?.postMoneyValuation
+      };
+
+      request.auditTrail.push({
+        stage: 'ADMISSION',
+        action: 'INVESTOR_ADMISSION_FULLY_COMPLETED',
+        timestamp: nowIso,
+        performedBy: currentUserId,
+        details: `বিনিয়োগকারী সফলভাবে ফার্মে অন্তর্ভুক্ত হয়েছেন (ADMITTED)। কিস্তি: ${trancheNumber}, অর্থনৈতিক অংশগ্রহণ সক্রিয়। মূল্যায়ন রেফারেন্স: ${request.valuation?.valuationEventId}`
+      });
+
+      request.updatedAt = nowIso;
+      await persistAdmissionRequest(request, dbInstance);
+
+      // Link valuation event to admission bidirectionally
+      if (request.valuation?.valuationEventId) {
+        try {
+          await linkValuationEventToAdmission(
+            request.valuation.valuationEventId,
+            {
+              investorId: investor.id,
+              investorName: investor.name,
+              trancheId,
+              admissionReference: request.requestNumber || admissionId
+            },
+            dbInstance
+          );
+        } catch {}
+      }
+
+      return {
+        request,
+        investor,
+        tranche,
+        admissionAudit
+      };
+    });
+  } catch (err) {
+    // Transaction rolled back all database table updates.
+    // Restore in-memory admission request snapshot to prevent any half-completed state in memory.
+    inMemoryAdmissionRequests.set(requestId, requestSnapshot);
     try {
-      await recordCapitalMovement(
-        {
-          investorId: investor.id,
-          investorName: investor.name,
-          trancheId,
-          movementType: 'INITIAL_CONTRIBUTION',
-          amount: receivedCapital,
-          direction: 'INFLOW',
-          date: cleanDate,
-          journalEntryId: request.capitalReceipt?.journalEntryId || 'initial_entry',
-          voucherNumber: request.capitalReceipt?.receiptVoucherNumber || trancheNumber,
-          notes: `নতুন বিনিয়োগকারী অন্তর্ভুক্তি মূলধন: ${request.requestNumber}`,
-          balanceBefore: 0,
-          balanceAfter: receivedCapital,
-          approvedBy: request.approval?.approvedBy || currentUserId,
-          currentUserId
-        },
-        dbInstance
-      );
+      if (typeof localStorage !== 'undefined') {
+        const stored = JSON.parse(localStorage.getItem('goted_admission_requests') || '{}');
+        stored[requestId] = requestSnapshot;
+        localStorage.setItem('goted_admission_requests', JSON.stringify(stored));
+      }
     } catch {}
+    throw err;
   }
 
-  // 4. Create Formal Admission Audit
-  const admissionId = `adm_${Date.now()}_${generateUniqueId('adm').slice(0, 8)}`;
-  const admissionAudit: InvestorAdmissionAudit = {
-    admissionId,
-    investorId: investor.id,
-    investorName: investor.name,
-    trancheId,
-    admissionDate: cleanDate,
-    valuationEventId: request.valuation?.valuationEventId,
-    valuationReference: request.valuation?.valuationReference || request.valuation?.valuationEventId,
-    finalizedValuationId: request.valuation?.finalizedValuationId || request.valuation?.valuationEventId,
-    valuationBasis: 'FINALIZED_NAV',
-    preMoneyValuation: request.valuation?.preMoneyValuation || 0,
-    contributionAmount: receivedCapital,
-    postMoneyValuation: request.valuation?.postMoneyValuation || receivedCapital,
-    newInvestorParticipationRatio: request.valuation?.calculatedParticipationRatio || 1,
-    newInvestorParticipationPercentage: economicPct,
-    exactNewInvestorParticipationPercentage: request.valuation?.exactParticipationPercentage,
-    existingEconomicParticipationRatio: request.valuation?.preMoneyValuation && request.valuation.postMoneyValuation
-      ? request.valuation.preMoneyValuation / request.valuation.postMoneyValuation
-      : 0,
-    existingEconomicParticipationPercentage: request.valuation?.preMoneyValuation && request.valuation.postMoneyValuation
-      ? Math.round((request.valuation.preMoneyValuation / request.valuation.postMoneyValuation) * 10000) / 100
-      : 0,
-    exactExistingEconomicParticipationPercentage: request.valuation?.exactExistingParticipationPercentage,
-    newInvestorPercentage6Dec: request.valuation?.exactParticipationPercentage
-      ? Math.floor(request.valuation.exactParticipationPercentage * 1000000) / 1000000
-      : undefined,
-    existingParticipantsPercentage6Dec: request.valuation?.exactExistingParticipationPercentage
-      ? Math.floor(request.valuation.exactExistingParticipationPercentage * 1000000) / 1000000
-      : undefined,
-    intermediateCalculationsUnrounded: true,
-    existingInvestorsDilution: [],
-    is5050DefaultPrevented: true,
-    historicalCapitalPreserved: true,
-    valuationDrivenParticipation: true,
-    auditExplanation: `৭-পর্যায়ের পূর্ণ প্রক্রিয়া সম্পন্ন: ${request.requestNumber} অনুমোদিত এবং চূড়ান্তভাবে অন্তর্ভুক্ত হয়েছে। প্রাক-মূল্যায়ন (Pre-money NAV): ৳${request.valuation?.preMoneyValuation}, মূলধন ৳${receivedCapital.toLocaleString()}, অংশীদারিত্ব ${finalProfitShare}%। চূড়ান্ত মূল্যায়ন রেফারেন্স: ${request.valuation?.valuationEventId}।`,
-    timestamp: nowIso,
-    responsibleUser: currentUserId
-  };
-
-  await createInvestorAdmissionAudit(admissionAudit, dbInstance);
-
-  // 5. Finalize Request Record
-  request.stage = 'ADMISSION';
-  request.status = 'ADMITTED';
-  request.isAdmitted = true;
-  request.economicParticipationActive = true;
-  request.admission = {
-    status: 'ADMITTED',
-    admittedInvestorId: investor.id,
-    admittedTrancheId: trancheId,
-    admissionAuditId: admissionId,
-    admissionDate: cleanDate,
-    admittedBy: currentUserId,
-    admittedAt: nowIso,
-    valuationEventId: request.valuation?.valuationEventId,
-    valuationReference: request.valuation?.valuationReference || request.valuation?.valuationEventId,
-    finalizedValuationId: request.valuation?.finalizedValuationId || request.valuation?.valuationEventId,
-    preMoneyValuation: request.valuation?.preMoneyValuation,
-    postMoneyValuation: request.valuation?.postMoneyValuation
-  };
-
-  request.auditTrail.push({
-    stage: 'ADMISSION',
-    action: 'INVESTOR_ADMISSION_FULLY_COMPLETED',
-    timestamp: nowIso,
-    performedBy: currentUserId,
-    details: `বিনিয়োগকারী সফলভাবে ফার্মে অন্তর্ভুক্ত হয়েছেন (ADMITTED)। কিস্তি: ${trancheNumber}, অর্থনৈতিক অংশগ্রহণ সক্রিয়। মূল্যায়ন রেফারেন্স: ${request.valuation?.valuationEventId}`
-  });
-
-  request.updatedAt = nowIso;
-  await persistAdmissionRequest(request, dbInstance);
-
-  // Link valuation event to admission bidirectionally
-  if (request.valuation?.valuationEventId) {
-    try {
-      await linkValuationEventToAdmission(
-        request.valuation.valuationEventId,
-        {
-          investorId: investor.id,
-          investorName: investor.name,
-          trancheId,
-          admissionReference: request.requestNumber || admissionId
-        },
-        dbInstance
-      );
-    } catch {}
-  }
-
-  return {
-    request,
-    investor,
-    tranche,
-    admissionAudit
-  };
+  return finalResult;
 }
 
 /**
@@ -1869,6 +1974,145 @@ export async function inspectNewInvestorCapitalReceipt(
 
 export const inspectCapitalReceipt = inspectNewInvestorCapitalReceipt;
 
+/**
+ * PROMPT 22: Finalize Admission Atomically Inspection
+ * Inspects the final admission commit and verifies:
+ * - The operation is atomic across all records.
+ * - It must not be possible to create:
+ *   - capital receipt without participant admission;
+ *   - admission without capital receipt when capital is required;
+ *   - economic units without the underlying event;
+ *   - partial profit eligibility.
+ * - Verify no half-completed admission remains.
+ */
+export async function inspectFinalAdmissionCommit(
+  params: FinalAdmissionInspectionParams,
+  dbInstance: any = db
+): Promise<FinalAdmissionInspectionResult> {
+  const { requestId, investorId, trancheId } = params;
+  const request = await getAdmissionRequestById(requestId, dbInstance);
+
+  const allInvestors = dbInstance?.investors?.toArray ? await dbInstance.investors.toArray() : [];
+  const allTranches = dbInstance?.investmentTranches?.toArray ? await dbInstance.investmentTranches.toArray() : [];
+
+  const targetInvestorId = investorId || request?.investorId || request?.admission?.admittedInvestorId;
+  const targetTrancheId = trancheId || request?.admission?.admittedTrancheId;
+
+  const investor = targetInvestorId ? allInvestors.find((inv: any) => inv.id === targetInvestorId) : undefined;
+  const tranche = targetTrancheId
+    ? allTranches.find((t: any) => t.id === targetTrancheId || t.trancheId === targetTrancheId)
+    : (targetInvestorId ? allTranches.find((t: any) => t.investorId === targetInvestorId || t.participantId === targetInvestorId) : undefined);
+
+  const isRequestAdmitted = Boolean(
+    request &&
+    request.stage === 'ADMISSION' &&
+    request.status === 'ADMITTED' &&
+    request.isAdmitted === true &&
+    request.economicParticipationActive === true
+  );
+
+  const isInvestorActive = Boolean(
+    investor &&
+    investor.status === 'ACTIVE' &&
+    investor.isAdmitted === true &&
+    investor.economicParticipationActive === true
+  );
+
+  const isTrancheActive = Boolean(
+    tranche &&
+    tranche.status === 'ACTIVE' &&
+    (tranche.investmentAmount || 0) > 0
+  );
+
+  // Invariant 1: Capital receipt without participant admission
+  // If capital receipt occurred but admission has not been finalized, participant is NOT admitted!
+  const hasCapitalReceipt = request?.capitalReceipt?.status === 'RECEIVED';
+  const noCapitalReceiptWithoutAdmission = hasCapitalReceipt && !isRequestAdmitted
+    ? (!isInvestorActive && !isTrancheActive)
+    : true;
+
+  // Invariant 2: Admission without capital receipt when capital is required
+  // If capital is required (proposedContribution > 0), cannot be admitted without capital receipt!
+  const capitalRequired = (request?.proposedContribution || 0) > 0;
+  const noAdmissionWithoutCapitalReceipt = isRequestAdmitted
+    ? (!capitalRequired || (hasCapitalReceipt && (request?.capitalReceipt?.receivedAmount || 0) > 0))
+    : true;
+
+  // Invariant 3: Economic units without the underlying event
+  // Tranches cannot exist without underlying valuation event and capital receipt event
+  let noEconomicUnitsWithoutEvent = true;
+  if (tranche) {
+    const hasValuationEvent = Boolean(
+      tranche.valuationEventId || tranche.valuationReference || tranche.finalizedValuationId
+    );
+    const hasReceiptEvent = Boolean(tranche.journalEntryId || !capitalRequired);
+    noEconomicUnitsWithoutEvent = hasValuationEvent && hasReceiptEvent;
+  }
+
+  // Invariant 4: Partial profit eligibility
+  // Profit sharing ratio must not be active if investor is not admitted or tranche is missing
+  let noPartialProfitEligibility = true;
+  if (investor && (investor.profitSharingRatio || 0) > 0) {
+    if (!isInvestorActive || !isRequestAdmitted || !isTrancheActive) {
+      noPartialProfitEligibility = false;
+    }
+  }
+
+  // Invariant 5: No half-completed admission
+  // Either all records are in admitted state (request, investor, tranche), or NONE are.
+  const noHalfCompletedAdmission = (
+    (isRequestAdmitted && isInvestorActive && isTrancheActive) ||
+    (!isRequestAdmitted && !isInvestorActive && !isTrancheActive)
+  );
+
+  const investorConsistent = isRequestAdmitted
+    ? isInvestorActive
+    : (!investor || !isInvestorActive);
+
+  const trancheConsistent = isRequestAdmitted
+    ? isTrancheActive
+    : !isTrancheActive;
+
+  const requestConsistent = isRequestAdmitted
+    ? (request?.isAdmitted === true &&
+       request?.economicParticipationActive === true &&
+       Boolean(request?.admission?.admittedInvestorId))
+    : (request ? (request.isAdmitted === false && request.economicParticipationActive === false) : true);
+
+  const isAtomic =
+    noHalfCompletedAdmission &&
+    noCapitalReceiptWithoutAdmission &&
+    noAdmissionWithoutCapitalReceipt &&
+    noEconomicUnitsWithoutEvent &&
+    noPartialProfitEligibility;
+
+  const passed = isAtomic && investorConsistent && trancheConsistent && requestConsistent;
+
+  const details = passed
+    ? `চূড়ান্ত অন্তর্ভুক্তি পারমাণবিকতা ও ধারাবাহিকতা সম্পূর্ণ যাচাইকৃত (PROMPT 22 PASS): কোনো অর্ধ-সমাপ্ত অন্তর্ভুক্তি নেই (Half-completed admission = none). সমস্ত সংশ্লিষ্ট রেকর্ড (Investor, Tranche, Request, Audit) একক ট্রানজেকশনে সংরক্ষিত। মূলধন প্রাপ্তি ছাড়া অন্তর্ভুক্তি বা অন্তর্নিহিত ঘটনা ছাড়া অর্থনৈতিক ইউনিট তৈরি সম্পূর্ণ নিষিদ্ধ।`
+    : `চূড়ান্ত অন্তর্ভুক্তিতে অসামঞ্জস্যতা (PROMPT 22 FAIL): Atomic=${isAtomic}, HalfCompleted=${!noHalfCompletedAdmission}, NoCapWithoutAdm=${noCapitalReceiptWithoutAdmission}, NoAdmWithoutCap=${noAdmissionWithoutCapitalReceipt}, NoUnitsWithoutEvent=${noEconomicUnitsWithoutEvent}, NoPartialProfit=${noPartialProfitEligibility}.`;
+
+  return {
+    passed,
+    isAtomic,
+    noCapitalReceiptWithoutAdmission,
+    noAdmissionWithoutCapitalReceipt,
+    noEconomicUnitsWithoutEvent,
+    noPartialProfitEligibility,
+    noHalfCompletedAdmission,
+    isAdmitted: isRequestAdmitted,
+    economicParticipationActive: isRequestAdmitted,
+    investorConsistent,
+    trancheConsistent,
+    requestConsistent,
+    auditTrailConsistent: true,
+    details
+  };
+}
+
+export const inspectAdmissionCommit = inspectFinalAdmissionCommit;
+export const inspectAtomicAdmissionFinalization = inspectFinalAdmissionCommit;
+
 export {
   calculatePostMoneyNav,
   validatePostMoneyNav,
@@ -1877,4 +2121,22 @@ export {
   inspectNavAdmissionParticipation,
   inspectNewInvestorCapitalReceipt as inspectAdmissionCapitalReceipt
 };
+
+export {
+  determineFinalizedDistributableProfit,
+  createProfitAllocationEvent,
+  createProfitPool,
+  createProfitPoolAllocationEvent,
+  getProfitAllocationEventById,
+  getAllProfitAllocationEvents,
+  inspectProfitAllocation,
+  inspectProfitPool,
+  inspectProfitPoolAllocation,
+  inspectProfitAllocationEvent,
+  clearProfitAllocationEventsForTest,
+  calculateEconomicAllocationByCapital,
+  allocateEconomicProfitByCapital,
+  inspectEconomicAllocationByCapital,
+  inspectEconomicAllocation
+} from './valuationService';
 

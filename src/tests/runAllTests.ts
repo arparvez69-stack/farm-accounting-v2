@@ -74,6 +74,10 @@ import { runPrompt17PreMoneyNavAdmissionValuationTests } from './testPrompt17Pre
 import { runPrompt18PostMoneyNavTests } from './testPrompt18PostMoneyNav';
 import { runPrompt19NewInvestorParticipationTests } from './testPrompt19NewInvestorParticipation';
 import { runPrompt20ProtectHistoricalProfitTests } from './testPrompt20ProtectHistoricalProfit';
+import { runPrompt21CapitalReceiptTests } from './testPrompt21CapitalReceipt';
+import { runPrompt22FinalizeAdmissionAtomicallyTests } from './testPrompt22FinalizeAdmissionAtomically';
+import { runPrompt23CreateProfitPoolTests } from './testPrompt23CreateProfitPool';
+import { runPrompt24EconomicAllocationByCapitalTests } from './testPrompt24EconomicAllocationByCapital';
 
 interface SuiteResult {
   total: number;
@@ -184,6 +188,10 @@ async function main() {
   suiteResults.push(await runPrompt18PostMoneyNavTests());
   suiteResults.push(await runPrompt19NewInvestorParticipationTests());
   suiteResults.push(await runPrompt20ProtectHistoricalProfitTests());
+  suiteResults.push(await runPrompt21CapitalReceiptTests());
+  suiteResults.push(await runPrompt22FinalizeAdmissionAtomicallyTests());
+  suiteResults.push(await runPrompt23CreateProfitPoolTests());
+  suiteResults.push(await runPrompt24EconomicAllocationByCapitalTests());
 
   // Strictly aggregate actual executed assertions — no manual +10 or phantom counts
   const total = suiteResults.reduce((s, r) => s + (r.total || 0), 0);

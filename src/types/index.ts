@@ -1817,3 +1817,233 @@ export interface CapitalReceiptInspectionResult {
   details: string;
 }
 
+/**
+ * PROMPT 22: Finalize Admission Atomically Inspection
+ * Invariants:
+ * - The operation must be atomic across all records.
+ * - It must not be possible to create:
+ *   - capital receipt without participant admission;
+ *   - admission without capital receipt when capital is required;
+ *   - economic units without the underlying event;
+ *   - partial profit eligibility.
+ * - Simulate a failure during the operation -> verify no half-completed admission remains.
+ */
+export interface FinalAdmissionInspectionParams {
+  requestId: string;
+  investorId?: string;
+  trancheId?: string;
+  dbInstance?: any;
+}
+
+export interface FinalAdmissionInspectionResult {
+  passed: boolean;
+  isAtomic: boolean;
+  noCapitalReceiptWithoutAdmission: boolean;
+  noAdmissionWithoutCapitalReceipt: boolean;
+  noEconomicUnitsWithoutEvent: boolean;
+  noPartialProfitEligibility: boolean;
+  noHalfCompletedAdmission: boolean;
+  isAdmitted: boolean;
+  economicParticipationActive: boolean;
+  investorConsistent: boolean;
+  trancheConsistent: boolean;
+  requestConsistent: boolean;
+  auditTrailConsistent: boolean;
+  details: string;
+}
+
+/**
+ * PHASE 4 — PROFIT ALLOCATION
+ * PROMPT 23: Create the Profit Pool & Inspect Profit Allocation
+ * 
+ * Invariants & Requirements:
+ * 1. First determine the finalized accounting/distributable profit for the eligible period.
+ * 2. Do not calculate investor profit directly from random account balances.
+ * 3. Do not change the accounting P&L during allocation.
+ * 4. Create a clear allocation event referencing:
+ *    - period;
+ *    - profit pool;
+ *    - valuation/eligibility boundary;
+ *    - source accounting result.
+ * 5. Test with distributable profit = 300.
+ * 6. Verify allocation starts from exactly 300.
+ */
+export interface ProfitAllocationPeriod {
+  startDate: string;
+  endDate: string;
+}
+
+export interface ProfitPool {
+  poolId: string;
+  poolAmount: number;
+  distributableProfit: number;
+  currency?: string;
+  description?: string;
+  createdAt: string;
+  isFinalized: boolean;
+}
+
+export interface ValuationEligibilityBoundary {
+  cutoffDate: string;
+  eligibleAdmissionCutoffDate: string;
+  valuationEventId?: string;
+  valuationReference?: string;
+  eligibleTrancheIds?: string[];
+  eligibleInvestorIds?: string[];
+  boundaryRule?: string;
+  notes?: string;
+}
+
+export interface SourceAccountingResult {
+  sourceType: 'PROFIT_AND_LOSS' | 'FINANCIAL_STATEMENTS' | 'GENERAL_LEDGER';
+  periodStartDate: string;
+  periodEndDate: string;
+  totalRevenue: number;
+  totalCogs: number;
+  totalOperatingExpenses: number;
+  operatingProfit: number;
+  netProfit: number;
+  finalizedDistributableProfit: number;
+  pnlReportReference?: string;
+  isUnalteredByAllocation: boolean;
+}
+
+export interface ProfitAllocationEvent {
+  id: string;
+  allocationNumber: string;
+  eventType: 'PROFIT_POOL_ALLOCATION';
+  status: 'DRAFT' | 'FINALIZED' | 'DISTRIBUTED';
+  createdAt: string;
+  createdDate: string;
+  responsibleUser: string;
+  period: ProfitAllocationPeriod;
+  profitPool: ProfitPool;
+  valuationEligibilityBoundary: ValuationEligibilityBoundary;
+  sourceAccountingResult: SourceAccountingResult;
+  allocationStartingAmount: number;
+  totalAllocated: number;
+  remainingPoolAmount: number;
+  allocations?: Array<{
+    investorId: string;
+    investorName: string;
+    trancheId?: string;
+    profitSharingRatio: number;
+    economicParticipationRatio?: number;
+    allocatedAmount: number;
+    journalEntryId?: string;
+    voucherNumber?: string;
+  }>;
+  notes?: string;
+  synced?: boolean;
+}
+
+export interface ProfitAllocationInspectionParams {
+  allocationEventId?: string;
+  allocationEvent?: ProfitAllocationEvent;
+  startDate?: string;
+  endDate?: string;
+  periodStartDate?: string;
+  periodEndDate?: string;
+  expectedDistributableProfit?: number;
+  dbInstance?: any;
+}
+
+export interface ProfitAllocationInspectionResult {
+  passed: boolean;
+  allocationStartsFromExactDistributableProfit: boolean;
+  distributableProfit: number;
+  initialPoolAmount: number;
+  accountingPnlUnchanged: boolean;
+  notCalculatedFromRandomBalances: boolean;
+  referencesPeriod: boolean;
+  referencesProfitPool: boolean;
+  referencesValuationEligibilityBoundary: boolean;
+  referencesSourceAccountingResult: boolean;
+  allocationEventId?: string;
+  period?: ProfitAllocationPeriod;
+  details: string;
+}
+
+/**
+ * PHASE 4 — PROFIT ALLOCATION
+ * PROMPT 24: Economic Allocation by Capital
+ * 
+ * Requirements & Invariants:
+ * 1. Implement the economic allocation layer.
+ * 2. When participants have equal eligibility periods, allocate profit according to eligible capital proportion.
+ * 3. Example:
+ *    A = 100
+ *    B = 200
+ *    Profit = 300
+ *    Economic allocation:
+ *    A = 100
+ *    B = 200
+ * 4. This is BEFORE applying their individual contractual profit-sharing percentages.
+ * 5. Do not apply A's 50% or B's 60% directly to the total 300.
+ * 6. Test the exact example.
+ */
+export interface ParticipantCapitalPosition {
+  participantId?: string;
+  id?: string;
+  investorId?: string;
+  participantName?: string;
+  name?: string;
+  investorName?: string;
+  eligibleCapital?: number;
+  capitalAmount?: number;
+  investmentAmount?: number;
+  contractualProfitSharingPercentage?: number; // e.g. A = 50%, B = 60%
+  contractualProfitSharePercentage?: number;
+  profitSharingRatio?: number;
+  eligibilityPeriodStart?: string;
+  eligibilityPeriodEnd?: string;
+  status?: string;
+}
+
+export interface ParticipantEconomicAllocation {
+  participantId: string;
+  participantName: string;
+  eligibleCapital: number;
+  capitalProportionRatio: number;
+  capitalProportionPercentage: number;
+  allocatedEconomicProfit: number; // Allocated BEFORE contractual percentages are applied
+  contractualProfitSharingPercentage?: number;
+  investorContractualProfit?: number; // Result after applying contractual % to allocatedEconomicProfit
+  workingPartnerShare?: number;
+  directContractualApplicationToTotalProfitBlocked?: boolean;
+}
+
+export interface EconomicAllocationByCapitalResult {
+  distributableProfit: number;
+  totalEligibleCapital: number;
+  hasEqualEligibilityPeriods: boolean;
+  allocations: ParticipantEconomicAllocation[];
+  totalAllocatedEconomicProfit: number;
+  remainingEconomicProfit: number;
+  isBeforeContractualPercentages: boolean;
+  flatProfitSharingAntiPatternPrevented: boolean;
+  proportionsSumToOne: boolean;
+  notes?: string;
+}
+
+export interface EconomicAllocationInspectionParams {
+  distributableProfit: number;
+  participants: ParticipantCapitalPosition[];
+  expectedEconomicAllocations?: Record<string, number>;
+}
+
+export interface EconomicAllocationInspectionResult {
+  passed: boolean;
+  exactExampleVerified: boolean;
+  allocationsMatchCapitalProportions: boolean;
+  beforeContractualPercentagesApplied: boolean;
+  directApplicationOfContractualRateToTotalProfitBlocked: boolean;
+  allocations: Record<string, number>;
+  totalAllocated: number;
+  distributableProfit: number;
+  details: string;
+}
+
+
+
+
