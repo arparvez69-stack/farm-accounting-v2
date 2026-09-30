@@ -1,5 +1,13 @@
 import { db } from '../db/indexedDb';
 import { CANONICAL_ACCOUNTS } from './accountMapping';
+export {
+  recordPhysicalInventoryAdjustment,
+  detectSilentInventoryOverwrite,
+  assertNoSilentInventoryOverwrite,
+  getPhysicalInventoryRecords,
+  getPhysicalInventoryRecordById,
+  clearPhysicalInventoryRecordsForTest
+} from './physicalInventoryService';
 import {
   calculateAnimalRecordedCosts,
   calculateFishBatchRecordedCosts,
@@ -16,11 +24,14 @@ import {
   InventoryItem,
   Investor,
   JournalEntry,
+  Loan,
   Party,
   PaymentRecord,
   Purchase,
   Sale,
-  StockMovement
+  StockMovement,
+  ValuationReconciliationGateCheck,
+  ValuationReconciliationGateResult
 } from '../types';
 
 export interface ReconciliationSubItem {
@@ -142,7 +153,7 @@ export function calculateHistoricalInventoryValuation(
   isValueMatched: boolean;
 } {
   const currentStock = Math.max(0, Number(item.currentStock) || 0);
-  const currentAvgCost = Math.max(0, Number(item.avgCostPrice) || Number((item as any).costPrice) || 0);
+  const currentAvgCost = Math.max(0, Number(item.avgCostPrice) || Number((item as any).costPrice) || Number((item as any).unitCost) || 0);
   const recordCurrentVal = round2(currentStock * currentAvgCost);
 
   // When asOfDate is not specified, preserve current weighted-average behavior
@@ -300,11 +311,15 @@ export function calculateHistoricalInventoryValuation(
       laterOutflowCost = round2(laterOutflowCost + mTotalVal);
     } else if (type === 'ADJUSTMENT') {
       const isDecrease =
+        (m as any).direction === 'OUT' ||
         (m as any).adjustmentType === 'DECREASE' ||
         Number(m.quantity) < 0 ||
         (m.notes || '').includes('হ্রাস') ||
+        (m.notes || '').includes('ঘাটতি') ||
         (m.notes || '').toLowerCase().includes('decrease') ||
         (m.notes || '').toLowerCase().includes('loss') ||
+        (m.notes || '').toLowerCase().includes('deficit') ||
+        (m.notes || '').toLowerCase().includes('shrinkage') ||
         (m.notes || '').toLowerCase().includes('damage');
       if (isDecrease) {
         laterOutflowQty = round2(laterOutflowQty + mQty);
@@ -415,11 +430,15 @@ export function calculateHistoricalInventoryValuation(
       runningTotalValue = newTotalValue;
     } else if (type === 'ADJUSTMENT') {
       const isDec =
+        (m as any).direction === 'OUT' ||
         (m as any).adjustmentType === 'DECREASE' ||
         Number(m.quantity) < 0 ||
         (m.notes || '').includes('হ্রাস') ||
+        (m.notes || '').includes('ঘাটতি') ||
         (m.notes || '').toLowerCase().includes('decrease') ||
         (m.notes || '').toLowerCase().includes('loss') ||
+        (m.notes || '').toLowerCase().includes('deficit') ||
+        (m.notes || '').toLowerCase().includes('shrinkage') ||
         (m.notes || '').toLowerCase().includes('damage');
 
       if (isDec) {
@@ -581,7 +600,8 @@ export async function reconcileInventorySubledger(
     CANONICAL_ACCOUNTS.RAW_MATERIALS,
     CANONICAL_ACCOUNTS.FINISHED_GOODS,
     CANONICAL_ACCOUNTS.PACKAGING_INVENTORY,
-    '1050' // Legacy account check
+    '1050', // Legacy account check
+    '1070', '1071', '1072', '1073', '1074', '1075'
   ];
 
   const glAmount = calculateGlBalanceForAccounts(entries, inventoryCodes, 'DEBIT', asOfDate);
@@ -646,7 +666,7 @@ export async function reconcileCustomerBalances(
   const customerDetails: ReconciliationSubItem[] = [];
 
   for (const c of customers) {
-    let bal = round2(Number(c.balance) || 0);
+    let bal = round2(Number(c.balance ?? c.currentBalance) || 0);
 
     if (cleanAsOf) {
       // 1. Credit sales after cleanAsOf (increased customer balance after asOfDate)
@@ -730,7 +750,7 @@ export async function reconcileSupplierBalances(
   const supplierDetails: ReconciliationSubItem[] = [];
 
   for (const s of suppliers) {
-    let bal = round2(Number(s.balance) || 0);
+    let bal = round2(Number(s.balance ?? s.currentBalance) || 0);
 
     if (cleanAsOf) {
       // 1. Credit purchases after cleanAsOf (increased supplier balance after asOfDate)
@@ -1074,7 +1094,7 @@ export async function reconcileFixedAssetRegister(
   const assetDetails: ReconciliationSubItem[] = [];
 
   for (const asset of activeAssets) {
-    const cost = round2(Number(asset.originalCost) || 0);
+    const cost = round2(Number(asset.originalCost ?? (asset as any).cost ?? (asset as any).purchasePrice) || 0);
     totalOperational = round2(totalOperational + cost);
     assetDetails.push({
       id: asset.id,
@@ -1955,5 +1975,439 @@ export async function generateInventoryReport(
     isQuantityMatched: allItemsQuantityMatched,
     isAllMatched,
     categoryBreakdown
+  };
+}
+
+/**
+ * Check: Loans subledger ↔ GL (Prompt 07)
+ * - Operational: Sum of remaining/outstanding principal across all active loans in the `loans` table as of asOfDate
+ * - GL: Net credit balance of GL accounts 2110 (Short Term Loans) & 2120 (Long Term Loans) / 2030 as of asOfDate
+ */
+export async function reconcileLoansSubledger(
+  dbInstance: any = db,
+  journalEntries?: JournalEntry[],
+  asOfDate?: string
+): Promise<ReconciliationCheck> {
+  const loans: Loan[] = dbInstance.loans ? await dbInstance.loans.toArray() : [];
+  const entries: JournalEntry[] = journalEntries || (await dbInstance.journalEntries.toArray());
+  const cleanAsOf = asOfDate ? asOfDate.slice(0, 10) : undefined;
+
+  let totalOperational = 0;
+  const loanDetails: ReconciliationSubItem[] = [];
+
+  for (const loan of loans) {
+    if (loan.status === 'CANCELLED') continue;
+    if (cleanAsOf && loan.disbursedDate && loan.disbursedDate.slice(0, 10) > cleanAsOf) continue;
+    if (cleanAsOf && loan.startDate && loan.startDate.slice(0, 10) > cleanAsOf) continue;
+
+    let bal = round2(
+      Number(
+        loan.remainingPrincipal ??
+        loan.outstandingPrincipal ??
+        loan.remainingBalance ??
+        (loan.principalAmount - (loan.totalPaidPrincipal || 0))
+      ) || 0
+    );
+
+    totalOperational = round2(totalOperational + bal);
+    loanDetails.push({
+      id: loan.id,
+      name: `${loan.lenderName} (${loan.loanType || 'ঋণ'})`,
+      operationalAmount: bal,
+      status: 'MATCHED',
+      notes: `ঋণ স্থিতি: ৳${bal} [${loan.loanNumber || loan.id}]`
+    });
+  }
+
+  const loanCodes = [
+    CANONICAL_ACCOUNTS.SHORT_TERM_LOANS, // 2110
+    CANONICAL_ACCOUNTS.LONG_TERM_LOANS, // 2120
+    '2030'
+  ];
+
+  const glAmount = calculateGlBalanceForAccounts(entries, loanCodes, 'CREDIT', asOfDate);
+  const difference = round2(totalOperational - glAmount);
+  const isMatched = Math.abs(difference) < 0.01;
+
+  return {
+    id: 'check_loans_subledger',
+    itemNumber: 12,
+    moduleBn: 'ঋণ ও দায় রেজিস্টার',
+    moduleEn: 'Loans Subledger vs GL',
+    accountCode: '2110, 2120',
+    accountNameBn: 'ব্যাংক ও আর্থিক ঋণ হিসাবসমূহ (Loans Payable - 2110, 2120)',
+    accountNameEn: 'Loans Payable (2110, 2120)',
+    operationalAmount: totalOperational,
+    glAmount,
+    difference,
+    isMatched,
+    status: isMatched ? 'MATCHED' : 'MISMATCH',
+    notesBn: isMatched
+      ? 'ঋণ রেজিস্টারের বকেয়া আসল স্থিতি এবং GL ঋণ হিসাব সম্পূর্ণ মিলেছে।'
+      : `ঋণ রেজিস্টার ও GL ব্যালেন্সের মাঝে ৳${Math.abs(difference)} এর অমিল শনাক্ত হয়েছে।`,
+    details: loanDetails
+  };
+}
+
+/**
+ * Check: Cash Subledger (GL 1010 & 1020 vs Cash Drawer / Cash Accounts)
+ */
+export async function reconcileCashSubledger(
+  dbInstance: any = db,
+  journalEntries?: JournalEntry[],
+  asOfDate?: string
+): Promise<ReconciliationCheck> {
+  const accounts: CashBankAccount[] = dbInstance.cashBankAccounts ? await dbInstance.cashBankAccounts.toArray() : [];
+  const entries: JournalEntry[] = journalEntries || (await dbInstance.journalEntries.toArray());
+  const cleanAsOf = asOfDate ? asOfDate.slice(0, 10) : undefined;
+
+  let totalOperational = 0;
+  const cashAccounts = accounts.filter(a => a.accountType === 'CASH');
+  const details: ReconciliationSubItem[] = [];
+
+  for (const acc of cashAccounts) {
+    let bal = round2(Number(acc.currentBalance ?? (acc as any).balance ?? 0));
+    if (cleanAsOf) {
+      const postEntries = entries.filter(e => e.date && e.date.slice(0, 10) > cleanAsOf);
+      let postNet = 0;
+      for (const pe of postEntries) {
+        for (const l of pe.lines || []) {
+          if (l.accountCode === CANONICAL_ACCOUNTS.CASH || l.accountCode === CANONICAL_ACCOUNTS.PETTY_CASH) {
+            postNet += (Number(l.debit) || 0) - (Number(l.credit) || 0);
+          }
+        }
+      }
+      bal = round2(bal - postNet);
+    }
+
+    totalOperational = round2(totalOperational + bal);
+    details.push({
+      id: acc.id,
+      name: `${acc.name || acc.accountName || 'ক্যাশ ড্রয়ার'} (CASH)`,
+      operationalAmount: bal,
+      status: 'MATCHED',
+      notes: `নগদ ক্যাশ স্থিতি: ৳${bal}`
+    });
+  }
+
+  const glAmount = calculateGlBalanceForAccounts(entries, [CANONICAL_ACCOUNTS.CASH, CANONICAL_ACCOUNTS.PETTY_CASH], 'DEBIT', asOfDate);
+  const difference = round2(totalOperational - glAmount);
+  const isMatched = Math.abs(difference) < 0.01;
+
+  return {
+    id: 'check_cash_subledger',
+    itemNumber: 13,
+    moduleBn: 'নগদ ক্যাশ রেজিস্টার',
+    moduleEn: 'Cash Drawer / Subledger vs GL',
+    accountCode: '1010, 1020',
+    accountNameBn: 'হাতে নগদ ও পেটি ক্যাশ (Cash in Hand - 1010, 1020)',
+    accountNameEn: 'Cash in Hand (1010, 1020)',
+    operationalAmount: totalOperational,
+    glAmount,
+    difference,
+    isMatched,
+    status: isMatched ? 'MATCHED' : 'MISMATCH',
+    notesBn: isMatched
+      ? 'হাতে নগদ ক্যাশ ড্রয়ার স্থিতি এবং GL নগদ হিসাব সম্পূর্ণ মিলেছে।'
+      : `ক্যাশ ড্রয়ার ও GL নগদ ব্যালেন্সের মাঝে ৳${Math.abs(difference)} এর অমিল শনাক্ত হয়েছে।`,
+    details
+  };
+}
+
+/**
+ * Check: Bank Subledger (GL 1030 vs Bank & MFS Accounts)
+ */
+export async function reconcileBankSubledger(
+  dbInstance: any = db,
+  journalEntries?: JournalEntry[],
+  asOfDate?: string
+): Promise<ReconciliationCheck> {
+  const accounts: CashBankAccount[] = dbInstance.cashBankAccounts ? await dbInstance.cashBankAccounts.toArray() : [];
+  const entries: JournalEntry[] = journalEntries || (await dbInstance.journalEntries.toArray());
+  const cleanAsOf = asOfDate ? asOfDate.slice(0, 10) : undefined;
+
+  let totalOperational = 0;
+  const bankAccounts = accounts.filter(a => a.accountType === 'BANK' || (a.accountType as any) === 'MFS');
+  const details: ReconciliationSubItem[] = [];
+
+  for (const acc of bankAccounts) {
+    let bal = round2(Number(acc.currentBalance ?? (acc as any).balance ?? 0));
+    if (cleanAsOf) {
+      const postEntries = entries.filter(e => e.date && e.date.slice(0, 10) > cleanAsOf);
+      let postNet = 0;
+      for (const pe of postEntries) {
+        for (const l of pe.lines || []) {
+          if (l.accountCode === CANONICAL_ACCOUNTS.BANK) {
+            postNet += (Number(l.debit) || 0) - (Number(l.credit) || 0);
+          }
+        }
+      }
+      bal = round2(bal - postNet);
+    }
+
+    totalOperational = round2(totalOperational + bal);
+    details.push({
+      id: acc.id,
+      name: `${acc.name || acc.accountName || 'ব্যাংক হিসাব'} (${acc.bankName || 'BANK'})`,
+      operationalAmount: bal,
+      status: 'MATCHED',
+      notes: `ব্যাংক স্থিতি: ৳${bal} [${acc.accountNumber || ''}]`
+    });
+  }
+
+  const glAmount = calculateGlBalanceForAccounts(entries, [CANONICAL_ACCOUNTS.BANK], 'DEBIT', asOfDate);
+  const difference = round2(totalOperational - glAmount);
+  const isMatched = Math.abs(difference) < 0.01;
+
+  return {
+    id: 'check_bank_subledger',
+    itemNumber: 14,
+    moduleBn: 'ব্যাংক হিসাব রেজিস্টার',
+    moduleEn: 'Bank Accounts Subledger vs GL',
+    accountCode: '1030',
+    accountNameBn: 'ব্যাংক ও মোবাইল ব্যাংকিং হিসাব (Bank Accounts - 1030)',
+    accountNameEn: 'Bank Accounts (1030)',
+    operationalAmount: totalOperational,
+    glAmount,
+    difference,
+    isMatched,
+    status: isMatched ? 'MATCHED' : 'MISMATCH',
+    notesBn: isMatched
+      ? 'ব্যাংক হিসাবসমূহের রেজিস্টার স্থিতি এবং GL ব্যাংক হিসাব সম্পূর্ণ মিলেছে।'
+      : `ব্যাংক হিসাব রেজিস্টার ও GL ব্যাংক ব্যালেন্সের মাঝে ৳${Math.abs(difference)} এর অমিল শনাক্ত হয়েছে।`,
+    details
+  };
+}
+
+/**
+ * PROMPT 07 — Valuation Reconciliation Gate
+ *
+ * Before a valuation can be finalized, require reconciliation of material:
+ * 1. cash
+ * 2. bank
+ * 3. inventory
+ * 4. receivables
+ * 5. payables
+ * 6. loans
+ * 7. fixed assets
+ * 8. depreciation
+ * 9. other material assets/liabilities (biological/production WIP, investor profit payable)
+ *
+ * An unresolved material discrepancy must block final valuation.
+ * Do not silently ignore missing or conflicting data.
+ */
+export async function runValuationReconciliationGate(
+  dbInstance: any = db,
+  asOfDate?: string,
+  options?: { tolerance?: number }
+): Promise<ValuationReconciliationGateResult> {
+  const tolerance = options?.tolerance ?? 0.01;
+  const journalEntries: JournalEntry[] = dbInstance.journalEntries ? await dbInstance.journalEntries.toArray() : [];
+  const cleanAsOf = asOfDate ? asOfDate.slice(0, 10) : new Date().toISOString().slice(0, 10);
+
+  // Run all material reconciliation checks in parallel
+  const [
+    cashCheck,
+    bankCheck,
+    inventoryCheck,
+    receivablesCheck,
+    payablesCheck,
+    loansCheck,
+    fixedAssetsCheck,
+    depreciationCheck,
+    investorProfitPayableCheck,
+    livestockCheck,
+    cropsCheck,
+    fishCheck
+  ] = await Promise.all([
+    reconcileCashSubledger(dbInstance, journalEntries, cleanAsOf),
+    reconcileBankSubledger(dbInstance, journalEntries, cleanAsOf),
+    reconcileInventorySubledger(dbInstance, journalEntries, cleanAsOf),
+    reconcileCustomerBalances(dbInstance, journalEntries, cleanAsOf),
+    reconcileSupplierBalances(dbInstance, journalEntries, cleanAsOf),
+    reconcileLoansSubledger(dbInstance, journalEntries, cleanAsOf),
+    reconcileFixedAssetRegister(dbInstance, journalEntries, cleanAsOf),
+    reconcileAccumulatedDepreciation(dbInstance, journalEntries, cleanAsOf),
+    reconcileInvestorProfitPayable(dbInstance, journalEntries, cleanAsOf),
+    reconcileLivestockBiologicalAssets(dbInstance, journalEntries, cleanAsOf),
+    reconcileCropCycleWip(dbInstance, journalEntries, cleanAsOf),
+    reconcileFishBatchProduction(dbInstance, journalEntries, cleanAsOf)
+  ]);
+
+  // Aggregate "other material assets/liabilities" check
+  const otherOp = round2(
+    investorProfitPayableCheck.operationalAmount +
+    livestockCheck.operationalAmount +
+    cropsCheck.operationalAmount +
+    fishCheck.operationalAmount
+  );
+  const otherGl = round2(
+    investorProfitPayableCheck.glAmount +
+    livestockCheck.glAmount +
+    cropsCheck.glAmount +
+    fishCheck.glAmount
+  );
+  const otherDiff = round2(otherOp - otherGl);
+  const isOtherMatched =
+    investorProfitPayableCheck.isMatched &&
+    livestockCheck.isMatched &&
+    cropsCheck.isMatched &&
+    fishCheck.isMatched;
+
+  const checks: ValuationReconciliationGateCheck[] = [
+    {
+      item: 'cash',
+      nameBn: 'নগদ তহবিল (Cash on Hand & Petty Cash)',
+      nameEn: 'Cash on Hand & Petty Cash',
+      accountCodes: cashCheck.accountCode,
+      operationalAmount: cashCheck.operationalAmount,
+      glAmount: cashCheck.glAmount,
+      difference: cashCheck.difference,
+      isMatched: Math.abs(cashCheck.difference) <= tolerance && cashCheck.isMatched,
+      status: Math.abs(cashCheck.difference) <= tolerance && cashCheck.isMatched ? 'MATCHED' : 'MISMATCH',
+      details: cashCheck.notesBn
+    },
+    {
+      item: 'bank',
+      nameBn: 'ব্যাংক ও মোবাইল ব্যাংকিং হিসাব (Bank Accounts)',
+      nameEn: 'Bank Accounts',
+      accountCodes: bankCheck.accountCode,
+      operationalAmount: bankCheck.operationalAmount,
+      glAmount: bankCheck.glAmount,
+      difference: bankCheck.difference,
+      isMatched: Math.abs(bankCheck.difference) <= tolerance && bankCheck.isMatched,
+      status: Math.abs(bankCheck.difference) <= tolerance && bankCheck.isMatched ? 'MATCHED' : 'MISMATCH',
+      details: bankCheck.notesBn
+    },
+    {
+      item: 'inventory',
+      nameBn: 'পণ্য ও মজুদ ইনভেন্টরি (Inventory Subledger)',
+      nameEn: 'Inventory Subledger',
+      accountCodes: inventoryCheck.accountCode,
+      operationalAmount: inventoryCheck.operationalAmount,
+      glAmount: inventoryCheck.glAmount,
+      difference: inventoryCheck.difference,
+      isMatched: Math.abs(inventoryCheck.difference) <= tolerance && inventoryCheck.isMatched,
+      status: Math.abs(inventoryCheck.difference) <= tolerance && inventoryCheck.isMatched ? 'MATCHED' : 'MISMATCH',
+      details: inventoryCheck.notesBn
+    },
+    {
+      item: 'receivables',
+      nameBn: 'প্রাপ্য হিসাব / বকেয়া পাওনা (Accounts Receivable)',
+      nameEn: 'Accounts Receivable',
+      accountCodes: receivablesCheck.accountCode,
+      operationalAmount: receivablesCheck.operationalAmount,
+      glAmount: receivablesCheck.glAmount,
+      difference: receivablesCheck.difference,
+      isMatched: Math.abs(receivablesCheck.difference) <= tolerance && receivablesCheck.isMatched,
+      status: Math.abs(receivablesCheck.difference) <= tolerance && receivablesCheck.isMatched ? 'MATCHED' : 'MISMATCH',
+      details: receivablesCheck.notesBn
+    },
+    {
+      item: 'payables',
+      nameBn: 'প্রদেয় হিসাব / বকেয়া দেনা (Accounts Payable)',
+      nameEn: 'Accounts Payable',
+      accountCodes: payablesCheck.accountCode,
+      operationalAmount: payablesCheck.operationalAmount,
+      glAmount: payablesCheck.glAmount,
+      difference: payablesCheck.difference,
+      isMatched: Math.abs(payablesCheck.difference) <= tolerance && payablesCheck.isMatched,
+      status: Math.abs(payablesCheck.difference) <= tolerance && payablesCheck.isMatched ? 'MATCHED' : 'MISMATCH',
+      details: payablesCheck.notesBn
+    },
+    {
+      item: 'loans',
+      nameBn: 'স্বীকৃত ব্যাংক ও আর্থিক ঋণ (Recognized Loans)',
+      nameEn: 'Loans Payable',
+      accountCodes: loansCheck.accountCode,
+      operationalAmount: loansCheck.operationalAmount,
+      glAmount: loansCheck.glAmount,
+      difference: loansCheck.difference,
+      isMatched: Math.abs(loansCheck.difference) <= tolerance && loansCheck.isMatched,
+      status: Math.abs(loansCheck.difference) <= tolerance && loansCheck.isMatched ? 'MATCHED' : 'MISMATCH',
+      details: loansCheck.notesBn
+    },
+    {
+      item: 'fixed_assets',
+      nameBn: 'স্থায়ী সম্পদ রেজিস্টার (Fixed Assets Cost Register)',
+      nameEn: 'Fixed Assets Register',
+      accountCodes: fixedAssetsCheck.accountCode,
+      operationalAmount: fixedAssetsCheck.operationalAmount,
+      glAmount: fixedAssetsCheck.glAmount,
+      difference: fixedAssetsCheck.difference,
+      isMatched: Math.abs(fixedAssetsCheck.difference) <= tolerance && fixedAssetsCheck.isMatched,
+      status: Math.abs(fixedAssetsCheck.difference) <= tolerance && fixedAssetsCheck.isMatched ? 'MATCHED' : 'MISMATCH',
+      details: fixedAssetsCheck.notesBn
+    },
+    {
+      item: 'depreciation',
+      nameBn: 'পুঞ্জীভূত অবচয় (Accumulated Depreciation)',
+      nameEn: 'Accumulated Depreciation',
+      accountCodes: depreciationCheck.accountCode,
+      operationalAmount: depreciationCheck.operationalAmount,
+      glAmount: depreciationCheck.glAmount,
+      difference: depreciationCheck.difference,
+      isMatched: Math.abs(depreciationCheck.difference) <= tolerance && depreciationCheck.isMatched,
+      status: Math.abs(depreciationCheck.difference) <= tolerance && depreciationCheck.isMatched ? 'MATCHED' : 'MISMATCH',
+      details: depreciationCheck.notesBn
+    },
+    {
+      item: 'other_material',
+      nameBn: 'অন্যান্য উপাদানগত সম্পদ ও দায় (Other Material Assets/Liabilities: WIP, Biological, Profit Payable)',
+      nameEn: 'Other Material Assets/Liabilities (WIP, Biological Assets, Investor Profit Payable)',
+      accountCodes: '1081, 1082, 1083, 2050',
+      operationalAmount: otherOp,
+      glAmount: otherGl,
+      difference: otherDiff,
+      isMatched: Math.abs(otherDiff) <= tolerance && isOtherMatched,
+      status: Math.abs(otherDiff) <= tolerance && isOtherMatched ? 'MATCHED' : 'MISMATCH',
+      details: isOtherMatched
+        ? 'অন্যান্য উপাদানগত উৎপাদন সম্পদ (WIP/বায়োলজিক্যাল) ও লভ্যাংশ বাধ্যবাধকতা নিখুঁত মিলেছে।'
+        : `অন্যান্য উপাদানগত সম্পদ/দায়ে ব্যবধান বিদ্যমান: ৳${otherDiff}`
+    }
+  ];
+
+  const unresolvedDiscrepancies: Array<{
+    item: string;
+    description: string;
+    operationalAmount: number;
+    glAmount: number;
+    difference: number;
+    reason: string;
+  }> = [];
+
+  let totalMaterialDiscrepancy = 0;
+
+  for (const c of checks) {
+    if (!c.isMatched || Math.abs(c.difference) > tolerance) {
+      totalMaterialDiscrepancy = round2(totalMaterialDiscrepancy + Math.abs(c.difference));
+      unresolvedDiscrepancies.push({
+        item: c.item,
+        description: `${c.nameBn} (${c.nameEn})`,
+        operationalAmount: c.operationalAmount,
+        glAmount: c.glAmount,
+        difference: c.difference,
+        reason: c.details || `GL ব্যালেন্স (৳${c.glAmount}) এবং সাবলেজার (৳${c.operationalAmount})-এর মাঝে ৳${Math.abs(c.difference)} এর অমিল বিদ্যমান।`
+      });
+    }
+  }
+
+  const passed = unresolvedDiscrepancies.length === 0;
+  const status: 'PASS' | 'UNRESOLVED' = passed ? 'PASS' : 'UNRESOLVED';
+
+  const blockingReason = passed
+    ? undefined
+    : `${unresolvedDiscrepancies.length}টি উপাদানগত ক্ষেত্রে অমীমাংসিত ব্যবধান শনাক্ত হয়েছে (${unresolvedDiscrepancies.map(d => `${d.item}: ৳${d.difference}`).join(', ')})। মূল্যায়ন চূড়ান্তকরণের পূর্বে এই ব্যবধানসমূহ অবশ্যই সমন্বয় করতে হবে।`;
+
+  return {
+    asOfDate: cleanAsOf,
+    timestamp: new Date().toISOString(),
+    passed,
+    status,
+    checks,
+    unresolvedCount: unresolvedDiscrepancies.length,
+    unresolvedDiscrepancies,
+    totalMaterialDiscrepancy,
+    blockingReason
   };
 }

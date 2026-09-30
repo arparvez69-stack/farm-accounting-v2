@@ -80,9 +80,9 @@ export async function runCompleteCloudRestoreCoverageTests(): Promise<AssertionR
     // -------------------------------------------------------------------------
     console.log('--- AUDIT 1: Persistent Tables Registry Verification ---');
     const persistentTableNames = db.tables.map(t => t.name).sort();
-    assert(persistentTableNames.length === 30, `Dexie database schema contains exactly 30 persistent tables (actual: ${persistentTableNames.length})`);
+    assert(persistentTableNames.length === 32, `Dexie database schema contains exactly 32 persistent tables (actual: ${persistentTableNames.length})`);
 
-    const expectedAll30 = [
+    const expectedAll32 = [
       'accessLogs',
       'accounts',
       'advancePayments',
@@ -97,6 +97,8 @@ export async function runCompleteCloudRestoreCoverageTests(): Promise<AssertionR
       'fixedAssets',
       'internalFlows',
       'inventoryItems',
+      'investmentTranches',
+      'investorCapitalMovements',
       'investors',
       'journalEntries',
       'loans',
@@ -116,8 +118,8 @@ export async function runCompleteCloudRestoreCoverageTests(): Promise<AssertionR
     ].sort();
 
     assert(
-      JSON.stringify(persistentTableNames) === JSON.stringify(expectedAll30),
-      'All 30 persistent tables match the complete farm ERP schema specification'
+      JSON.stringify(persistentTableNames) === JSON.stringify(expectedAll32),
+      'All 32 persistent tables match the complete farm ERP schema specification'
     );
 
     // -------------------------------------------------------------------------
@@ -445,6 +447,34 @@ export async function runCompleteCloudRestoreCoverageTests(): Promise<AssertionR
         loginMethod: 'SECRET_PIN',
         status: 'SUCCESS',
         synced: true
+      },
+      investmentTranches: {
+        id: `tranche_${runTag}`,
+        trancheNumber: `TR-${runTag.slice(-4)}`,
+        investorId: investorId,
+        participantId: investorId,
+        investmentAmount: 100000,
+        capitalAmount: 100000,
+        contractualProfitPercentage: 40,
+        contractualProfitSharePercentage: 40,
+        effectiveInvestmentDate: '2026-01-01',
+        effectiveDate: '2026-01-01',
+        currency: 'BDT',
+        status: 'ACTIVE',
+        creationTimestamp: '2026-01-01T00:00:00.000Z',
+        createdBy: testOwnerEmail,
+        createdAt: '2026-01-01T00:00:00.000Z',
+        synced: true
+      },
+      investorCapitalMovements: {
+        id: `capmov_${runTag}`,
+        movementNumber: `CM-${runTag.slice(-4)}`,
+        investorId: investorId,
+        movementType: 'INITIAL_CONTRIBUTION',
+        amount: 100000,
+        direction: 'INFLOW',
+        date: '2026-01-01',
+        synced: true
       }
     };
 
@@ -514,7 +544,7 @@ export async function runCompleteCloudRestoreCoverageTests(): Promise<AssertionR
 
     const restoreOutcome = await restoreRemoteDataIfLocalEmpty(testOwnerEmail, true);
     assert(restoreOutcome.restored === true, 'restoreRemoteDataIfLocalEmpty executed with restored: true');
-    assert(restoreOutcome.count >= 30, `restoreRemoteDataIfLocalEmpty restored all records (restored: ${restoreOutcome.count})`);
+    assert(restoreOutcome.count >= 32, `restoreRemoteDataIfLocalEmpty restored all records (restored: ${restoreOutcome.count})`);
 
     // -------------------------------------------------------------------------
     // STEP 7: Verify Required Tables: salesReturns, purchaseReturns, advancePayments

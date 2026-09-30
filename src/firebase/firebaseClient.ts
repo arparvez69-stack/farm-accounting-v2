@@ -636,6 +636,20 @@ export async function synchronizePendingData(): Promise<{ syncedCount: number; e
       }
     }
 
+    // 13c. Sync Investor Capital Movements
+    if (db.investorCapitalMovements) {
+      const pendingMovements = await db.investorCapitalMovements.filter((m) => !m.synced).toArray();
+      for (const movement of pendingMovements) {
+        try {
+          const syncRes = await syncRecordToServer('investorCapitalMovements', movement);
+          await handleSyncedResult(db.investorCapitalMovements, movement.id, syncRes);
+          count++;
+        } catch (err: any) {
+          errors.push(`Investor Capital Movement ${movement.id}: ${err.message}`);
+        }
+      }
+    }
+
     // 14. Sync Fixed Assets
     const pendingAssets = await db.fixedAssets.filter((asset) => !asset.synced).toArray();
     for (const asset of pendingAssets) {
@@ -1296,6 +1310,9 @@ export async function restoreRemoteDataIfLocalEmpty(
         applied += await restoreTableItemsWithDiff(db.investors, c.investors);
         if (db.investmentTranches) {
           applied += await restoreTableItemsWithDiff(db.investmentTranches, c.investmentTranches);
+        }
+        if (db.investorCapitalMovements) {
+          applied += await restoreTableItemsWithDiff(db.investorCapitalMovements, c.investorCapitalMovements);
         }
         applied += await restoreTableItemsWithDiff(db.cashBankAccounts, c.cashBankAccounts);
         applied += await restoreTableItemsWithDiff(db.bankTransfers, c.bankTransfers);

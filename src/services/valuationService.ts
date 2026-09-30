@@ -17,11 +17,38 @@ import {
   Investor,
   TrancheEconomicParticipationAllocation,
   CapitalParticipationAllocationResult,
-  JournalLine
+  JournalLine,
+  ValuationReconciliationGateResult,
+  ValuationReconciliationGateCheck
 } from '../types';
 import { generateTransactionNumber, generateUniqueId } from '../utils/idGenerator';
 import { db } from '../db/indexedDb';
 import { CANONICAL_ACCOUNTS } from '../accounting/accountMapping';
+import {
+  runValuationReconciliationGate,
+  reconcileLoansSubledger,
+  reconcileCashSubledger,
+  reconcileBankSubledger,
+  reconcileInventorySubledger,
+  recordPhysicalInventoryAdjustment,
+  detectSilentInventoryOverwrite,
+  assertNoSilentInventoryOverwrite,
+  getPhysicalInventoryRecords,
+  getPhysicalInventoryRecordById
+} from '../accounting/reconciliationService';
+
+export {
+  runValuationReconciliationGate,
+  reconcileLoansSubledger,
+  reconcileCashSubledger,
+  reconcileBankSubledger,
+  reconcileInventorySubledger,
+  recordPhysicalInventoryAdjustment,
+  detectSilentInventoryOverwrite,
+  assertNoSilentInventoryOverwrite,
+  getPhysicalInventoryRecords,
+  getPhysicalInventoryRecordById
+};
 
 // In-memory store for valuation events
 const inMemoryValuationEvents = new Map<string, InvestmentValuationEvent>();
@@ -146,7 +173,14 @@ export function categorizeNavLiability(code: string, name: string): NavLiability
   ) {
     return 'TRADE_PAYABLES';
   }
-  if (c.startsWith('203') || lowerName.includes('loan') || lowerName.includes('debt') || lowerName.includes('ঋণ')) {
+  if (
+    c.startsWith('211') ||
+    c.startsWith('212') ||
+    c.startsWith('203') ||
+    lowerName.includes('loan') ||
+    lowerName.includes('debt') ||
+    lowerName.includes('ঋণ')
+  ) {
     return 'LOANS';
   }
   if (c === '2040' || lowerName.includes('customer advance') || lowerName.includes('অগ্রিম গ্রহণ')) {
@@ -384,6 +418,10 @@ export async function createValuationEvent(
     totalBusinessAssetsIncluded?: number;
     relevantLiabilities?: number;
     notes?: string;
+    finalize?: boolean;
+    requireReconciliationGate?: boolean;
+    bypassReconciliationForTest?: boolean;
+    status?: 'DRAFT' | 'FINALIZED' | 'BLOCKED' | 'REJECTED';
   },
   dbInstance: any = db
 ): Promise<InvestmentValuationEvent> {
@@ -397,7 +435,11 @@ export async function createValuationEvent(
     admissionReference,
     totalBusinessAssetsIncluded: overrideAssets,
     relevantLiabilities: overrideLiabilities,
-    notes
+    notes,
+    finalize = false,
+    requireReconciliationGate = false,
+    bypassReconciliationForTest = false,
+    status: explicitStatus
   } = params;
 
   if (!valuationDate || typeof valuationDate !== 'string') {
@@ -410,6 +452,24 @@ export async function createValuationEvent(
 
   if (!responsibleUser || typeof responsibleUser !== 'string' || !responsibleUser.trim()) {
     throw new Error('দায়িত্বপ্রাপ্ত ব্যবহারকারী আবশ্যক (Responsible user is required for valuation event audit).');
+  }
+
+  // Prompt 07: Valuation Reconciliation Gate
+  // Before a valuation can be finalized, require reconciliation of material:
+  // cash, bank, inventory, receivables, payables, loans, fixed assets, depreciation, other material assets/liabilities.
+  // An unresolved material discrepancy must block final valuation.
+  // Do not silently ignore missing or conflicting data.
+  let gateResult: ValuationReconciliationGateResult | undefined;
+  if (finalize || requireReconciliationGate) {
+    gateResult = await runValuationReconciliationGate(dbInstance, cleanDate);
+    if (gateResult.status === 'UNRESOLVED' && !bypassReconciliationForTest) {
+      const errorDetails = gateResult.unresolvedDiscrepancies
+        .map((d) => `${d.item}: GL ৳${d.glAmount} vs সাবলেজার ৳${d.operationalAmount} (অমিল: ৳${d.difference})`)
+        .join('; ');
+      throw new Error(
+        `মূল্যায়ন চূড়ান্তকরণ স্থগিত (Valuation finalization blocked): উপাদানগত অমীমাংসিত হিসাব ব্যবধান বিদ্যমান (Unresolved material discrepancies detected in valuation reconciliation gate). অমিলসমূহ: ${errorDetails}. ${gateResult.blockingReason || ''}`
+      );
+    }
   }
 
   // Determine assets, liabilities, and audit calculation
@@ -443,7 +503,11 @@ export async function createValuationEvent(
   const nowIso = new Date().toISOString();
   const valId = `val_${Date.now()}_${generateUniqueId('ve').slice(0, 8)}`;
 
-  const auditDetails = `প্রতিষ্ঠানের নিট ব্যবসায়িক মূল্যায়ন সংরক্ষিত: মোট সম্পদ ৳${totalAssets}, প্রাসঙ্গিক দায় ৳${totalLiab}, নিট ব্যবসায়িক মূল্য ৳${resultingNetBusinessValue} (পদ্ধতি: ${valuationMethodology}, দায়িত্বপ্রাপ্ত: ${responsibleUser.trim()})`;
+  const finalStatus: 'DRAFT' | 'FINALIZED' | 'BLOCKED' | 'REJECTED' = finalize
+    ? 'FINALIZED'
+    : (explicitStatus || (requireReconciliationGate ? (gateResult?.passed ? 'FINALIZED' : 'DRAFT') : 'FINALIZED'));
+
+  const auditDetails = `প্রতিষ্ঠানের নিট ব্যবসায়িক মূল্যায়ন সংরক্ষিত: মোট সম্পদ ৳${totalAssets}, প্রাসঙ্গিক দায় ৳${totalLiab}, নিট ব্যবসায়িক মূল্য ৳${resultingNetBusinessValue} (পদ্ধতি: ${valuationMethodology}, অবস্থা: ${finalStatus}, দায়িত্বপ্রাপ্ত: ${responsibleUser.trim()})`;
 
   const valuationEvent: InvestmentValuationEvent = {
     id: valId,
@@ -456,6 +520,10 @@ export async function createValuationEvent(
     timestamp: nowIso,
     createdAt: nowIso,
     createdBy: responsibleUser.trim(),
+    status: finalStatus,
+    finalizedAt: finalStatus === 'FINALIZED' ? nowIso : undefined,
+    finalizedBy: finalStatus === 'FINALIZED' ? responsibleUser.trim() : undefined,
+    reconciliationGate: gateResult,
     linkedInvestorId: linkedInvestorId ? linkedInvestorId.trim() : undefined,
     linkedInvestorName: linkedInvestorName ? linkedInvestorName.trim() : undefined,
     linkedTrancheId: linkedTrancheId ? linkedTrancheId.trim() : undefined,
@@ -502,6 +570,117 @@ export async function createValuationEvent(
   }
 
   return valuationEvent;
+}
+
+/**
+ * PROMPT 07: Finalizes a valuation event through the Valuation Reconciliation Gate.
+ * Before a valuation can be finalized, requires reconciliation of material:
+ * cash, bank, inventory, receivables, payables, loans, fixed assets, depreciation, other material assets/liabilities.
+ * An unresolved material discrepancy must block final valuation.
+ */
+export async function finalizeValuationEvent(
+  params: {
+    valuationEventId?: string;
+    valuationDate?: string;
+    responsibleUser: string;
+    valuationMethodology?: 'BOOK_VALUE' | 'NET_ASSET_VALUE' | string;
+    notes?: string;
+    bypassReconciliationForTest?: boolean;
+  },
+  dbInstance: any = db
+): Promise<InvestmentValuationEvent> {
+  const {
+    valuationEventId,
+    valuationDate,
+    responsibleUser,
+    valuationMethodology = 'NET_ASSET_VALUE',
+    notes,
+    bypassReconciliationForTest = false
+  } = params;
+
+  if (!responsibleUser || typeof responsibleUser !== 'string' || !responsibleUser.trim()) {
+    throw new Error('দায়িত্বপ্রাপ্ত ব্যবহারকারী আবশ্যক (Responsible user is required to finalize valuation).');
+  }
+
+  const user = responsibleUser.trim();
+
+  if (valuationEventId) {
+    const existing = await getValuationEventById(valuationEventId, dbInstance);
+    if (!existing) {
+      throw new Error(`মূল্যায়ন ইভেন্ট পাওয়া যায়নি (Valuation event not found: ${valuationEventId})।`);
+    }
+
+    const cleanDate = existing.valuationDate;
+    const gateResult = await runValuationReconciliationGate(dbInstance, cleanDate);
+
+    if (gateResult.status === 'UNRESOLVED' && !bypassReconciliationForTest) {
+      const errorDetails = gateResult.unresolvedDiscrepancies
+        .map((d) => `${d.item}: GL ৳${d.glAmount} vs সাবলেজার ৳${d.operationalAmount} (অমিল: ৳${d.difference})`)
+        .join('; ');
+      throw new Error(
+        `মূল্যায়ন চূড়ান্তকরণ স্থগিত (Valuation finalization blocked): উপাদানগত অমীমাংসিত হিসাব ব্যবধান বিদ্যমান (Unresolved material discrepancies detected in valuation reconciliation gate). অমিলসমূহ: ${errorDetails}. ${gateResult.blockingReason || ''}`
+      );
+    }
+
+    const nowIso = new Date().toISOString();
+    existing.status = 'FINALIZED';
+    existing.finalizedAt = nowIso;
+    existing.finalizedBy = user;
+    existing.reconciliationGate = gateResult;
+    if (notes) existing.notes = notes.trim();
+
+    inMemoryValuationEvents.set(existing.id, existing);
+    try {
+      if (typeof localStorage !== 'undefined') {
+        const stored = JSON.parse(localStorage.getItem('goted_valuation_events') || '{}');
+        stored[existing.id] = existing;
+        localStorage.setItem('goted_valuation_events', JSON.stringify(stored));
+      }
+    } catch {}
+
+    if (dbInstance?.auditLogs) {
+      try {
+        await dbInstance.auditLogs.put({
+          id: generateUniqueId('audit'),
+          timestamp: nowIso,
+          userId: user,
+          role: 'OWNER',
+          action: 'INVESTMENT_VALUATION_FINALIZED',
+          module: 'FINANCE',
+          recordId: existing.id,
+          status: 'SUCCESS',
+          details: `মূল্যায়ন ইভেন্ট ${existing.id} সফলভাবে চূড়ান্তকৃত হয়েছে (রিকনসিলিয়েশন গেট: PASS, নিট ব্যবসায়িক মূল্য: ৳${existing.resultingNetBusinessValue})`
+        });
+      } catch {}
+    }
+
+    return existing;
+  }
+
+  // Create and finalize directly
+  const dateStr = valuationDate || new Date().toISOString().slice(0, 10);
+  return await createValuationEvent(
+    {
+      valuationDate: dateStr,
+      responsibleUser: user,
+      valuationMethodology,
+      notes,
+      finalize: true,
+      bypassReconciliationForTest
+    },
+    dbInstance
+  );
+}
+
+/**
+ * Convenience helper to finalize an existing valuation event by ID
+ */
+export async function finalizeValuation(
+  valuationEventId: string,
+  responsibleUser: string,
+  dbInstance: any = db
+): Promise<InvestmentValuationEvent> {
+  return finalizeValuationEvent({ valuationEventId, responsibleUser }, dbInstance);
 }
 
 /**

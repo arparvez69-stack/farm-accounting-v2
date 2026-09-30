@@ -3591,8 +3591,8 @@ export async function executeInvestorTransaction(
 
       // In the contractual tranche model, each investment tranche has its own contractual profit-sharing percentage.
       // These percentages apply separately to each investor's allocated economic profit, NOT as ownership percentages of total farm profit.
-      // Therefore, individual investor percentages do NOT have to sum to 100% across investors.
-      // Only reject if an individual percentage is invalid (> 100% or <= 0%).
+      // Therefore, individual investor percentages do NOT have to sum to 100% across investors by default.
+      // Only reject if an individual percentage is invalid (> 100% or <= 0%), or if global 100% limit is explicitly requested.
       if (enforceGlobal100 && otherActiveRatios + agreedRatio > 100) {
         throw new Error(
           `মোট লভ্যাংশ বণ্টন অনুপাত ১০০% অতিক্রম করতে পারে না (Total investor profit-sharing ratio cannot exceed 100%)। অন্যান্য সক্রিয় বিনিয়োগকারীদের বিদ্যমান অনুপাত: ${otherActiveRatios}%, প্রস্তাবিত অনুপাত: ${agreedRatio}% (সর্বমোট: ${otherActiveRatios + agreedRatio}%)।`
@@ -4600,10 +4600,12 @@ export async function executeInvestorProfitAllocationTransaction(
         }, 0) * 100
       ) / 100;
 
-      // Rule: In the contractual tranche model, each investor's percentage applies to their allocated economic profit,
-      // NOT as ownership percentages of total farm profit. Contractual percentages do NOT have to sum to <= 100%.
-      // Working partner ratio for this contract slice
-      const workingPartnerRatio = Math.max(0, Math.round((100 - ratio) * 100) / 100);
+      // Working partner ratio: uses the farm-wide working partner ratio stored on the investor record,
+      // or 100% minus total active investor ratios.
+      const workingPartnerRatio =
+        investor.workingPartnerShareRatio !== undefined && investor.workingPartnerShareRatio !== null
+          ? investor.workingPartnerShareRatio
+          : Math.max(0, Math.round((100 - totalActiveInvestorRatios) * 100) / 100);
 
       // 4. Determine finalized actual distributable profit
       let effectiveFinalizedProfit = 0;

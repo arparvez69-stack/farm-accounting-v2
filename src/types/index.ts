@@ -411,6 +411,38 @@ export interface StockMovement {
   synced?: boolean;
 }
 
+/**
+ * PROMPT 08: Physical Inventory Count & Adjustment Audit Record
+ * Captures explicit physical stock count vs accounting book quantity, variance, value impact,
+ * reason/narration, user, and timestamp before applying formal inventory/accounting adjustments.
+ * Physical counts must never silently overwrite accounting records.
+ */
+export interface PhysicalInventoryCountRecord {
+  id: string;
+  itemId: string;
+  itemCode?: string;
+  itemName?: string;
+  category?: string;
+  inventoryAccountCode?: string;
+  adjustmentAccountCode?: string;
+  bookQuantity: number;
+  physicalQuantity: number;
+  variance: number;
+  unitCost: number;
+  valueImpact: number;
+  reason: string;
+  narration?: string;
+  user: string;
+  timestamp: string;
+  date: string;
+  stockMovementId?: string;
+  journalEntryId?: string;
+  voucherNumber?: string;
+  auditLogId?: string;
+  status: 'RECORDED' | 'POSTED';
+  synced?: boolean;
+}
+
 export interface Party {
   id: string;
   type: 'CUSTOMER' | 'SUPPLIER' | 'BOTH';
@@ -959,6 +991,38 @@ export interface NavAuditCalculation {
   calculationTimestamp: string;
 }
 
+export interface ValuationReconciliationGateCheck {
+  item: 'cash' | 'bank' | 'inventory' | 'receivables' | 'payables' | 'loans' | 'fixed_assets' | 'depreciation' | 'other_material';
+  nameBn: string;
+  nameEn: string;
+  operationalAmount: number;
+  glAmount: number;
+  difference: number;
+  isMatched: boolean;
+  status: 'MATCHED' | 'MISMATCH' | 'MISSING_DATA';
+  accountCodes?: string;
+  details?: string;
+}
+
+export interface ValuationReconciliationGateResult {
+  asOfDate: string;
+  timestamp: string;
+  passed: boolean;
+  status: 'PASS' | 'UNRESOLVED';
+  checks: ValuationReconciliationGateCheck[];
+  unresolvedCount: number;
+  unresolvedDiscrepancies: Array<{
+    item: string;
+    description: string;
+    operationalAmount: number;
+    glAmount: number;
+    difference: number;
+    reason: string;
+  }>;
+  totalMaterialDiscrepancy: number;
+  blockingReason?: string;
+}
+
 export interface InvestmentValuationEvent {
   id: string;
   valuationDate: string; // YYYY-MM-DD
@@ -970,6 +1034,12 @@ export interface InvestmentValuationEvent {
   timestamp: string; // ISO 8601
   createdAt: string;
   createdBy: string;
+
+  // Finalization & Reconciliation Gate Audit (Prompt 07)
+  status?: 'DRAFT' | 'FINALIZED' | 'BLOCKED' | 'REJECTED';
+  finalizedAt?: string;
+  finalizedBy?: string;
+  reconciliationGate?: ValuationReconciliationGateResult;
 
   // Linked investment admission
   linkedInvestorId?: string;

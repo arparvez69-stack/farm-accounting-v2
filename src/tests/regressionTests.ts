@@ -5504,7 +5504,8 @@ async function runRegressionTestsInternal(): Promise<TestResult> {
           profitSharingRatio: 25,
           targetAccountId: 'cb_bank_t4_3',
           date: '2026-02-01',
-          currentUserId: 'usr_owner'
+          currentUserId: 'usr_owner',
+          enforceGlobal100: true
         },
         t4Db3
       );

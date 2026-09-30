@@ -365,6 +365,7 @@ export async function runSyncPersistentTablesTests(): Promise<AssertionResult> {
       'loans',
       'investors',
       'investmentTranches',
+      'investorCapitalMovements',
       'fixedAssets',
       'auditLogs',
       'accessLogs',
@@ -372,7 +373,7 @@ export async function runSyncPersistentTablesTests(): Promise<AssertionResult> {
       'recurringExpenseTemplates'
     ];
 
-    assert(db.tables.length === 31, `Dexie database has exactly 31 persistent tables (actual: ${db.tables.length})`);
+    assert(db.tables.length === 32, `Dexie database has exactly 32 persistent tables (actual: ${db.tables.length})`);
 
     for (const tbl of expectedPersistentTables) {
       assert(db.table(tbl) !== undefined, `Table "${tbl}" is verified as active persistent Dexie table`);

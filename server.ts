@@ -89,7 +89,9 @@ function getProductionAllowedOrigins(): Set<string> {
     'https://ais-dev-45kx2ob3kg2z4xfqm6bqjk-425671667112.asia-east1.run.app',
     'https://ais-pre-45kx2ob3kg2z4xfqm6bqjk-425671667112.asia-east1.run.app',
     'https://ais-dev-sr3loqxb5zmdg3bwg6zekt-302025970149.asia-southeast1.run.app',
-    'https://ais-pre-sr3loqxb5zmdg3bwg6zekt-302025970149.asia-southeast1.run.app'
+    'https://ais-pre-sr3loqxb5zmdg3bwg6zekt-302025970149.asia-southeast1.run.app',
+    'https://ais-dev-qizjkaa3swodsa253dfqm4-425671667112.asia-east1.run.app',
+    'https://ais-pre-qizjkaa3swodsa253dfqm4-425671667112.asia-east1.run.app'
   ];
   for (const item of envOrigins) {
     if (!item) continue;
@@ -2218,8 +2220,12 @@ export function validateRecordShape(targetCol: string, data: any): { valid: bool
       if (!isNonEmptyStr(data.investorId)) {
         return { valid: false, error: 'বিনিয়োগকারী আইডি আবশ্যক (Investor ID is required for investment tranche).' };
       }
-      if (typeof data.investmentAmount !== 'number' || data.investmentAmount <= 0) {
+      const invAmt = typeof data.investmentAmount === 'number' ? data.investmentAmount : (typeof data.capitalAmount === 'number' ? data.capitalAmount : 0);
+      if (invAmt <= 0) {
         return { valid: false, error: 'বিনিয়োগের পরিমাণ অবশ্যই ০ থেকে বেশি হতে হবে (Investment amount must be > 0).' };
+      }
+      if (data.investmentAmount === undefined) {
+        data.investmentAmount = invAmt;
       }
       break;
     }
@@ -3983,7 +3989,8 @@ app.get(['/api/sync/restore', '/api/restore'], async (req, res) => {
       'auditLogs',
       'accessLogs',
       'closedPeriods',
-      'recurringExpenseTemplates'
+      'recurringExpenseTemplates',
+      'investorCapitalMovements'
     ];
 
     const result: Record<string, any[]> = {};

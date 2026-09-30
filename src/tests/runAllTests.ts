@@ -60,6 +60,8 @@ import { runSeparatePersonFromCapacityTests } from './testSeparatePersonFromCapa
 import { runIndividualContractPercentageTests } from './testIndividualContractPercentage';
 import { runEffectiveInvestmentDatesTests } from './testEffectiveInvestmentDates';
 import { runCapitalMovementLedgerTests } from './testCapitalMovementLedger';
+import { runValuationReconciliationGateTests } from './testValuationReconciliationGate';
+import { runPhysicalInventoryAdjustmentTests } from './testPhysicalInventoryAdjustment';
 
 interface SuiteResult {
   total: number;
@@ -156,6 +158,8 @@ async function main() {
   suiteResults.push(await runIndividualContractPercentageTests());
   suiteResults.push(await runEffectiveInvestmentDatesTests());
   suiteResults.push(await runCapitalMovementLedgerTests());
+  suiteResults.push(await runValuationReconciliationGateTests());
+  suiteResults.push(await runPhysicalInventoryAdjustmentTests());
 
   // Strictly aggregate actual executed assertions — no manual +10 or phantom counts
   const total = suiteResults.reduce((s, r) => s + (r.total || 0), 0);
