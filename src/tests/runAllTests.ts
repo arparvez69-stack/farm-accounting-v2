@@ -51,6 +51,7 @@ import { runContractualPercentagePerTrancheTests } from './testContractualPercen
 import { runValuationEventTests } from './testValuationEvent';
 import { runNetAssetValuationTests } from './testNetAssetValuation';
 import { runInvestorEntrySnapshotTests } from './testInvestorEntrySnapshot';
+import { runNewInvestorEntryValuationTests } from './testNewInvestorEntryValuation';
 
 interface SuiteResult {
   total: number;
@@ -138,6 +139,7 @@ async function main() {
   suiteResults.push(await runValuationEventTests());
   suiteResults.push(await runNetAssetValuationTests());
   suiteResults.push(await runInvestorEntrySnapshotTests());
+  suiteResults.push(await runNewInvestorEntryValuationTests());
 
   // Strictly aggregate actual executed assertions — no manual +10 or phantom counts
   const total = suiteResults.reduce((s, r) => s + (r.total || 0), 0);

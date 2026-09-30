@@ -51,7 +51,8 @@ import {
   AdvanceDirection,
   SaleLineInput,
   PurchaseLineInput,
-  InvestmentValuationEvent
+  InvestmentValuationEvent,
+  InvestorAdmissionAudit
 } from '../types';
 import { generateAmortizationSchedule } from '../accounting/amortizationService';
 import {
@@ -72,7 +73,13 @@ import {
   reverseInvestorEntrySnapshot,
   correctInvestorEntrySnapshot,
   updateInvestorEntrySnapshotDirectly,
-  clearSnapshotsForTest
+  clearSnapshotsForTest,
+  calculateAdmissionParticipation,
+  createInvestorAdmissionAudit,
+  getAdmissionAuditById,
+  getAllAdmissionAudits,
+  getAdmissionAuditsForInvestor,
+  clearAdmissionAuditsForTest
 } from './valuationService';
 
 export {
@@ -93,7 +100,13 @@ export {
   reverseInvestorEntrySnapshot,
   correctInvestorEntrySnapshot,
   updateInvestorEntrySnapshotDirectly,
-  clearSnapshotsForTest
+  clearSnapshotsForTest,
+  calculateAdmissionParticipation,
+  createInvestorAdmissionAudit,
+  getAdmissionAuditById,
+  getAllAdmissionAudits,
+  getAdmissionAuditsForInvestor,
+  clearAdmissionAuditsForTest
 };
 
 const activeSaleLocks = new Set<string>();
@@ -3797,6 +3810,180 @@ export async function executeInvestorTransaction(
       return { investor: investorRecord, journalEntryId: journalEntry.id, tranche: trancheRecord };
     }
   );
+}
+
+/**
+ * Admits a new investor using the approved valuation model (Prompt 9).
+ *
+ * Example:
+ * Existing business value before admission = ৳110.
+ * New investor contributes = ৳100.
+ * Post-money economic value = ৳210.
+ *
+ * Existing economic participation = ৳110 / ৳210 (52.38%).
+ * New investor economic participation = ৳100 / ৳210 (47.62%).
+ *
+ * Guarantees:
+ * - Does NOT automatically make them 50/50 merely because both contributed ৳100 originally/currently.
+ * - The actual contribution and valuation drive participation.
+ * - Stores the admission valuation and resulting participation in an auditable way.
+ * - Does NOT rewrite the original investor's historical investment amount.
+ */
+export async function admitNewInvestorWithValuation(
+  params: {
+    investorName: string;
+    phone?: string;
+    contribution: number;
+    targetAccountId: string;
+    currentUserId: string;
+    admissionDate: string;
+    valuationEventId?: string;
+    snapshotId?: string;
+    preMoneyValuation?: number;
+    contractualProfitSharePercentage?: number;
+    adjustExistingInvestorRatios?: boolean;
+    notes?: string;
+  },
+  dbInstance: any = db
+): Promise<{
+  investor: Investor;
+  tranche: InvestmentTranche;
+  admissionAudit: InvestorAdmissionAudit;
+}> {
+  const {
+    investorName,
+    phone,
+    contribution,
+    targetAccountId,
+    currentUserId,
+    admissionDate,
+    valuationEventId,
+    snapshotId,
+    preMoneyValuation: overridePreMoney,
+    contractualProfitSharePercentage,
+    adjustExistingInvestorRatios = true,
+    notes
+  } = params;
+
+  if (!investorName || !investorName.trim()) {
+    throw new Error('বিনিয়োগকারীর নাম আবশ্যক (Investor name is required).');
+  }
+  if (typeof contribution !== 'number' || isNaN(contribution) || contribution <= 0) {
+    throw new Error('অবৈধ বিনিয়োগ পরিমাণ (Contribution must be greater than zero).');
+  }
+
+  // 1. Determine pre-money valuation from approved sources
+  let preMoney = overridePreMoney;
+  if (preMoney === undefined && snapshotId) {
+    const snap = await getInvestorEntrySnapshotById(snapshotId, dbInstance);
+    if (snap) {
+      preMoney = snap.netBusinessValue;
+    }
+  }
+  if (preMoney === undefined && valuationEventId) {
+    const valEvent = await getValuationEventById(valuationEventId, dbInstance);
+    if (valEvent) {
+      preMoney = valEvent.resultingNetBusinessValue;
+    }
+  }
+  if (preMoney === undefined) {
+    const nav = await calculateNetAssetValuation(admissionDate, dbInstance);
+    preMoney = nav.netAssetValue;
+  }
+
+  // 2. Fetch existing active investors to calculate dilution without rewriting historical capital
+  const allInvestors: Investor[] = dbInstance.investors ? await dbInstance.investors.toArray() : [];
+  const activeExisting = allInvestors.filter((inv) => inv.status !== 'EXITED');
+  const existingForCalc = activeExisting.map((inv) => ({
+    investorId: inv.id,
+    investorName: inv.name,
+    historicalCapital: inv.capitalContributed ?? inv.capitalAmount ?? 0,
+    profitSharingRatio: inv.profitSharingRatio || 0
+  }));
+
+  // 3. Drive participation by valuation and contribution
+  const calcResult = calculateAdmissionParticipation({
+    preMoneyValuation: preMoney,
+    contribution,
+    existingInvestors: existingForCalc
+  });
+
+  const finalAgreedRatio = contractualProfitSharePercentage ?? calcResult.newInvestorParticipationPercentage;
+
+  // 4. Adjust existing investors' participation ratios if requested, strictly preserving historical capital
+  if (adjustExistingInvestorRatios && calcResult.existingInvestorsDilution.length > 0) {
+    for (const dilutionItem of calcResult.existingInvestorsDilution) {
+      await dbInstance.investors.update(dilutionItem.investorId, {
+        profitSharingRatio: dilutionItem.newParticipationPercentage,
+        profitSharePercentage: dilutionItem.newParticipationPercentage,
+        sharePercentage: dilutionItem.newParticipationPercentage
+        // Note: capitalContributed and capitalAmount are NEVER rewritten!
+      });
+    }
+  }
+
+  // 5. Execute standard investor transaction
+  const admissionTx = await executeInvestorTransaction(
+    {
+      investorName: investorName.trim(),
+      phone,
+      contribution,
+      profitSharingRatio: finalAgreedRatio,
+      targetAccountId,
+      currentUserId,
+      date: admissionDate,
+      valuationEventId,
+      preMoneyValuation: preMoney,
+      postMoneyValuation: calcResult.postMoneyValuation,
+      allowExceedingGlobal100: true,
+      notes: notes || calcResult.auditExplanation
+    },
+    dbInstance
+  );
+
+  // 6. Record formal audit trail
+  const admissionId = `adm_${Date.now()}_${generateUniqueId('adm').slice(0, 8)}`;
+  const admissionAudit: InvestorAdmissionAudit = {
+    admissionId,
+    investorId: admissionTx.investor.id,
+    investorName: admissionTx.investor.name,
+    trancheId: admissionTx.tranche.id,
+    admissionDate,
+    valuationEventId,
+    snapshotId,
+    preMoneyValuation: calcResult.preMoneyValuation,
+    contributionAmount: calcResult.contributionAmount,
+    postMoneyValuation: calcResult.postMoneyValuation,
+    newInvestorParticipationRatio: calcResult.newInvestorParticipationRatio,
+    newInvestorParticipationPercentage: calcResult.newInvestorParticipationPercentage,
+    existingEconomicParticipationRatio: calcResult.existingEconomicParticipationRatio,
+    existingEconomicParticipationPercentage: calcResult.existingEconomicParticipationPercentage,
+    existingInvestorsDilution: calcResult.existingInvestorsDilution,
+    is5050DefaultPrevented: calcResult.is5050DefaultPrevented,
+    historicalCapitalPreserved: true,
+    valuationDrivenParticipation: true,
+    auditExplanation: calcResult.auditExplanation,
+    timestamp: new Date().toISOString(),
+    responsibleUser: currentUserId
+  };
+
+  await createInvestorAdmissionAudit(admissionAudit, dbInstance);
+
+  // 7. Update tranche record with economic participation percentage and audit ID
+  if ((dbInstance as any).investmentTranches) {
+    await (dbInstance as any).investmentTranches.update(admissionTx.tranche.id, {
+      economicParticipationPercentage: calcResult.newInvestorParticipationPercentage,
+      admissionAuditId: admissionId
+    });
+  }
+  admissionTx.tranche.economicParticipationPercentage = calcResult.newInvestorParticipationPercentage;
+  admissionTx.tranche.admissionAuditId = admissionId;
+
+  return {
+    investor: admissionTx.investor,
+    tranche: admissionTx.tranche,
+    admissionAudit
+  };
 }
 
 /**

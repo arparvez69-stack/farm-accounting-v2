@@ -816,6 +816,8 @@ export interface InvestmentTranche {
   valuationEventId?: string;
   preMoneyValuation?: number;
   postMoneyValuation?: number;
+  economicParticipationPercentage?: number;
+  admissionAuditId?: string;
 
   // Optional withdrawal/closure information
   withdrawalDate?: string;
@@ -995,6 +997,46 @@ export interface InvestorEntrySnapshot {
 
   notes?: string;
   synced?: boolean;
+}
+
+export interface ExistingInvestorDilutionItem {
+  investorId: string;
+  investorName: string;
+  historicalCapital: number;
+  previousParticipationPercentage: number;
+  newParticipationPercentage: number;
+}
+
+export interface InvestorAdmissionAudit {
+  admissionId: string;
+  investorId: string;
+  investorName: string;
+  trancheId: string;
+  admissionDate: string;
+
+  // Valuation Basis
+  valuationEventId?: string;
+  snapshotId?: string;
+  preMoneyValuation: number;
+  contributionAmount: number;
+  postMoneyValuation: number;
+
+  // Economic Participation
+  newInvestorParticipationRatio: number;
+  newInvestorParticipationPercentage: number;
+  existingEconomicParticipationRatio: number;
+  existingEconomicParticipationPercentage: number;
+
+  // Dilution breakdown of existing investors
+  existingInvestorsDilution: ExistingInvestorDilutionItem[];
+
+  // Audit integrity guarantees
+  is5050DefaultPrevented: boolean;
+  historicalCapitalPreserved: boolean;
+  valuationDrivenParticipation: boolean;
+  auditExplanation: string;
+  timestamp: string;
+  responsibleUser: string;
 }
 
 export interface UnattributedRecordAudit {

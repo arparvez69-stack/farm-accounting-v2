@@ -10,7 +10,9 @@ import {
   InvestorEntrySnapshot,
   ExistingInvestorParticipationSnapshot,
   ExistingTrancheSnapshot,
-  PendingTransactionSnapshotItem
+  PendingTransactionSnapshotItem,
+  InvestorAdmissionAudit,
+  ExistingInvestorDilutionItem
 } from '../types';
 import { generateUniqueId } from '../utils/idGenerator';
 import { db } from '../db/indexedDb';
@@ -21,16 +23,21 @@ const inMemoryValuationEvents = new Map<string, InvestmentValuationEvent>();
 // In-memory store for pre-entry closing snapshots
 const inMemoryInvestorEntrySnapshots = new Map<string, InvestorEntrySnapshot>();
 
+// In-memory store for investor admission audits
+const inMemoryAdmissionAudits = new Map<string, InvestorAdmissionAudit>();
+
 /**
- * Resets the in-memory valuation events and snapshots store for test isolation
+ * Resets the in-memory valuation events, snapshots, and admission audits store for test isolation
  */
 export function clearValuationEventsForTest(): void {
   inMemoryValuationEvents.clear();
   inMemoryInvestorEntrySnapshots.clear();
+  inMemoryAdmissionAudits.clear();
   try {
     if (typeof localStorage !== 'undefined') {
       localStorage.removeItem('goted_valuation_events');
       localStorage.removeItem('goted_investor_entry_snapshots');
+      localStorage.removeItem('goted_admission_audits');
     }
   } catch {}
 }
@@ -40,6 +47,15 @@ export function clearSnapshotsForTest(): void {
   try {
     if (typeof localStorage !== 'undefined') {
       localStorage.removeItem('goted_investor_entry_snapshots');
+    }
+  } catch {}
+}
+
+export function clearAdmissionAuditsForTest(): void {
+  inMemoryAdmissionAudits.clear();
+  try {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.removeItem('goted_admission_audits');
     }
   } catch {}
 }
@@ -922,4 +938,180 @@ export function updateInvestorEntrySnapshotDirectly(
   throw new Error(
     `অননুমোদিত পরিবর্তন: চূড়ান্তকৃত বিনিয়োগকারী প্রবেশ স্ন্যাপশট পরিবর্তনযোগ্য নয় (Immutable finalized snapshot ${snapshotId} cannot be directly edited; explicit audited reversal/correction is required).`
   );
+}
+
+/**
+ * Calculates new investor admission economic participation driven by valuation and contribution.
+ *
+ * Example from Prompt 9:
+ * Existing business value before admission = ৳110.
+ * New investor contributes = ৳100.
+ * Post-money economic value = ৳210.
+ *
+ * Existing economic participation = ৳110 / ৳210 (52.38095%).
+ * New investor economic participation = ৳100 / ৳210 (47.61905%).
+ *
+ * Guarantees:
+ * - Does NOT automatically make them 50/50 merely because both contributed ৳100 originally/currently.
+ * - The actual contribution and valuation drive participation.
+ * - Preserves historical investment amounts of existing investors without rewriting them.
+ */
+export function calculateAdmissionParticipation(params: {
+  preMoneyValuation: number;
+  contribution: number;
+  existingInvestors?: {
+    investorId: string;
+    investorName: string;
+    historicalCapital: number;
+    profitSharingRatio: number;
+  }[];
+}): {
+  preMoneyValuation: number;
+  contributionAmount: number;
+  postMoneyValuation: number;
+  newInvestorParticipationRatio: number;
+  newInvestorParticipationPercentage: number;
+  existingEconomicParticipationRatio: number;
+  existingEconomicParticipationPercentage: number;
+  existingInvestorsDilution: ExistingInvestorDilutionItem[];
+  is5050DefaultPrevented: boolean;
+  historicalCapitalPreserved: boolean;
+  valuationDrivenParticipation: boolean;
+  auditExplanation: string;
+} {
+  const { preMoneyValuation, contribution, existingInvestors = [] } = params;
+
+  if (typeof preMoneyValuation !== 'number' || isNaN(preMoneyValuation) || preMoneyValuation < 0) {
+    throw new Error('অবৈধ প্রি-মানি ব্যবসায়িক মূল্যায়ন (Pre-money valuation must be a non-negative number).');
+  }
+  if (typeof contribution !== 'number' || isNaN(contribution) || contribution <= 0) {
+    throw new Error('বিনিয়োগের পরিমাণ অবশ্যই শূন্যের চেয়ে বেশি হতে হবে (Contribution must be greater than zero).');
+  }
+
+  const postMoneyValuation = Math.round((preMoneyValuation + contribution) * 100) / 100;
+  if (postMoneyValuation <= 0) {
+    throw new Error('অবৈধ পোস্ট-মানি মূল্যায়ন (Post-money valuation must be greater than zero).');
+  }
+
+  // Exact valuation-driven participation ratios
+  const newInvestorParticipationRatio = contribution / postMoneyValuation;
+  const newInvestorParticipationPercentage = Math.round(newInvestorParticipationRatio * 10000) / 100;
+
+  const existingEconomicParticipationRatio = preMoneyValuation / postMoneyValuation;
+  const existingEconomicParticipationPercentage = Math.round(existingEconomicParticipationRatio * 10000) / 100;
+
+  // Verify that an automatic 50/50 split is strictly prevented when valuation !== contribution
+  const is5050DefaultPrevented =
+    preMoneyValuation !== contribution ? newInvestorParticipationPercentage !== 50 : true;
+
+  // Calculate dilution of existing investors without modifying their historical capital
+  const existingInvestorsDilution: ExistingInvestorDilutionItem[] = existingInvestors.map((inv) => {
+    const prevRatio = inv.profitSharingRatio || 0;
+    const dilutedRatio = Math.round(prevRatio * existingEconomicParticipationRatio * 100) / 100;
+    return {
+      investorId: inv.investorId,
+      investorName: inv.investorName,
+      historicalCapital: inv.historicalCapital, // UNCHANGED AND PRESERVED!
+      previousParticipationPercentage: prevRatio,
+      newParticipationPercentage: dilutedRatio
+    };
+  });
+
+  const auditExplanation = `মূল্যায়ন-ভিত্তিক বিনিয়োগকারী অন্তর্ভুক্তি: প্রি-মানি ব্যবসায়িক মূল্যায়ন ৳${preMoneyValuation}, নতুন মূলধন বিনিয়োগ ৳${contribution}, পোস্ট-মানি মূল্যায়ন ৳${postMoneyValuation}। নতুন বিনিয়োগকারীর অর্থনৈতিক অংশগ্রহণ = ৳${contribution} / ৳${postMoneyValuation} (${newInvestorParticipationPercentage}%), বিদ্যমান উদ্যোক্তাদের অর্থনৈতিক অংশগ্রহণ = ৳${preMoneyValuation} / ৳${postMoneyValuation} (${existingEconomicParticipationPercentage}%)। ৫০/৫০ ডিফল্ট প্রতিরোধিত: ${is5050DefaultPrevented ? 'হ্যাঁ' : 'না'}, ঐতিহাসিক মূলধন অপরিবর্তিত: হ্যাঁ।`;
+
+  return {
+    preMoneyValuation,
+    contributionAmount: contribution,
+    postMoneyValuation,
+    newInvestorParticipationRatio,
+    newInvestorParticipationPercentage,
+    existingEconomicParticipationRatio,
+    existingEconomicParticipationPercentage,
+    existingInvestorsDilution,
+    is5050DefaultPrevented,
+    historicalCapitalPreserved: true,
+    valuationDrivenParticipation: true,
+    auditExplanation
+  };
+}
+
+/**
+ * Persists an auditable InvestorAdmissionAudit record
+ */
+export async function createInvestorAdmissionAudit(
+  auditRecord: InvestorAdmissionAudit,
+  dbInstance: any = db
+): Promise<InvestorAdmissionAudit> {
+  inMemoryAdmissionAudits.set(auditRecord.admissionId, auditRecord);
+  try {
+    if (typeof localStorage !== 'undefined') {
+      const existing = JSON.parse(localStorage.getItem('goted_admission_audits') || '{}');
+      existing[auditRecord.admissionId] = auditRecord;
+      localStorage.setItem('goted_admission_audits', JSON.stringify(existing));
+    }
+  } catch {}
+
+  if (dbInstance?.auditLogs) {
+    try {
+      await dbInstance.auditLogs.put({
+        id: generateUniqueId('audit'),
+        timestamp: auditRecord.timestamp,
+        userId: auditRecord.responsibleUser,
+        role: 'OWNER',
+        action: 'INVESTOR_ADMISSION_VALUATION_RECORDED',
+        module: 'FINANCE',
+        recordId: auditRecord.admissionId,
+        status: 'SUCCESS',
+        details: auditRecord.auditExplanation
+      });
+    } catch {}
+  }
+
+  return auditRecord;
+}
+
+export async function getAdmissionAuditById(
+  id: string,
+  _dbInstance: any = db
+): Promise<InvestorAdmissionAudit | null> {
+  if (inMemoryAdmissionAudits.has(id)) {
+    return inMemoryAdmissionAudits.get(id)!;
+  }
+  try {
+    if (typeof localStorage !== 'undefined') {
+      const stored = JSON.parse(localStorage.getItem('goted_admission_audits') || '{}');
+      if (stored[id]) {
+        inMemoryAdmissionAudits.set(id, stored[id]);
+        return stored[id];
+      }
+    }
+  } catch {}
+  return null;
+}
+
+export async function getAllAdmissionAudits(
+  _dbInstance: any = db
+): Promise<InvestorAdmissionAudit[]> {
+  const all = new Map<string, InvestorAdmissionAudit>(inMemoryAdmissionAudits);
+  try {
+    if (typeof localStorage !== 'undefined') {
+      const stored = JSON.parse(localStorage.getItem('goted_admission_audits') || '{}');
+      for (const [k, v] of Object.entries(stored)) {
+        if (!all.has(k)) {
+          all.set(k, v as InvestorAdmissionAudit);
+        }
+      }
+    }
+  } catch {}
+  return Array.from(all.values()).sort((a, b) =>
+    (b.admissionDate || '').localeCompare(a.admissionDate || '')
+  );
+}
+
+export async function getAdmissionAuditsForInvestor(
+  investorId: string,
+  dbInstance: any = db
+): Promise<InvestorAdmissionAudit[]> {
+  const all = await getAllAdmissionAudits(dbInstance);
+  return all.filter((a) => a.investorId === investorId);
 }
