@@ -1039,6 +1039,44 @@ export interface InvestorAdmissionAudit {
   responsibleUser: string;
 }
 
+export interface InvestorAllocationDistributionItem {
+  investorId: string;
+  investorName: string;
+  profitSharingRatio: number;
+  allocatedProfitAmount: number;
+  journalEntryId: string;
+  voucherNumber: string;
+  payableGlCode: string;
+  distributionGlCode: string;
+}
+
+export interface BusinessProfitAllocationResult {
+  allocationId: string;
+  periodStartDate: string;
+  periodEndDate: string;
+  finalizedBusinessProfit: number;
+  totalAllocatedToInvestors: number;
+  retainedBusinessProfit: number;
+  allocations: InvestorAllocationDistributionItem[];
+  preAllocationOperatingPnl: {
+    totalRevenue: number;
+    totalCogs: number;
+    totalOperatingExpenses: number;
+    netProfit: number;
+  };
+  postAllocationOperatingPnl: {
+    totalRevenue: number;
+    totalCogs: number;
+    totalOperatingExpenses: number;
+    netProfit: number;
+  };
+  operatingPnlUnaltered: boolean;
+  salesUnaltered: boolean;
+  expensesUnaltered: boolean;
+  cogsUnaltered: boolean;
+  trialBalanceBalanced: boolean;
+}
+
 export interface UnattributedRecordAudit {
   id: string;
   recordType: 'INVESTMENT_TRANCHE' | 'JOURNAL_ENTRY' | 'INVESTOR';

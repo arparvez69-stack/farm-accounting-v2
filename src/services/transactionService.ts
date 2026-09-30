@@ -14,7 +14,12 @@ import {
   getCustomerAdvanceAccount,
   getSupplierAdvanceAccount
 } from '../accounting/accountMapping';
-import { postJournalEntry, validateBalancedLines } from '../accounting/accountingEngine';
+import {
+  postJournalEntry,
+  validateBalancedLines,
+  generateProfitLoss,
+  generateTrialBalance
+} from '../accounting/accountingEngine';
 import { generateDisplayNumber, generateTransactionNumber, generateUniqueId, safeInsert } from '../utils/idGenerator';
 import {
   Account,
@@ -52,7 +57,9 @@ import {
   SaleLineInput,
   PurchaseLineInput,
   InvestmentValuationEvent,
-  InvestorAdmissionAudit
+  InvestorAdmissionAudit,
+  InvestorAllocationDistributionItem,
+  BusinessProfitAllocationResult
 } from '../types';
 import { generateAmortizationSchedule } from '../accounting/amortizationService';
 import {
@@ -4494,6 +4501,14 @@ export async function executeInvestorProfitAllocationTransaction(
         effectiveFinalizedProfit = Number(finalizedDistributableProfit) || 0;
       } else if (actualBusinessProfit !== undefined) {
         effectiveFinalizedProfit = Number(actualBusinessProfit) || 0;
+      } else if (dateStr) {
+        try {
+          const yearStart = `${dateStr.slice(0, 4)}-01-01`;
+          const pnl = await generateProfitLoss({ startDate: yearStart, endDate: dateStr }, undefined, dbInstance);
+          if (pnl.netProfit > 0) {
+            effectiveFinalizedProfit = pnl.netProfit;
+          }
+        } catch {}
       }
 
       if (effectiveFinalizedProfit <= 0) {
@@ -4668,6 +4683,9 @@ export async function executeInvestorProfitAllocationTransaction(
       return {
         investor: updatedInvestor,
         journalEntryId: journalEntry.id,
+        voucherNumber: journalEntry.voucherNumber,
+        payableGlCode,
+        distributionGlCode: distGlCode,
         allocatedProfit: profitAmount,
         finalizedProfit: effectiveFinalizedProfit,
         workingPartnerShare: workingPartnerProfit,
@@ -4679,6 +4697,146 @@ export async function executeInvestorProfitAllocationTransaction(
   } finally {
     activeInvestorAllocationLocks.delete(lockKey);
   }
+}
+
+/**
+ * Phase IV — Prompt 10: Separate Business Profit From Investor Profit
+ *
+ * Ensures the ERP calculates actual farm business profit first.
+ * Only after final business profit is determined may investor profit allocation occur.
+ *
+ * The investor allocation process must NEVER:
+ * - change sales (revenues 4000+)
+ * - change expenses (operating expenses 6000+)
+ * - change inventory COGS (5000+)
+ * - fabricate revenue
+ * - fabricate expenses
+ * - alter Trial Balance incorrectly (total debits must strictly equal total credits)
+ * - alter actual P&L
+ *
+ * Investor profit allocation is strictly an appropriation/distribution calculation
+ * based on the finalized business profit and approved investor participation methodology:
+ *   Dr 3070 Profit Distribution (Equity Appropriation)
+ *   Cr 2050 Investor Profit Payable (Liability)
+ */
+export async function executeFinalizedBusinessProfitAllocationToInvestors(
+  params: {
+    startDate: string;
+    endDate: string;
+    responsibleUser: string;
+    allocationReference?: string;
+    notes?: string;
+  },
+  dbInstance: any = db
+): Promise<BusinessProfitAllocationResult> {
+  const { startDate, endDate, responsibleUser, allocationReference, notes } = params;
+
+  if (!startDate || !endDate) {
+    throw new Error('হিসাবকালের শুরু ও সমাপ্তি তারিখ আবশ্যক (Start and end dates are required).');
+  }
+
+  // 1. Calculate actual farm business profit first via formal operating P&L!
+  const prePnl = await generateProfitLoss({ startDate, endDate }, undefined, dbInstance);
+  const finalizedBusinessProfit = Math.round(prePnl.netProfit * 100) / 100;
+
+  if (finalizedBusinessProfit <= 0) {
+    throw new Error(
+      `চূড়ান্ত বণ্টনযোগ্য প্রকৃত মুনাফা অবশ্যই ০ এর বেশি হতে হবে (Finalized distributable business profit must be > 0: ৳${finalizedBusinessProfit})। কোনো প্রকৃত মুনাফা অর্জিত না হলে বা লোকসান হলে লভ্যাংশ বণ্টন সম্ভব নয় (Actual farm business profit must be determined first and must be positive)।`
+    );
+  }
+
+  // 2. Fetch active investors and approved participation ratios
+  const allInvestors = await dbInstance.investors.toArray();
+  const activeInvestors = allInvestors.filter((inv: any) => inv.status !== 'EXITED');
+
+  if (activeInvestors.length === 0) {
+    throw new Error('কোনো সক্রিয় বিনিয়োগকারী পাওয়া যায়নি (No active investors found to allocate profit)।');
+  }
+
+  const allocRef = allocationReference || `ALLOC-${endDate}-${generateUniqueId('ref').slice(0, 6)}`;
+  const allocations: InvestorAllocationDistributionItem[] = [];
+  let totalAllocated = 0;
+
+  // 3. For each active investor, allocate their contractual ratio of finalized business profit
+  for (const inv of activeInvestors) {
+    const ratio = inv.profitSharingRatio ?? inv.profitSharePercentage ?? inv.sharePercentage ?? 0;
+    if (ratio <= 0) continue;
+
+    const allocatedAmount = Math.round(finalizedBusinessProfit * (ratio / 100) * 100) / 100;
+    if (allocatedAmount <= 0) continue;
+
+    const allocResult = await executeInvestorProfitAllocationTransaction(
+      {
+        investorId: inv.id,
+        finalizedDistributableProfit: finalizedBusinessProfit,
+        actualBusinessProfit: finalizedBusinessProfit,
+        allocatedProfit: allocatedAmount,
+        date: endDate,
+        allocationReference: allocRef,
+        currentUserId: responsibleUser,
+        notes: notes || `Finalized business profit allocation for period ${startDate} to ${endDate}`
+      },
+      dbInstance
+    );
+
+    allocations.push({
+      investorId: inv.id,
+      investorName: inv.name,
+      profitSharingRatio: ratio,
+      allocatedProfitAmount: allocatedAmount,
+      journalEntryId: allocResult.journalEntryId,
+      voucherNumber: allocResult.voucherNumber,
+      payableGlCode: allocResult.payableGlCode,
+      distributionGlCode: allocResult.distributionGlCode
+    });
+
+    totalAllocated += allocatedAmount;
+  }
+
+  totalAllocated = Math.round(totalAllocated * 100) / 100;
+  const retainedBusinessProfit = Math.round((finalizedBusinessProfit - totalAllocated) * 100) / 100;
+
+  // 4. Verify that investor allocation process NEVER altered operating P&L
+  const postPnl = await generateProfitLoss({ startDate, endDate }, undefined, dbInstance);
+
+  const salesUnaltered = postPnl.totalRevenue === prePnl.totalRevenue;
+  const cogsUnaltered = postPnl.totalCogs === prePnl.totalCogs;
+  const expensesUnaltered = postPnl.totalOperatingExpenses === prePnl.totalOperatingExpenses;
+  const operatingPnlUnaltered =
+    salesUnaltered && cogsUnaltered && expensesUnaltered && postPnl.netProfit === prePnl.netProfit;
+
+  // 5. Verify Trial Balance is balanced
+  const tb = await generateTrialBalance({ endDate }, dbInstance);
+  const trialBalanceBalanced = Math.abs(tb.totalDebit - tb.totalCredit) < 0.01;
+
+  const result: BusinessProfitAllocationResult = {
+    allocationId: allocRef,
+    periodStartDate: startDate,
+    periodEndDate: endDate,
+    finalizedBusinessProfit,
+    totalAllocatedToInvestors: totalAllocated,
+    retainedBusinessProfit,
+    allocations,
+    preAllocationOperatingPnl: {
+      totalRevenue: prePnl.totalRevenue,
+      totalCogs: prePnl.totalCogs,
+      totalOperatingExpenses: prePnl.totalOperatingExpenses,
+      netProfit: prePnl.netProfit
+    },
+    postAllocationOperatingPnl: {
+      totalRevenue: postPnl.totalRevenue,
+      totalCogs: postPnl.totalCogs,
+      totalOperatingExpenses: postPnl.totalOperatingExpenses,
+      netProfit: postPnl.netProfit
+    },
+    operatingPnlUnaltered,
+    salesUnaltered,
+    expensesUnaltered,
+    cogsUnaltered,
+    trialBalanceBalanced
+  };
+
+  return result;
 }
 
 /**
