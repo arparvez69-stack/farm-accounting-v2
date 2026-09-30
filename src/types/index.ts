@@ -904,6 +904,7 @@ export interface InvestmentTranche {
   preMoneyValuation?: number;
   postMoneyValuation?: number;
   economicParticipationPercentage?: number;
+  exactEconomicParticipationPercentage?: number;
   admissionAuditId?: string;
 
   // Optional withdrawal/closure information
@@ -1227,8 +1228,13 @@ export interface InvestorAdmissionAudit {
   // Economic Participation
   newInvestorParticipationRatio: number;
   newInvestorParticipationPercentage: number;
+  exactNewInvestorParticipationPercentage?: number;
   existingEconomicParticipationRatio: number;
   existingEconomicParticipationPercentage: number;
+  exactExistingEconomicParticipationPercentage?: number;
+  newInvestorPercentage6Dec?: number;
+  existingParticipantsPercentage6Dec?: number;
+  intermediateCalculationsUnrounded?: boolean;
 
   // Dilution breakdown of existing investors
   existingInvestorsDilution: ExistingInvestorDilutionItem[];
@@ -1311,6 +1317,8 @@ export interface InvestorAdmissionRequest {
     postMoneyValuation?: number;
     calculatedParticipationRatio?: number;
     calculatedParticipationPercentage?: number;
+    exactParticipationPercentage?: number;
+    exactExistingParticipationPercentage?: number;
     valuedAt?: string;
     valuedBy?: string;
     isFinalized?: boolean;
@@ -1650,6 +1658,60 @@ export interface PostMoneyNavInspectionResult {
   expectedPostMoneyNav: number;
   formula: string;
   profitDoubleCounted: boolean;
+  details: string;
+}
+
+/**
+ * PROMPT 19: NAV-Based Admission Participation
+ *
+ * Formula:
+ * New investor participation = New capital / Post-money NAV
+ * Existing participants collectively represent = Pre-money NAV / Post-money NAV
+ *
+ * Example:
+ * 100 / 700 = 14.285714...%
+ * 600 / 700 = 85.714285...%
+ *
+ * Safe decimal/money precision: intermediate calculations are NOT prematurely rounded.
+ */
+export interface NavAdmissionParticipationResult {
+  preMoneyNav: number;
+  newCapital: number;
+  postMoneyNav: number;
+  // Exact unrounded intermediate ratios
+  newInvestorParticipationRatio: number; // e.g. 100 / 700 = 0.14285714285714285...
+  existingParticipantsRatio: number; // e.g. 600 / 700 = 0.8571428571428571...
+  // Exact unrounded percentages
+  exactNewInvestorPercentage: number; // 14.285714285714285...
+  exactExistingParticipantsPercentage: number; // 85.71428571428571...
+  // High-precision display representations
+  newInvestorPercentage6Dec: number; // 14.285714
+  existingParticipantsPercentage6Dec: number; // 85.714285
+  newInvestorPercentageFormatted: string; // "14.285714...%"
+  existingParticipantsPercentageFormatted: string; // "85.714285...%"
+  // Standard financial display (2 decimal places)
+  newInvestorPercentage2Dec: number; // 14.29
+  existingParticipantsPercentage2Dec: number; // 85.71
+  // Compatibility aliases
+  newInvestorParticipationPercentage: number; // 14.29
+  existingEconomicParticipationPercentage: number; // 85.71
+  isPrematurelyRounded: boolean;
+  formula: string;
+  auditExplanation: string;
+}
+
+export interface NavAdmissionParticipationInspectionResult {
+  passed: boolean;
+  preMoneyNav: number;
+  newCapital: number;
+  postMoneyNav: number;
+  exactNewInvestorPercentage: number;
+  exactExistingParticipantsPercentage: number;
+  newInvestorPercentageFormatted: string;
+  existingParticipantsPercentageFormatted: string;
+  sumPercentage: number;
+  isPrematurelyRounded: boolean;
+  formula: string;
   details: string;
 }
 
