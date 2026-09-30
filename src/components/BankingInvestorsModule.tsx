@@ -536,19 +536,8 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
       return;
     }
 
-    const activeInvestors = investors.filter((i) => i.status !== 'EXITED');
-    const existingShareTotal = activeInvestors.reduce((sum, i) => {
-      const r = i.profitSharingRatio ?? i.profitSharePercentage ?? i.sharePercentage ?? 0;
-      return sum + r;
-    }, 0);
-    if (existingShareTotal + share > 100) {
-      setMsg({
-        type: 'error',
-        text: `মোট বিনিয়োগকারীদের চুক্তিভিত্তিক লভ্যাংশ অনুপাত ১০০% অতিক্রম করতে পারে না। বর্তমান সক্রিয় বিনিয়োগকারীদের মোট অনুপাত: ${existingShareTotal}%, সর্বোচ্চ অবশিষ্ট অনুপাত: ${100 - existingShareTotal}%।`
-      });
-      return;
-    }
-
+    // In the contractual tranche model, each investor's percentage applies to their allocated economic profit.
+    // Percentages do NOT have to sum to 100% across investors.
     if (!investorDestinationAcc) {
       setMsg({ type: 'error', text: 'বিনিয়োগ জমার জন্য ক্যাশ বা ব্যাংক হিসাব নির্বাচন করুন।' });
       return;

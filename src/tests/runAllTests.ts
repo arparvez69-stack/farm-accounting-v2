@@ -57,6 +57,7 @@ import { runCapitalParticipationAllocationTests } from './testCapitalParticipati
 import { runSameTimeEqualInvestmentsTests } from './testSameTimeEqualInvestments';
 import { runPrompt02TrancheStructureTests } from './testPrompt02TrancheStructure';
 import { runSeparatePersonFromCapacityTests } from './testSeparatePersonFromCapacity';
+import { runIndividualContractPercentageTests } from './testIndividualContractPercentage';
 
 interface SuiteResult {
   total: number;
@@ -150,6 +151,7 @@ async function main() {
   suiteResults.push(await runSameTimeEqualInvestmentsTests());
   suiteResults.push(await runPrompt02TrancheStructureTests());
   suiteResults.push(await runSeparatePersonFromCapacityTests());
+  suiteResults.push(await runIndividualContractPercentageTests());
 
   // Strictly aggregate actual executed assertions — no manual +10 or phantom counts
   const total = suiteResults.reduce((s, r) => s + (r.total || 0), 0);

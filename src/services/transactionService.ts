@@ -3508,6 +3508,7 @@ export async function executeInvestorTransaction(
     date?: string;
     notes?: string;
     allowExceedingGlobal100?: boolean;
+    enforceGlobal100?: boolean;
     trancheId?: string;
     trancheNumber?: string;
     valuationEventId?: string;
@@ -3540,6 +3541,7 @@ export async function executeInvestorTransaction(
         date,
         notes,
         allowExceedingGlobal100,
+        enforceGlobal100,
         trancheId,
         trancheNumber,
         valuationEventId,
@@ -3585,9 +3587,11 @@ export async function executeInvestorTransaction(
           return sum + r;
         }, 0);
 
-      // In the contractual tranche model, each investor's percentage applies to their allocated economic profit.
-      // We enforce the 100% check only when not adding an additional tranche to an existing investor and not bypassed.
-      if (!existingInvestor && !allowExceedingGlobal100 && otherActiveRatios + agreedRatio > 100) {
+      // In the contractual tranche model, each investment tranche has its own contractual profit-sharing percentage.
+      // These percentages apply separately to each investor's allocated economic profit, NOT as ownership percentages of total farm profit.
+      // Therefore, individual investor percentages do NOT have to sum to 100% across investors.
+      // Only reject if an individual percentage is invalid (> 100% or <= 0%).
+      if (enforceGlobal100 && otherActiveRatios + agreedRatio > 100) {
         throw new Error(
           `মোট লভ্যাংশ বণ্টন অনুপাত ১০০% অতিক্রম করতে পারে না (Total investor profit-sharing ratio cannot exceed 100%)। অন্যান্য সক্রিয় বিনিয়োগকারীদের বিদ্যমান অনুপাত: ${otherActiveRatios}%, প্রস্তাবিত অনুপাত: ${agreedRatio}% (সর্বমোট: ${otherActiveRatios + agreedRatio}%)।`
         );
@@ -4520,15 +4524,10 @@ export async function executeInvestorProfitAllocationTransaction(
         }, 0) * 100
       ) / 100;
 
-      // Rule: Total active investor ratios cannot exceed 100%
-      if (totalActiveInvestorRatios > 100) {
-        throw new Error(
-          `মোট সক্রিয় বিনিয়োগকারীদের লভ্যাংশ বণ্টন অনুপাত ১০০% অতিক্রম করতে পারে না (Total active investor ratios cannot exceed 100%: ${totalActiveInvestorRatios}%)।`
-        );
-      }
-
-      // Rule: Working partner ratio = 100% - total active investor ratios
-      const workingPartnerRatio = Math.max(0, Math.round((100 - totalActiveInvestorRatios) * 100) / 100);
+      // Rule: In the contractual tranche model, each investor's percentage applies to their allocated economic profit,
+      // NOT as ownership percentages of total farm profit. Contractual percentages do NOT have to sum to <= 100%.
+      // Working partner ratio for this contract slice
+      const workingPartnerRatio = Math.max(0, Math.round((100 - ratio) * 100) / 100);
 
       // 4. Determine finalized actual distributable profit
       let effectiveFinalizedProfit = 0;
