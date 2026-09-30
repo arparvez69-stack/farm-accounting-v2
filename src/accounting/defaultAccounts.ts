@@ -236,6 +236,16 @@ export const DEFAULT_CHART_OF_ACCOUNTS: Account[] = [
     isActive: true
   },
   {
+    id: 'acc_2060',
+    code: '2060',
+    nameBn: 'মুদারিব / কর্ম অংশীদারের মুনাফা প্রদেয় (Mudarib / Working Partner Profit Payable)',
+    nameEn: 'Working Partner Mudarib Profit Payable',
+    accountClass: 'LIABILITY',
+    normalBalance: 'CREDIT',
+    isSystem: true,
+    isActive: true
+  },
+  {
     id: 'acc_2110',
     code: '2110',
     nameBn: 'স্বল্পমেয়াদী ঋণ (Short-Term Loans)',
@@ -262,6 +272,16 @@ export const DEFAULT_CHART_OF_ACCOUNTS: Account[] = [
     code: '3010',
     nameBn: 'মালিকের মূলধন (Owner Capital)',
     nameEn: 'Owner Capital',
+    accountClass: 'EQUITY',
+    normalBalance: 'CREDIT',
+    isSystem: true,
+    isActive: true
+  },
+  {
+    id: 'acc_3015',
+    code: '3015',
+    nameBn: 'মুদারিব / কর্ম অংশীদারের মুনাফা স্বত্ব (Mudarib / Working Partner Profit Equity)',
+    nameEn: 'Working Partner Mudarib Profit Equity',
     accountClass: 'EQUITY',
     normalBalance: 'CREDIT',
     isSystem: true,

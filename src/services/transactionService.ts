@@ -3776,10 +3776,15 @@ export async function executeInvestorTransaction(
 
       const trancheRecord: InvestmentTranche = {
         id: tId,
+        trancheId: tId,
         trancheNumber: tNum,
         investorId: invId,
+        participantId: invId,
         investorName: validatedInvName,
         investmentAmount: contribution,
+        originalCapital: contribution,
+        investmentDate: dateStr,
+        effectiveDate: dateStr,
         effectiveInvestmentDate: dateStr,
         contractualProfitSharePercentage: agreedRatio,
         currency: 'BDT',
@@ -3787,6 +3792,7 @@ export async function executeInvestorTransaction(
         attributionStatus: 'VERIFIED',
         missingAttribution: false,
         creationTimestamp: new Date().toISOString(),
+        currentCapital: contribution,
         currentCapitalBalance: contribution,
         totalCapitalReturned: 0,
         createdBy: currentUserId,
@@ -4216,10 +4222,15 @@ export async function executeInvestmentTrancheTransaction(
 
       const trancheRecord: InvestmentTranche = {
         id: tId,
+        trancheId: tId,
         trancheNumber: tRef,
         investorId: investor.id,
+        participantId: investor.id,
         investorName: validatedInvName || investor.name,
         investmentAmount,
+        originalCapital: investmentAmount,
+        investmentDate: dateStr,
+        effectiveDate: dateStr,
         effectiveInvestmentDate: dateStr,
         contractualProfitSharePercentage,
         currency,
@@ -4227,6 +4238,7 @@ export async function executeInvestmentTrancheTransaction(
         attributionStatus: 'VERIFIED',
         missingAttribution: false,
         creationTimestamp: new Date().toISOString(),
+        currentCapital: investmentAmount,
         currentCapitalBalance: investmentAmount,
         totalCapitalReturned: 0,
         createdBy: currentUserId,
@@ -4301,7 +4313,16 @@ export async function getTranchesForInvestor(
   if (!dbInstance.investmentTranches) return [];
   const tranches = await dbInstance.investmentTranches.toArray();
   return tranches
-    .filter((t: any) => t.investorId === investorId)
+    .filter((t: any) => t.investorId === investorId || t.participantId === investorId)
+    .map((t: any) => ({
+      ...t,
+      trancheId: t.trancheId || t.id,
+      participantId: t.participantId || t.investorId,
+      investmentDate: t.investmentDate || t.effectiveInvestmentDate || t.effectiveDate,
+      effectiveDate: t.effectiveDate || t.effectiveInvestmentDate,
+      originalCapital: t.originalCapital !== undefined ? t.originalCapital : t.investmentAmount,
+      currentCapital: t.currentCapital !== undefined ? t.currentCapital : (t.currentCapitalBalance !== undefined ? t.currentCapitalBalance : t.investmentAmount)
+    }))
     .sort((a: any, b: any) => (b.effectiveInvestmentDate || '').localeCompare(a.effectiveInvestmentDate || ''));
 }
 
@@ -4313,7 +4334,17 @@ export async function getAllInvestmentTranches(
 ): Promise<InvestmentTranche[]> {
   if (!dbInstance.investmentTranches) return [];
   const tranches = await dbInstance.investmentTranches.toArray();
-  return tranches.sort((a: any, b: any) => (b.effectiveInvestmentDate || '').localeCompare(a.effectiveInvestmentDate || ''));
+  return tranches
+    .map((t: any) => ({
+      ...t,
+      trancheId: t.trancheId || t.id,
+      participantId: t.participantId || t.investorId,
+      investmentDate: t.investmentDate || t.effectiveInvestmentDate || t.effectiveDate,
+      effectiveDate: t.effectiveDate || t.effectiveInvestmentDate,
+      originalCapital: t.originalCapital !== undefined ? t.originalCapital : t.investmentAmount,
+      currentCapital: t.currentCapital !== undefined ? t.currentCapital : (t.currentCapitalBalance !== undefined ? t.currentCapitalBalance : t.investmentAmount)
+    }))
+    .sort((a: any, b: any) => (b.effectiveInvestmentDate || '').localeCompare(a.effectiveInvestmentDate || ''));
 }
 
 /**
@@ -4736,10 +4767,12 @@ export async function executeFinalizedBusinessProfitAllocationToInvestors(
     responsibleUser: string;
     allocationReference?: string;
     notes?: string;
+    useCapitalParticipation?: boolean;
+    totalValuationBasis?: number;
   },
   dbInstance: any = db
 ): Promise<BusinessProfitAllocationResult> {
-  const { startDate, endDate, responsibleUser, allocationReference, notes } = params;
+  const { startDate, endDate, responsibleUser, allocationReference, notes, useCapitalParticipation, totalValuationBasis } = params;
 
   if (!startDate || !endDate) {
     throw new Error('হিসাবকালের শুরু ও সমাপ্তি তারিখ আবশ্যক (Start and end dates are required).');
@@ -4767,19 +4800,39 @@ export async function executeFinalizedBusinessProfitAllocationToInvestors(
   const allocations: InvestorAllocationDistributionItem[] = [];
   let totalAllocated = 0;
 
+  const totalActiveCapital = activeInvestors.reduce(
+    (sum: number, i: any) => sum + (i.capitalAmount || i.capitalContributed || i.initialCapital || i.netCapital || 0),
+    0
+  );
+  const effectiveCapitalBasis = totalValuationBasis && totalValuationBasis > 0 ? totalValuationBasis : totalActiveCapital;
+
   // 3. For each active investor, allocate their contractual ratio of finalized business profit
   for (const inv of activeInvestors) {
     const ratio = inv.profitSharingRatio ?? inv.profitSharePercentage ?? inv.sharePercentage ?? 0;
     if (ratio <= 0) continue;
 
-    const allocatedAmount = Math.round(finalizedBusinessProfit * (ratio / 100) * 100) / 100;
+    let allocatedAmount: number;
+    let applicableProfitForInvestor = finalizedBusinessProfit;
+
+    if (useCapitalParticipation) {
+      const invCapital = inv.capitalAmount || inv.capitalContributed || inv.initialCapital || inv.netCapital || 0;
+      const economicRatio = inv.economicParticipationPercentage !== undefined
+        ? inv.economicParticipationPercentage / 100
+        : (effectiveCapitalBasis > 0 ? invCapital / effectiveCapitalBasis : 1 / activeInvestors.length);
+
+      applicableProfitForInvestor = Math.round(finalizedBusinessProfit * economicRatio * 100) / 100;
+      allocatedAmount = Math.round(applicableProfitForInvestor * (ratio / 100) * 100) / 100;
+    } else {
+      allocatedAmount = Math.round(finalizedBusinessProfit * (ratio / 100) * 100) / 100;
+    }
+
     if (allocatedAmount <= 0) continue;
 
     const allocResult = await executeInvestorProfitAllocationTransaction(
       {
         investorId: inv.id,
         finalizedDistributableProfit: finalizedBusinessProfit,
-        actualBusinessProfit: finalizedBusinessProfit,
+        actualBusinessProfit: applicableProfitForInvestor,
         allocatedProfit: allocatedAmount,
         date: endDate,
         allocationReference: allocRef,

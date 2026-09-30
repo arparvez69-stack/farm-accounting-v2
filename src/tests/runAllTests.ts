@@ -54,6 +54,9 @@ import { runInvestorEntrySnapshotTests } from './testInvestorEntrySnapshot';
 import { runNewInvestorEntryValuationTests } from './testNewInvestorEntryValuation';
 import { runSeparateBusinessProfitFromInvestorProfitTests } from './testSeparateBusinessProfitFromInvestorProfit';
 import { runCapitalParticipationAllocationTests } from './testCapitalParticipationAllocation';
+import { runSameTimeEqualInvestmentsTests } from './testSameTimeEqualInvestments';
+import { runPrompt02TrancheStructureTests } from './testPrompt02TrancheStructure';
+import { runSeparatePersonFromCapacityTests } from './testSeparatePersonFromCapacity';
 
 interface SuiteResult {
   total: number;
@@ -144,6 +147,9 @@ async function main() {
   suiteResults.push(await runNewInvestorEntryValuationTests());
   suiteResults.push(await runSeparateBusinessProfitFromInvestorProfitTests());
   suiteResults.push(await runCapitalParticipationAllocationTests());
+  suiteResults.push(await runSameTimeEqualInvestmentsTests());
+  suiteResults.push(await runPrompt02TrancheStructureTests());
+  suiteResults.push(await runSeparatePersonFromCapacityTests());
 
   // Strictly aggregate actual executed assertions — no manual +10 or phantom counts
   const total = suiteResults.reduce((s, r) => s + (r.total || 0), 0);

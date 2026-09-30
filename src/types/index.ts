@@ -770,6 +770,10 @@ export interface Investor {
   currentBalance?: number;
   currentEquityBalance?: number;
 
+  // Capacity profile (e.g. CAPITAL_PROVIDER vs MUDARIB)
+  financialCapacities?: FinancialCapacity[];
+  participantCapacity?: FinancialCapacity;
+
   status: 'ACTIVE' | 'EXITED' | 'CANCELLED';
   notes?: string;
   synced?: boolean;
@@ -788,14 +792,59 @@ export interface Investor {
     | 'AGREEMENT_BASED';
 }
 
+export type FinancialCapacity =
+  | 'CAPITAL_PROVIDER'
+  | 'INVESTOR'
+  | 'MUDARIB'
+  | 'WORKING_PARTNER';
+
+export interface ParticipantCapacityProfile {
+  capacity: FinancialCapacity;
+  personId: string;
+  personName: string;
+  capitalAmount: number;
+  currentCapitalBalance: number;
+  profitAllocated: number;
+  profitPayable: number;
+  profitWithdrawn: number;
+  glAccountCode: string;
+}
+
+export interface ParticipantFinancialProfile {
+  personId: string;
+  name: string;
+  phone?: string;
+  isOwner?: boolean;
+  capacities: FinancialCapacity[];
+  capitalProviderBalance: {
+    capitalAmount: number; // e.g. Owner personal capital = 100
+    currentCapitalBalance: number;
+    profitPayable: number;
+    totalProfitAllocated: number;
+    glAccountCode: string; // '3010' for Owner personal capital or '3020' for Investor capital
+  };
+  workingPartnerBalance: {
+    mudaribProfitEarned: number; // e.g. Owner Mudarib profit = 170
+    mudaribProfitPayable: number;
+    totalWithdrawn: number;
+    glAccountCode: string; // '3015' for Mudarib Profit Equity or '2060' for Mudarib Profit Payable
+  };
+  isSeparate: boolean;
+}
+
 export type TrancheStatus = 'ACTIVE' | 'PARTIALLY_RETURNED' | 'RETURNED' | 'EXITED' | 'CANCELLED';
 
 export interface InvestmentTranche {
   id: string; // unique tranche ID (e.g. 'tranche_...')
+  trancheId?: string; // alias/explicit tranche ID
   trancheNumber?: string; // human-readable identifier (e.g. 'TR-2026-001')
   investorId: string; // investor reference ID
+  participantId?: string; // alias for investor/participant ID
   investorName?: string; // denormalized investor name
   investmentAmount: number; // investment amount strictly > 0
+  originalCapital?: number; // alias for original investment capital
+  investmentDate?: string; // date of investment
+  effectiveDate?: string; // alias for effective date
   effectiveInvestmentDate: string; // YYYY-MM-DD
   contractualProfitSharePercentage: number; // e.g. 25 (for 25% of that investor's allocated economic profit)
   currency: string; // currency (e.g. 'BDT')
@@ -803,6 +852,7 @@ export interface InvestmentTranche {
   creationTimestamp: string; // ISO 8601 creation timestamp
 
   // Capital tracking per tranche (never collapsed into a single lump sum)
+  currentCapital?: number; // alias for current capital
   currentCapitalBalance?: number;
   totalCapitalReturned?: number;
 
