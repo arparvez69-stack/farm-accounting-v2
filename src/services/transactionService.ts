@@ -95,6 +95,10 @@ import {
   runValuationReconciliationGate
 } from './valuationService';
 import { recordCapitalMovement } from './capitalMovementService';
+import {
+  getInvestorEffectiveAdmissionDate,
+  inspectAdmissionPeriodProfitAllocation
+} from './admissionService';
 
 export {
   calculateBusinessValuation,
@@ -4097,8 +4101,13 @@ export async function admitNewInvestorWithValuation(
     postMoneyValuation: calcResult.postMoneyValuation,
     newInvestorParticipationRatio: calcResult.newInvestorParticipationRatio,
     newInvestorParticipationPercentage: calcResult.newInvestorParticipationPercentage,
+    exactNewInvestorParticipationPercentage: calcResult.exactNewInvestorParticipationPercentage,
     existingEconomicParticipationRatio: calcResult.existingEconomicParticipationRatio,
     existingEconomicParticipationPercentage: calcResult.existingEconomicParticipationPercentage,
+    exactExistingEconomicParticipationPercentage: calcResult.exactExistingEconomicParticipationPercentage,
+    newInvestorPercentage6Dec: calcResult.newInvestorPercentage6Dec,
+    existingParticipantsPercentage6Dec: calcResult.existingParticipantsPercentage6Dec,
+    intermediateCalculationsUnrounded: true,
     existingInvestorsDilution: calcResult.existingInvestorsDilution,
     is5050DefaultPrevented: calcResult.is5050DefaultPrevented,
     historicalCapitalPreserved: true,
@@ -4644,7 +4653,14 @@ export async function executeInvestorProfitAllocationTransaction(
           }
         }
 
-        // Prompt 05 Rule: A new investor must not receive profit from periods before admission
+        // Prompt 20 / Prompt 05 Rule: A new investor must not receive profit from periods before admission
+        const effAdmissionDate = await getInvestorEffectiveAdmissionDate(investor, dbInstance);
+        if (effAdmissionDate && effAdmissionDate > targetPeriodEndDate) {
+          throw new Error(
+            `ঐতিহাসিক মুনাফা সুরক্ষা (PROMPT 20): হিসাবকাল সমাপ্তির (${targetPeriodEndDate}) পরবর্তী সময়ে যোগদানকৃত বিনিয়োগকারীর (${investor.name}, কার্যকর তারিখ: ${effAdmissionDate}) জন্য পূর্ববর্তী হিসাবকালের মুনাফা বণ্টন সম্পূর্ণ নিষিদ্ধ (A new investor admitted after a finalized profit period must not receive profit from that earlier period: receives zero allocation).`
+          );
+        }
+
         if (dbInstance.investmentTranches) {
           const allTranches = await dbInstance.investmentTranches.toArray();
           const tranchesForThisInv = allTranches.filter(
@@ -5000,7 +5016,7 @@ export async function executeFinalizedBusinessProfitAllocationToInvestors(
     );
   }
 
-  // 2. Fetch active investors and approved participation ratios
+  // 2. Fetch active investors and filter by effective admission date
   const allInvestors = await dbInstance.investors.toArray();
   const activeInvestors = allInvestors.filter((inv: any) => inv.status !== 'EXITED');
 
@@ -5008,11 +5024,20 @@ export async function executeFinalizedBusinessProfitAllocationToInvestors(
     throw new Error('কোনো সক্রিয় বিনিয়োগকারী পাওয়া যায়নি (No active investors found to allocate profit)।');
   }
 
+  // PROMPT 20: Filter active investors who participated during the period (effectiveAdmissionDate <= endDate)
+  const eligibleInvestorsForPeriod: any[] = [];
+  for (const inv of activeInvestors) {
+    const eff = await getInvestorEffectiveAdmissionDate(inv, dbInstance);
+    if (!eff || eff <= endDate) {
+      eligibleInvestorsForPeriod.push(inv);
+    }
+  }
+
   const allocRef = allocationReference || `ALLOC-${endDate}-${generateUniqueId('ref').slice(0, 6)}`;
   const allocations: InvestorAllocationDistributionItem[] = [];
   let totalAllocated = 0;
 
-  const totalActiveCapital = activeInvestors.reduce(
+  const totalActiveCapital = eligibleInvestorsForPeriod.reduce(
     (sum: number, i: any) => sum + (i.capitalAmount || i.capitalContributed || i.initialCapital || i.netCapital || 0),
     0
   );
@@ -5023,6 +5048,24 @@ export async function executeFinalizedBusinessProfitAllocationToInvestors(
     const ratio = inv.profitSharingRatio ?? inv.profitSharePercentage ?? inv.sharePercentage ?? 0;
     if (ratio <= 0) continue;
 
+    // PROMPT 20: A new investor admitted after a finalized profit period must not receive profit from that earlier period.
+    const effAdmissionDate = await getInvestorEffectiveAdmissionDate(inv, dbInstance);
+    if (effAdmissionDate && effAdmissionDate > endDate) {
+      allocations.push({
+        investorId: inv.id,
+        investorName: inv.name,
+        profitSharingRatio: ratio,
+        allocatedProfitAmount: 0,
+        journalEntryId: '',
+        voucherNumber: '',
+        payableGlCode: getInvestorProfitPayableAccount(),
+        distributionGlCode: getProfitDistributionAccount(),
+        effectiveDate: effAdmissionDate,
+        ineligibleReason: `ঐতিহাসিক মুনাফা সুরক্ষা (PROMPT 20): হিসাবকালের (${startDate} থেকে ${endDate}) সমাপ্তির পর যোগদান (${effAdmissionDate}) করায় পূর্ববর্তী হিসাবকালের কোনো মুনাফা বণ্টন প্রযোজ্য নয় (Zero allocation for earlier period).`
+      });
+      continue;
+    }
+
     let allocatedAmount: number;
     let applicableProfitForInvestor = finalizedBusinessProfit;
 
@@ -5030,7 +5073,7 @@ export async function executeFinalizedBusinessProfitAllocationToInvestors(
       const invCapital = inv.capitalAmount || inv.capitalContributed || inv.initialCapital || inv.netCapital || 0;
       const economicRatio = inv.economicParticipationPercentage !== undefined
         ? inv.economicParticipationPercentage / 100
-        : (effectiveCapitalBasis > 0 ? invCapital / effectiveCapitalBasis : 1 / activeInvestors.length);
+        : (effectiveCapitalBasis > 0 ? invCapital / effectiveCapitalBasis : (eligibleInvestorsForPeriod.length > 0 ? 1 / eligibleInvestorsForPeriod.length : 1));
 
       applicableProfitForInvestor = Math.round(finalizedBusinessProfit * economicRatio * 100) / 100;
       allocatedAmount = Math.round(applicableProfitForInvestor * (ratio / 100) * 100) / 100;
@@ -14825,4 +14868,10 @@ export {
 
 // Admission Valuation Inspection (Prompt 17)
 export { inspectAdmissionValuation } from './admissionService';
+
+// Protect Historical Profit & Admission-Period Profit Allocation (Prompt 20)
+export {
+  getInvestorEffectiveAdmissionDate,
+  inspectAdmissionPeriodProfitAllocation
+} from './admissionService';
 

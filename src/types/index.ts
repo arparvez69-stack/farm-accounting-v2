@@ -764,6 +764,10 @@ export interface Investor {
   phone?: string;
   entryDate?: string;
   joinedDate?: string;
+  admissionDate?: string;
+  effectiveInvestmentDate?: string;
+  effectiveDate?: string;
+  economicParticipationPercentage?: number;
 
   // 1. Investor Capital Contributed & Balance
   initialCapital?: number;
@@ -1395,6 +1399,8 @@ export interface InvestorAllocationDistributionItem {
   voucherNumber: string;
   payableGlCode: string;
   distributionGlCode: string;
+  ineligibleReason?: string;
+  effectiveDate?: string;
 }
 
 export interface BusinessProfitAllocationResult {
@@ -1681,22 +1687,34 @@ export interface NavAdmissionParticipationResult {
   // Exact unrounded intermediate ratios
   newInvestorParticipationRatio: number; // e.g. 100 / 700 = 0.14285714285714285...
   existingParticipantsRatio: number; // e.g. 600 / 700 = 0.8571428571428571...
+  existingEconomicParticipationRatio?: number; // alias
   // Exact unrounded percentages
   exactNewInvestorPercentage: number; // 14.285714285714285...
   exactExistingParticipantsPercentage: number; // 85.71428571428571...
+  exactNewInvestorParticipationPercentage?: number; // alias
+  exactExistingEconomicParticipationPercentage?: number; // alias
   // High-precision display representations
   newInvestorPercentage6Dec: number; // 14.285714
   existingParticipantsPercentage6Dec: number; // 85.714285
   newInvestorPercentageFormatted: string; // "14.285714...%"
   existingParticipantsPercentageFormatted: string; // "85.714285...%"
+  newInvestorPercentageWithEllipsis?: string; // "14.285714...%"
+  existingParticipantsPercentageWithEllipsis?: string; // "85.714285...%"
+  newInvestorPercentagePlain?: string; // "14.285714%"
+  existingParticipantsPercentagePlain?: string; // "85.714285%"
   // Standard financial display (2 decimal places)
   newInvestorPercentage2Dec: number; // 14.29
   existingParticipantsPercentage2Dec: number; // 85.71
   // Compatibility aliases
   newInvestorParticipationPercentage: number; // 14.29
   existingEconomicParticipationPercentage: number; // 85.71
+  existingParticipantsPercentage?: number; // 85.71
+  existingInvestorsDilution?: ExistingInvestorDilutionItem[];
   isPrematurelyRounded: boolean;
+  intermediateCalculationsUnrounded?: boolean;
+  safePrecision?: boolean;
   formula: string;
+  formulaDetailed?: string;
   auditExplanation: string;
 }
 
@@ -1705,13 +1723,54 @@ export interface NavAdmissionParticipationInspectionResult {
   preMoneyNav: number;
   newCapital: number;
   postMoneyNav: number;
+  newInvestorParticipationRatio?: number;
+  existingParticipantsRatio?: number;
   exactNewInvestorPercentage: number;
   exactExistingParticipantsPercentage: number;
+  newInvestorPercentage6Dec?: number;
+  existingParticipantsPercentage6Dec?: number;
   newInvestorPercentageFormatted: string;
   existingParticipantsPercentageFormatted: string;
   sumPercentage: number;
   isPrematurelyRounded: boolean;
+  safePrecision?: boolean;
   formula: string;
   details: string;
+}
+
+/**
+ * PROMPT 20: Protect Historical Profit & Admission-Period Profit Allocation
+ * A new investor admitted after a finalized profit period must not receive profit from that earlier period.
+ * Admission must create a clear effective date/period boundary.
+ */
+export interface AdmissionPeriodProfitAllocationInspectionParams {
+  periodStartDate: string;
+  periodEndDate: string;
+  targetInvestorId?: string;
+  admittedInvestorId?: string;
+  existingInvestorId?: string;
+  dbInstance?: any;
+}
+
+export interface AdmissionPeriodProfitAllocationInspectionResult {
+  passed: boolean;
+  periodStartDate: string;
+  periodEndDate: string;
+  historicalProfitProtected: boolean;
+  clearBoundaryEstablished: boolean;
+  postPeriodAdmittedInvestorId?: string;
+  postPeriodAdmittedInvestorName?: string;
+  postPeriodAdmittedInvestorAllocation: number; // MUST be 0!
+  prePeriodInvestorAllocation?: number;
+  totalPeriodProfit?: number;
+  postPeriodInvestorEffectiveDate?: string;
+  ineligibleInvestorsDetected?: Array<{
+    investorId: string;
+    investorName: string;
+    effectiveDate: string;
+    allocatedProfit: number;
+  }>;
+  details: string;
+  boundaryRule: string;
 }
 

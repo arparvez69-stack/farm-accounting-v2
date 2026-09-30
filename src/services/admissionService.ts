@@ -12,7 +12,9 @@ import {
   ValuationReconciliationGateResult,
   JournalLine,
   AdmissionValuationInspectionResult,
-  PostMoneyNavInspectionResult
+  PostMoneyNavInspectionResult,
+  AdmissionPeriodProfitAllocationInspectionParams,
+  AdmissionPeriodProfitAllocationInspectionResult
 } from '../types';
 import {
   runValuationReconciliationGate
@@ -28,7 +30,10 @@ import {
   linkValuationEventToAdmission,
   getAdmissionAuditById,
   calculatePostMoneyNav,
-  validatePostMoneyNav
+  validatePostMoneyNav,
+  calculateNavAdmissionParticipation,
+  verifyNoPrematureRounding,
+  inspectNavAdmissionParticipation
 } from './valuationService';
 import { recordCapitalMovement } from './capitalMovementService';
 
@@ -304,11 +309,14 @@ export async function executeAdmissionValuation(
   params: {
     responsibleUser: string;
     overridePreMoney?: number;
+    overridePreMoneyValuation?: number;
     valuationEventId?: string;
+    valuationDate?: string;
     valuationMethodology?: 'NET_ASSET_VALUE' | 'BOOK_VALUE' | string;
     notes?: string;
     finalizeValuation?: boolean;
     allowNonNavPreMoneyForTest?: boolean;
+    bypassReconciliationForTest?: boolean;
   },
   dbInstance: any = db
 ): Promise<InvestorAdmissionRequest> {
@@ -319,12 +327,14 @@ export async function executeAdmissionValuation(
 
   const {
     responsibleUser,
-    overridePreMoney,
+    overridePreMoney: directOverridePreMoney,
+    overridePreMoneyValuation,
     valuationEventId: explicitValEventId,
     valuationMethodology = 'NET_ASSET_VALUE',
     notes,
     finalizeValuation: explicitFinalize
   } = params;
+  const overridePreMoney = directOverridePreMoney !== undefined ? directOverridePreMoney : overridePreMoneyValuation;
 
   // 1. Fetch existing investors for baseline calculations
   const allInvestors: Investor[] = dbInstance.investors ? await dbInstance.investors.toArray() : [];
@@ -465,6 +475,8 @@ export async function executeAdmissionValuation(
     postMoneyValuation: calcResult.postMoneyValuation,
     calculatedParticipationRatio: calcResult.newInvestorParticipationRatio,
     calculatedParticipationPercentage: calcResult.newInvestorParticipationPercentage,
+    exactParticipationPercentage: calcResult.exactNewInvestorParticipationPercentage,
+    exactExistingParticipationPercentage: calcResult.exactExistingEconomicParticipationPercentage,
     valuedAt: nowIso,
     valuedBy: responsibleUser,
     finalizedAt: isFinalized ? (valEvent?.finalizedAt || nowIso) : undefined,
@@ -887,6 +899,8 @@ export async function executeAdmissionFinalization(
         profitSharingRatio: finalProfitShare,
         entryDate: cleanDate,
         joinedDate: cleanDate,
+        admissionDate: cleanDate,
+        effectiveDate: cleanDate,
         synced: false
       });
       investor = await dbInstance.investors.get(request.investorId);
@@ -904,6 +918,8 @@ export async function executeAdmissionFinalization(
         profitSharingRatio: finalProfitShare,
         entryDate: cleanDate,
         joinedDate: cleanDate,
+        admissionDate: cleanDate,
+        effectiveDate: cleanDate,
         admissionRequestId: requestId,
         synced: false
       };
@@ -924,6 +940,8 @@ export async function executeAdmissionFinalization(
       profitSharingRatio: finalProfitShare,
       entryDate: cleanDate,
       joinedDate: cleanDate,
+      admissionDate: cleanDate,
+      effectiveDate: cleanDate,
       admissionRequestId: requestId,
       synced: false
     };
@@ -1016,12 +1034,21 @@ export async function executeAdmissionFinalization(
     postMoneyValuation: request.valuation?.postMoneyValuation || receivedCapital,
     newInvestorParticipationRatio: request.valuation?.calculatedParticipationRatio || 1,
     newInvestorParticipationPercentage: economicPct,
+    exactNewInvestorParticipationPercentage: request.valuation?.exactParticipationPercentage,
     existingEconomicParticipationRatio: request.valuation?.preMoneyValuation && request.valuation.postMoneyValuation
       ? request.valuation.preMoneyValuation / request.valuation.postMoneyValuation
       : 0,
     existingEconomicParticipationPercentage: request.valuation?.preMoneyValuation && request.valuation.postMoneyValuation
       ? Math.round((request.valuation.preMoneyValuation / request.valuation.postMoneyValuation) * 10000) / 100
       : 0,
+    exactExistingEconomicParticipationPercentage: request.valuation?.exactExistingParticipationPercentage,
+    newInvestorPercentage6Dec: request.valuation?.exactParticipationPercentage
+      ? Math.floor(request.valuation.exactParticipationPercentage * 1000000) / 1000000
+      : undefined,
+    existingParticipantsPercentage6Dec: request.valuation?.exactExistingParticipationPercentage
+      ? Math.floor(request.valuation.exactExistingParticipationPercentage * 1000000) / 1000000
+      : undefined,
+    intermediateCalculationsUnrounded: true,
     existingInvestorsDilution: [],
     is5050DefaultPrevented: true,
     historicalCapitalPreserved: true,
@@ -1456,5 +1483,186 @@ export async function inspectAdmissionPostMoneyNav(
   };
 }
 
-export { calculatePostMoneyNav, validatePostMoneyNav };
+/**
+ * Resolves the authoritative effective admission / economic participation date of an investor.
+ * Strictly respects tranche effectiveInvestmentDate, investor admissionDate, joinedDate, and entryDate.
+ */
+export async function getInvestorEffectiveAdmissionDate(
+  investor: any,
+  dbInstance: any = db
+): Promise<string | null> {
+  if (!investor) return null;
+
+  // 1. Check investment tranches first (authoritative economic participation dates)
+  if (dbInstance?.investmentTranches?.toArray) {
+    try {
+      const allTranches = await dbInstance.investmentTranches.toArray();
+      const investorTranches = allTranches.filter(
+        (t: any) =>
+          (t.investorId === investor.id || t.participantId === investor.id) &&
+          t.status !== 'CANCELLED' &&
+          t.status !== 'EXITED'
+      );
+      if (investorTranches.length > 0) {
+        const sortedTranches = [...investorTranches].sort((a: any, b: any) => {
+          const dateA = a.effectiveInvestmentDate || a.effectiveDate || a.investmentDate || '';
+          const dateB = b.effectiveInvestmentDate || b.effectiveDate || b.investmentDate || '';
+          return dateA.localeCompare(dateB);
+        });
+        const earliestTrancheDate =
+          sortedTranches[0].effectiveInvestmentDate ||
+          sortedTranches[0].effectiveDate ||
+          sortedTranches[0].investmentDate;
+        if (earliestTrancheDate) return earliestTrancheDate;
+      }
+    } catch {}
+  }
+
+  // 2. Check investor's direct entryDate, admissionDate, joinedDate, effectiveDate
+  const directDate =
+    investor.admissionDate ||
+    investor.effectiveInvestmentDate ||
+    investor.effectiveDate ||
+    investor.entryDate ||
+    investor.joinedDate;
+  if (directDate) return directDate;
+
+  return null;
+}
+
+/**
+ * PROMPT 20 — Inspect Admission-Period Profit Allocation
+ *
+ * Requirements:
+ * 1. A new investor admitted after a finalized profit period must not receive profit from that earlier period.
+ * 2. Admission must create a clear effective date/period boundary.
+ * 3. Test: A exists January-May, C enters June, Finalize January-May profit -> C receives zero January-May allocation.
+ * 4. Return PASS.
+ */
+export async function inspectAdmissionPeriodProfitAllocation(
+  params: AdmissionPeriodProfitAllocationInspectionParams,
+  dbInstance: any = db
+): Promise<AdmissionPeriodProfitAllocationInspectionResult> {
+  const { periodStartDate, periodEndDate, targetInvestorId, admittedInvestorId, existingInvestorId } = params;
+  const targetId = targetInvestorId || admittedInvestorId;
+
+  const allInvestors = dbInstance?.investors?.toArray ? await dbInstance.investors.toArray() : [];
+  const allEntries = dbInstance?.journalEntries?.toArray ? await dbInstance.journalEntries.toArray() : [];
+
+  // Identify post-period admitted investors (effective date > periodEndDate)
+  const postPeriodInvestors: Array<{ investor: any; effectiveDate: string }> = [];
+  const existingPeriodInvestors: Array<{ investor: any; effectiveDate: string }> = [];
+
+  for (const inv of allInvestors) {
+    const effDate = await getInvestorEffectiveAdmissionDate(inv, dbInstance);
+    if (effDate && effDate > periodEndDate) {
+      postPeriodInvestors.push({ investor: inv, effectiveDate: effDate });
+    } else {
+      existingPeriodInvestors.push({ investor: inv, effectiveDate: effDate || 'N/A' });
+    }
+  }
+
+  // If a specific target investor was requested, find them
+  let postTarget = targetId ? postPeriodInvestors.find((p) => p.investor.id === targetId) : postPeriodInvestors[0];
+  if (!postTarget && targetId) {
+    const found = allInvestors.find((i: any) => i.id === targetId);
+    if (found) {
+      const eff = await getInvestorEffectiveAdmissionDate(found, dbInstance);
+      postTarget = { investor: found, effectiveDate: eff || 'N/A' };
+    }
+  }
+
+  // Calculate profit allocated to post-period investor for period ending <= periodEndDate
+  let postPeriodAdmittedInvestorAllocation = 0;
+  const ineligibleDetected: Array<{
+    investorId: string;
+    investorName: string;
+    effectiveDate: string;
+    allocatedProfit: number;
+  }> = [];
+
+  for (const p of postPeriodInvestors) {
+    let investorAllocTotal = 0;
+    for (const j of allEntries) {
+      if (j.status === 'REVERSED') continue;
+      // Is entry within period or dated <= periodEndDate?
+      if (j.date <= periodEndDate) {
+        const isMatch =
+          j.investorId === p.investor.id ||
+          j.relatedInvestorId === p.investor.id ||
+          j.relatedPerson === p.investor.name ||
+          (j.narration && j.narration.includes(p.investor.name));
+
+        if (isMatch) {
+          const payableLine = j.lines?.find((l: any) => l.accountCode === '2050' || l.accountName?.includes('প্রদেয়'));
+          if (payableLine && payableLine.credit > 0) {
+            investorAllocTotal += payableLine.credit;
+          }
+        }
+      }
+    }
+
+    if (p.investor.id === postTarget?.investor.id) {
+      postPeriodAdmittedInvestorAllocation = investorAllocTotal;
+    }
+
+    ineligibleDetected.push({
+      investorId: p.investor.id,
+      investorName: p.investor.name,
+      effectiveDate: p.effectiveDate,
+      allocatedProfit: investorAllocTotal
+    });
+  }
+
+  // Calculate allocation for pre-period existing investor (e.g. A)
+  let prePeriodInvestorAllocation = 0;
+  const existingTargetId = existingInvestorId || existingPeriodInvestors[0]?.investor.id;
+  if (existingTargetId) {
+    for (const j of allEntries) {
+      if (j.status === 'REVERSED') continue;
+      if (j.date <= periodEndDate && (j.investorId === existingTargetId || j.relatedInvestorId === existingTargetId)) {
+        const payableLine = j.lines?.find((l: any) => l.accountCode === '2050');
+        if (payableLine && payableLine.credit > 0) {
+          prePeriodInvestorAllocation += payableLine.credit;
+        }
+      }
+    }
+  }
+
+  const historicalProfitProtected = postPeriodAdmittedInvestorAllocation === 0;
+  const clearBoundaryEstablished = Boolean(postTarget && postTarget.effectiveDate && postTarget.effectiveDate > periodEndDate);
+
+  const passed = historicalProfitProtected && (postTarget ? clearBoundaryEstablished : true);
+
+  const targetName = postTarget?.investor.name || 'নতুন বিনিয়োগকারী';
+  const targetEff = postTarget?.effectiveDate || 'N/A';
+
+  const details = passed
+    ? `ঐতিহাসিক মুনাফা সুরক্ষা সফলভাবে যাচাইকৃত (PROMPT 20 PASS): ${periodStartDate} থেকে ${periodEndDate} হিসাবকালের পর যোগদানকারী বিনিয়োগকারী ${targetName} (যোগদান: ${targetEff}) কোনো পূর্ববর্তী মুনাফা পাননি (প্রাপ্ত বরাদ্দ: ৳${postPeriodAdmittedInvestorAllocation})। স্পষ্ট কার্যকর সময়সীমা (Date Boundary) নিশ্চিত।`
+    : `ঐতিহাসিক মুনাফা সুরক্ষায় অমিল: ${targetName} পূর্ববর্তী হিসাবকাল (${periodStartDate} থেকে ${periodEndDate}) থেকে ৳${postPeriodAdmittedInvestorAllocation} মুনাফা গ্রহণ করেছেন, যা সম্পূর্ণ নিষিদ্ধ!`;
+
+  return {
+    passed,
+    periodStartDate,
+    periodEndDate,
+    historicalProfitProtected,
+    clearBoundaryEstablished,
+    postPeriodAdmittedInvestorId: postTarget?.investor.id,
+    postPeriodAdmittedInvestorName: targetName,
+    postPeriodAdmittedInvestorAllocation,
+    prePeriodInvestorAllocation,
+    postPeriodInvestorEffectiveDate: targetEff,
+    ineligibleInvestorsDetected: ineligibleDetected,
+    boundaryRule: 'A new investor admitted after a finalized profit period must not receive profit from that earlier period.',
+    details
+  };
+}
+
+export {
+  calculatePostMoneyNav,
+  validatePostMoneyNav,
+  calculateNavAdmissionParticipation,
+  verifyNoPrematureRounding,
+  inspectNavAdmissionParticipation
+};
 

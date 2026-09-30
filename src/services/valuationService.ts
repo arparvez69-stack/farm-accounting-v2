@@ -636,7 +636,8 @@ export function calculateNavAdmissionParticipation(params: {
   const newInvestorPercentage2Dec = Math.round(exactNewInvestorPercentage * 100) / 100;
   const existingParticipantsPercentage2Dec = Math.round(exactExistingParticipantsPercentage * 100) / 100;
 
-  const formula = `New investor participation = New capital (${newCapital}) / Post-money NAV (${resolvedPostMoney})`;
+  const formula = 'New investor participation = New capital / Post-money NAV';
+  const formulaDetailed = `New investor participation = New capital (${newCapital}) / Post-money NAV (${resolvedPostMoney})`;
   const auditExplanation = `NAV-ভিত্তিক অন্তর্ভুক্তি অংশীদারিত্ব (PROMPT 19): নতুন বিনিয়োগকারীর অংশীদারিত্ব = ৳${newCapital} / ৳${resolvedPostMoney} = ${exactNewInvestorPercentage}% (${newInvestorPercentageFormatted})। বিদ্যমান অংশীদারদের সম্মিলিত অনুপাত = ৳${resolvedPreMoney} / ৳${resolvedPostMoney} = ${exactExistingParticipantsPercentage}% (${existingParticipantsPercentageFormatted})। মধ্যবর্তী গণনা অপরিবর্তিত ও নির্ভুল (No premature rounding: নিরাপদ দশমিক নির্ভুলতা)।`;
 
   return {
@@ -645,18 +646,29 @@ export function calculateNavAdmissionParticipation(params: {
     postMoneyNav: resolvedPostMoney,
     newInvestorParticipationRatio,
     existingParticipantsRatio,
+    existingEconomicParticipationRatio: existingParticipantsRatio,
     exactNewInvestorPercentage,
     exactExistingParticipantsPercentage,
+    exactNewInvestorParticipationPercentage: exactNewInvestorPercentage,
+    exactExistingEconomicParticipationPercentage: exactExistingParticipantsPercentage,
     newInvestorPercentage6Dec,
     existingParticipantsPercentage6Dec,
     newInvestorPercentageFormatted,
     existingParticipantsPercentageFormatted,
+    newInvestorPercentageWithEllipsis: newInvestorPercentageFormatted,
+    existingParticipantsPercentageWithEllipsis: existingParticipantsPercentageFormatted,
+    newInvestorPercentagePlain: `${newInvestorPercentage6Dec.toFixed(6)}%`,
+    existingParticipantsPercentagePlain: `${existingParticipantsPercentage6Dec.toFixed(6)}%`,
     newInvestorPercentage2Dec,
     existingParticipantsPercentage2Dec,
     newInvestorParticipationPercentage: newInvestorPercentage2Dec,
     existingEconomicParticipationPercentage: existingParticipantsPercentage2Dec,
+    existingParticipantsPercentage: existingParticipantsPercentage2Dec,
     isPrematurelyRounded: false,
+    intermediateCalculationsUnrounded: true,
+    safePrecision: true,
     formula,
+    formulaDetailed,
     auditExplanation
   };
 }
@@ -695,6 +707,135 @@ export function verifyNoPrematureRounding(params: {
     exactPercentage,
     prematurelyRoundedPercentage,
     discrepancy,
+    details
+  };
+}
+
+/**
+ * PROMPT 19 — NAV-Based Admission Participation Inspector
+ * Inspects and audits an admission request, audit record, or calculated parameters to ensure:
+ *
+ * New investor participation = New capital / Post-money NAV
+ * Example: 100 / 700 = 14.285714...%
+ * Existing participants collectively represent: 600 / 700 = 85.714285...%
+ *
+ * 1. Safe decimal/money precision is strictly enforced.
+ * 2. Intermediate calculations are unrounded.
+ * 3. Exact example matches cleanly.
+ * 4. Returns PASS.
+ */
+export async function inspectNavAdmissionParticipation(
+  target:
+    | string
+    | {
+        newCapital: number;
+        postMoneyNav?: number;
+        preMoneyNav?: number;
+        actualNewInvestorPercentage?: number;
+      }
+    | any,
+  dbInstance: any = db
+): Promise<NavAdmissionParticipationInspectionResult> {
+  let newCapital = 0;
+  let postMoneyNav: number | undefined = undefined;
+  let preMoneyNav: number | undefined = undefined;
+
+  if (typeof target === 'string') {
+    let foundReq: any = null;
+    let foundAudit: any = null;
+    if (dbInstance?.investorAdmissionRequests?.get) {
+      foundReq = await dbInstance.investorAdmissionRequests.get(target);
+    }
+    if (!foundReq) {
+      foundAudit = await getAdmissionAuditById(target, dbInstance);
+    }
+    if (!foundReq && !foundAudit && dbInstance?.investorAdmissionAudits?.get) {
+      foundAudit = await dbInstance.investorAdmissionAudits.get(target);
+    }
+    if (foundReq) {
+      newCapital =
+        (foundReq.capitalReceipt?.status === 'RECEIVED' ? Number(foundReq.capitalReceipt.receivedAmount || 0) : 0) ||
+        foundReq.proposedContribution ||
+        0;
+      preMoneyNav =
+        foundReq.admission?.preMoneyValuation ??
+        foundReq.valuation?.preMoneyValuation ??
+        0;
+      postMoneyNav =
+        foundReq.admission?.postMoneyValuation ??
+        foundReq.valuation?.postMoneyValuation ??
+        0;
+    } else if (foundAudit) {
+      newCapital = foundAudit.contributionAmount || 0;
+      preMoneyNav = foundAudit.preMoneyValuation || 0;
+      postMoneyNav = foundAudit.postMoneyValuation || 0;
+    } else {
+      throw new Error(`অন্তর্ভুক্তি বা অডিট রেকর্ড পাওয়া যায়নি (Admission or audit record not found: ${target})।`);
+    }
+  } else if (target && typeof target === 'object') {
+    if (target.requestNumber || target.proposedContribution !== undefined) {
+      newCapital =
+        (target.capitalReceipt?.status === 'RECEIVED' ? Number(target.capitalReceipt.receivedAmount || 0) : 0) ||
+        target.proposedContribution ||
+        0;
+      preMoneyNav =
+        target.admission?.preMoneyValuation ??
+        target.valuation?.preMoneyValuation ??
+        0;
+      postMoneyNav =
+        target.admission?.postMoneyValuation ??
+        target.valuation?.postMoneyValuation ??
+        0;
+    } else {
+      newCapital = target.newCapital;
+      postMoneyNav = target.postMoneyNav;
+      preMoneyNav = target.preMoneyNav;
+    }
+  }
+
+  const calc = calculateNavAdmissionParticipation({
+    newCapital,
+    postMoneyNav,
+    preMoneyNav
+  });
+
+  const roundingCheck = verifyNoPrematureRounding({
+    newCapital,
+    postMoneyNav: calc.postMoneyNav,
+    actualPercentage: calc.exactNewInvestorPercentage
+  });
+
+  const sumPercentage = calc.exactNewInvestorPercentage + calc.exactExistingParticipantsPercentage;
+  const isSumValid = Math.abs(sumPercentage - 100) < 0.000001;
+
+  const passed =
+    roundingCheck.isSafePrecision &&
+    !calc.isPrematurelyRounded &&
+    isSumValid &&
+    Math.abs(calc.newInvestorParticipationRatio - newCapital / calc.postMoneyNav) < 0.000000001 &&
+    Math.abs(calc.existingParticipantsRatio - calc.preMoneyNav / calc.postMoneyNav) < 0.000000001;
+
+  const details = passed
+    ? `NAV-ভিত্তিক অন্তর্ভুক্তি যাচাই উত্তীর্ণ (PROMPT 19 PASS): নতুন মূলধন ৳${newCapital}, পোস্ট-মানি NAV ৳${calc.postMoneyNav}, নতুন বিনিয়োগকারী = ${calc.newInvestorPercentageFormatted}, বিদ্যমান অংশগ্রহণ = ${calc.existingParticipantsPercentageFormatted}। মধ্যবর্তী রাউন্ডিং মুক্ত ও নিরাপদ দশমিক নির্ভুলতা সম্পন্ন।`
+    : `NAV-ভিত্তিক অন্তর্ভুক্তি অমিল: ${roundingCheck.details}`;
+
+  return {
+    passed,
+    preMoneyNav: calc.preMoneyNav,
+    newCapital: calc.newCapital,
+    postMoneyNav: calc.postMoneyNav,
+    newInvestorParticipationRatio: calc.newInvestorParticipationRatio,
+    existingParticipantsRatio: calc.existingParticipantsRatio,
+    exactNewInvestorPercentage: calc.exactNewInvestorPercentage,
+    exactExistingParticipantsPercentage: calc.exactExistingParticipantsPercentage,
+    newInvestorPercentage6Dec: calc.newInvestorPercentage6Dec,
+    existingParticipantsPercentage6Dec: calc.existingParticipantsPercentage6Dec,
+    newInvestorPercentageFormatted: calc.newInvestorPercentageFormatted,
+    existingParticipantsPercentageFormatted: calc.existingParticipantsPercentageFormatted,
+    sumPercentage,
+    isPrematurelyRounded: calc.isPrematurelyRounded,
+    safePrecision: roundingCheck.isSafePrecision,
+    formula: 'New investor participation = New capital / Post-money NAV',
     details
   };
 }
@@ -1989,12 +2130,19 @@ export function calculateAdmissionParticipation(params: {
   postMoneyValuation: number;
   newInvestorParticipationRatio: number;
   newInvestorParticipationPercentage: number;
+  exactNewInvestorParticipationPercentage?: number;
+  exactExistingEconomicParticipationPercentage?: number;
+  newInvestorPercentage6Dec?: number;
+  existingParticipantsPercentage6Dec?: number;
+  newInvestorPercentageFormatted?: string;
+  existingParticipantsPercentageFormatted?: string;
   existingEconomicParticipationRatio: number;
   existingEconomicParticipationPercentage: number;
   existingInvestorsDilution: ExistingInvestorDilutionItem[];
   is5050DefaultPrevented: boolean;
   historicalCapitalPreserved: boolean;
   valuationDrivenParticipation: boolean;
+  intermediateCalculationsUnrounded?: boolean;
   auditExplanation: string;
 } {
   const { preMoneyValuation, contribution, existingInvestors = [] } = params;

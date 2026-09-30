@@ -2262,6 +2262,18 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
                         <span className="font-bold text-sky-900">{fmt(req.valuation.preMoneyValuation)}</span>
                       </div>
                     )}
+                    {req.valuation?.postMoneyValuation !== undefined && (
+                      <div className="text-xs font-mono flex justify-between bg-emerald-50 px-1.5 py-0.5 rounded">
+                        <span className="font-sans text-emerald-800">পোস্ট-মানি NAV:</span>
+                        <span className="font-bold text-emerald-900">{fmt(req.valuation.postMoneyValuation)}</span>
+                      </div>
+                    )}
+                    {req.valuation?.calculatedParticipationPercentage !== undefined && (
+                      <div className="text-xs font-mono flex justify-between bg-purple-50 px-1.5 py-0.5 rounded" title={req.valuation.exactParticipationPercentage ? `নিখুঁত অনুপাত: ${req.valuation.exactParticipationPercentage}%` : undefined}>
+                        <span className="font-sans text-purple-800">অংশীদারিত্ব (NAV-ভিত্তিক):</span>
+                        <span className="font-bold text-purple-900">{req.valuation.calculatedParticipationPercentage}%</span>
+                      </div>
+                    )}
                     {req.valuation?.valuationEventId && (
                       <div className="text-[10px] font-mono text-slate-500 truncate" title={req.valuation.valuationEventId}>
                         মূল্যায়ন রেফারেন্স: {req.valuation.valuationEventId}
