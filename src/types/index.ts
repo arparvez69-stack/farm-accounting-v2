@@ -836,6 +836,167 @@ export interface InvestmentTranche {
   synced?: boolean;
 }
 
+export interface ValuationAssetItem {
+  code: string;
+  name: string;
+  amount: number;
+}
+
+export interface ValuationLiabilityItem {
+  code: string;
+  name: string;
+  amount: number;
+}
+
+export interface NavAssetCategorySummary {
+  category: 'CASH' | 'BANK' | 'INVENTORY' | 'RECEIVABLES' | 'FIXED_ASSETS' | 'PRODUCTION_ASSETS' | 'OTHER_CURRENT_ASSETS';
+  categoryLabel: string;
+  totalAmount: number;
+  items: ValuationAssetItem[];
+}
+
+export interface NavLiabilityCategorySummary {
+  category: 'TRADE_PAYABLES' | 'LOANS' | 'CUSTOMER_ADVANCES' | 'ACCRUED_OBLIGATIONS' | 'OTHER_LIABILITIES';
+  categoryLabel: string;
+  totalAmount: number;
+  items: ValuationLiabilityItem[];
+}
+
+export interface NavAuditCalculation {
+  valuationDate: string;
+  formula: string;
+  assetCategories: NavAssetCategorySummary[];
+  totalEligibleAssets: number;
+  liabilityCategories: NavLiabilityCategorySummary[];
+  totalDeductedLiabilities: number;
+  netAssetValue: number;
+  reproducibilityChecksum: string;
+  reproducibleFromGl: boolean;
+  revenueExcludedFromAssets: boolean;
+  unrecognizedProfitExcluded: boolean;
+  investorCapitalExcludedFromNavBasis: boolean;
+  marketValueInventionDetected: boolean;
+  calculationTimestamp: string;
+}
+
+export interface InvestmentValuationEvent {
+  id: string;
+  valuationDate: string; // YYYY-MM-DD
+  totalBusinessAssetsIncluded: number;
+  relevantLiabilities: number;
+  resultingNetBusinessValue: number; // totalBusinessAssetsIncluded - relevantLiabilities
+  valuationMethodology: 'BOOK_VALUE' | 'NET_ASSET_VALUE' | string;
+  responsibleUser: string;
+  timestamp: string; // ISO 8601
+  createdAt: string;
+  createdBy: string;
+
+  // Linked investment admission
+  linkedInvestorId?: string;
+  linkedInvestorName?: string;
+  linkedTrancheId?: string;
+  admissionReference?: string;
+
+  // Breakdown of included accounting values
+  includedAssets?: ValuationAssetItem[];
+  includedLiabilities?: ValuationLiabilityItem[];
+
+  // Detailed transparent Net Asset Value audit calculation
+  auditCalculation?: NavAuditCalculation;
+
+  // Formal audit trail
+  auditTrail: {
+    eventId: string;
+    action: string;
+    timestamp: string;
+    performedBy: string;
+    details: string;
+  };
+
+  notes?: string;
+  synced?: boolean;
+}
+
+export interface ExistingInvestorParticipationSnapshot {
+  investorId: string;
+  investorName: string;
+  capitalContributed: number;
+  currentCapitalBalance: number;
+  profitSharingRatio: number;
+  totalCapitalReturned: number;
+  activeTrancheCount: number;
+}
+
+export interface ExistingTrancheSnapshot {
+  trancheId: string;
+  trancheNumber?: string;
+  investorId: string;
+  investorName: string;
+  investmentAmount: number;
+  effectiveInvestmentDate: string;
+  contractualProfitSharePercentage: number;
+  currentCapitalBalance: number;
+  status: string;
+}
+
+export interface PendingTransactionSnapshotItem {
+  id: string;
+  type: string;
+  date: string;
+  amount: number;
+  description: string;
+  synced: boolean;
+}
+
+export interface InvestorEntrySnapshot {
+  id: string;
+  snapshotDate: string; // YYYY-MM-DD
+  valuationEventId?: string;
+  status: 'DRAFT' | 'FINALIZED' | 'REVERSED';
+
+  // Current Financial Position
+  currentBusinessAssets: number;
+  currentLiabilities: number;
+  netBusinessValue: number;
+  assetBreakdown: ValuationAssetItem[];
+  liabilityBreakdown: ValuationLiabilityItem[];
+  navAuditCalculation?: NavAuditCalculation;
+
+  // Existing Investor Economic Participation
+  existingInvestors: ExistingInvestorParticipationSnapshot[];
+
+  // Existing Investment Tranches
+  existingTranches: ExistingTrancheSnapshot[];
+
+  // Pending Transactions Affecting Valuation
+  pendingTransactions: PendingTransactionSnapshotItem[];
+  hasPendingUnsynchronizedData: boolean;
+
+  // Immutability & Lifecycle Metadata
+  isImmutable: boolean;
+  finalizedAt?: string;
+  finalizedBy?: string;
+  createdBy: string;
+  createdAt: string;
+
+  // Explicit Audited Correction / Reversal Metadata
+  reversalReason?: string;
+  reversedAt?: string;
+  reversedBy?: string;
+  correctionReference?: string;
+
+  auditTrail: {
+    snapshotId: string;
+    action: string;
+    timestamp: string;
+    performedBy: string;
+    details: string;
+  };
+
+  notes?: string;
+  synced?: boolean;
+}
+
 export interface UnattributedRecordAudit {
   id: string;
   recordType: 'INVESTMENT_TRANCHE' | 'JOURNAL_ENTRY' | 'INVESTOR';

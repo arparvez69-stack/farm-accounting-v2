@@ -47,6 +47,10 @@ import { runProductionSmokeTests } from './testPrompt12ProductionSmokeTest';
 import { runRealDeviceRegressionTests } from './testPrompt13RealDeviceRegression';
 import { runPrompt14FinalDataIntegrityReconciliation } from './testPrompt14FinalDataIntegrityReconciliation';
 import { runInvestmentTrancheModelTests } from './testInvestmentTrancheModel';
+import { runContractualPercentagePerTrancheTests } from './testContractualPercentagePerTranche';
+import { runValuationEventTests } from './testValuationEvent';
+import { runNetAssetValuationTests } from './testNetAssetValuation';
+import { runInvestorEntrySnapshotTests } from './testInvestorEntrySnapshot';
 
 interface SuiteResult {
   total: number;
@@ -130,6 +134,10 @@ async function main() {
   suiteResults.push(await runRealDeviceRegressionTests());
   suiteResults.push(await runPrompt14FinalDataIntegrityReconciliation());
   suiteResults.push(await runInvestmentTrancheModelTests());
+  suiteResults.push(await runContractualPercentagePerTrancheTests());
+  suiteResults.push(await runValuationEventTests());
+  suiteResults.push(await runNetAssetValuationTests());
+  suiteResults.push(await runInvestorEntrySnapshotTests());
 
   // Strictly aggregate actual executed assertions — no manual +10 or phantom counts
   const total = suiteResults.reduce((s, r) => s + (r.total || 0), 0);

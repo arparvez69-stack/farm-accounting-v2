@@ -50,9 +50,51 @@ import {
   AdvancePayment,
   AdvanceDirection,
   SaleLineInput,
-  PurchaseLineInput
+  PurchaseLineInput,
+  InvestmentValuationEvent
 } from '../types';
 import { generateAmortizationSchedule } from '../accounting/amortizationService';
+import {
+  calculateBusinessValuation,
+  calculateNetAssetValuation,
+  categorizeNavAsset,
+  categorizeNavLiability,
+  createValuationEvent,
+  getValuationEventById,
+  getAllValuationEvents,
+  getValuationEventsForInvestor,
+  linkValuationEventToAdmission,
+  clearValuationEventsForTest,
+  createInvestorEntrySnapshot,
+  getInvestorEntrySnapshotById,
+  getAllInvestorEntrySnapshots,
+  getInvestorEntrySnapshotForDate,
+  reverseInvestorEntrySnapshot,
+  correctInvestorEntrySnapshot,
+  updateInvestorEntrySnapshotDirectly,
+  clearSnapshotsForTest
+} from './valuationService';
+
+export {
+  calculateBusinessValuation,
+  calculateNetAssetValuation,
+  categorizeNavAsset,
+  categorizeNavLiability,
+  createValuationEvent,
+  getValuationEventById,
+  getAllValuationEvents,
+  getValuationEventsForInvestor,
+  linkValuationEventToAdmission,
+  clearValuationEventsForTest,
+  createInvestorEntrySnapshot,
+  getInvestorEntrySnapshotById,
+  getAllInvestorEntrySnapshots,
+  getInvestorEntrySnapshotForDate,
+  reverseInvestorEntrySnapshot,
+  correctInvestorEntrySnapshot,
+  updateInvestorEntrySnapshotDirectly,
+  clearSnapshotsForTest
+};
 
 const activeSaleLocks = new Set<string>();
 const activeSalesReturnLocks = new Set<string>();
@@ -3681,6 +3723,33 @@ export async function executeInvestorTransaction(
       // 4. Create and persist distinct Investment Tranche
       const tId = trancheId || generateUniqueId('tranche');
       const tNum = trancheNumber || generateTransactionNumber('TR');
+
+      let resolvedPreMoney = preMoneyValuation;
+      let resolvedPostMoney = postMoneyValuation;
+      if (valuationEventId) {
+        try {
+          const valEvent = await getValuationEventById(valuationEventId, dbInstance);
+          if (valEvent) {
+            if (resolvedPreMoney === undefined) {
+              resolvedPreMoney = valEvent.resultingNetBusinessValue;
+            }
+            if (resolvedPostMoney === undefined) {
+              resolvedPostMoney = Math.round((resolvedPreMoney + contribution) * 100) / 100;
+            }
+            await linkValuationEventToAdmission(
+              valuationEventId,
+              {
+                investorId: invId,
+                investorName: validatedInvName,
+                trancheId: tId,
+                admissionReference: invRef
+              },
+              dbInstance
+            );
+          }
+        } catch {}
+      }
+
       const trancheRecord: InvestmentTranche = {
         id: tId,
         trancheNumber: tNum,
@@ -3699,8 +3768,8 @@ export async function executeInvestorTransaction(
         createdBy: currentUserId,
         createdAt: new Date().toISOString(),
         valuationEventId: valuationEventId || undefined,
-        preMoneyValuation: preMoneyValuation !== undefined ? preMoneyValuation : undefined,
-        postMoneyValuation: postMoneyValuation !== undefined ? postMoneyValuation : undefined,
+        preMoneyValuation: resolvedPreMoney !== undefined ? resolvedPreMoney : undefined,
+        postMoneyValuation: resolvedPostMoney !== undefined ? resolvedPostMoney : undefined,
         notes: notes || undefined,
         journalEntryId: journalEntry.id,
         targetAccountId: targetAcc.id,
@@ -3920,6 +3989,33 @@ export async function executeInvestmentTrancheTransaction(
 
       // 2. Insert InvestmentTranche record
       const tId = trancheId || generateUniqueId('tranche');
+
+      let resolvedPreMoney = preMoneyValuation;
+      let resolvedPostMoney = postMoneyValuation;
+      if (valuationEventId) {
+        try {
+          const valEvent = await getValuationEventById(valuationEventId, dbInstance);
+          if (valEvent) {
+            if (resolvedPreMoney === undefined) {
+              resolvedPreMoney = valEvent.resultingNetBusinessValue;
+            }
+            if (resolvedPostMoney === undefined) {
+              resolvedPostMoney = Math.round((resolvedPreMoney + investmentAmount) * 100) / 100;
+            }
+            await linkValuationEventToAdmission(
+              valuationEventId,
+              {
+                investorId: investor.id,
+                investorName: validatedInvName || investor.name,
+                trancheId: tId,
+                admissionReference: tRef
+              },
+              dbInstance
+            );
+          }
+        } catch {}
+      }
+
       const trancheRecord: InvestmentTranche = {
         id: tId,
         trancheNumber: tRef,
@@ -3938,8 +4034,8 @@ export async function executeInvestmentTrancheTransaction(
         createdBy: currentUserId,
         createdAt: new Date().toISOString(),
         valuationEventId: valuationEventId || undefined,
-        preMoneyValuation: preMoneyValuation !== undefined ? preMoneyValuation : undefined,
-        postMoneyValuation: postMoneyValuation !== undefined ? postMoneyValuation : undefined,
+        preMoneyValuation: resolvedPreMoney !== undefined ? resolvedPreMoney : undefined,
+        postMoneyValuation: resolvedPostMoney !== undefined ? resolvedPostMoney : undefined,
         notes: notes || undefined,
         journalEntryId: journalEntry.id,
         targetAccountId: targetAcc.id,
