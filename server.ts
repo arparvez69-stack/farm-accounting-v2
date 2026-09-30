@@ -2023,7 +2023,9 @@ export const ALLOWED_SYNC_COLLECTIONS = [
   'purchaseReturns',
   'advancePayments',
   'accounts',
-  'systemConfig'
+  'systemConfig',
+  'investmentTranches',
+  'investorCapitalMovements'
 ];
 
 /**

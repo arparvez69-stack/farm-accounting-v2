@@ -90,6 +90,7 @@ import {
   calculateCapitalParticipationAllocation,
   executeCapitalParticipationAllocation
 } from './valuationService';
+import { recordCapitalMovement } from './capitalMovementService';
 
 export {
   calculateBusinessValuation,
@@ -3523,6 +3524,7 @@ export async function executeInvestorTransaction(
       dbInstance.journalEntries,
       dbInstance.investors,
       ...((dbInstance as any).investmentTranches ? [(dbInstance as any).investmentTranches] : []),
+      ...((dbInstance as any).investorCapitalMovements ? [(dbInstance as any).investorCapitalMovements] : []),
       dbInstance.cashBankAccounts,
       dbInstance.accounts,
       dbInstance.auditLogs,
@@ -3815,6 +3817,28 @@ export async function executeInvestorTransaction(
         await safeInsert((dbInstance as any).investmentTranches, trancheRecord, { idPrefix: 'tranche' });
       }
 
+      if ((dbInstance as any).investorCapitalMovements) {
+        await recordCapitalMovement(
+          {
+            investorId: invId,
+            investorName: validatedInvName,
+            trancheId: tId,
+            movementType: existingInvestor ? 'ADDITIONAL_CONTRIBUTION' : 'INITIAL_CONTRIBUTION',
+            amount: contribution,
+            direction: 'INFLOW',
+            date: dateStr,
+            journalEntryId: journalEntry.id,
+            voucherNumber,
+            sourceOrTargetAccountId: targetAcc.id,
+            notes: notes || (existingInvestor ? 'অতিরিক্ত মূলধন সংযোজন' : 'প্রাথমিক মূলধন সংযোজন'),
+            balanceBefore: existingInvestor ? (existingInvestor.currentCapitalBalance || 0) : 0,
+            balanceAfter: currentCapBalance,
+            currentUserId
+          },
+          dbInstance
+        );
+      }
+
       // 5. Audit Log
       await safeInsert(dbInstance.auditLogs, {
         id: generateUniqueId('audit'),
@@ -4024,6 +4048,8 @@ export async function executeInvestmentTrancheTransaction(
     investorName?: string;
     investmentAmount: number;
     effectiveInvestmentDate?: string;
+    investmentDate?: string;
+    date?: string;
     contractualProfitSharePercentage: number;
     currency?: string;
     targetAccountId: string;
@@ -4045,6 +4071,7 @@ export async function executeInvestmentTrancheTransaction(
       dbInstance.journalEntries,
       dbInstance.investors,
       ...((dbInstance as any).investmentTranches ? [(dbInstance as any).investmentTranches] : []),
+      ...((dbInstance as any).investorCapitalMovements ? [(dbInstance as any).investorCapitalMovements] : []),
       dbInstance.cashBankAccounts,
       dbInstance.accounts,
       dbInstance.auditLogs,
@@ -4102,7 +4129,7 @@ export async function executeInvestmentTrancheTransaction(
         throw new Error(`বিনিয়োগকারী পাওয়া যায়নি (Investor not found: ${validatedInvId})।`);
       }
 
-      const dateStr = effectiveInvestmentDate || new Date().toISOString().split('T')[0];
+      const dateStr = effectiveInvestmentDate || params.investmentDate || params.date || new Date().toISOString().split('T')[0];
 
       // Closed period validation
       if (dbInstance.closedPeriods) {
@@ -4259,6 +4286,28 @@ export async function executeInvestmentTrancheTransaction(
 
       if ((dbInstance as any).investmentTranches) {
         await safeInsert((dbInstance as any).investmentTranches, trancheRecord, { idPrefix: 'tranche' });
+      }
+
+      if ((dbInstance as any).investorCapitalMovements) {
+        await recordCapitalMovement(
+          {
+            investorId,
+            investorName: investor.name,
+            trancheId: tId,
+            movementType: 'ADDITIONAL_CONTRIBUTION',
+            amount: investmentAmount,
+            direction: 'INFLOW',
+            date: dateStr,
+            journalEntryId: journalEntry.id,
+            voucherNumber,
+            sourceOrTargetAccountId: targetAcc.id,
+            notes: notes || 'অতিরিক্ত মূলধন কিস্তি সংযোজন',
+            balanceBefore: investor.currentCapitalBalance || 0,
+            balanceAfter: (investor.currentCapitalBalance || 0) + investmentAmount,
+            currentUserId
+          },
+          dbInstance
+        );
       }
 
       // 3. Update investor cumulative summary (preserving historical records and backward compatibility)
@@ -4447,11 +4496,38 @@ export async function executeInvestorProfitAllocationTransaction(
         }
 
         // 2. Closed period validation - respect closed periods
+        let targetPeriodEndDate = dateStr;
         if (dbInstance.closedPeriods) {
           const closedPeriods = await dbInstance.closedPeriods.toArray();
           const isClosed = closedPeriods.some((cp: any) => cp.endDate >= dateStr);
           if (isClosed) {
             throw new Error(`সীমাবদ্ধতা: ${dateStr} তারিখটি ইতোমধ্যে বন্ধ হিসাবকালের (Closed Period) অন্তর্ভুক্ত। বন্ধ হিসাবকালে নতুন বণ্টন দাখিলা দেওয়া যাবে না।`);
+          }
+          if (closedPeriodId) {
+            const cp = closedPeriods.find((p: any) => p.id === closedPeriodId);
+            if (cp?.endDate) targetPeriodEndDate = cp.endDate;
+          }
+        }
+
+        // Prompt 05 Rule: A new investor must not receive profit from periods before admission
+        if (dbInstance.investmentTranches) {
+          const allTranches = await dbInstance.investmentTranches.toArray();
+          const tranchesForThisInv = allTranches.filter(
+            (t: any) =>
+              (t.investorId === investorId || t.participantId === investorId) &&
+              t.status !== 'CANCELLED' &&
+              t.status !== 'EXITED'
+          );
+          if (tranchesForThisInv.length > 0) {
+            const hasEligibleTranche = tranchesForThisInv.some((t: any) => {
+              const eff = t.effectiveInvestmentDate || t.effectiveDate || t.investmentDate;
+              return !eff || eff <= targetPeriodEndDate;
+            });
+            if (!hasEligibleTranche) {
+              throw new Error(
+                `বিনিয়োগকারী যোগদানের পূর্ববর্তী হিসাবকালের জন্য লভ্যাংশ বণ্টন প্রযোজ্য নয় (Investor admission/tranches were effective after period end date ${targetPeriodEndDate}; receives zero profit).`
+              );
+            }
           }
         }
 
@@ -5317,6 +5393,7 @@ export async function executeInvestorCapitalReturnTransaction(
       [
         dbInstance.journalEntries,
         dbInstance.investors,
+        ...((dbInstance as any).investorCapitalMovements ? [(dbInstance as any).investorCapitalMovements] : []),
         dbInstance.cashBankAccounts,
         dbInstance.accounts,
         dbInstance.auditLogs,
@@ -5577,6 +5654,27 @@ export async function executeInvestorCapitalReturnTransaction(
           synced: false
         };
         await dbInstance.investors.put(updatedInvestor);
+
+        if ((dbInstance as any).investorCapitalMovements) {
+          await recordCapitalMovement(
+            {
+              investorId,
+              investorName: investor.name,
+              movementType: 'WITHDRAWAL',
+              amount,
+              direction: 'OUTFLOW',
+              date: dateStr,
+              journalEntryId: journalEntry.id,
+              voucherNumber,
+              sourceOrTargetAccountId: sourceAcc.id,
+              notes: notes || 'মূলধন ফেরত / উত্তোলন',
+              balanceBefore: currentCapital,
+              balanceAfter: newCapBalance,
+              currentUserId
+            },
+            dbInstance
+          );
+        }
 
         // 10. If investor exited, recalculate unified working partner ratio for remaining active investors
         if (updatedInvestor.status === 'EXITED') {

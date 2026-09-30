@@ -1166,6 +1166,16 @@ export function calculateCapitalParticipationAllocation(params: {
     );
   }
 
+  // Helper to extract contractual/accounting effective date (not record creation time)
+  const getTrancheEffectiveDate = (t: any): string => {
+    return (
+      t.effectiveInvestmentDate ||
+      t.effectiveDate ||
+      t.investmentDate ||
+      ''
+    );
+  };
+
   // Filter active, eligible tranches
   const activeTranches = (tranches || []).filter(
     (t) => t.status !== 'CANCELLED' && t.status !== 'EXITED' && t.investmentAmount > 0
@@ -1175,11 +1185,20 @@ export function calculateCapitalParticipationAllocation(params: {
     throw new Error('কোনো সক্রিয় বিনিয়োগ কিস্তি পাওয়া যায়নি (No active investment tranches found for allocation)।');
   }
 
-  // Determine valuation/capital denominator if needed
-  const totalTrancheInvestment = activeTranches.reduce((sum, t) => sum + t.investmentAmount, 0);
+  // Filter tranches eligible for this period based on contractual/accounting effective date
+  // Prompt 05 Rule: A new investor must not receive profit from periods before admission.
+  // A later tranche of an existing investor must not receive profit from periods before that tranche became effective.
+  const eligibleActiveTranches = activeTranches.filter((t) => {
+    if (!periodEndDate) return true;
+    const effDate = getTrancheEffectiveDate(t);
+    return !effDate || effDate <= periodEndDate;
+  });
+
+  // Determine valuation/capital denominator if needed based on eligible tranches
+  const totalEligibleInvestment = eligibleActiveTranches.reduce((sum, t) => sum + t.investmentAmount, 0);
   const effectiveValuationBasis = totalValuationBasis && totalValuationBasis > 0
     ? totalValuationBasis
-    : totalTrancheInvestment;
+    : totalEligibleInvestment;
 
   const trancheAllocations: TrancheEconomicParticipationAllocation[] = [];
   const investorAggregates = new Map<string, {
@@ -1200,6 +1219,44 @@ export function calculateCapitalParticipationAllocation(params: {
   let notFlatFarmPercentageGuaranteed = true;
 
   for (const t of activeTranches) {
+    const effDate = getTrancheEffectiveDate(t);
+    const isEligibleInPeriod = !periodEndDate || !effDate || effDate <= periodEndDate;
+
+    if (!isEligibleInPeriod) {
+      // Ineligible tranche: effective after period end date -> strictly receives zero allocation
+      const contractRate = t.contractualProfitSharePercentage || 0;
+      trancheAllocations.push({
+        id: t.id,
+        trancheId: t.id,
+        trancheNumber: t.trancheNumber,
+        investorId: t.investorId,
+        investorName: t.investorName || 'বিনিয়োগকারী',
+        investmentAmount: t.investmentAmount,
+        economicParticipationRatio: 0,
+        economicParticipationPercentage: 0,
+        applicableBusinessProfit: 0,
+        contractualProfitSharePercentage: contractRate,
+        investorProfitShare: 0,
+        workingPartnerProfitSharePercentage: 0,
+        workingPartnerProfitShare: 0
+      });
+
+      const existingInv = investorAggregates.get(t.investorId) || {
+        investorId: t.investorId,
+        investorName: t.investorName || 'বিনিয়োগকারী',
+        totalInvestmentAmount: 0,
+        economicParticipationRatioSum: 0,
+        totalAllocatedEconomicProfit: 0,
+        totalInvestorProfitShare: 0,
+        totalWorkingPartnerShare: 0,
+        trancheCount: 0
+      };
+      existingInv.totalInvestmentAmount += t.investmentAmount;
+      existingInv.trancheCount += 1;
+      investorAggregates.set(t.investorId, existingInv);
+      continue;
+    }
+
     // 1. Determine eligible investor participation according to approved investment/valuation structure
     let economicParticipationPercentage: number;
     if (typeof t.economicParticipationPercentage === 'number' && t.economicParticipationPercentage > 0) {

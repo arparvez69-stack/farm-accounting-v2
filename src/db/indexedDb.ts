@@ -20,6 +20,7 @@ import {
   Loan,
   Investor,
   InvestmentTranche,
+  InvestorCapitalMovement,
   FixedAsset,
   AuditLogEntry,
   SystemConfig,
@@ -62,6 +63,7 @@ export class AgroDatabase extends Dexie {
   loans!: Table<Loan, string>;
   investors!: Table<Investor, string>;
   investmentTranches!: Table<InvestmentTranche, string>;
+  investorCapitalMovements!: Table<InvestorCapitalMovement, string>;
   fixedAssets!: Table<FixedAsset, string>;
   auditLogs!: Table<AuditLogEntry, string>;
   accessLogs!: Table<AppAccessLog, string>;
@@ -101,6 +103,7 @@ export class AgroDatabase extends Dexie {
       loans: 'id, lenderName, status, synced',
       investors: 'id, name, status, synced',
       investmentTranches: 'id, investorId, effectiveInvestmentDate, status, synced',
+      investorCapitalMovements: 'id, investorId, movementType, date, trancheId, synced',
       fixedAssets: 'id, name, category, synced',
       auditLogs: 'id, timestamp, userId, action, module, synced',
       accessLogs: 'id, email, timestamp, status, synced',
@@ -181,6 +184,10 @@ export class AgroDatabase extends Dexie {
 
     this.version(13).stores({
       investmentTranches: 'id, investorId, effectiveInvestmentDate, status, synced'
+    });
+
+    this.version(14).stores({
+      investorCapitalMovements: 'id, investorId, movementType, date, trancheId, synced'
     });
 
     // STABILITY TASK 34: Safe version upgrades and conflict handling

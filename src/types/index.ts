@@ -888,6 +888,34 @@ export interface InvestmentTranche {
   synced?: boolean;
 }
 
+export type CapitalMovementType =
+  | 'INITIAL_CONTRIBUTION'
+  | 'ADDITIONAL_CONTRIBUTION'
+  | 'WITHDRAWAL'
+  | 'REINVESTED_PROFIT'
+  | 'ADJUSTMENT';
+
+export interface InvestorCapitalMovement {
+  id: string;
+  investorId: string;
+  investorName?: string;
+  trancheId?: string;
+  movementType: CapitalMovementType;
+  amount: number;
+  direction: 'INFLOW' | 'OUTFLOW';
+  date: string;
+  journalEntryId: string;
+  voucherNumber: string;
+  sourceOrTargetAccountId?: string;
+  notes?: string;
+  balanceBefore?: number;
+  balanceAfter?: number;
+  approvedBy?: string;
+  createdAt: string;
+  createdBy: string;
+  synced?: boolean;
+}
+
 export interface ValuationAssetItem {
   code: string;
   name: string;
