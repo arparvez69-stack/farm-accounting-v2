@@ -1077,6 +1077,51 @@ export interface BusinessProfitAllocationResult {
   trialBalanceBalanced: boolean;
 }
 
+export interface TrancheEconomicParticipationAllocation {
+  id?: string;
+  trancheId: string;
+  trancheNumber?: string;
+  investorId: string;
+  investorName: string;
+  investmentAmount: number;
+  economicParticipationRatio: number;
+  economicParticipationPercentage: number;
+  applicableBusinessProfit: number;
+  contractualProfitSharePercentage: number;
+  investorProfitShare: number;
+  workingPartnerProfitSharePercentage: number;
+  workingPartnerProfitShare: number;
+  journalEntryId?: string;
+  voucherNumber?: string;
+  payableGlCode?: string;
+  distributionGlCode?: string;
+}
+
+export interface CapitalParticipationAllocationResult {
+  allocationId: string;
+  periodStartDate?: string;
+  periodEndDate?: string;
+  finalizedBusinessProfit: number;
+  totalEconomicProfitAllocatedToTranches: number;
+  totalInvestorProfitShare: number;
+  totalWorkingPartnerShareFromTranches: number;
+  retainedBusinessEquityProfit: number;
+  totalWorkingPartnerEarnings: number;
+  trancheAllocations: TrancheEconomicParticipationAllocation[];
+  investorSummary: Array<{
+    investorId: string;
+    investorName: string;
+    totalInvestmentAmount: number;
+    effectiveEconomicParticipationPercentage: number;
+    totalAllocatedEconomicProfit: number;
+    totalInvestorProfitShare: number;
+    totalWorkingPartnerShare: number;
+    trancheCount: number;
+  }>;
+  noLeakageGuaranteed: boolean;
+  notFlatFarmPercentageGuaranteed: boolean;
+}
+
 export interface UnattributedRecordAudit {
   id: string;
   recordType: 'INVESTMENT_TRANCHE' | 'JOURNAL_ENTRY' | 'INVESTOR';

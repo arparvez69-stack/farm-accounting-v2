@@ -359,8 +359,15 @@ export async function runSeparateBusinessProfitFromInvestorProfitTests(): Promis
   );
 
   // 6. Trial Balance Operating Accounts (4xxx, 5xxx, 6xxx) must remain 100% identical
-  const preOperatingTbRows = preTb.rows.filter((r) => r.code.startsWith('4') || r.code.startsWith('5') || r.code.startsWith('6'));
-  const postOperatingTbRows = postTb.rows.filter((r) => r.code.startsWith('4') || r.code.startsWith('5') || r.code.startsWith('6'));
+  const getRowCode = (r: any): string => (r && (r.code || r.accountCode) ? String(r.code || r.accountCode).trim() : '');
+  const preOperatingTbRows = preTb.rows.filter((r) => {
+    const code = getRowCode(r);
+    return code.startsWith('4') || code.startsWith('5') || code.startsWith('6');
+  });
+  const postOperatingTbRows = postTb.rows.filter((r) => {
+    const code = getRowCode(r);
+    return code.startsWith('4') || code.startsWith('5') || code.startsWith('6');
+  });
 
   assert(
     preOperatingTbRows.length === postOperatingTbRows.length,
@@ -369,7 +376,8 @@ export async function runSeparateBusinessProfitFromInvestorProfitTests(): Promis
 
   let allOperatingBalancesIdentical = true;
   for (const preRow of preOperatingTbRows) {
-    const postRow = postOperatingTbRows.find((r) => r.code === preRow.code);
+    const preCode = getRowCode(preRow);
+    const postRow = postOperatingTbRows.find((r) => getRowCode(r) === preCode);
     if (!postRow || postRow.debit !== preRow.debit || postRow.credit !== preRow.credit) {
       allOperatingBalancesIdentical = false;
       break;

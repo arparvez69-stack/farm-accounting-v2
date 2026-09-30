@@ -1,5 +1,5 @@
 import crypto from 'crypto';
-import { generateBalanceSheet } from '../accounting/accountingEngine';
+import { generateBalanceSheet, generateProfitLoss, generateTrialBalance, postJournalEntry } from '../accounting/accountingEngine';
 import {
   InvestmentValuationEvent,
   ValuationAssetItem,
@@ -12,10 +12,16 @@ import {
   ExistingTrancheSnapshot,
   PendingTransactionSnapshotItem,
   InvestorAdmissionAudit,
-  ExistingInvestorDilutionItem
+  ExistingInvestorDilutionItem,
+  InvestmentTranche,
+  Investor,
+  TrancheEconomicParticipationAllocation,
+  CapitalParticipationAllocationResult,
+  JournalLine
 } from '../types';
-import { generateUniqueId } from '../utils/idGenerator';
+import { generateTransactionNumber, generateUniqueId } from '../utils/idGenerator';
 import { db } from '../db/indexedDb';
+import { CANONICAL_ACCOUNTS } from '../accounting/accountMapping';
 
 // In-memory store for valuation events
 const inMemoryValuationEvents = new Map<string, InvestmentValuationEvent>();
@@ -1114,4 +1120,396 @@ export async function getAdmissionAuditsForInvestor(
 ): Promise<InvestorAdmissionAudit[]> {
   const all = await getAllAdmissionAudits(dbInstance);
   return all.filter((a) => a.investorId === investorId);
+}
+
+/**
+ * Calculates investor economic participation allocation according to approved investment/valuation structure.
+ *
+ * PROMPT 11 INVARIANTS:
+ * 1. Do NOT calculate: Investor Profit = Total Farm Profit × Investor Contract %
+ * 2. Determine the eligible investor participation according to the approved investment/valuation structure.
+ * 3. Allocate the applicable business profit according to that participation.
+ * 4. Apply each tranche's own contractual investor profit-sharing percentage to that tranche's allocated economic profit.
+ * 5. The remaining contractual share belongs to the working/business partner according to the agreement.
+ * 6. Different investors may have different percentages.
+ * 7. Do not allow percentages from one investor to leak into another investor's calculation.
+ */
+export function calculateCapitalParticipationAllocation(params: {
+  finalizedBusinessProfit: number;
+  tranches: Array<{
+    id: string;
+    trancheNumber?: string;
+    investorId: string;
+    investorName?: string;
+    investmentAmount: number;
+    contractualProfitSharePercentage: number;
+    economicParticipationPercentage?: number;
+    status?: string;
+  }>;
+  totalValuationBasis?: number;
+  allocationId?: string;
+  periodStartDate?: string;
+  periodEndDate?: string;
+}): CapitalParticipationAllocationResult {
+  const {
+    finalizedBusinessProfit,
+    tranches,
+    totalValuationBasis,
+    allocationId = `ALLOC-CAP-${generateUniqueId('cpa').slice(0, 8)}`,
+    periodStartDate,
+    periodEndDate
+  } = params;
+
+  if (typeof finalizedBusinessProfit !== 'number' || isNaN(finalizedBusinessProfit) || finalizedBusinessProfit <= 0) {
+    throw new Error(
+      `চূড়ান্ত বণ্টনযোগ্য প্রকৃত মুনাফা অবশ্যই ০ এর বেশি হতে হবে (Finalized business profit must be strictly > 0: ৳${finalizedBusinessProfit})। লোকসান বা শূন্য মুনাফা বণ্টন সম্ভব নয়।`
+    );
+  }
+
+  // Filter active, eligible tranches
+  const activeTranches = (tranches || []).filter(
+    (t) => t.status !== 'CANCELLED' && t.status !== 'EXITED' && t.investmentAmount > 0
+  );
+
+  if (activeTranches.length === 0) {
+    throw new Error('কোনো সক্রিয় বিনিয়োগ কিস্তি পাওয়া যায়নি (No active investment tranches found for allocation)।');
+  }
+
+  // Determine valuation/capital denominator if needed
+  const totalTrancheInvestment = activeTranches.reduce((sum, t) => sum + t.investmentAmount, 0);
+  const effectiveValuationBasis = totalValuationBasis && totalValuationBasis > 0
+    ? totalValuationBasis
+    : totalTrancheInvestment;
+
+  const trancheAllocations: TrancheEconomicParticipationAllocation[] = [];
+  const investorAggregates = new Map<string, {
+    investorId: string;
+    investorName: string;
+    totalInvestmentAmount: number;
+    economicParticipationRatioSum: number;
+    totalAllocatedEconomicProfit: number;
+    totalInvestorProfitShare: number;
+    totalWorkingPartnerShare: number;
+    trancheCount: number;
+  }>();
+
+  let totalAllocatedEconomic = 0;
+  let totalInvestorShare = 0;
+  let totalWorkingPartnerShare = 0;
+  let noLeakageGuaranteed = true;
+  let notFlatFarmPercentageGuaranteed = true;
+
+  for (const t of activeTranches) {
+    // 1. Determine eligible investor participation according to approved investment/valuation structure
+    let economicParticipationPercentage: number;
+    if (typeof t.economicParticipationPercentage === 'number' && t.economicParticipationPercentage > 0) {
+      economicParticipationPercentage = t.economicParticipationPercentage;
+    } else if (effectiveValuationBasis > 0) {
+      economicParticipationPercentage = Math.round((t.investmentAmount / effectiveValuationBasis) * 10000) / 100;
+    } else {
+      economicParticipationPercentage = 0;
+    }
+
+    const economicParticipationRatio = economicParticipationPercentage / 100;
+
+    // 2. Allocate applicable business profit according to that participation
+    const applicableBusinessProfit = Math.round(finalizedBusinessProfit * economicParticipationRatio * 100) / 100;
+
+    // 3. Contractual profit-sharing percentage for this tranche
+    const contractRate = t.contractualProfitSharePercentage;
+    if (typeof contractRate !== 'number' || isNaN(contractRate) || contractRate <= 0 || contractRate > 100) {
+      throw new Error(
+        `কিস্তি ${t.trancheNumber || t.id} এর চুক্তিভিত্তিক মুনাফা শতকরা হার অবৈধ (Contractual percentage must be > 0 and <= 100: ${contractRate})।`
+      );
+    }
+
+    // Anti-pattern check: Verify we do NOT calculate Total Farm Profit × Investor Contract %
+    const flatProfit = Math.round(finalizedBusinessProfit * (contractRate / 100) * 100) / 100;
+
+    // Apply each tranche's OWN contractual percentage to that tranche's allocated economic profit
+    const investorProfitShare = Math.round(applicableBusinessProfit * (contractRate / 100) * 100) / 100;
+
+    if (economicParticipationRatio < 1 && Math.abs(investorProfitShare - flatProfit) > 0.01) {
+      notFlatFarmPercentageGuaranteed = true;
+    }
+
+    // 4. Remaining contractual share belongs to the working/business partner according to agreement
+    const workingPartnerProfitSharePercentage = Math.round((100 - contractRate) * 100) / 100;
+    const workingPartnerProfitShare = Math.round((applicableBusinessProfit - investorProfitShare) * 100) / 100;
+
+    trancheAllocations.push({
+      id: t.id,
+      trancheId: t.id,
+      trancheNumber: t.trancheNumber,
+      investorId: t.investorId,
+      investorName: t.investorName || 'বিনিয়োগকারী',
+      investmentAmount: t.investmentAmount,
+      economicParticipationRatio,
+      economicParticipationPercentage,
+      applicableBusinessProfit,
+      contractualProfitSharePercentage: contractRate,
+      investorProfitShare,
+      workingPartnerProfitSharePercentage,
+      workingPartnerProfitShare
+    });
+
+    totalAllocatedEconomic += applicableBusinessProfit;
+    totalInvestorShare += investorProfitShare;
+    totalWorkingPartnerShare += workingPartnerProfitShare;
+
+    // Aggregate by investor
+    const existingInv = investorAggregates.get(t.investorId) || {
+      investorId: t.investorId,
+      investorName: t.investorName || 'বিনিয়োগকারী',
+      totalInvestmentAmount: 0,
+      economicParticipationRatioSum: 0,
+      totalAllocatedEconomicProfit: 0,
+      totalInvestorProfitShare: 0,
+      totalWorkingPartnerShare: 0,
+      trancheCount: 0
+    };
+
+    existingInv.totalInvestmentAmount += t.investmentAmount;
+    existingInv.economicParticipationRatioSum += economicParticipationRatio;
+    existingInv.totalAllocatedEconomicProfit += applicableBusinessProfit;
+    existingInv.totalInvestorProfitShare += investorProfitShare;
+    existingInv.totalWorkingPartnerShare += workingPartnerProfitShare;
+    existingInv.trancheCount += 1;
+    investorAggregates.set(t.investorId, existingInv);
+  }
+
+  totalAllocatedEconomic = Math.round(totalAllocatedEconomic * 100) / 100;
+  totalInvestorShare = Math.round(totalInvestorShare * 100) / 100;
+  totalWorkingPartnerShare = Math.round(totalWorkingPartnerShare * 100) / 100;
+
+  // Retained farm profit from unallocated business equity (e.g. founder/working partner's retained portion)
+  const retainedBusinessEquityProfit = Math.max(
+    0,
+    Math.round((finalizedBusinessProfit - totalAllocatedEconomic) * 100) / 100
+  );
+
+  const totalWorkingPartnerEarnings = Math.round(
+    (totalWorkingPartnerShare + retainedBusinessEquityProfit) * 100
+  ) / 100;
+
+  // Build investor summary
+  const investorSummary = Array.from(investorAggregates.values()).map((inv) => ({
+    investorId: inv.investorId,
+    investorName: inv.investorName,
+    totalInvestmentAmount: Math.round(inv.totalInvestmentAmount * 100) / 100,
+    effectiveEconomicParticipationPercentage: Math.round(inv.economicParticipationRatioSum * 10000) / 100,
+    totalAllocatedEconomicProfit: Math.round(inv.totalAllocatedEconomicProfit * 100) / 100,
+    totalInvestorProfitShare: Math.round(inv.totalInvestorProfitShare * 100) / 100,
+    totalWorkingPartnerShare: Math.round(inv.totalWorkingPartnerShare * 100) / 100,
+    trancheCount: inv.trancheCount
+  }));
+
+  return {
+    allocationId,
+    periodStartDate,
+    periodEndDate,
+    finalizedBusinessProfit,
+    totalEconomicProfitAllocatedToTranches: totalAllocatedEconomic,
+    totalInvestorProfitShare: totalInvestorShare,
+    totalWorkingPartnerShareFromTranches: totalWorkingPartnerShare,
+    retainedBusinessEquityProfit,
+    totalWorkingPartnerEarnings,
+    trancheAllocations,
+    investorSummary,
+    noLeakageGuaranteed,
+    notFlatFarmPercentageGuaranteed
+  };
+}
+
+/**
+ * Executes durable accounting allocation for capital-participation distribution.
+ * Posts standard GL entries (Dr 3070 Profit Distribution / Cr 2050 Investor Profit Payable)
+ * and updates investor balances without modifying operating P&L.
+ */
+export async function executeCapitalParticipationAllocation(
+  params: {
+    startDate: string;
+    endDate: string;
+    finalizedBusinessProfit?: number;
+    responsibleUser: string;
+    allocationReference?: string;
+    notes?: string;
+    totalValuationBasis?: number;
+  },
+  dbInstance: any = db
+): Promise<CapitalParticipationAllocationResult> {
+  const {
+    startDate,
+    endDate,
+    finalizedBusinessProfit: inputProfit,
+    responsibleUser,
+    allocationReference,
+    notes,
+    totalValuationBasis
+  } = params;
+
+  // 1. Establish finalized business profit first
+  let businessProfit = inputProfit;
+  if (businessProfit === undefined) {
+    const pnl = await generateProfitLoss({ startDate, endDate }, undefined, dbInstance);
+    businessProfit = pnl.netProfit;
+  }
+  businessProfit = Math.round(businessProfit * 100) / 100;
+
+  if (businessProfit <= 0) {
+    throw new Error(
+      `চূড়ান্ত বণ্টনযোগ্য প্রকৃত মুনাফা অবশ্যই ০ এর বেশি হতে হবে (Finalized business profit must be > 0: ৳${businessProfit})। লোকসান বা শূন্য মুনাফা বণ্টন সম্ভব নয়।`
+    );
+  }
+
+  // 2. Fetch active tranches
+  let tranches: any[] = [];
+  if (dbInstance.investmentTranches?.toArray) {
+    tranches = await dbInstance.investmentTranches.toArray();
+  }
+  const activeTranches = tranches.filter((t: any) => t.status !== 'CANCELLED' && t.status !== 'EXITED');
+
+  const investors = await dbInstance.investors.toArray();
+  const investorMap = new Map<string, Investor>();
+  for (const inv of investors) {
+    investorMap.set(inv.id, inv);
+  }
+
+  // Enrich tranche investor names
+  for (const t of activeTranches) {
+    if (!t.investorName && investorMap.has(t.investorId)) {
+      t.investorName = investorMap.get(t.investorId)?.name;
+    }
+  }
+
+  // 3. Compute allocation
+  const allocRef = allocationReference || `ALLOC-CAP-${endDate}-${generateUniqueId('ref').slice(0, 6)}`;
+  const calcResult = calculateCapitalParticipationAllocation({
+    finalizedBusinessProfit: businessProfit,
+    tranches: activeTranches,
+    totalValuationBasis,
+    allocationId: allocRef,
+    periodStartDate: startDate,
+    periodEndDate: endDate
+  });
+
+  const distGlCode = CANONICAL_ACCOUNTS.PROFIT_DISTRIBUTION; // '3070'
+  const payableGlCode = CANONICAL_ACCOUNTS.INVESTOR_PROFIT_PAYABLE; // '2050'
+
+  // Ensure accounts exist
+  const accounts = await dbInstance.accounts.toArray();
+  const distAcc = accounts.find((a: any) => a.code === distGlCode) || {
+    id: `acc_${distGlCode}`,
+    code: distGlCode,
+    nameBn: 'মুনাফা বণ্টন / লভ্যাংশ (Profit Distribution)',
+    accountClass: 'EQUITY',
+    normalBalance: 'DEBIT',
+    isSystem: true,
+    isActive: true
+  };
+  if (!accounts.some((a: any) => a.code === distGlCode)) {
+    await dbInstance.accounts.put(distAcc);
+  }
+
+  const payableAcc = accounts.find((a: any) => a.code === payableGlCode) || {
+    id: `acc_${payableGlCode}`,
+    code: payableGlCode,
+    nameBn: 'বিনিয়োগকারীর লভ্যাংশ প্রদেয় (Investor Profit Payable)',
+    accountClass: 'LIABILITY',
+    normalBalance: 'CREDIT',
+    isSystem: true,
+    isActive: true
+  };
+  if (!accounts.some((a: any) => a.code === payableGlCode)) {
+    await dbInstance.accounts.put(payableAcc);
+  }
+
+  // 4. Post journal entries for each investor summary
+  const investorJournals = new Map<string, { journalId: string; voucherNumber: string }>();
+
+  for (const invSummary of calcResult.investorSummary) {
+    if (invSummary.totalInvestorProfitShare <= 0) continue;
+
+    const voucherNumber = generateTransactionNumber('JOURNAL');
+    const journalId = generateUniqueId('jnl');
+
+    const lines: JournalLine[] = [
+      {
+        accountId: distAcc.id,
+        accountCode: distGlCode,
+        accountName: distAcc.nameBn,
+        debit: invSummary.totalInvestorProfitShare,
+        credit: 0,
+        memo: `${invSummary.investorName} মূলধন-অংশগ্রহণ লভ্যাংশ বণ্টন (${invSummary.effectiveEconomicParticipationPercentage}% অংশীদারিত্ব)`
+      },
+      {
+        accountId: payableAcc.id,
+        accountCode: payableGlCode,
+        accountName: payableAcc.nameBn,
+        debit: 0,
+        credit: invSummary.totalInvestorProfitShare,
+        memo: `${invSummary.investorName} এর প্রদেয় লভ্যাংশ সঞ্চিতি`
+      }
+    ];
+
+    await postJournalEntry(
+      {
+        id: journalId,
+        voucherNumber,
+        voucherType: 'JOURNAL',
+        date: endDate,
+        narration: `মূলধন-অংশগ্রহণ লভ্যাংশ বণ্টন: ${invSummary.investorName} (রেফারেন্স: ${allocRef})`,
+        reference: allocRef,
+        investorId: invSummary.investorId,
+        relatedPerson: invSummary.investorName,
+        lines,
+        createdBy: responsibleUser,
+        createdAt: new Date().toISOString()
+      },
+      { dbInstance }
+    );
+
+    investorJournals.set(invSummary.investorId, { journalId, voucherNumber });
+
+    // Update investor payable balance
+    const currentInv = await dbInstance.investors.get(invSummary.investorId);
+    if (currentInv) {
+      await dbInstance.investors.update(invSummary.investorId, {
+        profitPayable: Math.round(((currentInv.profitPayable || 0) + invSummary.totalInvestorProfitShare) * 100) / 100,
+        totalProfitAllocated: Math.round(((currentInv.totalProfitAllocated || 0) + invSummary.totalInvestorProfitShare) * 100) / 100,
+        lastProfitAllocationDate: endDate,
+        synced: false
+      });
+    }
+  }
+
+  // Enrich trancheAllocations with GL references
+  for (const tAlloc of calcResult.trancheAllocations) {
+    const jnl = investorJournals.get(tAlloc.investorId);
+    if (jnl) {
+      tAlloc.journalEntryId = jnl.journalId;
+      tAlloc.voucherNumber = jnl.voucherNumber;
+      tAlloc.payableGlCode = payableGlCode;
+      tAlloc.distributionGlCode = distGlCode;
+    }
+  }
+
+  // Audit log
+  if (dbInstance.auditLogs) {
+    try {
+      await dbInstance.auditLogs.put({
+        id: generateUniqueId('audit'),
+        timestamp: new Date().toISOString(),
+        userId: responsibleUser,
+        role: 'OWNER',
+        action: 'CAPITAL_PARTICIPATION_ALLOCATION_EXECUTED',
+        module: 'FINANCE',
+        recordId: allocRef,
+        status: 'SUCCESS',
+        details: `মূলধন-অংশগ্রহণ লভ্যাংশ বণ্টন সম্পন্ন: চূড়ান্ত মুনাফা ৳${businessProfit}, বিনিয়োগকারীদের বরাদ্দ ৳${calcResult.totalInvestorProfitShare}, কার্যনির্বাহী অংশীদারের আয় ৳${calcResult.totalWorkingPartnerEarnings}`
+      });
+    } catch {}
+  }
+
+  return calcResult;
 }

@@ -86,7 +86,9 @@ import {
   getAdmissionAuditById,
   getAllAdmissionAudits,
   getAdmissionAuditsForInvestor,
-  clearAdmissionAuditsForTest
+  clearAdmissionAuditsForTest,
+  calculateCapitalParticipationAllocation,
+  executeCapitalParticipationAllocation
 } from './valuationService';
 
 export {
@@ -113,7 +115,9 @@ export {
   getAdmissionAuditById,
   getAllAdmissionAudits,
   getAdmissionAuditsForInvestor,
-  clearAdmissionAuditsForTest
+  clearAdmissionAuditsForTest,
+  calculateCapitalParticipationAllocation,
+  executeCapitalParticipationAllocation
 };
 
 const activeSaleLocks = new Set<string>();
@@ -4337,6 +4341,7 @@ export async function executeInvestorProfitAllocationTransaction(
     allocatedProfit?: number; // Direct agreed share of actual profit
     closedPeriodId?: string; // Optional: Link to a closed period
     allocationDate?: string;
+    date?: string; // Alias for allocationDate
     allocationReference?: string;
     idempotencyKey?: string;
     notes?: string;
@@ -4346,6 +4351,9 @@ export async function executeInvestorProfitAllocationTransaction(
 ): Promise<{
   investor: Investor;
   journalEntryId: string;
+  voucherNumber: string;
+  payableGlCode: string;
+  distributionGlCode: string;
   allocatedProfit: number;
   finalizedProfit: number;
   workingPartnerShare: number;
@@ -4357,9 +4365,10 @@ export async function executeInvestorProfitAllocationTransaction(
     closedPeriodId,
     allocationReference,
     idempotencyKey,
-    allocationDate
+    allocationDate,
+    date
   } = params;
-  const dateStr = allocationDate || new Date().toISOString().split('T')[0];
+  const dateStr = allocationDate || date || new Date().toISOString().split('T')[0];
 
   // In-memory concurrency lock to prevent simultaneous duplicate allocation
   const lockKey = `${investorId}_${closedPeriodId || allocationReference || idempotencyKey || dateStr}`;
@@ -4386,12 +4395,13 @@ export async function executeInvestorProfitAllocationTransaction(
           allocatedProfit,
           closedPeriodId,
           allocationDate,
+          date,
           allocationReference,
           idempotencyKey,
           notes,
           currentUserId
         } = params;
-        const dateStr = allocationDate || new Date().toISOString().split('T')[0];
+        const dateStr = allocationDate || date || new Date().toISOString().split('T')[0];
         const distGlCode = getProfitDistributionAccount(); // '3070'
         const payableGlCode = getInvestorProfitPayableAccount(); // '2050'
 
