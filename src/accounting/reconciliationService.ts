@@ -8,6 +8,17 @@ export {
   getPhysicalInventoryRecordById,
   clearPhysicalInventoryRecordsForTest
 } from './physicalInventoryService';
+export {
+  getFixedAssetVerificationBreakdown,
+  recordFixedAssetVerificationAdjustment,
+  getFixedAssetRevaluationEvents,
+  getFixedAssetRevaluationEventById,
+  clearFixedAssetRevaluationEventsForTest
+} from './fixedAssetVerificationService';
+export {
+  verifyValuationLiabilities,
+  detectCashOnlyLiabilitiesBias
+} from './liabilityVerificationService';
 import {
   calculateAnimalRecordedCosts,
   calculateFishBatchRecordedCosts,
@@ -1094,7 +1105,8 @@ export async function reconcileFixedAssetRegister(
   const assetDetails: ReconciliationSubItem[] = [];
 
   for (const asset of activeAssets) {
-    const cost = round2(Number(asset.originalCost ?? (asset as any).cost ?? (asset as any).purchasePrice) || 0);
+    const baseCost = Number(asset.originalCost ?? (asset as any).cost ?? (asset as any).purchasePrice) || 0;
+    const cost = round2(baseCost + (Number(asset.revaluationAdjustment) || 0));
     totalOperational = round2(totalOperational + cost);
     assetDetails.push({
       id: asset.id,
@@ -2021,8 +2033,7 @@ export async function reconcileLoansSubledger(
 
   const loanCodes = [
     CANONICAL_ACCOUNTS.SHORT_TERM_LOANS, // 2110
-    CANONICAL_ACCOUNTS.LONG_TERM_LOANS, // 2120
-    '2030'
+    CANONICAL_ACCOUNTS.LONG_TERM_LOANS // 2120
   ];
 
   const glAmount = calculateGlBalanceForAccounts(entries, loanCodes, 'CREDIT', asOfDate);
@@ -2201,9 +2212,17 @@ export async function runValuationReconciliationGate(
   asOfDate?: string,
   options?: { tolerance?: number }
 ): Promise<ValuationReconciliationGateResult> {
+  // Support swapped parameter order if caller passed (asOfDate, dbInstance)
+  let effectiveDb = dbInstance;
+  let effectiveAsOf = asOfDate;
+  if (typeof dbInstance === 'string') {
+    effectiveAsOf = dbInstance;
+    effectiveDb = (asOfDate && typeof asOfDate === 'object') ? asOfDate : db;
+  }
+
   const tolerance = options?.tolerance ?? 0.01;
-  const journalEntries: JournalEntry[] = dbInstance.journalEntries ? await dbInstance.journalEntries.toArray() : [];
-  const cleanAsOf = asOfDate ? asOfDate.slice(0, 10) : new Date().toISOString().slice(0, 10);
+  const journalEntries: JournalEntry[] = effectiveDb.journalEntries ? await effectiveDb.journalEntries.toArray() : [];
+  const cleanAsOf = effectiveAsOf ? String(effectiveAsOf).slice(0, 10) : new Date().toISOString().slice(0, 10);
 
   // Run all material reconciliation checks in parallel
   const [

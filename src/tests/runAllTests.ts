@@ -62,6 +62,12 @@ import { runEffectiveInvestmentDatesTests } from './testEffectiveInvestmentDates
 import { runCapitalMovementLedgerTests } from './testCapitalMovementLedger';
 import { runValuationReconciliationGateTests } from './testValuationReconciliationGate';
 import { runPhysicalInventoryAdjustmentTests } from './testPhysicalInventoryAdjustment';
+import { runFixedAssetVerificationTests } from './testFixedAssetVerification';
+import { runLiabilityVerificationTests } from './testLiabilityVerification';
+import { runCorrectNavFormulaTests } from './testCorrectNavFormula';
+import { runSeparateProfitFromValuationTests } from './testSeparateProfitFromValuation';
+import { runImmutableValuationSnapshotTests } from './testImmutableValuationSnapshot';
+import { runValuationPreviewNoMutationTests } from './testValuationPreviewNoMutation';
 
 interface SuiteResult {
   total: number;
@@ -160,6 +166,12 @@ async function main() {
   suiteResults.push(await runCapitalMovementLedgerTests());
   suiteResults.push(await runValuationReconciliationGateTests());
   suiteResults.push(await runPhysicalInventoryAdjustmentTests());
+  suiteResults.push(await runFixedAssetVerificationTests());
+  suiteResults.push(await runLiabilityVerificationTests());
+  suiteResults.push(await runCorrectNavFormulaTests());
+  suiteResults.push(await runSeparateProfitFromValuationTests());
+  suiteResults.push(await runImmutableValuationSnapshotTests());
+  suiteResults.push(await runValuationPreviewNoMutationTests());
 
   // Strictly aggregate actual executed assertions — no manual +10 or phantom counts
   const total = suiteResults.reduce((s, r) => s + (r.total || 0), 0);

@@ -88,7 +88,10 @@ import {
   getAdmissionAuditsForInvestor,
   clearAdmissionAuditsForTest,
   calculateCapitalParticipationAllocation,
-  executeCapitalParticipationAllocation
+  executeCapitalParticipationAllocation,
+  updateValuationEventDirectly,
+  attemptValuationMutation,
+  createValuationRevisionEvent
 } from './valuationService';
 import { recordCapitalMovement } from './capitalMovementService';
 
@@ -118,7 +121,10 @@ export {
   getAdmissionAuditsForInvestor,
   clearAdmissionAuditsForTest,
   calculateCapitalParticipationAllocation,
-  executeCapitalParticipationAllocation
+  executeCapitalParticipationAllocation,
+  updateValuationEventDirectly,
+  attemptValuationMutation,
+  createValuationRevisionEvent
 };
 
 const activeSaleLocks = new Set<string>();

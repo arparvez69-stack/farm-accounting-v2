@@ -988,7 +988,43 @@ export interface NavAuditCalculation {
   unrecognizedProfitExcluded: boolean;
   investorCapitalExcludedFromNavBasis: boolean;
   marketValueInventionDetected: boolean;
+  // Prompt 11: Correct NAV formula (approved assets - approved liabilities)
+  netProfitExcludedFromNavSum?: boolean;
+  doubleCountingProfitPrevented?: boolean;
   calculationTimestamp: string;
+}
+
+/**
+ * PROMPT 10: Valuation Liability Verification Report
+ * Ensures valuation includes material liabilities such as:
+ * - supplier payables;
+ * - loans;
+ * - accrued obligations;
+ * - other recorded liabilities.
+ * Do not use only cash liabilities.
+ * The system must use the accounting source of truth.
+ */
+export interface ValuationLiabilityVerificationReport {
+  valuationDate: string;
+  totalEligibleAssets: number;
+  totalDeductedLiabilities: number;
+  netAssetValue: number; // totalEligibleAssets - totalDeductedLiabilities
+  supplierPayables: number;
+  loans: number;
+  accruedObligations: number;
+  otherRecordedLiabilities: number;
+  customerAdvances: number;
+  includesNonCashAccrualLiabilities: boolean;
+  onlyCashLiabilitiesUsed: boolean; // strictly FALSE
+  accountingSourceOfTruthVerified: boolean;
+  status: 'PASS' | 'UNRESOLVED';
+  liabilityBreakdown: {
+    category: NavLiabilityCategorySummary['category'];
+    categoryLabel: string;
+    amount: number;
+    items: ValuationLiabilityItem[];
+  }[];
+  unresolvedReasons?: string[];
 }
 
 export interface ValuationReconciliationGateCheck {
@@ -1035,11 +1071,22 @@ export interface InvestmentValuationEvent {
   createdAt: string;
   createdBy: string;
 
-  // Finalization & Reconciliation Gate Audit (Prompt 07)
+  // Finalization & Reconciliation Gate Audit (Prompt 07 & 13)
   status?: 'DRAFT' | 'FINALIZED' | 'BLOCKED' | 'REJECTED';
   finalizedAt?: string;
   finalizedBy?: string;
+  approver?: string;
+  reconciliationStatus?: 'PASS' | 'UNRESOLVED' | 'SKIPPED';
   reconciliationGate?: ValuationReconciliationGateResult;
+  adjustments?: number;
+  valuationAdjustments?: number;
+  isImmutable?: boolean;
+
+  // Revisions & Adjustment Events (Prompt 13)
+  revisionOfValuationId?: string;
+  revisionNumber?: number;
+  revisionReason?: string;
+  supersededByRevisionId?: string;
 
   // Linked investment admission
   linkedInvestorId?: string;
@@ -1317,6 +1364,66 @@ export interface FixedAsset {
   disposedOriginalCost?: number;
   disposedAccumulatedDepreciation?: number;
   disposalReason?: string;
+  // Prompt 09: Fixed Asset Verification & Revaluation Audit
+  verifiedApprovedValue?: number;
+  revaluationAdjustment?: number;
+  revaluationReason?: string;
+  lastRevaluationDate?: string;
+  revaluationJournalId?: string;
+  synced?: boolean;
+}
+
+/**
+ * PROMPT 09: Fixed Asset Verification Item Breakdown
+ * Explicitly separates:
+ * - original cost;
+ * - accumulated depreciation;
+ * - carrying amount;
+ * - verified/approved value;
+ * - adjustment;
+ * - reason.
+ */
+export interface FixedAssetVerificationItem {
+  assetId: string;
+  assetName: string;
+  category: string;
+  originalCost: number;
+  accumulatedDepreciation: number;
+  carryingAmount: number; // originalCost - accumulatedDepreciation
+  verifiedApprovedValue: number;
+  adjustment: number; // verifiedApprovedValue - carryingAmount
+  adjustmentType: 'IMPAIRMENT_DECREASE' | 'REVALUATION_SURPLUS' | 'NO_CHANGE';
+  reason: string;
+  status: 'VERIFIED' | 'ADJUSTED' | 'PENDING';
+}
+
+/**
+ * PROMPT 09: Fixed Asset Revaluation / Adjustment Event
+ * Auditable revaluation event for user corrections.
+ * Does not silently overwrite historical depreciation.
+ * Does not automatically classify valuation adjustments as operating profit.
+ */
+export interface FixedAssetRevaluationEvent {
+  id: string;
+  assetId: string;
+  assetName: string;
+  category: string;
+  valuationDate: string;
+  originalCost: number;
+  accumulatedDepreciation: number;
+  carryingAmount: number;
+  verifiedApprovedValue: number;
+  adjustment: number;
+  reason: string;
+  accountingTreatment: 'IMPAIRMENT_LOSS' | 'REVALUATION_SURPLUS' | 'EQUITY_REVALUATION_RESERVE' | 'NON_OPERATING_LOSS';
+  debitAccountCode: string;
+  creditAccountCode: string;
+  isOperatingProfit: boolean; // strictly false for valuation adjustments
+  user: string;
+  timestamp: string;
+  journalEntryId?: string;
+  voucherNumber?: string;
+  auditLogId?: string;
   synced?: boolean;
 }
 

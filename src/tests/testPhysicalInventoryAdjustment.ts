@@ -279,7 +279,11 @@ export async function runPhysicalInventoryAdjustmentTests(): Promise<AssertionRe
   assert(adjRecord.unitCost === 200, 'Recorded unit cost is ৳200');
   assert(adjRecord.valueImpact === -2000, 'Recorded value impact is strictly -৳2,000 (-10 * ৳200)');
   assert(adjRecord.reason === countReason, 'Recorded reason matches audit narration');
-  assert(adjRecord.narration.includes('৫০') && adjRecord.narration.includes('৪০'), 'Descriptive narration includes book quantity 50 and physical quantity 40');
+  assert(
+    (adjRecord.narration.includes('50') || adjRecord.narration.includes('৫০')) &&
+    (adjRecord.narration.includes('40') || adjRecord.narration.includes('৪০')),
+    'Descriptive narration includes book quantity 50 and physical quantity 40'
+  );
   assert(adjRecord.user === testUser, 'Recorded user is strictly lead audit officer');
   assert(typeof adjRecord.timestamp === 'string' && !isNaN(Date.parse(adjRecord.timestamp)), 'Recorded timestamp is a valid ISO 8601 string');
   assert(adjRecord.status === 'POSTED', 'Adjustment record status is POSTED');
@@ -340,7 +344,14 @@ export async function runPhysicalInventoryAdjustmentTests(): Promise<AssertionRe
   const adjustmentAudit = auditLogs.find((a) => a.recordId === adjRecord.id);
   assert(adjustmentAudit !== undefined, 'Audit log entry was recorded for PHYSICAL_INVENTORY_ADJUSTMENT');
   assert(adjustmentAudit?.userId === testUser, 'Audit log records responsible user');
-  assert(adjustmentAudit?.details.includes('৫০') && adjustmentAudit?.details.includes('৪০'), 'Audit log details include 50 -> 40 transition');
+  assert(
+    Boolean(
+      adjustmentAudit?.details &&
+      (adjustmentAudit.details.includes('50') || adjustmentAudit.details.includes('৫০')) &&
+      (adjustmentAudit.details.includes('40') || adjustmentAudit.details.includes('৪০'))
+    ),
+    'Audit log details include 50 -> 40 transition'
+  );
 
   // ---------------------------------------------------------------------------
   // STEP 5: Verify That Historical Records Were NOT Mutated

@@ -246,6 +246,16 @@ export const DEFAULT_CHART_OF_ACCOUNTS: Account[] = [
     isActive: true
   },
   {
+    id: 'acc_2090',
+    code: '2090',
+    nameBn: 'অন্যান্য স্বীকৃত দায় (Other Recorded Liabilities)',
+    nameEn: 'Other Recorded Liabilities',
+    accountClass: 'LIABILITY',
+    normalBalance: 'CREDIT',
+    isSystem: true,
+    isActive: true
+  },
+  {
     id: 'acc_2110',
     code: '2110',
     nameBn: 'স্বল্পমেয়াদী ঋণ (Short-Term Loans)',

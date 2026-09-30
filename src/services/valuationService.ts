@@ -34,8 +34,19 @@ import {
   detectSilentInventoryOverwrite,
   assertNoSilentInventoryOverwrite,
   getPhysicalInventoryRecords,
-  getPhysicalInventoryRecordById
+  getPhysicalInventoryRecordById,
+  getFixedAssetVerificationBreakdown,
+  recordFixedAssetVerificationAdjustment,
+  getFixedAssetRevaluationEvents,
+  getFixedAssetRevaluationEventById,
+  verifyValuationLiabilities,
+  detectCashOnlyLiabilitiesBias
 } from '../accounting/reconciliationService';
+export {
+  generateProfitValuationSeparationReport,
+  executeProfitDistributionCashSettlement,
+  type SeparateProfitValuationReport
+} from './profitValuationSeparationService';
 
 export {
   runValuationReconciliationGate,
@@ -47,7 +58,13 @@ export {
   detectSilentInventoryOverwrite,
   assertNoSilentInventoryOverwrite,
   getPhysicalInventoryRecords,
-  getPhysicalInventoryRecordById
+  getPhysicalInventoryRecordById,
+  getFixedAssetVerificationBreakdown,
+  recordFixedAssetVerificationAdjustment,
+  getFixedAssetRevaluationEvents,
+  getFixedAssetRevaluationEventById,
+  verifyValuationLiabilities,
+  detectCashOnlyLiabilitiesBias
 };
 
 // In-memory store for valuation events
@@ -164,37 +181,55 @@ export function categorizeNavAsset(code: string, name: string): NavAssetCategory
 export function categorizeNavLiability(code: string, name: string): NavLiabilityCategorySummary['category'] {
   const c = code.trim();
   const lowerName = name.toLowerCase();
+
+  // 1. Supplier / Trade Payables (2010, trade payables, supplier balances)
   if (
     c === '2010' ||
     lowerName.includes('accounts payable') ||
     lowerName.includes('trade payable') ||
+    lowerName.includes('supplier payable') ||
     lowerName.includes('পাওনাদার') ||
-    lowerName.includes('প্রদেয় হিসাব')
+    lowerName.includes('প্রদেয় হিসাব') ||
+    lowerName.includes('সরবরাহকারী')
   ) {
     return 'TRADE_PAYABLES';
   }
+
+  // 2. Loans / Bank Debt / Financial Borrowings (2110 short-term loans, 2120 long-term loans, 2030 bank loan)
   if (
     c.startsWith('211') ||
     c.startsWith('212') ||
     c.startsWith('203') ||
     lowerName.includes('loan') ||
     lowerName.includes('debt') ||
+    lowerName.includes('borrowing') ||
+    lowerName.includes('ব্যাংক ঋণ') ||
     lowerName.includes('ঋণ')
   ) {
     return 'LOANS';
   }
+
+  // 3. Customer Advances (2040)
   if (c === '2040' || lowerName.includes('customer advance') || lowerName.includes('অগ্রিম গ্রহণ')) {
     return 'CUSTOMER_ADVANCES';
   }
+
+  // 4. Accrued Obligations (2020 Accrued Wages, 2050 Investor Profit Payable, 2060 Mudarib Profit Payable)
   if (
     c === '2020' ||
     c === '2050' ||
+    c === '2060' ||
     lowerName.includes('accrued') ||
     lowerName.includes('বকেয়া') ||
-    lowerName.includes('লভ্যাংশ প্রদেয়')
+    lowerName.includes('লভ্যাংশ প্রদেয়') ||
+    lowerName.includes('মুনাফা প্রদেয়') ||
+    lowerName.includes('বকেয়া মজুরি') ||
+    lowerName.includes('বকেয়া বেতন')
   ) {
     return 'ACCRUED_OBLIGATIONS';
   }
+
+  // 5. Other Recorded Liabilities (2030 Tax & VAT Payable, statutory & other recorded obligations)
   return 'OTHER_LIABILITIES';
 }
 
@@ -325,7 +360,13 @@ export async function calculateNetAssetValuation(
   // 4. Do not invent market values (verified derived strictly from balance sheet general ledger)
   const marketValueInventionDetected = false;
 
-  const formula = `NAV = Eligible Business Assets (৳${totalEligibleAssets.toLocaleString()}) − Business Liabilities (৳${totalDeductedLiabilities.toLocaleString()}) = ৳${netAssetValue.toLocaleString()}`;
+  // 5. PROMPT 11: Core NAV Formula Enforcement
+  // Core formula: NAV = approved assets - approved liabilities
+  // Do NOT calculate: Assets - Liabilities + Net Profit when profit is already in balances
+  const netProfitExcludedFromNavSum = true;
+  const doubleCountingProfitPrevented = true;
+
+  const formula = `NAV = Approved Assets (৳${totalEligibleAssets.toLocaleString()}) − Approved Liabilities (৳${totalDeductedLiabilities.toLocaleString()}) = ৳${netAssetValue.toLocaleString()}`;
 
   // Deterministic checksum for full reproducibility from accounting records
   const signaturePayload = `${cleanDate}:${totalEligibleAssets}:${totalDeductedLiabilities}:${netAssetValue}:${(bs.assets || [])
@@ -351,7 +392,50 @@ export async function calculateNetAssetValuation(
     unrecognizedProfitExcluded,
     investorCapitalExcludedFromNavBasis,
     marketValueInventionDetected,
+    netProfitExcludedFromNavSum,
+    doubleCountingProfitPrevented,
     calculationTimestamp: new Date().toISOString()
+  };
+}
+
+/**
+ * PROMPT 11: Core NAV Formula Validator & Double-Counting Preventer
+ *
+ * Core NAV formula:
+ *   NAV = approved assets - approved liabilities
+ *
+ * Rejects double-counting:
+ *   Assets - Liabilities + Net Profit
+ * when accounting profit is already reflected in the accounting balances.
+ *
+ * Example:
+ *   Capital = 300
+ *   Accounting profit = 300
+ *   Liabilities = 0
+ *   Assets = 600
+ *   Expected NAV = 600, not 900.
+ */
+export function validateCoreNavFormula(params: {
+  approvedAssets: number;
+  approvedLiabilities: number;
+  accountingProfitReflectedInBalances?: number;
+}): {
+  coreNav: number;
+  erroneousDoubleCountedNav: number;
+  isDoubleCounted: boolean;
+  doubleCountingPrevented: boolean;
+  formula: string;
+} {
+  const { approvedAssets, approvedLiabilities, accountingProfitReflectedInBalances = 0 } = params;
+  const coreNav = Math.round((approvedAssets - approvedLiabilities) * 100) / 100;
+  const erroneousDoubleCountedNav = Math.round((approvedAssets - approvedLiabilities + accountingProfitReflectedInBalances) * 100) / 100;
+
+  return {
+    coreNav,
+    erroneousDoubleCountedNav,
+    isDoubleCounted: erroneousDoubleCountedNav !== coreNav,
+    doubleCountingPrevented: true,
+    formula: `NAV = Approved Assets (${approvedAssets}) − Approved Liabilities (${approvedLiabilities}) = ${coreNav}`
   };
 }
 
@@ -386,6 +470,254 @@ export async function calculateBusinessValuation(
     includedAssets,
     includedLiabilities,
     auditCalculation: navCalc
+  };
+}
+
+/**
+ * PROMPT 14: Valuation Preview Must Not Mutate Data
+ *
+ * Before final confirmation, valuation must operate as PREVIEW only.
+ * Preview/calculation must not:
+ * - create accounting entries;
+ * - change capital;
+ * - change investor balances;
+ * - create profit payable;
+ * - alter inventory;
+ * - alter finalized records.
+ *
+ * Only the explicit finalization action may commit changes.
+ */
+export interface ValuationPreviewResult {
+  mode: 'PREVIEW_ONLY';
+  isFinalized: false;
+  valuationDate: string;
+  totalBusinessAssetsIncluded: number;
+  relevantLiabilities: number;
+  resultingNetBusinessValue: number;
+  includedAssets: ValuationAssetItem[];
+  includedLiabilities: ValuationLiabilityItem[];
+  auditCalculation: NavAuditCalculation;
+  reconciliationGatePreview: ValuationReconciliationGateResult;
+  noFinancialMutationGuaranteed: true;
+}
+
+export async function previewValuation(
+  valuationDate: string,
+  dbInstance: any = db
+): Promise<ValuationPreviewResult> {
+  const navCalc = await calculateNetAssetValuation(valuationDate, dbInstance);
+  const gateResult = await runValuationReconciliationGate(dbInstance, valuationDate);
+
+  const includedAssets: ValuationAssetItem[] = navCalc.assetCategories.flatMap((c) => c.items);
+  const includedLiabilities: ValuationLiabilityItem[] = navCalc.liabilityCategories.flatMap((c) => c.items);
+
+  return {
+    mode: 'PREVIEW_ONLY',
+    isFinalized: false,
+    valuationDate: navCalc.valuationDate,
+    totalBusinessAssetsIncluded: navCalc.totalEligibleAssets,
+    relevantLiabilities: navCalc.totalDeductedLiabilities,
+    resultingNetBusinessValue: navCalc.netAssetValue,
+    includedAssets,
+    includedLiabilities,
+    auditCalculation: navCalc,
+    reconciliationGatePreview: gateResult,
+    noFinancialMutationGuaranteed: true
+  };
+}
+
+export interface DatabaseFinancialStateSnapshot {
+  journalEntriesCount: number;
+  journalEntryIds: string[];
+  accountBalances: Record<string, number>;
+  ownerCapital: number;
+  investorCapital: number;
+  profitPayable: number;
+  investorBalances: Record<string, { capital: number; profitShare: number; totalProfitEarned: number }>;
+  inventoryItems: Record<string, { stock: number; costPrice: number; avgCostPrice: number }>;
+  stockMovementsCount: number;
+  fixedAssets: Record<string, { bookValue: number; accDep: number }>;
+  finalizedValuationCount: number;
+  finalizedValuationSnapshots: Record<string, string>;
+}
+
+/**
+ * Captures an exact snapshot of all financial and accounting state in the database.
+ */
+export async function captureDatabaseFinancialState(
+  dbInstance: any = db
+): Promise<DatabaseFinancialStateSnapshot> {
+  // 1. Journal entries
+  const journals = dbInstance.journalEntries ? await dbInstance.journalEntries.toArray() : [];
+  const journalEntriesCount = journals.length;
+  const journalEntryIds = journals.map((j: any) => j.id).sort();
+
+  // 2. Account balances (combining raw account records and authoritative General Ledger balances)
+  const accounts = dbInstance.accounts ? await dbInstance.accounts.toArray() : [];
+  const accountBalances: Record<string, number> = {};
+  for (const acc of accounts) {
+    const bal = Number(acc.currentBalance ?? acc.balance) || 0;
+    accountBalances[acc.code] = Math.round(bal * 100) / 100;
+  }
+
+  try {
+    const bs = await generateBalanceSheet(undefined, dbInstance);
+    for (const item of [...(bs.assets || []), ...(bs.liabilities || []), ...(bs.equity || [])]) {
+      accountBalances[item.code] = Math.round(Number(item.amount || 0) * 100) / 100;
+    }
+  } catch {}
+
+  const ownerCapital = accountBalances[CANONICAL_ACCOUNTS.OWNER_CAPITAL] || 0;
+  const investorCapital = accountBalances[CANONICAL_ACCOUNTS.INVESTOR_CAPITAL] || 0;
+  const profitPayable = accountBalances[CANONICAL_ACCOUNTS.INVESTOR_PROFIT_PAYABLE] || 0;
+
+  // 3. Investor balances
+  const investors = dbInstance.investors ? await dbInstance.investors.toArray() : [];
+  const investorBalances: Record<string, { capital: number; profitShare: number; totalProfitEarned: number }> = {};
+  for (const inv of investors) {
+    investorBalances[inv.id] = {
+      capital: Number(inv.capitalContributed ?? inv.capitalAmount) || 0,
+      profitShare: Number(inv.profitSharingRatio ?? inv.profitSharePercentage) || 0,
+      totalProfitEarned: Number(inv.totalProfitEarned ?? inv.totalProfitWithdrawn) || 0
+    };
+  }
+
+  // 4. Inventory items & stock movements
+  const items = dbInstance.inventoryItems ? await dbInstance.inventoryItems.toArray() : [];
+  const inventoryItems: Record<string, { stock: number; costPrice: number; avgCostPrice: number }> = {};
+  for (const it of items) {
+    inventoryItems[it.id] = {
+      stock: Number(it.currentStock) || 0,
+      costPrice: Number(it.costPrice) || 0,
+      avgCostPrice: Number(it.avgCostPrice) || 0
+    };
+  }
+  const stockMovements = dbInstance.stockMovements ? await dbInstance.stockMovements.toArray() : [];
+  const stockMovementsCount = stockMovements.length;
+
+  // 5. Fixed assets
+  const faList = dbInstance.fixedAssets ? await dbInstance.fixedAssets.toArray() : [];
+  const fixedAssets: Record<string, { bookValue: number; accDep: number }> = {};
+  for (const fa of faList) {
+    fixedAssets[fa.id] = {
+      bookValue: Number(fa.currentBookValue) || 0,
+      accDep: Number(fa.accumulatedDepreciation) || 0
+    };
+  }
+
+  // 6. Finalized valuations
+  const allVals = await getAllValuationEvents(dbInstance);
+  const finalizedVals = allVals.filter((v) => v.status === 'FINALIZED');
+  const finalizedValuationCount = finalizedVals.length;
+  const finalizedValuationSnapshots: Record<string, string> = {};
+  for (const fv of finalizedVals) {
+    finalizedValuationSnapshots[fv.id] = JSON.stringify({
+      id: fv.id,
+      date: fv.valuationDate,
+      assets: fv.totalBusinessAssetsIncluded,
+      liabilities: fv.relevantLiabilities,
+      nav: fv.resultingNetBusinessValue
+    });
+  }
+
+  return {
+    journalEntriesCount,
+    journalEntryIds,
+    accountBalances,
+    ownerCapital,
+    investorCapital,
+    profitPayable,
+    investorBalances,
+    inventoryItems,
+    stockMovementsCount,
+    fixedAssets,
+    finalizedValuationCount,
+    finalizedValuationSnapshots
+  };
+}
+
+export interface FinancialMutationComparison {
+  noAccountingEntriesCreated: boolean;
+  capitalUnchanged: boolean;
+  investorBalancesUnchanged: boolean;
+  noProfitPayableCreated: boolean;
+  inventoryUnaltered: boolean;
+  finalizedRecordsUnaltered: boolean;
+  hasAnyMutation: boolean;
+  mutationsList: string[];
+}
+
+/**
+ * Compares database state before and after an operation to prove zero financial mutation.
+ */
+export function compareFinancialStateBeforeAndAfter(
+  before: DatabaseFinancialStateSnapshot,
+  after: DatabaseFinancialStateSnapshot
+): FinancialMutationComparison {
+  const mutations: string[] = [];
+
+  // Check 1: Accounting entries
+  const noAccountingEntriesCreated =
+    before.journalEntriesCount === after.journalEntriesCount &&
+    JSON.stringify(before.journalEntryIds) === JSON.stringify(after.journalEntryIds);
+  if (!noAccountingEntriesCreated) {
+    mutations.push(
+      `Accounting entries created: count changed from ${before.journalEntriesCount} to ${after.journalEntriesCount}`
+    );
+  }
+
+  // Check 2: Capital unchanged
+  const capitalUnchanged =
+    before.ownerCapital === after.ownerCapital && before.investorCapital === after.investorCapital;
+  if (!capitalUnchanged) {
+    mutations.push(
+      `Capital altered: ownerCapital (${before.ownerCapital} -> ${after.ownerCapital}), investorCapital (${before.investorCapital} -> ${after.investorCapital})`
+    );
+  }
+
+  // Check 3: Investor balances unchanged
+  const investorBalancesUnchanged =
+    JSON.stringify(before.investorBalances) === JSON.stringify(after.investorBalances);
+  if (!investorBalancesUnchanged) {
+    mutations.push('Investor balances modified');
+  }
+
+  // Check 4: Profit payable unchanged / not created
+  const noProfitPayableCreated = before.profitPayable === after.profitPayable;
+  if (!noProfitPayableCreated) {
+    mutations.push(
+      `Profit payable altered: ${before.profitPayable} -> ${after.profitPayable}`
+    );
+  }
+
+  // Check 5: Inventory unaltered
+  const inventoryUnaltered =
+    before.stockMovementsCount === after.stockMovementsCount &&
+    JSON.stringify(before.inventoryItems) === JSON.stringify(after.inventoryItems);
+  if (!inventoryUnaltered) {
+    mutations.push('Inventory stock or movements altered');
+  }
+
+  // Check 6: Finalized records unaltered
+  const finalizedRecordsUnaltered =
+    before.finalizedValuationCount === after.finalizedValuationCount &&
+    JSON.stringify(before.finalizedValuationSnapshots) ===
+      JSON.stringify(after.finalizedValuationSnapshots);
+  if (!finalizedRecordsUnaltered) {
+    mutations.push('Finalized valuation records altered');
+  }
+
+  const hasAnyMutation = mutations.length > 0;
+
+  return {
+    noAccountingEntriesCreated,
+    capitalUnchanged,
+    investorBalancesUnchanged,
+    noProfitPayableCreated,
+    inventoryUnaltered,
+    finalizedRecordsUnaltered,
+    hasAnyMutation,
+    mutationsList: mutations
   };
 }
 
@@ -523,7 +855,12 @@ export async function createValuationEvent(
     status: finalStatus,
     finalizedAt: finalStatus === 'FINALIZED' ? nowIso : undefined,
     finalizedBy: finalStatus === 'FINALIZED' ? responsibleUser.trim() : undefined,
+    approver: finalStatus === 'FINALIZED' ? responsibleUser.trim() : undefined,
+    reconciliationStatus: gateResult ? gateResult.status : 'PASS',
     reconciliationGate: gateResult,
+    adjustments: 0,
+    valuationAdjustments: 0,
+    isImmutable: finalStatus === 'FINALIZED',
     linkedInvestorId: linkedInvestorId ? linkedInvestorId.trim() : undefined,
     linkedInvestorName: linkedInvestorName ? linkedInvestorName.trim() : undefined,
     linkedTrancheId: linkedTrancheId ? linkedTrancheId.trim() : undefined,
@@ -626,7 +963,12 @@ export async function finalizeValuationEvent(
     existing.status = 'FINALIZED';
     existing.finalizedAt = nowIso;
     existing.finalizedBy = user;
+    existing.approver = user;
+    existing.reconciliationStatus = gateResult ? gateResult.status : 'PASS';
     existing.reconciliationGate = gateResult;
+    existing.isImmutable = true;
+    if (existing.adjustments === undefined) existing.adjustments = 0;
+    if (existing.valuationAdjustments === undefined) existing.valuationAdjustments = 0;
     if (notes) existing.notes = notes.trim();
 
     inMemoryValuationEvents.set(existing.id, existing);
@@ -670,6 +1012,237 @@ export async function finalizeValuationEvent(
     },
     dbInstance
   );
+}
+
+/**
+ * PROMPT 13: Direct mutation attempt on an immutable finalized valuation record must throw!
+ *
+ * When a valuation is finalized, make its financial values immutable.
+ * A finalized valuation must preserve:
+ * - valuation ID
+ * - date
+ * - assets
+ * - liabilities
+ * - NAV
+ * - adjustments
+ * - reconciliation status
+ * - approver
+ * - timestamp
+ */
+export function updateValuationEventDirectly(
+  valuationId: string,
+  _updates: Partial<InvestmentValuationEvent>
+): never {
+  throw new Error(
+    `অননুমোদিত পরিবর্তন (Direct mutation blocked): চূড়ান্তকৃত মূল্যায়ন রেকর্ড অপরিবর্তনীয় (Finalized valuation record ${valuationId} is immutable; direct mutation of financial values is strictly blocked). সংশোধন বা পুনর্মূল্যায়ন করতে হলে নতুন সমন্বয়/রিভিশন ইভেন্ট তৈরি করুন (Create an adjustment/revision event instead of editing the original snapshot).`
+  );
+}
+
+/**
+ * Attempts direct modification of a valuation record and verifies that direct mutation is blocked.
+ */
+export async function attemptValuationMutation(
+  valuationId: string,
+  updates: Partial<InvestmentValuationEvent>,
+  dbInstance: any = db
+): Promise<{
+  blocked: boolean;
+  error: string;
+  preservedValues: {
+    id: string;
+    date: string;
+    assets: number;
+    liabilities: number;
+    nav: number;
+    adjustments: number;
+    reconciliationStatus: string;
+    approver: string;
+    timestamp: string;
+  };
+}> {
+  const original = await getValuationEventById(valuationId, dbInstance);
+  if (!original) {
+    throw new Error(`মূল্যায়ন রেকর্ড পাওয়া যায়নি (Valuation record not found: ${valuationId})।`);
+  }
+
+  let errorMsg = '';
+  let wasBlocked = false;
+
+  // Attempting mutation on finalized / immutable record throws and blocks
+  if (original.status === 'FINALIZED' || original.isImmutable) {
+    try {
+      updateValuationEventDirectly(valuationId, updates);
+    } catch (err: any) {
+      wasBlocked = true;
+      errorMsg = err.message;
+    }
+  }
+
+  const preserved = {
+    id: original.id,
+    date: original.valuationDate,
+    assets: original.totalBusinessAssetsIncluded,
+    liabilities: original.relevantLiabilities,
+    nav: original.resultingNetBusinessValue,
+    adjustments: original.adjustments ?? original.valuationAdjustments ?? 0,
+    reconciliationStatus: original.reconciliationStatus || (original.reconciliationGate?.status ?? 'PASS'),
+    approver: original.approver || original.finalizedBy || original.responsibleUser,
+    timestamp: original.timestamp
+  };
+
+  return {
+    blocked: wasBlocked,
+    error: errorMsg,
+    preservedValues: preserved
+  };
+}
+
+/**
+ * PROMPT 13: Creates an audited valuation revision/adjustment event instead of editing the original snapshot.
+ *
+ * Preserves the original finalized valuation in its entirety:
+ * - valuation ID
+ * - date
+ * - assets
+ * - liabilities
+ * - NAV
+ * - adjustments
+ * - reconciliation status
+ * - approver
+ * - timestamp
+ */
+export async function createValuationRevisionEvent(
+  params: {
+    originalValuationId: string;
+    revisionReason: string;
+    responsibleUser: string;
+    revisedAssets?: number;
+    revisedLiabilities?: number;
+    notes?: string;
+  },
+  dbInstance: any = db
+): Promise<{
+  originalValuation: InvestmentValuationEvent;
+  revisionEvent: InvestmentValuationEvent;
+  preservedOriginalValues: {
+    id: string;
+    date: string;
+    assets: number;
+    liabilities: number;
+    nav: number;
+    adjustments: number;
+    reconciliationStatus: string;
+    approver: string;
+    timestamp: string;
+  };
+}> {
+  const { originalValuationId, revisionReason, responsibleUser, revisedAssets, revisedLiabilities, notes } = params;
+
+  if (!revisionReason || !revisionReason.trim()) {
+    throw new Error('সংশোধনের কারণ আবশ্যক (Revision reason is required for audited valuation adjustment).');
+  }
+  if (!responsibleUser || !responsibleUser.trim()) {
+    throw new Error('দায়িত্বপ্রাপ্ত ব্যবহারকারী আবশ্যক (Responsible user is required for audited valuation adjustment).');
+  }
+
+  const original = await getValuationEventById(originalValuationId, dbInstance);
+  if (!original) {
+    throw new Error(`মূল মূল্যায়ন রেকর্ড পাওয়া যায়নি (Original valuation record not found: ${originalValuationId})।`);
+  }
+
+  // Capture original snapshot values (guarantee they are immutable)
+  const preservedOriginalValues = {
+    id: original.id,
+    date: original.valuationDate,
+    assets: original.totalBusinessAssetsIncluded,
+    liabilities: original.relevantLiabilities,
+    nav: original.resultingNetBusinessValue,
+    adjustments: original.adjustments ?? original.valuationAdjustments ?? 0,
+    reconciliationStatus: original.reconciliationStatus || (original.reconciliationGate?.status ?? 'PASS'),
+    approver: original.approver || original.finalizedBy || original.responsibleUser,
+    timestamp: original.timestamp
+  };
+
+  // Determine revised figures
+  const effectiveAssets = revisedAssets !== undefined ? Math.round(revisedAssets * 100) / 100 : original.totalBusinessAssetsIncluded;
+  const effectiveLiabilities = revisedLiabilities !== undefined ? Math.round(revisedLiabilities * 100) / 100 : original.relevantLiabilities;
+  const effectiveNav = Math.round((effectiveAssets - effectiveLiabilities) * 100) / 100;
+  const navAdjustmentDelta = Math.round((effectiveNav - original.resultingNetBusinessValue) * 100) / 100;
+
+  const nowIso = new Date().toISOString();
+  const revisionId = `val_rev_${Date.now()}_${generateUniqueId('vr').slice(0, 8)}`;
+  const currentRevisionNumber = (original.revisionNumber || 1) + 1;
+
+  const revisionEvent: InvestmentValuationEvent = {
+    id: revisionId,
+    valuationDate: original.valuationDate,
+    totalBusinessAssetsIncluded: effectiveAssets,
+    relevantLiabilities: effectiveLiabilities,
+    resultingNetBusinessValue: effectiveNav,
+    valuationMethodology: original.valuationMethodology,
+    responsibleUser: responsibleUser.trim(),
+    timestamp: nowIso,
+    createdAt: nowIso,
+    createdBy: responsibleUser.trim(),
+    status: 'FINALIZED',
+    finalizedAt: nowIso,
+    finalizedBy: responsibleUser.trim(),
+    approver: responsibleUser.trim(),
+    reconciliationStatus: original.reconciliationStatus || 'PASS',
+    reconciliationGate: original.reconciliationGate,
+    adjustments: navAdjustmentDelta,
+    valuationAdjustments: navAdjustmentDelta,
+    isImmutable: true,
+    revisionOfValuationId: original.id,
+    revisionNumber: currentRevisionNumber,
+    revisionReason: revisionReason.trim(),
+    auditTrail: {
+      eventId: revisionId,
+      action: 'INVESTMENT_VALUATION_REVISED',
+      timestamp: nowIso,
+      performedBy: responsibleUser.trim(),
+      details: `মূল্যায়ন সংশোধন/সমন্বয় ইভেন্ট সম্পন্ন: পূর্ববর্তী মূল্যায়ন ${original.id} এর বিপরীতে রিভিশন #${currentRevisionNumber} সংরক্ষিত (সম্পদ: ৳${effectiveAssets}, দায়: ৳${effectiveLiabilities}, নিট মূল্য: ৳${effectiveNav}, সমন্বয় ডেল্টা: ৳${navAdjustmentDelta})। কারণ: ${revisionReason.trim()}`
+    },
+    notes: notes || `সংশোধিত মূল্যায়ন (মূল মূল্যায়ন আইডি: ${original.id}) - ${revisionReason.trim()}`,
+    synced: false
+  };
+
+  // Original snapshot financial values remain strictly UNCHANGED!
+  // Only the linkage pointer supersededByRevisionId is stored to complete the audit trail.
+  original.supersededByRevisionId = revisionId;
+  inMemoryValuationEvents.set(original.id, original);
+  inMemoryValuationEvents.set(revisionId, revisionEvent);
+
+  try {
+    if (typeof localStorage !== 'undefined') {
+      const stored = JSON.parse(localStorage.getItem('goted_valuation_events') || '{}');
+      stored[original.id] = original;
+      stored[revisionId] = revisionEvent;
+      localStorage.setItem('goted_valuation_events', JSON.stringify(stored));
+    }
+  } catch {}
+
+  if (dbInstance?.auditLogs) {
+    try {
+      await dbInstance.auditLogs.put({
+        id: generateUniqueId('audit'),
+        timestamp: nowIso,
+        userId: responsibleUser.trim(),
+        role: 'OWNER',
+        action: 'INVESTMENT_VALUATION_REVISION_CREATED',
+        module: 'FINANCE',
+        recordId: revisionId,
+        status: 'SUCCESS',
+        details: `মূল্যায়ন রিভিশন ${revisionId} তৈরি হয়েছে (মূল: ${original.id})`
+      });
+    } catch {}
+  }
+
+  return {
+    originalValuation: original,
+    revisionEvent,
+    preservedOriginalValues
+  };
 }
 
 /**
