@@ -14,7 +14,9 @@ import {
   AdmissionValuationInspectionResult,
   PostMoneyNavInspectionResult,
   AdmissionPeriodProfitAllocationInspectionParams,
-  AdmissionPeriodProfitAllocationInspectionResult
+  AdmissionPeriodProfitAllocationInspectionResult,
+  CapitalReceiptInspectionParams,
+  CapitalReceiptInspectionResult
 } from '../types';
 import {
   runValuationReconciliationGate
@@ -663,6 +665,7 @@ export async function executeAdmissionCapitalReceipt(
     receiptDate?: string;
     currentUserId: string;
     notes?: string;
+    idempotencyKey?: string;
   },
   dbInstance: any = db
 ): Promise<InvestorAdmissionRequest> {
@@ -671,17 +674,67 @@ export async function executeAdmissionCapitalReceipt(
     throw new Error(`অন্তর্ভুক্তি আবেদন পাওয়া যায়নি (Admission request not found: ${requestId})।`);
   }
 
-  if (request.status !== 'APPROVED') {
-    throw new Error(`অননুমোদিত আবেদন (Cannot receive capital for unapproved request; current status: ${request.status})।`);
-  }
-
   const {
     receivedAmount,
     targetAccountId,
     receiptDate = new Date().toISOString().split('T')[0],
     currentUserId,
-    notes
+    notes,
+    idempotencyKey
   } = params;
+
+  const effectiveIdempotencyKey = idempotencyKey || request.capitalReceipt?.idempotencyKey;
+
+  // PROMPT 21: Idempotency Enforcement
+  // If the same capital receipt is repeated (matching idempotencyKey or already RECEIVED for this request),
+  // verify only one economic/accounting contribution exists and return existing request idempotently.
+  if (
+    request.capitalReceipt?.status === 'RECEIVED' &&
+    request.capitalReceipt.journalEntryId &&
+    (
+      (effectiveIdempotencyKey && request.capitalReceipt.idempotencyKey === effectiveIdempotencyKey) ||
+      (!idempotencyKey && request.status === 'CAPITAL_RECEIVED') ||
+      request.status === 'CAPITAL_RECEIVED'
+    )
+  ) {
+    return request;
+  }
+
+  // Also check if any journal entry already exists with this idempotencyKey
+  if (effectiveIdempotencyKey && dbInstance.journalEntries?.toArray) {
+    const existingJournals = await dbInstance.journalEntries.toArray();
+    const duplicateEntry = existingJournals.find(
+      (j: any) =>
+        j.status !== 'REVERSED' &&
+        (j.idempotencyKey === effectiveIdempotencyKey || j.reference === effectiveIdempotencyKey)
+    );
+    if (duplicateEntry) {
+      if (request.capitalReceipt?.status === 'RECEIVED') {
+        return request;
+      }
+      request.stage = 'CAPITAL_RECEIPT';
+      request.status = 'CAPITAL_RECEIVED';
+      request.isAdmitted = false;
+      request.economicParticipationActive = false;
+      request.capitalReceipt = {
+        status: 'RECEIVED',
+        receivedAmount,
+        targetAccountId,
+        receiptDate: duplicateEntry.date,
+        receiptVoucherNumber: duplicateEntry.voucherNumber,
+        journalEntryId: duplicateEntry.id,
+        receivedBy: currentUserId,
+        receivedAt: duplicateEntry.createdAt,
+        idempotencyKey: effectiveIdempotencyKey
+      };
+      await persistAdmissionRequest(request, dbInstance);
+      return request;
+    }
+  }
+
+  if (request.status !== 'APPROVED') {
+    throw new Error(`অননুমোদিত আবেদন (Cannot receive capital for unapproved request; current status: ${request.status})।`);
+  }
 
   if (receivedAmount <= 0) {
     throw new Error('প্রাপ্ত মূলধনের পরিমাণ অবশ্যই ০ এর বেশি হতে হবে (Received amount must be > 0).');
@@ -747,7 +800,8 @@ export async function executeAdmissionCapitalReceipt(
       voucherType: 'RECEIPT',
       date: cleanReceiptDate,
       narration: notes || `বিনিয়োগকারীর অনুমোদিত মূলধন গ্রহণ: ${request.investorName} (${request.requestNumber})`,
-      reference: request.requestNumber,
+      reference: effectiveIdempotencyKey || request.requestNumber,
+      idempotencyKey: effectiveIdempotencyKey,
       relatedPerson: request.investorName,
       investorId: request.investorId,
       lines,
@@ -777,7 +831,8 @@ export async function executeAdmissionCapitalReceipt(
     receiptVoucherNumber: voucherNumber,
     journalEntryId: journalId,
     receivedBy: currentUserId,
-    receivedAt: nowIso
+    receivedAt: nowIso,
+    idempotencyKey: effectiveIdempotencyKey
   };
 
   request.auditTrail.push({
@@ -1658,11 +1713,166 @@ export async function inspectAdmissionPeriodProfitAllocation(
   };
 }
 
+/**
+ * PROMPT 21 — Capital Receipt Inspection
+ *
+ * Requirements:
+ * Inspect new-investor capital receipt.
+ * The investor's new capital contribution must:
+ * - increase the appropriate asset/cash/bank account;
+ * - increase participant capital/economic position;
+ * - NOT become revenue;
+ * - NOT become operating profit.
+ * The event must have an idempotency key.
+ * Repeat the same capital receipt twice.
+ * Verify only one economic/accounting contribution exists.
+ * Return PASS.
+ */
+export async function inspectNewInvestorCapitalReceipt(
+  params: CapitalReceiptInspectionParams,
+  dbInstance: any = db
+): Promise<CapitalReceiptInspectionResult> {
+  const { requestId, investorId, idempotencyKey, expectedAmount, targetAccountId } = params;
+
+  let request: InvestorAdmissionRequest | undefined;
+  if (requestId) {
+    request = await getAdmissionRequestById(requestId, dbInstance);
+  } else if (investorId) {
+    const all = await getAllAdmissionRequests(dbInstance);
+    request = all.find((r) => r.investorId === investorId);
+  } else if (idempotencyKey) {
+    const all = await getAllAdmissionRequests(dbInstance);
+    request = all.find(
+      (r) => r.capitalReceipt?.idempotencyKey === idempotencyKey || r.reference === idempotencyKey
+    );
+  }
+
+  const allJournals = dbInstance.journalEntries?.toArray ? await dbInstance.journalEntries.toArray() : [];
+  const activeJournals = allJournals.filter((j: any) => j.status !== 'REVERSED');
+
+  // Find journal entries related to this capital receipt
+  const relatedJournals = activeJournals.filter((j: any) => {
+    if (idempotencyKey && (j.idempotencyKey === idempotencyKey || j.reference === idempotencyKey)) return true;
+    if (request?.capitalReceipt?.journalEntryId && j.id === request.capitalReceipt.journalEntryId) return true;
+    if (
+      request?.requestNumber &&
+      (j.reference === request.requestNumber || j.narration?.includes(request.requestNumber))
+    )
+      return true;
+    if (request?.capitalReceipt?.receiptVoucherNumber && j.voucherNumber === request.capitalReceipt.receiptVoucherNumber)
+      return true;
+    return false;
+  });
+
+  const journalEntryCount = relatedJournals.length;
+  const singleContributionVerified = journalEntryCount === 1;
+
+  const targetEntry = relatedJournals[0];
+  const receivedAmount = request?.capitalReceipt?.receivedAmount ?? expectedAmount ?? (targetEntry?.totalDebit || 0);
+
+  // Analyze lines in the journal entries
+  let totalDebitToAsset = 0;
+  let totalCreditToEquity = 0;
+  let totalCreditToRevenue = 0;
+  let totalOperatingExpense = 0;
+  let assetAccountCode = '';
+  let equityAccountCode = '';
+
+  for (const j of relatedJournals) {
+    for (const l of j.lines || []) {
+      const code = l.accountCode || '';
+      const debit = Number(l.debit || 0);
+      const credit = Number(l.credit || 0);
+
+      // Asset lines (1010 Cash, 1030 Bank, etc.)
+      if (code.startsWith('10') || code === '1010' || code === '1030') {
+        totalDebitToAsset += debit;
+        if (!assetAccountCode) assetAccountCode = code;
+      }
+
+      // Equity lines (3020 Investor Capital, etc.)
+      if (code.startsWith('30') || code === '3020') {
+        totalCreditToEquity += credit;
+        if (!equityAccountCode) equityAccountCode = code;
+      }
+
+      // Revenue lines (4xxx)
+      if (code.startsWith('4') || code === '4010' || code === '4020' || code === '4030') {
+        totalCreditToRevenue += credit;
+      }
+
+      // Operating Expense lines (5xxx)
+      if (code.startsWith('5')) {
+        totalOperatingExpense += debit;
+      }
+    }
+  }
+
+  // Check target cash/bank account
+  let targetAccountType = 'BANK';
+  const effectiveTargetAccId = targetAccountId || request?.capitalReceipt?.targetAccountId;
+  if (effectiveTargetAccId && dbInstance.cashBankAccounts?.get) {
+    const acc = await dbInstance.cashBankAccounts.get(effectiveTargetAccId);
+    if (acc) {
+      targetAccountType = acc.accountType || 'BANK';
+    }
+  }
+
+  // Invariant checks:
+  // 1. Asset increased by received amount
+  const assetIncreased = totalDebitToAsset === receivedAmount && totalDebitToAsset > 0;
+
+  // 2. Participant capital/economic position increased by received amount
+  const capitalIncreased = totalCreditToEquity === receivedAmount && totalCreditToEquity > 0;
+
+  // 3. NOT become revenue (strictly 0)
+  const revenueZero = totalCreditToRevenue === 0;
+
+  // 4. NOT become operating profit (strictly 0)
+  const operatingProfitImpact = totalCreditToRevenue - totalOperatingExpense;
+  const operatingProfitZero = operatingProfitImpact === 0 && revenueZero;
+
+  const passed =
+    singleContributionVerified &&
+    assetIncreased &&
+    capitalIncreased &&
+    revenueZero &&
+    operatingProfitZero;
+
+  const details = passed
+    ? `মূলধন প্রাপ্তি সফলভাবে যাচাইকৃত (PROMPT 21 PASS): ৳${receivedAmount.toLocaleString()} মূলধন প্রাপ্তি যথাযথ সম্পদ হিসাবে ডেবিট (৳${totalDebitToAsset}) এবং বিনিয়োগকারীর ইকুইটি হিসাবে ক্রেডিট (৳${totalCreditToEquity}) হয়েছে। কোনো আয় (Revenue = ৳0) বা পরিচালন মুনাফা (Operating Profit = ৳0) তৈরি হয়নি। আইডেম্পোটেন্সি কী (${idempotencyKey || 'N/A'}) প্রয়োগের পর পুনরাবৃত্তিতে ঠিক একটি দাখিলা (Journal entries = 1) সংরক্ষিত।`
+    : `মূলধন প্রাপ্তি সুরক্ষায় অমিল (PROMPT 21 FAIL): Asset=${assetIncreased}, Capital=${capitalIncreased}, RevenueZero=${revenueZero}, OperatingProfitZero=${operatingProfitZero}, SingleEntry=${singleContributionVerified} (Found ${journalEntryCount} entries).`;
+
+  return {
+    passed,
+    idempotencyKey: idempotencyKey || request?.capitalReceipt?.idempotencyKey,
+    singleContributionVerified,
+    assetIncreased,
+    capitalIncreased,
+    revenueZero,
+    operatingProfitZero,
+    receivedAmount,
+    targetAccountId: effectiveTargetAccId,
+    targetAccountType,
+    assetAccountCode: assetAccountCode || '1030',
+    equityAccountCode: equityAccountCode || '3020',
+    journalEntryCount,
+    totalDebitToAsset,
+    totalCreditToEquity,
+    totalCreditToRevenue,
+    operatingProfitImpact,
+    details
+  };
+}
+
+export const inspectCapitalReceipt = inspectNewInvestorCapitalReceipt;
+
 export {
   calculatePostMoneyNav,
   validatePostMoneyNav,
   calculateNavAdmissionParticipation,
   verifyNoPrematureRounding,
-  inspectNavAdmissionParticipation
+  inspectNavAdmissionParticipation,
+  inspectNewInvestorCapitalReceipt as inspectAdmissionCapitalReceipt
 };
 

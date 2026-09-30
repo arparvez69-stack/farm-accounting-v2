@@ -3526,6 +3526,7 @@ export async function executeInvestorTransaction(
     valuationEventId?: string;
     preMoneyValuation?: number;
     postMoneyValuation?: number;
+    idempotencyKey?: string;
   },
   dbInstance: any = db
 ): Promise<{ investor: Investor; journalEntryId: string; tranche?: InvestmentTranche }> {
@@ -3559,8 +3560,37 @@ export async function executeInvestorTransaction(
         trancheNumber,
         valuationEventId,
         preMoneyValuation,
-        postMoneyValuation
+        postMoneyValuation,
+        idempotencyKey
       } = params;
+
+      // PROMPT 21: Idempotency Check for direct capital transactions
+      if (idempotencyKey && dbInstance.journalEntries?.toArray) {
+        const existingJournals = await dbInstance.journalEntries.toArray();
+        const existingEntry = existingJournals.find(
+          (j: any) =>
+            j.status !== 'REVERSED' &&
+            (j.idempotencyKey === idempotencyKey || j.reference === idempotencyKey)
+        );
+        if (existingEntry) {
+          const inv = existingEntry.investorId
+            ? await dbInstance.investors.get(existingEntry.investorId)
+            : undefined;
+          let tranche: InvestmentTranche | undefined;
+          if ((dbInstance as any).investmentTranches?.toArray) {
+            const tranches = await (dbInstance as any).investmentTranches.toArray();
+            tranche = tranches.find(
+              (t: any) =>
+                t.journalEntryId === existingEntry.id ||
+                t.reference === idempotencyKey ||
+                t.trancheNumber === existingEntry.voucherNumber
+            );
+          }
+          if (inv) {
+            return { investor: inv, journalEntryId: existingEntry.id, tranche };
+          }
+        }
+      }
 
       if (contribution <= 0) {
         throw new Error('Contribution amount must be strictly greater than 0.');
@@ -3704,7 +3734,8 @@ export async function executeInvestorTransaction(
           voucherType: 'RECEIPT',
           date: dateStr,
           narration: `বিনিয়োগকারীর মূলধন জমা: ${validatedInvName} এর বিনিয়োগ ৳${contribution}`,
-          reference: invRef,
+          reference: idempotencyKey || invRef,
+          idempotencyKey: idempotencyKey,
           relatedPerson: validatedInvName,
           investorId: invId,
           attributionStatus: 'VERIFIED',
@@ -14873,5 +14904,11 @@ export { inspectAdmissionValuation } from './admissionService';
 export {
   getInvestorEffectiveAdmissionDate,
   inspectAdmissionPeriodProfitAllocation
+} from './admissionService';
+
+// Capital Receipt Inspection & Idempotency (Prompt 21)
+export {
+  inspectNewInvestorCapitalReceipt,
+  inspectCapitalReceipt
 } from './admissionService';
 

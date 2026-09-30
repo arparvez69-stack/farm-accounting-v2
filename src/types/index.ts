@@ -108,6 +108,7 @@ export interface JournalEntry {
   totalDebit?: number;
   totalCredit?: number;
   reference?: string;
+  idempotencyKey?: string;
   createdBy?: string;
   createdAt: string;
   status?: 'POSTED' | 'DRAFT' | 'REVERSED' | string;
@@ -1357,6 +1358,7 @@ export interface InvestorAdmissionRequest {
     journalEntryId?: string;
     receivedBy?: string;
     receivedAt?: string;
+    idempotencyKey?: string;
   };
 
   // Step 7: Admission
@@ -1772,5 +1774,45 @@ export interface AdmissionPeriodProfitAllocationInspectionResult {
   }>;
   details: string;
   boundaryRule: string;
+}
+
+/**
+ * PROMPT 21: Capital Receipt Inspection
+ * - The investor's new capital contribution must:
+ *   - increase the appropriate asset/cash/bank account;
+ *   - increase participant capital/economic position;
+ *   - NOT become revenue;
+ *   - NOT become operating profit.
+ * - The event must have an idempotency key.
+ * - Repeat the same capital receipt twice -> verify only one economic/accounting contribution exists.
+ */
+export interface CapitalReceiptInspectionParams {
+  requestId?: string;
+  investorId?: string;
+  idempotencyKey?: string;
+  expectedAmount?: number;
+  targetAccountId?: string;
+  dbInstance?: any;
+}
+
+export interface CapitalReceiptInspectionResult {
+  passed: boolean;
+  idempotencyKey?: string;
+  singleContributionVerified: boolean;
+  assetIncreased: boolean;
+  capitalIncreased: boolean;
+  revenueZero: boolean;
+  operatingProfitZero: boolean;
+  receivedAmount: number;
+  targetAccountId?: string;
+  targetAccountType?: string;
+  assetAccountCode: string;
+  equityAccountCode: string;
+  journalEntryCount: number;
+  totalDebitToAsset: number;
+  totalCreditToEquity: number;
+  totalCreditToRevenue: number;
+  operatingProfitImpact: number;
+  details: string;
 }
 
