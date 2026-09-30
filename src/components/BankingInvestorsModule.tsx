@@ -38,8 +38,12 @@ import {
   executeOwnerDrawingTransaction
 } from '../services/transactionService';
 import { generateAmortizationSchedule } from '../accounting/amortizationService';
-import { AmortizationScheduleItem, CashBankAccount, Investor, Loan, UserRole, JournalEntry } from '../types';
+import { AmortizationScheduleItem, CashBankAccount, Investor, Loan, UserRole, JournalEntry, InvestorAdmissionRequest, AdmissionStage } from '../types';
 import { generateTransactionNumber, generateUniqueId, safeInsert } from '../utils/idGenerator';
+import {
+  createAdmissionRequest,
+  getAllAdmissionRequests
+} from '../services/admissionService';
 import {
   BankReconcileTransaction,
   calculateBankReconciliationMetrics,
@@ -135,6 +139,16 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
   const [investorAmount, setInvestorAmount] = useState('');
   const [investorSharePct, setInvestorSharePct] = useState('');
   const [investorDestinationAcc, setInvestorDestinationAcc] = useState('');
+
+  // PROMPT 15: Admission Requests State
+  const [admissionRequests, setAdmissionRequests] = useState<InvestorAdmissionRequest[]>([]);
+  const [showNewAdmissionRequest, setShowNewAdmissionRequest] = useState(false);
+  const [admReqName, setAdmReqName] = useState('');
+  const [admReqPhone, setAdmReqPhone] = useState('');
+  const [admReqContribution, setAdmReqContribution] = useState('');
+  const [admReqSharePct, setAdmReqSharePct] = useState('');
+  const [admReqNotes, setAdmReqNotes] = useState('');
+  const [submittingAdmReq, setSubmittingAdmReq] = useState(false);
 
   // Profit Allocation, Payment & Capital Return Modals
   const [allocatingInvestor, setAllocatingInvestor] = useState<Investor | null>(null);
@@ -329,6 +343,10 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
           const freshInv = invList.find((i) => i.id === selectedInvestor.id);
           if (freshInv) setSelectedInvestor(freshInv);
         }
+        try {
+          const reqs = await getAllAdmissionRequests();
+          setAdmissionRequests(reqs);
+        } catch {}
       } else if (tab === 'owner') {
         const jEntries = await db.journalEntries.toArray();
         const filtered = jEntries
@@ -570,6 +588,55 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
       setMsg({ type: 'error', text: isStorageFailure(err) ? formatStorageErrorMessage(err) : (err.message || 'বিনিয়োগ সংরক্ষণ ব্যর্থ হয়েছে।') });
     } finally {
       setSubmittingInvestor(false);
+    }
+  };
+
+  // PROMPT 15: Create Explicit Investor Admission Request
+  const handleCreateAdmissionRequest = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (submittingAdmReq) return;
+    const amt = parseFloat(admReqContribution) || 0;
+    const share = parseFloat(admReqSharePct) || 0;
+
+    if (!admReqName.trim() || amt <= 0) {
+      setMsg({ type: 'error', text: 'বিনিয়োগকারীর নাম ও প্রস্তাবিত মূলধন সঠিকভাবে লিখুন (মূলধন > ০ হতে হবে)।' });
+      return;
+    }
+
+    if (share <= 0 || share > 100) {
+      setMsg({
+        type: 'error',
+        text: 'চুক্তিভিত্তিক লভ্যাংশ বণ্টন অনুপাত (Profit-sharing ratio) অবশ্যই ০ এর বেশি এবং সর্বোচ্চ ১০০% হতে হবে।'
+      });
+      return;
+    }
+
+    setSubmittingAdmReq(true);
+    try {
+      const newReq = await createAdmissionRequest({
+        investorName: admReqName.trim(),
+        phone: admReqPhone.trim() || undefined,
+        proposedContribution: amt,
+        proposedProfitSharingRatio: share,
+        notes: admReqNotes.trim() || undefined,
+        currentUserId
+      });
+
+      setShowNewAdmissionRequest(false);
+      setAdmReqName('');
+      setAdmReqPhone('');
+      setAdmReqContribution('');
+      setAdmReqSharePct('');
+      setAdmReqNotes('');
+      setMsg({
+        type: 'success',
+        text: `নতুন বিনিয়োগকারী অন্তর্ভুক্তি আবেদন ${newReq.requestNumber} নিবন্ধিত হয়েছে! (পর্যায়: REQUEST, অর্থনৈতিক অংশগ্রহণ: নিষ্ক্রিয়)`
+      });
+      await loadFinanceData();
+    } catch (err: any) {
+      setMsg({ type: 'error', text: isStorageFailure(err) ? formatStorageErrorMessage(err) : (err.message || 'অন্তর্ভুক্তি আবেদন ব্যর্থ হয়েছে।') });
+    } finally {
+      setSubmittingAdmReq(false);
     }
   };
 
@@ -2011,15 +2078,203 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
             </div>
 
             {role === 'OWNER' && (
-              <button
-                onClick={() => setShowNewInvestor(!showNewInvestor)}
-                className="px-3.5 py-2 rounded-xl bg-[#1E5128] hover:bg-[#173F1F] text-white text-[13px] font-bold shadow-xs transition-all cursor-pointer min-h-[40px] flex items-center gap-1.5"
-              >
-                <PlusCircle className="w-4 h-4" />
-                <span>+ নতুন বিনিয়োগকারী</span>
-              </button>
+              <div className="flex items-center gap-2 flex-wrap">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowNewAdmissionRequest(!showNewAdmissionRequest);
+                    setShowNewInvestor(false);
+                  }}
+                  className="px-3.5 py-2 rounded-xl bg-sky-700 hover:bg-sky-800 text-white text-[13px] font-bold shadow-xs transition-all cursor-pointer min-h-[40px] flex items-center gap-1.5"
+                >
+                  <PlusCircle className="w-4 h-4" />
+                  <span>+ অন্তর্ভুক্তি আবেদন (Admission Request)</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowNewInvestor(!showNewInvestor);
+                    setShowNewAdmissionRequest(false);
+                  }}
+                  className="px-3.5 py-2 rounded-xl bg-[#1E5128] hover:bg-[#173F1F] text-white text-[13px] font-bold shadow-xs transition-all cursor-pointer min-h-[40px] flex items-center gap-1.5"
+                >
+                  <PlusCircle className="w-4 h-4" />
+                  <span>+ সরাসরি মূলধন এন্ট্রি</span>
+                </button>
+              </div>
             )}
           </div>
+
+          {/* PROMPT 15: New Admission Request Form */}
+          {showNewAdmissionRequest && (
+            <form onSubmit={handleCreateAdmissionRequest} className="p-4 bg-[#F0F9FF] border border-sky-300 rounded-xl space-y-3">
+              <div className="font-bold text-sky-900 text-[15px] flex items-center justify-between">
+                <span>নতুন বিনিয়োগকারী অন্তর্ভুক্তি আবেদন (Investor Admission Request)</span>
+                <span className="text-xs bg-sky-200 text-sky-800 px-2 py-0.5 rounded font-mono">ধাপ ১: REQUEST</span>
+              </div>
+
+              {/* Protocol Note */}
+              <div className="bg-white border border-sky-200 rounded-lg p-3 text-xs text-sky-950 space-y-1">
+                <div className="font-bold text-sky-900 flex items-center gap-1.5">
+                  <CheckCircle2 className="w-4 h-4 text-sky-600 shrink-0" />
+                  অন্তর্ভুক্তি নীতিমালা ও ৭-পর্যায়ের নিরাপত্তা নিয়ন্ত্রণ (Admission Protocol):
+                </div>
+                <div className="text-[12px] text-sky-800 space-y-0.5 leading-relaxed">
+                  <div>• অন্তর্ভুক্তি পর্যায়ক্রম: <strong>REQUEST → RECONCILIATION → VALUATION → REVIEW → APPROVAL → CAPITAL RECEIPT → ADMISSION</strong>।</div>
+                  <div>• আবেদন করা মাত্রই বিনিয়োগকারীকে অর্থনৈতিক অংশগ্রহণে যুক্ত করা হবে না। <strong>অন্তর্ভুক্তি চূড়ান্ত না হওয়া পর্যন্ত লভ্যাংশ বণ্টনে প্রবেশাধিকার সম্পূর্ণ বন্ধ থাকবে।</strong></div>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs sm:text-[13px] font-semibold text-gray-700 mb-1.5">বিনিয়োগকারীর নাম <span className="text-red-500">*</span></label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="উদাঃ ডাঃ কামাল হাসান"
+                    value={admReqName}
+                    onChange={(e) => setAdmReqName(e.target.value)}
+                    className="w-full bg-white border border-gray-300 rounded-xl px-3.5 py-2.5 text-sm sm:text-[15px] text-gray-900 focus:outline-none focus:border-sky-600 focus:ring-2 focus:ring-sky-600/20 min-h-[44px]"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs sm:text-[13px] font-semibold text-gray-700 mb-1.5">মোবাইল নম্বর (ঐচ্ছিক)</label>
+                  <input
+                    type="text"
+                    inputMode="tel"
+                    placeholder="01XXXXXXXXX"
+                    value={admReqPhone}
+                    onChange={(e) => setAdmReqPhone(e.target.value)}
+                    className="w-full bg-white border border-gray-300 rounded-xl px-3.5 py-2.5 text-sm sm:text-[15px] text-gray-900 focus:outline-none focus:border-sky-600 focus:ring-2 focus:ring-sky-600/20 min-h-[44px]"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs sm:text-[13px] font-semibold text-gray-700 mb-1.5">
+                    প্রস্তাবিত মূলধনের পরিমাণ ৳ (Proposed Contribution) <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="number"
+                    inputMode="decimal"
+                    min="1"
+                    step="any"
+                    required
+                    placeholder="যেমন: 50000"
+                    value={admReqContribution}
+                    onChange={(e) => setAdmReqContribution(e.target.value)}
+                    className="w-full bg-white border border-gray-300 rounded-xl px-3.5 py-2.5 text-sm sm:text-[15px] text-gray-900 font-mono font-bold text-sky-800 focus:outline-none focus:border-sky-600 focus:ring-2 focus:ring-sky-600/20 min-h-[44px]"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs sm:text-[13px] font-semibold text-gray-700 mb-1.5">
+                    প্রস্তাবিত লভ্যাংশ বণ্টন অনুপাত % (Profit-Sharing Ratio) <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="number"
+                    inputMode="decimal"
+                    min="0.1"
+                    max="100"
+                    step="0.1"
+                    required
+                    placeholder="যেমন: 25"
+                    value={admReqSharePct}
+                    onChange={(e) => setAdmReqSharePct(e.target.value)}
+                    className="w-full bg-white border border-gray-300 rounded-xl px-3.5 py-2.5 text-sm sm:text-[15px] text-gray-900 font-mono font-bold text-sky-800 focus:outline-none focus:border-sky-600 focus:ring-2 focus:ring-sky-600/20 min-h-[44px]"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs sm:text-[13px] font-semibold text-gray-700 mb-1.5">আবেদনের বিবরণ বা উদ্দেশ্য (ঐচ্ছিক)</label>
+                <input
+                  type="text"
+                  placeholder="যেমন: ডেইরি সম্প্রসারণ প্রকল্পে বিনিয়োগ প্রস্তাবনা"
+                  value={admReqNotes}
+                  onChange={(e) => setAdmReqNotes(e.target.value)}
+                  className="w-full bg-white border border-gray-300 rounded-xl px-3.5 py-2 text-sm text-gray-900 focus:outline-none focus:border-sky-600 focus:ring-2 focus:ring-sky-600/20 min-h-[40px]"
+                />
+              </div>
+
+              <div className="flex flex-col-reverse sm:flex-row justify-end gap-2.5 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowNewAdmissionRequest(false)}
+                  className="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-gray-200 text-gray-800 text-[13px] font-semibold cursor-pointer min-h-[44px]"
+                >
+                  বাতিল
+                </button>
+                <button
+                  type="submit"
+                  disabled={submittingAdmReq}
+                  className="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-sky-700 hover:bg-sky-800 disabled:bg-gray-400 text-white text-[13px] font-bold cursor-pointer disabled:cursor-not-allowed min-h-[44px] shadow-sm transition-colors flex items-center justify-center gap-2"
+                >
+                  {submittingAdmReq ? (
+                    <>
+                      <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                      <span>আবেদন জমা হচ্ছে...</span>
+                    </>
+                  ) : (
+                    'অন্তর্ভুক্তি আবেদন নথিভুক্ত করুন'
+                  )}
+                </button>
+              </div>
+            </form>
+          )}
+
+          {/* Active Admission Requests Section */}
+          {admissionRequests.length > 0 && (
+            <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-3">
+              <div className="flex items-center justify-between">
+                <h4 className="font-bold text-slate-800 text-[14px] flex items-center gap-2">
+                  <Clock className="w-4 h-4 text-sky-600" />
+                  <span>অন্তর্ভুক্তি আবেদনসমূহ ও পাইপলাইন অবস্থা ({admissionRequests.length})</span>
+                </h4>
+                <span className="text-xs text-slate-500 font-sans">নিরাপদ ৭-ধাপ পর্যায়ক্রম</span>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                {admissionRequests.map((req) => (
+                  <div key={req.id} className="p-3.5 bg-white border border-slate-200 rounded-xl shadow-xs space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="font-mono text-xs font-bold text-sky-800">{req.requestNumber}</span>
+                      <span className={`px-2 py-0.5 rounded text-[11px] font-bold ${
+                        req.stage === 'ADMISSION' ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-900 border border-amber-300'
+                      }`}>
+                        {req.stage}
+                      </span>
+                    </div>
+                    <div>
+                      <h5 className="font-bold text-gray-900 text-sm">{req.investorName}</h5>
+                      <p className="text-xs text-gray-500">{req.requestDate}</p>
+                    </div>
+                    <div className="text-xs font-mono pt-1.5 border-t border-gray-100 flex justify-between">
+                      <span className="font-sans text-gray-600">প্রস্তাবিত মূলধন:</span>
+                      <span className="font-bold text-emerald-700">{fmt(req.proposedContribution)}</span>
+                    </div>
+                    <div className="text-xs font-mono flex justify-between">
+                      <span className="font-sans text-gray-600">প্রস্তাবিত অনুপাত:</span>
+                      <span className="font-bold text-sky-700">{req.proposedProfitSharingRatio}%</span>
+                    </div>
+                    {req.valuation?.preMoneyValuation !== undefined && (
+                      <div className="text-xs font-mono flex justify-between bg-sky-50 px-1.5 py-0.5 rounded">
+                        <span className="font-sans text-sky-800">প্রি-মানি NAV:</span>
+                        <span className="font-bold text-sky-900">{fmt(req.valuation.preMoneyValuation)}</span>
+                      </div>
+                    )}
+                    {req.valuation?.valuationEventId && (
+                      <div className="text-[10px] font-mono text-slate-500 truncate" title={req.valuation.valuationEventId}>
+                        মূল্যায়ন রেফারেন্স: {req.valuation.valuationEventId}
+                      </div>
+                    )}
+                    <div className="text-[11px] text-slate-500 bg-slate-100 p-1.5 rounded">
+                      অর্থনৈতিক অংশগ্রহণ: <strong className={req.economicParticipationActive ? 'text-emerald-700' : 'text-amber-800'}>{req.economicParticipationActive ? 'সক্রিয়' : 'নিষ্ক্রিয় (আবেদনাধীন)'}</strong>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           {showNewInvestor && (
             <form onSubmit={handleCreateInvestor} className="p-4 bg-[#F8FAFC] border border-gray-300 rounded-xl space-y-3">
@@ -2214,9 +2469,15 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
                             <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
                               inv.status === 'EXITED'
                                 ? 'bg-gray-200 text-gray-700'
+                                : (inv.status === 'REQUESTED' || inv.status === 'PENDING_ADMISSION' || inv.status === 'PENDING' || inv.economicParticipationActive === false)
+                                ? 'bg-amber-100 text-amber-900 border border-amber-300'
                                 : 'bg-emerald-100 text-emerald-800 border border-emerald-300'
                             }`}>
-                              {inv.status === 'EXITED' ? 'অব্যাহতিপ্রাপ্ত' : 'সক্রিয় পার্টনার'}
+                              {inv.status === 'EXITED'
+                                ? 'অব্যাহতিপ্রাপ্ত'
+                                : (inv.status === 'REQUESTED' || inv.status === 'PENDING_ADMISSION' || inv.status === 'PENDING' || inv.economicParticipationActive === false)
+                                ? 'আবেদনাধীন (Pending)'
+                                : 'সক্রিয় পার্টনার'}
                             </span>
                           </div>
                           <p className="text-[12px] text-gray-500">{inv.phone || 'ফোন নম্বর নেই'}</p>
@@ -2265,19 +2526,38 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
 
                   {role === 'OWNER' && (
                     <div className="pt-2 grid grid-cols-3 gap-1.5">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setAllocatingInvestor(inv);
-                          setFinalizedFarmProfit('');
-                          setAllocationNotes('');
-                        }}
-                        className="py-1.5 px-2 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 text-xs font-bold flex items-center justify-center gap-1 cursor-pointer transition-colors"
-                        title="ফার্মের প্রকৃত অর্জিত মুনাফা থেকে চুক্তি অনুযায়ী লভ্যাংশ বণ্টন"
-                      >
-                        <Plus className="w-3.5 h-3.5" />
-                        <span>মুনাফা বণ্টন</span>
-                      </button>
+                      {(() => {
+                        const isPending =
+                          inv.status === 'REQUESTED' ||
+                          inv.status === 'PENDING_ADMISSION' ||
+                          inv.status === 'PENDING' ||
+                          inv.economicParticipationActive === false;
+                        return (
+                          <button
+                            type="button"
+                            disabled={isPending}
+                            onClick={() => {
+                              if (isPending) return;
+                              setAllocatingInvestor(inv);
+                              setFinalizedFarmProfit('');
+                              setAllocationNotes('');
+                            }}
+                            className={`py-1.5 px-2 rounded-lg text-xs font-bold flex items-center justify-center gap-1 transition-colors ${
+                              isPending
+                                ? 'bg-gray-100 text-gray-400 border border-gray-200 cursor-not-allowed'
+                                : 'bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 cursor-pointer'
+                            }`}
+                            title={
+                              isPending
+                                ? 'অন্তর্ভুক্তি চূড়ান্ত না হওয়া পর্যন্ত লভ্যাংশ বণ্টন সম্ভব নয় (Admission pending)'
+                                : 'ফার্মের প্রকৃত অর্জিত মুনাফা থেকে চুক্তি অনুযায়ী লভ্যাংশ বণ্টন'
+                            }
+                          >
+                            <Plus className="w-3.5 h-3.5" />
+                            <span>মুনাফা বণ্টন</span>
+                          </button>
+                        );
+                      })()}
                       <button
                         type="button"
                         disabled={payable <= 0}

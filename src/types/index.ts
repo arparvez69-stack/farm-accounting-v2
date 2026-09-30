@@ -806,7 +806,10 @@ export interface Investor {
   financialCapacities?: FinancialCapacity[];
   participantCapacity?: FinancialCapacity;
 
-  status: 'ACTIVE' | 'EXITED' | 'CANCELLED';
+  status: 'ACTIVE' | 'REQUESTED' | 'PENDING_ADMISSION' | 'PENDING' | 'EXITED' | 'CANCELLED';
+  admissionRequestId?: string;
+  isAdmitted?: boolean;
+  economicParticipationActive?: boolean;
   notes?: string;
   synced?: boolean;
 
@@ -864,7 +867,7 @@ export interface ParticipantFinancialProfile {
   isSeparate: boolean;
 }
 
-export type TrancheStatus = 'ACTIVE' | 'PARTIALLY_RETURNED' | 'RETURNED' | 'EXITED' | 'CANCELLED';
+export type TrancheStatus = 'ACTIVE' | 'PENDING_ADMISSION' | 'REQUESTED' | 'PARTIALLY_RETURNED' | 'RETURNED' | 'EXITED' | 'CANCELLED';
 
 export interface InvestmentTranche {
   id: string; // unique tranche ID (e.g. 'tranche_...')
@@ -896,6 +899,8 @@ export interface InvestmentTranche {
 
   // Optional valuation-event reference
   valuationEventId?: string;
+  valuationReference?: string;
+  finalizedValuationId?: string;
   preMoneyValuation?: number;
   postMoneyValuation?: number;
   economicParticipationPercentage?: number;
@@ -1211,6 +1216,9 @@ export interface InvestorAdmissionAudit {
 
   // Valuation Basis
   valuationEventId?: string;
+  valuationReference?: string;
+  finalizedValuationId?: string;
+  valuationBasis?: 'FINALIZED_NAV' | 'SNAPSHOT' | 'BOOK_VALUE' | string;
   snapshotId?: string;
   preMoneyValuation: number;
   contributionAmount: number;
@@ -1232,6 +1240,142 @@ export interface InvestorAdmissionAudit {
   auditExplanation: string;
   timestamp: string;
   responsibleUser: string;
+}
+
+/**
+ * PROMPT 15: New Investor Admission Request & 7-Stage Lifecycle
+ * Stages:
+ * REQUEST -> RECONCILIATION -> VALUATION -> REVIEW -> APPROVAL -> CAPITAL RECEIPT -> ADMISSION
+ *
+ * Invariant: Merely creating an investor record or request does NOT grant active economic participation.
+ * Only explicit completion through the full pipeline grants active status.
+ */
+export type AdmissionStage =
+  | 'REQUEST'
+  | 'RECONCILIATION'
+  | 'VALUATION'
+  | 'REVIEW'
+  | 'APPROVAL'
+  | 'CAPITAL_RECEIPT'
+  | 'ADMISSION';
+
+export type AdmissionRequestStatus =
+  | 'REQUESTED'
+  | 'RECONCILED'
+  | 'VALUED'
+  | 'REVIEWED'
+  | 'APPROVED'
+  | 'CAPITAL_RECEIVED'
+  | 'ADMITTED'
+  | 'REJECTED'
+  | 'CANCELLED';
+
+export interface InvestorAdmissionRequest {
+  id: string; // e.g. 'adm_req_...'
+  requestNumber: string; // e.g. 'AR-2026-001'
+  investorName: string;
+  phone?: string;
+  proposedContribution: number;
+  proposedProfitSharingRatio: number;
+  requestDate: string; // YYYY-MM-DD
+  stage: AdmissionStage;
+  status: AdmissionRequestStatus;
+  isAdmitted: boolean; // strictly false until final ADMISSION step
+  economicParticipationActive: boolean; // strictly false until ADMISSION
+  investorId?: string; // linked candidate investor record
+
+  // Step 1: Request
+  requestDetails?: {
+    requestedBy: string;
+    requestedAt: string;
+    notes?: string;
+  };
+
+  // Step 2: Reconciliation
+  reconciliation?: {
+    status: 'PENDING' | 'PASS' | 'UNRESOLVED';
+    reconciledAt?: string;
+    reconciledBy?: string;
+    gateResult?: ValuationReconciliationGateResult;
+    notes?: string;
+  };
+
+  // Step 3: Valuation
+  valuation?: {
+    status: 'PENDING' | 'VALUED' | 'FINALIZED';
+    valuationEventId?: string;
+    valuationReference?: string;
+    finalizedValuationId?: string;
+    valuationBasis?: 'FINALIZED_NAV' | 'SNAPSHOT' | 'BOOK_VALUE' | string;
+    preMoneyValuation?: number;
+    postMoneyValuation?: number;
+    calculatedParticipationRatio?: number;
+    calculatedParticipationPercentage?: number;
+    valuedAt?: string;
+    valuedBy?: string;
+    isFinalized?: boolean;
+    finalizedAt?: string;
+    finalizedBy?: string;
+  };
+
+  // Step 4: Review
+  review?: {
+    status: 'PENDING' | 'REVIEWED';
+    reviewedAt?: string;
+    reviewedBy?: string;
+    reviewNotes?: string;
+    approvedRecommendation?: boolean;
+  };
+
+  // Step 5: Approval
+  approval?: {
+    status: 'PENDING' | 'APPROVED' | 'REJECTED';
+    approvedAt?: string;
+    approvedBy?: string;
+    approvalNotes?: string;
+  };
+
+  // Step 6: Capital Receipt
+  capitalReceipt?: {
+    status: 'PENDING' | 'RECEIVED';
+    receivedAmount?: number;
+    targetAccountId?: string;
+    receiptDate?: string;
+    receiptVoucherNumber?: string;
+    journalEntryId?: string;
+    receivedBy?: string;
+    receivedAt?: string;
+  };
+
+  // Step 7: Admission
+  admission?: {
+    status: 'PENDING' | 'ADMITTED';
+    admittedInvestorId?: string;
+    admittedTrancheId?: string;
+    admissionAuditId?: string;
+    admissionDate?: string;
+    admittedBy?: string;
+    admittedAt?: string;
+    valuationEventId?: string;
+    valuationReference?: string;
+    finalizedValuationId?: string;
+    preMoneyValuation?: number;
+    postMoneyValuation?: number;
+  };
+
+  auditTrail: Array<{
+    stage: AdmissionStage;
+    action: string;
+    timestamp: string;
+    performedBy: string;
+    details: string;
+  }>;
+
+  notes?: string;
+  createdBy: string;
+  createdAt: string;
+  updatedAt?: string;
+  synced?: boolean;
 }
 
 export interface InvestorAllocationDistributionItem {
@@ -1458,5 +1602,54 @@ export interface RecurringExpenseTemplate {
   dayOfMonth: number;
   active: boolean;
   synced?: boolean;
+}
+
+/**
+ * PROMPT 17: Pre-Money NAV Admission Inspection
+ * Validates that admission valuation strictly uses the finalized business NAV immediately before admission
+ * and does NOT use original nominal capital only, historical contribution total only, or current cash only.
+ */
+export interface AdmissionValuationInspectionResult {
+  passed: boolean;
+  preMoneyNav: number;
+  finalizedBusinessNav: number;
+  nominalCapitalOnly: number;
+  historicalContributionTotal: number;
+  currentCashOnly: number;
+  referencedValuationEventId?: string;
+  valuationReference?: string;
+  isFinalizedValuationReferenced: boolean;
+  valuationReferenceStored: boolean;
+  rejectedNominalCapitalOnly: boolean;
+  rejectedHistoricalContributionOnly: boolean;
+  rejectedCurrentCashOnly: boolean;
+  details: string;
+}
+
+/**
+ * PROMPT 18: Post-Money NAV Calculation & Double-Profit Prevention
+ * Formula: POST-MONEY NAV = PRE-MONEY NAV + NEW CAPITAL
+ * Example: Pre-money NAV = 600, New capital = 100 -> Post-money NAV = 700.
+ * Strictly prohibits adding profit again.
+ */
+export interface PostMoneyNavCalculationResult {
+  preMoneyNav: number;
+  newCapital: number;
+  postMoneyNav: number;
+  formula: string;
+  profitDoubleCounted: boolean;
+  erroneousWithProfitNav?: number;
+  auditExplanation: string;
+}
+
+export interface PostMoneyNavInspectionResult {
+  passed: boolean;
+  preMoneyNav: number;
+  newCapital: number;
+  postMoneyNav: number;
+  expectedPostMoneyNav: number;
+  formula: string;
+  profitDoubleCounted: boolean;
+  details: string;
 }
 

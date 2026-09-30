@@ -68,6 +68,10 @@ import { runCorrectNavFormulaTests } from './testCorrectNavFormula';
 import { runSeparateProfitFromValuationTests } from './testSeparateProfitFromValuation';
 import { runImmutableValuationSnapshotTests } from './testImmutableValuationSnapshot';
 import { runValuationPreviewNoMutationTests } from './testValuationPreviewNoMutation';
+import { runPrompt15AdmissionRequestTests } from './testPrompt15AdmissionRequest';
+import { runPrompt16BlockAdmissionWithoutFinalValuationTests } from './testPrompt16BlockAdmissionWithoutFinalValuation';
+import { runPrompt17PreMoneyNavAdmissionValuationTests } from './testPrompt17PreMoneyNavAdmissionValuation';
+import { runPrompt18PostMoneyNavTests } from './testPrompt18PostMoneyNav';
 
 interface SuiteResult {
   total: number;
@@ -172,6 +176,10 @@ async function main() {
   suiteResults.push(await runSeparateProfitFromValuationTests());
   suiteResults.push(await runImmutableValuationSnapshotTests());
   suiteResults.push(await runValuationPreviewNoMutationTests());
+  suiteResults.push(await runPrompt15AdmissionRequestTests());
+  suiteResults.push(await runPrompt16BlockAdmissionWithoutFinalValuationTests());
+  suiteResults.push(await runPrompt17PreMoneyNavAdmissionValuationTests());
+  suiteResults.push(await runPrompt18PostMoneyNavTests());
 
   // Strictly aggregate actual executed assertions — no manual +10 or phantom counts
   const total = suiteResults.reduce((s, r) => s + (r.total || 0), 0);

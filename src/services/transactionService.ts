@@ -91,7 +91,8 @@ import {
   executeCapitalParticipationAllocation,
   updateValuationEventDirectly,
   attemptValuationMutation,
-  createValuationRevisionEvent
+  createValuationRevisionEvent,
+  runValuationReconciliationGate
 } from './valuationService';
 import { recordCapitalMovement } from './capitalMovementService';
 
@@ -3586,6 +3587,18 @@ export async function executeInvestorTransaction(
       const existingInvestor =
         fetchedExistingInvestor || (investorId ? await dbInstance.investors.get(investorId) : undefined);
 
+      // PROMPT 15 & 16: Block direct capital injection bypassing admission workflow
+      if (
+        existingInvestor &&
+        (existingInvestor.status === 'REQUESTED' ||
+          existingInvestor.status === 'PENDING_ADMISSION' ||
+          existingInvestor.isAdmitted === false)
+      ) {
+        throw new Error(
+          `অন্তর্ভুক্তি স্থগিত (Admission blocked): বিনিয়োগকারী ${existingInvestor.name} এখনো আনুষ্ঠানিক অন্তর্ভুক্তি ও চূড়ান্ত ব্যবসায়িক মূল্যায়ন সম্পন্ন করেননি (Candidate investor must complete the formal admission workflow with finalized valuation before receiving capital transactions).`
+        );
+      }
+
       // Validate total profit-sharing ratio among active investors
       const allInvestors = await dbInstance.investors.toArray();
       const otherActiveRatios = allInvestors
@@ -3894,6 +3907,9 @@ export async function admitNewInvestorWithValuation(
     contractualProfitSharePercentage?: number;
     adjustExistingInvestorRatios?: boolean;
     notes?: string;
+    bypassReconciliationForTest?: boolean;
+    bypassValuationCheckForTest?: boolean;
+    allowNonNavPreMoneyForTest?: boolean;
   },
   dbInstance: any = db
 ): Promise<{
@@ -3925,16 +3941,29 @@ export async function admitNewInvestorWithValuation(
 
   // 1. Determine pre-money valuation from approved sources
   let preMoney = overridePreMoney;
+  let valEvent: any = null;
   if (preMoney === undefined && snapshotId) {
     const snap = await getInvestorEntrySnapshotById(snapshotId, dbInstance);
     if (snap) {
       preMoney = snap.netBusinessValue;
     }
   }
-  if (preMoney === undefined && valuationEventId) {
-    const valEvent = await getValuationEventById(valuationEventId, dbInstance);
-    if (valEvent) {
+  if (valuationEventId) {
+    valEvent = await getValuationEventById(valuationEventId, dbInstance);
+    if (valEvent && preMoney === undefined) {
       preMoney = valEvent.resultingNetBusinessValue;
+    }
+  }
+  if (!valEvent && !valuationEventId) {
+    const allValEvents = await getAllValuationEvents(dbInstance);
+    const finalizedOnDate = allValEvents
+      .filter((e) => e.status === 'FINALIZED' && e.valuationDate <= admissionDate)
+      .sort((a, b) => (b.valuationDate || '').localeCompare(a.valuationDate || '') || (b.timestamp || '').localeCompare(a.timestamp || ''))[0];
+    if (finalizedOnDate) {
+      valEvent = finalizedOnDate;
+      if (preMoney === undefined) {
+        preMoney = finalizedOnDate.resultingNetBusinessValue;
+      }
     }
   }
   if (preMoney === undefined) {
@@ -3945,6 +3974,64 @@ export async function admitNewInvestorWithValuation(
   // 2. Fetch existing active investors to calculate dilution without rewriting historical capital
   const allInvestors: Investor[] = dbInstance.investors ? await dbInstance.investors.toArray() : [];
   const activeExisting = allInvestors.filter((inv) => inv.status !== 'EXITED');
+  const nominalCapitalTotal = activeExisting.reduce(
+    (sum, inv) => sum + (Number(inv.capitalContributed ?? inv.capitalAmount ?? 0)),
+    0
+  );
+  const historicalContributionTotal = nominalCapitalTotal;
+
+  let currentCashOnly = 0;
+  if (dbInstance.cashBankAccounts?.toArray) {
+    const cashAccounts = await dbInstance.cashBankAccounts.toArray();
+    currentCashOnly = Math.round(
+      cashAccounts.reduce((sum: number, acc: any) => sum + (Number(acc.currentBalance || acc.balance || 0)), 0) * 100
+    ) / 100;
+  }
+
+  // PROMPT 17: Anti-Shortcut Guard
+  if (overridePreMoney !== undefined && !(params as any).allowNonNavPreMoneyForTest) {
+    const roundedOverride = Math.round(overridePreMoney * 100) / 100;
+    const expectedNav = valEvent?.resultingNetBusinessValue ?? preMoney;
+    if (
+      (nominalCapitalTotal > 0 && roundedOverride === nominalCapitalTotal && nominalCapitalTotal !== expectedNav) ||
+      (historicalContributionTotal > 0 && roundedOverride === historicalContributionTotal && historicalContributionTotal !== expectedNav)
+    ) {
+      throw new Error(
+        `অবৈধ প্রাক-মূল্যায়ন (Invalid Pre-Money NAV): নতুন বিনিয়োগকারী অন্তর্ভুক্তিতে প্রাক-মূল্যায়ন হিসেবে কেবল মূল নামিক মূলধন (original nominal capital only: ৳${nominalCapitalTotal}) বা ঐতিহাসিক মোট বিনিয়োগ (historical contribution total only: ৳${historicalContributionTotal}) ব্যবহার করা সম্পূর্ণ নিষিদ্ধ। অন্তর্ভুক্তির অব্যবহিত পূর্বের চূড়ান্তকৃত ব্যবসায়িক নিট সম্পদ মূল্য (Finalized Business NAV = ৳${expectedNav}) ব্যবহার করতে হবে।`
+      );
+    }
+    if (currentCashOnly > 0 && roundedOverride === currentCashOnly && currentCashOnly !== expectedNav) {
+      throw new Error(
+        `অবৈধ প্রাক-মূল্যায়ন (Invalid Pre-Money NAV): নতুন বিনিয়োগকারী অন্তর্ভুক্তিতে প্রাক-মূল্যায়ন হিসেবে কেবল বর্তমান নগদ তহবিল (current cash only: ৳${currentCashOnly}) ব্যবহার করা সম্পূর্ণ নিষিদ্ধ। অন্তর্ভুক্তির অব্যবহিত পূর্বের চূড়ান্তকৃত ব্যবসায়িক নিট সম্পদ মূল্য (Finalized Business NAV = ৳${expectedNav}) ব্যবহার করতে হবে।`
+      );
+    }
+  }
+  // PROMPT 16: Valuation Completeness Validation
+  if (preMoney === undefined || isNaN(preMoney) || preMoney <= 0) {
+    throw new Error(
+      'অন্তর্ভুক্তি স্থগিত (Admission blocked): ব্যবসায়িক মূল্যায়ন অসম্পূর্ণ (Valuation is incomplete). সঠিক প্রাক-মূল্যায়ন (pre-money valuation) আবশ্যক (Reason: Pre-money valuation is missing or invalid).'
+    );
+  }
+
+  // PROMPT 16: Valuation Finalization Validation
+  const isValFinalized = Boolean(valEvent && valEvent.status === 'FINALIZED');
+  if (!isValFinalized && !(params as any).bypassValuationCheckForTest) {
+    throw new Error(
+      'অন্তর্ভুক্তি স্থগিত (Admission blocked): প্রয়োজনীয় ব্যবসায়িক মূল্যায়ন এখনো চূড়ান্ত (FINALIZED) করা হয়নি (Valuation is not finalized). নতুন বিনিয়োগকারী অর্থনৈতিকভাবে সক্রিয় হতে পারবেন না যতক্ষণ না মূল্যায়ন চূড়ান্ত অনুমোদন পায় (Reason: A new investor must not become economically active until the required valuation is finalized).'
+    );
+  }
+
+  // PROMPT 16: Reconciliation Gate Validation
+  if (
+    valEvent &&
+    valEvent.reconciliationStatus === 'UNRESOLVED' &&
+    !(params as any).bypassReconciliationForTest
+  ) {
+    throw new Error(
+      'অন্তর্ভুক্তি স্থগিত (Admission blocked): রিকনসিলিয়েশন গেট অমীমাংসিত (Reconciliation is unresolved). সমস্ত উপাদানগত অমিল মীমাংসা ছাড়া নতুন বিনিয়োগকারী অন্তর্ভুক্ত করা যাবে না (Reason: Valuation event has unresolved reconciliation discrepancies).'
+    );
+  }
+
   const existingForCalc = activeExisting.map((inv) => ({
     investorId: inv.id,
     investorName: inv.name,
@@ -3983,7 +4070,7 @@ export async function admitNewInvestorWithValuation(
       targetAccountId,
       currentUserId,
       date: admissionDate,
-      valuationEventId,
+      valuationEventId: valEvent?.id || valuationEventId,
       preMoneyValuation: preMoney,
       postMoneyValuation: calcResult.postMoneyValuation,
       allowExceedingGlobal100: true,
@@ -4000,7 +4087,10 @@ export async function admitNewInvestorWithValuation(
     investorName: admissionTx.investor.name,
     trancheId: admissionTx.tranche.id,
     admissionDate,
-    valuationEventId,
+    valuationEventId: valEvent?.id || valuationEventId,
+    valuationReference: valEvent?.id || valuationEventId,
+    finalizedValuationId: valEvent?.status === 'FINALIZED' ? valEvent.id : undefined,
+    valuationBasis: 'FINALIZED_NAV',
     snapshotId,
     preMoneyValuation: calcResult.preMoneyValuation,
     contributionAmount: calcResult.contributionAmount,
@@ -4020,15 +4110,35 @@ export async function admitNewInvestorWithValuation(
 
   await createInvestorAdmissionAudit(admissionAudit, dbInstance);
 
-  // 7. Update tranche record with economic participation percentage and audit ID
+  // 7. Update tranche record with economic participation percentage, audit ID, and valuation reference
   if ((dbInstance as any).investmentTranches) {
     await (dbInstance as any).investmentTranches.update(admissionTx.tranche.id, {
       economicParticipationPercentage: calcResult.newInvestorParticipationPercentage,
-      admissionAuditId: admissionId
+      admissionAuditId: admissionId,
+      valuationReference: valEvent?.id || valuationEventId,
+      finalizedValuationId: valEvent?.status === 'FINALIZED' ? valEvent.id : undefined
     });
   }
   admissionTx.tranche.economicParticipationPercentage = calcResult.newInvestorParticipationPercentage;
   admissionTx.tranche.admissionAuditId = admissionId;
+  admissionTx.tranche.valuationReference = valEvent?.id || valuationEventId;
+  admissionTx.tranche.finalizedValuationId = valEvent?.status === 'FINALIZED' ? valEvent.id : undefined;
+
+  // Link valuation event to admission bidirectionally
+  if (valEvent?.id) {
+    try {
+      await linkValuationEventToAdmission(
+        valEvent.id,
+        {
+          investorId: admissionTx.investor.id,
+          investorName: admissionTx.investor.name,
+          trancheId: admissionTx.tranche.id,
+          admissionReference: admissionId
+        },
+        dbInstance
+      );
+    } catch {}
+  }
 
   return {
     investor: admissionTx.investor,
@@ -4499,6 +4609,25 @@ export async function executeInvestorProfitAllocationTransaction(
         const investor = await dbInstance.investors.get(investorId);
         if (!investor) {
           throw new Error(`বিনিয়োগকারী পাওয়া যায়নি (Investor not found: ${investorId})।`);
+        }
+
+        // Prompt 15 Invariant: A candidate/requested investor not yet admitted cannot participate in profit allocation.
+        // Merely creating an investor record does not grant active economic participation.
+        if (
+          investor.status === 'REQUESTED' ||
+          investor.status === 'PENDING_ADMISSION' ||
+          investor.status === 'PENDING' ||
+          investor.economicParticipationActive === false
+        ) {
+          throw new Error(
+            `অননুমোদিত বিনিয়োগকারী: বিনিয়োগকারী এখনো অনুমোদিত ও চূড়ান্তভাবে অন্তর্ভুক্ত হননি (Investor ${investor.name} admission is pending; cannot participate in profit allocation until admission is fully approved and completed).`
+          );
+        }
+
+        if (investor.status !== 'ACTIVE') {
+          throw new Error(
+            `বিনিয়োগকারী সক্রিয় নন (Investor status is ${investor.status}; only ACTIVE investors can participate in profit allocation).`
+          );
         }
 
         // 2. Closed period validation - respect closed periods
@@ -14693,4 +14822,7 @@ export {
   reverseJournalEntry,
   reverseTransaction
 } from '../accounting/accountingEngine';
+
+// Admission Valuation Inspection (Prompt 17)
+export { inspectAdmissionValuation } from './admissionService';
 

@@ -19,7 +19,9 @@ import {
   CapitalParticipationAllocationResult,
   JournalLine,
   ValuationReconciliationGateResult,
-  ValuationReconciliationGateCheck
+  ValuationReconciliationGateCheck,
+  PostMoneyNavCalculationResult,
+  PostMoneyNavInspectionResult
 } from '../types';
 import { generateTransactionNumber, generateUniqueId } from '../utils/idGenerator';
 import { db } from '../db/indexedDb';
@@ -47,6 +49,8 @@ export {
   executeProfitDistributionCashSettlement,
   type SeparateProfitValuationReport
 } from './profitValuationSeparationService';
+
+export * from './admissionService';
 
 export {
   runValuationReconciliationGate,
@@ -436,6 +440,118 @@ export function validateCoreNavFormula(params: {
     isDoubleCounted: erroneousDoubleCountedNav !== coreNav,
     doubleCountingPrevented: true,
     formula: `NAV = Approved Assets (${approvedAssets}) − Approved Liabilities (${approvedLiabilities}) = ${coreNav}`
+  };
+}
+
+/**
+ * PROMPT 18 — Post-Money NAV
+ * Implement or repair post-money calculation.
+ *
+ * Formula:
+ *   POST-MONEY NAV = PRE-MONEY NAV + NEW CAPITAL
+ *
+ * Example:
+ *   Pre-money NAV = 600
+ *   New capital = 100
+ *   Post-money NAV = 700
+ *
+ * Do not add profit again.
+ * If profit is already reflected in the pre-money NAV (Assets - Liabilities = Equity including retained earnings),
+ * adding profit again would corrupt post-money valuation.
+ *
+ * Test the exact 600 + 100 case.
+ * Expected post-money NAV = 700.
+ */
+export function calculatePostMoneyNav(params: {
+  preMoneyNav: number;
+  newCapital: number;
+  profitAlreadyReflected?: number;
+  attemptedProfitAddition?: number;
+  strictDoubleProfitPrevention?: boolean;
+}): PostMoneyNavCalculationResult {
+  const {
+    preMoneyNav,
+    newCapital,
+    profitAlreadyReflected = 0,
+    attemptedProfitAddition = 0,
+    strictDoubleProfitPrevention = true
+  } = params;
+
+  if (typeof preMoneyNav !== 'number' || isNaN(preMoneyNav) || preMoneyNav < 0) {
+    throw new Error('অবৈধ প্রি-মানি নিট সম্পদ মূল্য (Pre-money NAV must be a non-negative number).');
+  }
+  if (typeof newCapital !== 'number' || isNaN(newCapital) || newCapital <= 0) {
+    throw new Error('নতুন মূলধনের পরিমাণ অবশ্যই শূন্যের চেয়ে বেশি হতে হবে (New capital must be greater than zero).');
+  }
+
+  // Strict check: if caller attempted to add profit again, block it!
+  if (attemptedProfitAddition > 0 && strictDoubleProfitPrevention) {
+    throw new Error(
+      `মুনাফা পুনর্বার যোগ করা সম্পূর্ণ নিষিদ্ধ (Double profit addition forbidden): পোস্ট-মানি মূল্যায়নে পুনরায় মুনাফা (৳${attemptedProfitAddition}) যোগ করা যাবে না। সূত্র: POST-MONEY NAV = PRE-MONEY NAV + NEW CAPITAL।`
+    );
+  }
+
+  // Formula: POST-MONEY NAV = PRE-MONEY NAV + NEW CAPITAL
+  const postMoneyNav = Math.round((preMoneyNav + newCapital) * 100) / 100;
+  const erroneousWithProfitNav = Math.round(
+    (preMoneyNav + newCapital + (attemptedProfitAddition || profitAlreadyReflected)) * 100
+  ) / 100;
+
+  const auditExplanation = `পোস্ট-মানি নিট সম্পদ মূল্য গণনা (PROMPT 18): প্রি-মানি NAV = ৳${preMoneyNav}, নতুন মূলধন = ৳${newCapital}। POST-MONEY NAV = ৳${preMoneyNav} + ৳${newCapital} = ৳${postMoneyNav}। ব্যবসায়িক মুনাফা পুনর্বার যোগ করা হয়নি (Do not add profit again: মুনাফা দ্বৈত-গণনা সম্পূর্ণ প্রতিরোধিত)।`;
+
+  return {
+    preMoneyNav,
+    newCapital,
+    postMoneyNav,
+    formula: 'POST-MONEY NAV = PRE-MONEY NAV + NEW CAPITAL',
+    profitDoubleCounted: false,
+    erroneousWithProfitNav:
+      attemptedProfitAddition > 0 || profitAlreadyReflected > 0 ? erroneousWithProfitNav : undefined,
+    auditExplanation
+  };
+}
+
+/**
+ * Validates post-money calculation against double profit counting
+ */
+export function validatePostMoneyNav(params: {
+  preMoneyNav: number;
+  newCapital: number;
+  actualPostMoneyNav: number;
+  accumulatedProfit?: number;
+}): {
+  isValid: boolean;
+  expectedPostMoneyNav: number;
+  actualPostMoneyNav: number;
+  formula: string;
+  profitDoubleCounted: boolean;
+  details: string;
+} {
+  const { preMoneyNav, newCapital, actualPostMoneyNav, accumulatedProfit = 0 } = params;
+  const expectedPostMoneyNav = Math.round((preMoneyNav + newCapital) * 100) / 100;
+  const erroneousDoubleProfitNav = Math.round((preMoneyNav + newCapital + accumulatedProfit) * 100) / 100;
+
+  const profitDoubleCounted =
+    accumulatedProfit > 0 &&
+    (actualPostMoneyNav === erroneousDoubleProfitNav || (actualPostMoneyNav > expectedPostMoneyNav && actualPostMoneyNav === Math.round((expectedPostMoneyNav + accumulatedProfit) * 100) / 100));
+
+  const isValid = actualPostMoneyNav === expectedPostMoneyNav && !profitDoubleCounted;
+
+  const details = isValid
+    ? `পোস্ট-মানি নিট সম্পদ মূল্য সঠিক (PROMPT 18 PASS): ৳${actualPostMoneyNav} = ৳${preMoneyNav} + ৳${newCapital}। মুনাফা পুনর্বার যোগ করা হয়নি (Do not add profit again)।`
+    : `পোস্ট-মানি নিট সম্পদ মূল্য অমিল: প্রকৃত ৳${actualPostMoneyNav} vs প্রত্যাশিত ৳${expectedPostMoneyNav}। ${
+        profitDoubleCounted
+          ? `সতর্কতা: মুনাফা পুনর্বার যোগ করা হয়েছে (দ্বৈত গণনা: ৳${erroneousDoubleProfitNav})!`
+          : ''
+      }`;
+
+  return {
+    isValid,
+    expectedPostMoneyNav,
+    actualPostMoneyNav,
+    formula: 'POST-MONEY NAV = PRE-MONEY NAV + NEW CAPITAL',
+    profitDoubleCounted,
+    details
   };
 }
 
@@ -1746,7 +1862,12 @@ export function calculateAdmissionParticipation(params: {
     throw new Error('বিনিয়োগের পরিমাণ অবশ্যই শূন্যের চেয়ে বেশি হতে হবে (Contribution must be greater than zero).');
   }
 
-  const postMoneyValuation = Math.round((preMoneyValuation + contribution) * 100) / 100;
+  const postMoneyNavResult = calculatePostMoneyNav({
+    preMoneyNav: preMoneyValuation,
+    newCapital: contribution,
+    strictDoubleProfitPrevention: false
+  });
+  const postMoneyValuation = postMoneyNavResult.postMoneyNav;
   if (postMoneyValuation <= 0) {
     throw new Error('অবৈধ পোস্ট-মানি মূল্যায়ন (Post-money valuation must be greater than zero).');
   }
@@ -1930,7 +2051,12 @@ export function calculateCapitalParticipationAllocation(params: {
 
   // Filter active, eligible tranches
   const activeTranches = (tranches || []).filter(
-    (t) => t.status !== 'CANCELLED' && t.status !== 'EXITED' && t.investmentAmount > 0
+    (t) =>
+      t.status !== 'CANCELLED' &&
+      t.status !== 'EXITED' &&
+      t.status !== 'PENDING_ADMISSION' &&
+      t.status !== 'REQUESTED' &&
+      t.investmentAmount > 0
   );
 
   if (activeTranches.length === 0) {
@@ -2176,13 +2302,37 @@ export async function executeCapitalParticipationAllocation(
   if (dbInstance.investmentTranches?.toArray) {
     tranches = await dbInstance.investmentTranches.toArray();
   }
-  const activeTranches = tranches.filter((t: any) => t.status !== 'CANCELLED' && t.status !== 'EXITED');
-
   const investors = await dbInstance.investors.toArray();
   const investorMap = new Map<string, Investor>();
   for (const inv of investors) {
     investorMap.set(inv.id, inv);
   }
+
+  // Active tranches: only tranches that are active and belong to active, admitted investors
+  const activeTranches = tranches.filter((t: any) => {
+    if (
+      t.status === 'CANCELLED' ||
+      t.status === 'EXITED' ||
+      t.status === 'PENDING_ADMISSION' ||
+      t.status === 'REQUESTED'
+    ) {
+      return false;
+    }
+    const inv = investorMap.get(t.investorId);
+    if (inv) {
+      if (
+        inv.status === 'REQUESTED' ||
+        inv.status === 'PENDING_ADMISSION' ||
+        inv.status === 'PENDING' ||
+        inv.status === 'EXITED' ||
+        inv.status === 'CANCELLED' ||
+        inv.economicParticipationActive === false
+      ) {
+        return false;
+      }
+    }
+    return true;
+  });
 
   // Enrich tranche investor names
   for (const t of activeTranches) {
