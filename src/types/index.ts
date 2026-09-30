@@ -1284,6 +1284,7 @@ export type AdmissionRequestStatus =
 export interface InvestorAdmissionRequest {
   id: string; // e.g. 'adm_req_...'
   requestNumber: string; // e.g. 'AR-2026-001'
+  reference?: string;
   investorName: string;
   phone?: string;
   proposedContribution: number;

@@ -168,6 +168,7 @@ export class MockTable<T extends { id: string }> {
  * NEVER connects to IndexedDB or Firestore.
  */
 export function createMockAgroDatabase() {
+  const admissionTable = new MockTable<any>();
   return {
     accounts: new MockTable<any>(),
     animals: new MockTable<Animal>(),
@@ -190,7 +191,8 @@ export function createMockAgroDatabase() {
     investors: new MockTable<any>(),
     investmentTranches: new MockTable<any>(),
     investorCapitalMovements: new MockTable<any>(),
-    investorAdmissionRequests: new MockTable<any>(),
+    investorAdmissionRequests: admissionTable,
+    admissionRequests: admissionTable,
     fixedAssets: new MockTable<any>(),
     reminders: new MockTable<any>(),
     ponds: new MockTable<any>(),

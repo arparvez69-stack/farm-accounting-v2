@@ -614,6 +614,7 @@ export async function executeAdmissionApproval(
   params: {
     approvedBy: string;
     approvalNotes?: string;
+    notes?: string;
     approved?: boolean;
     decision?: 'APPROVE' | 'REJECT';
   },
@@ -624,7 +625,8 @@ export async function executeAdmissionApproval(
     throw new Error(`অন্তর্ভুক্তি আবেদন পাওয়া যায়নি (Admission request not found: ${requestId})।`);
   }
 
-  const { approvedBy, approvalNotes, approved, decision } = params;
+  const { approvedBy, approved, decision } = params;
+  const rawApprovalNotes = params.approvalNotes || params.notes;
   const isApproved = approved === true || decision === 'APPROVE' || (approved === undefined && decision !== 'REJECT');
   const nowIso = new Date().toISOString();
 
@@ -636,7 +638,7 @@ export async function executeAdmissionApproval(
     status: isApproved ? 'APPROVED' : 'REJECTED',
     approvedAt: nowIso,
     approvedBy: approvedBy.trim(),
-    approvalNotes: approvalNotes ? approvalNotes.trim() : undefined
+    approvalNotes: rawApprovalNotes ? rawApprovalNotes.trim() : undefined
   };
 
   request.auditTrail.push({

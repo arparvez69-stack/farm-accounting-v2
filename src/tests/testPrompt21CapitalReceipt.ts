@@ -163,7 +163,7 @@ export async function runPrompt21CapitalReceiptTests(): Promise<AssertionResult>
     mDb
   );
 
-  const approvedReq = await mDb.admissionRequests.get(req.id);
+  const approvedReq = (await mDb.admissionRequests?.get(req.id)) || (await (mDb as any).investorAdmissionRequests?.get(req.id)) || (await getAdmissionRequestById(req.id, mDb));
   assert(approvedReq.status === 'APPROVED', 'Request is APPROVED and ready for capital receipt');
 
   // Baseline Bank Balance before capital receipt
