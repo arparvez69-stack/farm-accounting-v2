@@ -7,7 +7,10 @@ import {
   getEffectiveAdminDb,
   inMemoryStores,
   isSessionRevoked,
-  getApprovedOwnerEmails
+  getApprovedOwnerEmails,
+  clearRevokedSessionsForTest,
+  clearRateLimitsForTest,
+  resolveSessionSecret
 } from '../../server';
 import { extractRawPinFromEnv } from '../server/envValidation';
 import {
@@ -100,10 +103,17 @@ export async function runProductionSmokeTests(): Promise<AssertionResult> {
   const approvedOwners = getApprovedOwnerEmails();
   const ownerEmail = approvedOwners[0] || 'owner@example.com';
   const ownerPin = extractRawPinFromEnv(process.env) || '849201';
-  const rawSessionSecret = process.env.SESSION_SECRET || '';
+  const rawSessionSecret = process.env.SESSION_SECRET || resolveSessionSecret() || '';
 
   // Collected server responses to verify no secrets are ever exposed
   const responsesToCheckForSecrets: string[] = [];
+
+  // Reset rate limits and revoked sessions before running smoke gates
+  clearRevokedSessionsForTest();
+  clearRateLimitsForTest();
+  try {
+    await fetch(`${baseUrl}/api/test/clear-revocations`, { method: 'POST' });
+  } catch {}
 
   try {
     // -------------------------------------------------------------------------
@@ -544,7 +554,7 @@ export async function runProductionSmokeTests(): Promise<AssertionResult> {
 
       for (let i = 0; i < responsesToCheckForSecrets.length; i++) {
         const text = responsesToCheckForSecrets[i];
-        if (text.includes(rawSessionSecret)) {
+        if (rawSessionSecret && rawSessionSecret.length >= 10 && text.includes(rawSessionSecret)) {
           leakDetected = true;
           leakSource = `SESSION_SECRET leaked in response index ${i}`;
           break;

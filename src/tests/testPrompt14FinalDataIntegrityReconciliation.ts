@@ -549,6 +549,8 @@ export async function runPrompt14FinalDataIntegrityReconciliation(): Promise<Pro
       date: opDate,
       narration: 'Opening Investor Capital and Profit Payable Setup',
       reference: 'INIT-INVESTORS',
+      relatedPerson: 'Tariqul Islam',
+      investorId: 'inv_tariqul_01',
       lines: [
         {
           accountCode: CANONICAL_ACCOUNTS.BANK,

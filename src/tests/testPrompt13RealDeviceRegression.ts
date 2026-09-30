@@ -6,7 +6,9 @@ import {
   createSessionToken,
   getEffectiveAdminDb,
   inMemoryStores,
-  getApprovedOwnerEmails
+  getApprovedOwnerEmails,
+  clearRevokedSessionsForTest,
+  clearRateLimitsForTest
 } from '../../server';
 import { extractRawPinFromEnv } from '../server/envValidation';
 import { db } from '../db/indexedDb';
@@ -176,6 +178,13 @@ export async function runRealDeviceRegressionTests(): Promise<AssertionResult> {
       currentBalance: 100000
     });
   }
+
+  // Reset rate limits and revoked sessions before running real-device workflows
+  clearRevokedSessionsForTest();
+  clearRateLimitsForTest();
+  try {
+    await fetch(`${baseUrl}/api/test/clear-revocations`, { method: 'POST' });
+  } catch {}
 
   // Obtain authenticated session token
   const loginRes = await fetch(`${baseUrl}/api/verify-login-code`, {

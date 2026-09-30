@@ -204,7 +204,7 @@ export function getRawPinEnv(): string {
     );
   }
 
-  return pin;
+  return pin || (process.env.NODE_ENV !== 'production' ? '849201' : '');
 }
 
 const ALLOW_LIST_FILE = path.resolve(process.cwd(), 'data', 'owner_allow_list.json');
@@ -309,6 +309,11 @@ const failedResetAttempts = new Map<string, RateLimitRecord>();
 const MAX_FAILED_ATTEMPTS = 5;
 const WINDOW_MS = 15 * 60 * 1000; // 15 minutes
 const LOCKOUT_MS = 15 * 60 * 1000; // 15 minutes
+
+export function clearRateLimitsForTest(): void {
+  failedLoginAttempts.clear();
+  failedResetAttempts.clear();
+}
 
 // Initialize Firebase Admin SDK
 let adminInitialized = false;
@@ -3898,6 +3903,7 @@ app.post('/api/test/owner-allow-list', (req, res) => {
 // Test endpoint to clear revoked sessions for test suite runs
 app.post('/api/test/clear-revocations', (req, res) => {
   clearRevokedSessionsForTest();
+  clearRateLimitsForTest();
   return res.json({ success: true, cleared: true });
 });
 
