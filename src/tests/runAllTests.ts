@@ -100,6 +100,8 @@ import { runFinalTestHProductionFreeze } from './testFinalTestHProductionFreeze'
 import { runTask2InvestorProfitAllocationTests } from './testTask2InvestorProfitAllocation';
 import { runTask3NewInvestorAdmissionGateTests } from './testTask3NewInvestorAdmissionGate';
 import { runTask5AuthoritativeProfitSourceTests } from './testTask5AuthoritativeProfitSource';
+import { runDefaultPinRejectionRegressionTest } from './testDefaultPinRejectionRegression';
+import { runPermanentPinSecurityGuards } from './testPermanentPinSecurityGuards';
 
 interface SuiteResult {
   total: number;
@@ -236,6 +238,8 @@ async function main() {
   suiteResults.push(await runTask2InvestorProfitAllocationTests());
   suiteResults.push(await runTask3NewInvestorAdmissionGateTests());
   suiteResults.push(await runTask5AuthoritativeProfitSourceTests());
+  suiteResults.push(await runDefaultPinRejectionRegressionTest());
+  suiteResults.push(await runPermanentPinSecurityGuards());
 
   // Strictly aggregate actual executed assertions — no manual +10 or phantom counts
   const total = suiteResults.reduce((s, r) => s + (r.total || 0), 0);

@@ -135,8 +135,21 @@ export function validateProductionEnvironment(options?: ValidationOptions): EnvV
   }
 
   // 2. Validate INITIAL_PIN / PIN in production
-  const rawPin = extractRawPinFromEnv(env);
-  if (!rawPin) {
+  const candidatePin = (
+    env.INITIAL_PIN?.trim() ||
+    env.MASTER_PIN?.trim() ||
+    env.INITIAL_MASTER_PIN?.trim() ||
+    env.masterpin?.trim() ||
+    env.MASTERPIN?.trim() ||
+    env.PIN?.trim() ||
+    env.pin?.trim() ||
+    ''
+  );
+  if (candidatePin && INSECURE_DEFAULT_PINS.includes(candidatePin)) {
+    errors.push(
+      "Insecure default PIN detected: Common or default PINs (e.g. 123456, 849201) are strictly prohibited for production owner authentication."
+    );
+  } else if (!candidatePin) {
     errors.push(
       "Missing required secret 'INITIAL_PIN' (or PIN/MASTER_PIN). An initial owner PIN is required in production for secure authentication bootstrapping."
     );

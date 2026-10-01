@@ -5,6 +5,7 @@ import {
   validateProductionEnvironment,
   assertProductionEnvironmentValid
 } from '../server/envValidation';
+import { runPermanentPinSecurityGuards } from './testPermanentPinSecurityGuards';
 
 interface GateResult {
   step: number;
@@ -141,7 +142,26 @@ async function runProductionVerificationGate() {
       throw new Error('validateProductionEnvironment failed on valid production secrets');
     }
 
-    recordResult(6, 'Required production environment validation works', true, 'Passes on valid secrets, strictly rejects missing/weak production secrets');
+    // D: Insecure default PIN (e.g. 123456) in production is strictly rejected
+    const defaultPinResult = validateProductionEnvironment({
+      env: {
+        NODE_ENV: 'production',
+        SESSION_SECRET: '84b5c6d7e8f901a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a',
+        INITIAL_PIN: '123456',
+        APPROVED_OWNER_EMAILS: 'owner@example.com'
+      }
+    });
+    if (defaultPinResult.valid !== false) {
+      throw new Error('validateProductionEnvironment failed to reject insecure default PIN in production');
+    }
+
+    // E: Execute permanent PIN security guards suite
+    const guardResults = await runPermanentPinSecurityGuards();
+    if (guardResults.failed > 0) {
+      throw new Error(`Permanent PIN security guards failed: ${guardResults.failures.join(', ')}`);
+    }
+
+    recordResult(6, 'Required production environment validation works', true, 'Passes on valid secrets, strictly rejects missing/weak/default secrets, and permanent PIN guards verified');
   } catch (err: any) {
     recordResult(6, 'Required production environment validation works', false, undefined, err.message);
   }
