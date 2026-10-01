@@ -89,6 +89,9 @@ import { runPrompt34CrashSafeFinalizationTests } from './testPrompt34CrashSafeFi
 import { runPrompt35InvestorStatementTests } from './testPrompt35InvestorStatement';
 import { runPrompt36PeriodEndValuationTests } from './testPrompt36PeriodEndValuation';
 import { runFinalTestACapitalReconciliation } from './testFinalTestACapitalReconciliation';
+import { runFinalTestBProfitReconciliation } from './testFinalTestBProfitReconciliation';
+import { runFinalTestCNavReconciliation } from './testFinalTestCNavReconciliation';
+import { runFinalTestDHistoricalProtection } from './testFinalTestDHistoricalProtection';
 
 interface SuiteResult {
   total: number;
@@ -214,6 +217,9 @@ async function main() {
   suiteResults.push(await runPrompt35InvestorStatementTests());
   suiteResults.push(await runPrompt36PeriodEndValuationTests());
   suiteResults.push(await runFinalTestACapitalReconciliation());
+  suiteResults.push(await runFinalTestBProfitReconciliation());
+  suiteResults.push(await runFinalTestCNavReconciliation());
+  suiteResults.push(await runFinalTestDHistoricalProtection());
 
   // Strictly aggregate actual executed assertions — no manual +10 or phantom counts
   const total = suiteResults.reduce((s, r) => s + (r.total || 0), 0);
