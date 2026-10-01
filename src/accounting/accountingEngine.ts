@@ -2171,7 +2171,9 @@ export async function generateProfitLoss(
   options?: { includeClosingEntries?: boolean } | any,
   dbInstance: any = db
 ): Promise<ProfitLossReport> {
-  const actualDb = (options && (options.accounts || options.journalEntries)) ? options : dbInstance;
+  const actualDb = (options && (options.accounts || options.journalEntries))
+    ? options
+    : (options?.dbInstance || dbInstance);
   const actualOptions = (options && (options.accounts || options.journalEntries)) ? undefined : options;
   const rawAccounts = await actualDb.accounts.toArray();
   let entries = await actualDb.journalEntries.toArray();

@@ -2792,3 +2792,128 @@ export interface InspectInvestorStatementResult {
   discrepancies: string[];
   summaryMessage: string;
 }
+
+// ==========================================
+// PHASE 6 — REPORTING AND PERIODIC VALUATION
+// PROMPT 36 — Year-End / Period-End Valuation
+// ==========================================
+
+export interface PeriodEndValuationParams {
+  valuationDate: string; // e.g. '2026-12-31'
+  periodStartDate?: string; // e.g. '2026-01-01'
+  responsibleUser: string;
+  valuationType?: 'PERIOD_END' | 'YEAR_END' | 'QUARTER_END';
+  requireReconciliationGate?: boolean;
+  bypassReconciliationForTest?: boolean;
+  defaultReinvestmentPercentage?: number;
+  settlementPreferences?: Record<
+    string,
+    {
+      reinvestPercentage?: number;
+      amountToReinvest?: number;
+      amountToWithdraw?: number;
+    }
+  >;
+  notes?: string;
+  isNewInvestorEntering?: false;
+}
+
+export interface PeriodEndParticipantPosition {
+  participantId: string;
+  name: string;
+  currentCapital: number;
+  capitalProportionRatio: number;
+  capitalProportionPercentage: number;
+  contractPercentage: number;
+  economicProfitAllocation: number;
+  contractualInvestorProfit: number;
+  mudaribShare: number;
+  amountToReinvest: number;
+  amountToWithdraw: number;
+  resultingCapital: number;
+  resultingEconomicPosition: number;
+}
+
+export interface PeriodEndValuationResult {
+  id: string;
+  valuationDate: string;
+  periodStartDate: string;
+  periodEndDate: string;
+  valuationType: 'PERIOD_END' | 'YEAR_END' | 'QUARTER_END';
+  responsibleUser: string;
+
+  // Prompt 36 Invariant: No new investor required!
+  isNewInvestorEntering: false;
+  hasAdmission: false;
+  admissionReference?: undefined;
+  linkedInvestorId?: undefined;
+
+  reconciliation: {
+    status: 'PASS' | 'UNRESOLVED' | 'SKIPPED';
+    gateResult?: ValuationReconciliationGateResult;
+    isReconciled: boolean;
+    discrepanciesCount: number;
+  };
+
+  verifiedAssets: {
+    totalAssets: number;
+    categories: NavAssetCategorySummary[];
+    items: ValuationAssetItem[];
+  };
+
+  liabilities: {
+    totalLiabilities: number;
+    categories: NavLiabilityCategorySummary[];
+    items: ValuationLiabilityItem[];
+  };
+
+  nav: {
+    totalAssets: number;
+    totalLiabilities: number;
+    netAssetValue: number;
+    formula: string;
+  };
+
+  profitLoss: {
+    revenue: number;
+    expenses: number;
+    netProfitOrLoss: number;
+    isProfit: boolean;
+    periodStartDate: string;
+    periodEndDate: string;
+  };
+
+  participantPositions: PeriodEndParticipantPosition[];
+  totalCapital: number;
+
+  totalEconomicProfitAllocation: number;
+  totalContractualInvestorProfit: number;
+  totalMudaribShare: number;
+
+  settlement: {
+    totalReinvestment: number;
+    totalWithdrawal: number;
+    resultingTotalCapital: number;
+  };
+
+  status: 'DRAFT' | 'FINALIZED';
+  createdAt: string;
+  notes?: string;
+}
+
+export interface InspectPeriodEndValuationResult {
+  passed: boolean;
+  hasReconciliation: boolean;
+  hasVerifiedAssets: boolean;
+  hasLiabilities: boolean;
+  hasNav: boolean;
+  hasProfitLoss: boolean;
+  hasParticipantEconomicPositions: boolean;
+  hasContractualProfitAllocation: boolean;
+  hasMudaribAllocation: boolean;
+  hasSettlementReinvestment: boolean;
+  noAdmissionRequired: boolean;
+  isNavFormulaExact: boolean;
+  isProfitDistributionExact: boolean;
+  details: string;
+}

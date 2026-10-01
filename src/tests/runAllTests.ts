@@ -87,6 +87,7 @@ import { runPrompt32OwnerMudaribReinvestmentTests } from './testPrompt32OwnerMud
 import { runPrompt33SettlementIdempotencyTests } from './testPrompt33SettlementIdempotency';
 import { runPrompt34CrashSafeFinalizationTests } from './testPrompt34CrashSafeFinalization';
 import { runPrompt35InvestorStatementTests } from './testPrompt35InvestorStatement';
+import { runPrompt36PeriodEndValuationTests } from './testPrompt36PeriodEndValuation';
 
 interface SuiteResult {
   total: number;
@@ -210,6 +211,7 @@ async function main() {
   suiteResults.push(await runPrompt33SettlementIdempotencyTests());
   suiteResults.push(await runPrompt34CrashSafeFinalizationTests());
   suiteResults.push(await runPrompt35InvestorStatementTests());
+  suiteResults.push(await runPrompt36PeriodEndValuationTests());
 
   // Strictly aggregate actual executed assertions — no manual +10 or phantom counts
   const total = suiteResults.reduce((s, r) => s + (r.total || 0), 0);
