@@ -22,10 +22,13 @@ import {
   ArrowLeft,
   Search,
   CheckSquare,
-  Square
+  Square,
+  FileSpreadsheet
 } from 'lucide-react';
 import { db, isStorageFailure, formatStorageErrorMessage } from '../db/indexedDb';
 import { registerUnsavedChecker } from '../services/navigationService';
+import { generateInvestorStatement } from '../services/investorStatementService';
+import { InvestorStatement } from '../types';
 import {
   executeContraTransferTransaction,
   executeInvestorTransaction,
@@ -116,6 +119,20 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
 
   // Selected Investor & Schedule Detail View
   const [selectedInvestor, setSelectedInvestor] = useState<Investor | null>(null);
+  const [investorStatement, setInvestorStatement] = useState<InvestorStatement | null>(null);
+  const [loadingStatement, setLoadingStatement] = useState(false);
+
+  useEffect(() => {
+    if (selectedInvestor) {
+      setLoadingStatement(true);
+      generateInvestorStatement({ investorId: selectedInvestor.id })
+        .then((stmt) => setInvestorStatement(stmt))
+        .catch((err) => console.error('Failed to load investor statement:', err))
+        .finally(() => setLoadingStatement(false));
+    } else {
+      setInvestorStatement(null);
+    }
+  }, [selectedInvestor]);
 
   // Repayment Modal State
   const [showRepaymentModal, setShowRepaymentModal] = useState(false);
@@ -3819,6 +3836,99 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
                 <div>• লভ্যাংশ প্রদান: Dr 2050 বিনিয়োগকারীর লভ্যাংশ প্রদেয় | Cr 1010/1030 নগদ বা ব্যাংক</div>
                 <div>• মূলধন ফেরত: Dr 3020 বিনিয়োগকারীর মূলধন | Cr 1010/1030 নগদ বা ব্যাংক</div>
               </div>
+
+              {/* Prompt 35: Official Investor Statement */}
+              {loadingStatement ? (
+                <div className="p-4 text-center text-xs text-gray-500 font-mono">
+                  অংশীদার বিবরণী প্রস্তুত করা হচ্ছে...
+                </div>
+              ) : investorStatement ? (
+                <div className="bg-white border-2 border-emerald-500/40 rounded-xl p-4 space-y-3.5 shadow-xs">
+                  <div className="flex items-center justify-between border-b pb-2">
+                    <div className="flex items-center gap-2">
+                      <FileSpreadsheet className="w-4 h-4 text-emerald-700" />
+                      <h4 className="font-bold text-gray-900 text-sm">
+                        পূর্ণ অংশীদার বিবরণী (Official Investor Statement)
+                      </h4>
+                    </div>
+                    <span className="text-[11px] font-mono text-emerald-800 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200 font-semibold">
+                      Prompt 35 Compliant
+                    </span>
+                  </div>
+
+                  {/* Section 1: Capital Statement Table */}
+                  <div className="space-y-1.5 font-mono text-xs">
+                    <div className="font-sans font-bold text-[11px] uppercase tracking-wider text-emerald-900 bg-emerald-50/80 p-1.5 rounded flex items-center justify-between">
+                      <span>১. মূলধন হিসাব সমন্বয় সমীকরণ (Capital Equation)</span>
+                      <span className="text-[10px] text-emerald-700 font-mono">
+                        {investorStatement.capitalSummary.isFormulaBalanced ? '✓ সুষম (Balanced)' : 'অসুষম'}
+                      </span>
+                    </div>
+                    <div className="flex justify-between py-1 border-b border-gray-100">
+                      <span className="font-sans text-gray-600">প্রারম্ভিক মূলধন (Opening capital):</span>
+                      <span className="font-bold text-gray-900">{fmt(investorStatement.openingCapital)}</span>
+                    </div>
+                    <div className="flex justify-between py-1 border-b border-gray-100 text-emerald-700">
+                      <span className="font-sans">+ নতুন মূলধন সংযোজন (+ new capital):</span>
+                      <span className="font-bold">+{fmt(investorStatement.newCapital)}</span>
+                    </div>
+                    <div className="flex justify-between py-1 border-b border-gray-100 text-blue-700">
+                      <span className="font-sans">+ পুনর্বিনিয়োগকৃত লভ্যাংশ (+ reinvested profit):</span>
+                      <span className="font-bold">+{fmt(investorStatement.reinvestedProfit)}</span>
+                    </div>
+                    <div className="flex justify-between py-1 border-b border-gray-100 text-rose-700">
+                      <span className="font-sans">- মূলধন প্রত্যাহার (- capital withdrawals):</span>
+                      <span className="font-bold">-{fmt(investorStatement.capitalWithdrawals)}</span>
+                    </div>
+                    <div className="flex justify-between py-1.5 bg-gray-50 rounded px-2 font-bold text-sm text-gray-900 border border-gray-200">
+                      <span className="font-sans">= সমাপনী মূলধন স্থিতি (= closing capital):</span>
+                      <span className="text-emerald-800">{fmt(investorStatement.closingCapital)}</span>
+                    </div>
+                  </div>
+
+                  {/* Section 2: Profit & Economic Breakdown */}
+                  <div className="space-y-1.5 font-mono text-xs pt-1">
+                    <div className="font-sans font-bold text-[11px] uppercase tracking-wider text-purple-900 bg-purple-50/80 p-1.5 rounded">
+                      ২. অর্থনৈতিক মুনাফা বণ্টন, মুদারিব অংশ ও উত্তোলন (Economic Profit & Distributions)
+                    </div>
+                    <div className="flex justify-between py-1 border-b border-gray-100">
+                      <span className="font-sans text-gray-600">অর্থনৈতিক মুনাফা বরাদ্দ (Economic profit allocation):</span>
+                      <span className="font-bold text-purple-800">{fmt(investorStatement.economicProfitAllocation)}</span>
+                    </div>
+                    <div className="flex justify-between py-1 border-b border-gray-100">
+                      <span className="font-sans text-gray-600">চুক্তিভিত্তিক বিনিয়োগকারী মুনাফা (Contractual investor profit):</span>
+                      <span className="font-bold text-emerald-700">{fmt(investorStatement.contractualInvestorProfit)}</span>
+                    </div>
+                    <div className="flex justify-between py-1 border-b border-gray-100">
+                      <span className="font-sans text-gray-600">মুদারিবের অর্জিত অংশ (Mudarib share):</span>
+                      <span className="font-bold text-sky-700">{fmt(investorStatement.mudaribShare)}</span>
+                    </div>
+                    <div className="flex justify-between py-1 border-b border-gray-100">
+                      <span className="font-sans text-gray-600">উত্তোলন (Withdrawals - মূলধন ৳{investorStatement.capitalWithdrawals.toLocaleString()} + মুনাফা ৳{investorStatement.profitSummary.withdrawals.toLocaleString()}):</span>
+                      <span className="font-bold text-rose-700">{fmt(investorStatement.totalWithdrawals)}</span>
+                    </div>
+                    <div className="flex justify-between py-1 border-b border-gray-100">
+                      <span className="font-sans text-gray-600">পুনর্বিনিয়োগ (Reinvestment):</span>
+                      <span className="font-bold text-blue-700">{fmt(investorStatement.reinvestment)}</span>
+                    </div>
+                    <div className="flex justify-between py-1.5 bg-purple-50/80 rounded px-2 font-bold text-sm text-purple-950 border border-purple-200">
+                      <span className="font-sans">বর্তমান সামগ্রিক অর্থনৈতিক অবস্থান (Current economic position):</span>
+                      <span>{fmt(investorStatement.currentEconomicPosition)}</span>
+                    </div>
+                  </div>
+
+                  {/* Section 3: Invariant - Do not combine Mudarib earnings with owner capital */}
+                  <div className="p-2.5 rounded-lg bg-amber-50 border border-amber-200 text-[11px] text-amber-950 font-sans space-y-1">
+                    <div className="font-bold flex items-center gap-1.5 text-amber-900">
+                      <CheckCircle2 className="w-3.5 h-3.5 text-amber-700" />
+                      মুদারিব আয় বনাম মালিকের মূলধন কঠোর পৃথকীকরণ নীতি:
+                    </div>
+                    <p>
+                      মুদারিব বা কর্ম অংশীদারের অর্জিত লভ্যাংশ (হিসাব ৩০১৫) মালিকের মূলধন স্থিতি (হিসাব ৩০১০) এর সাথে কখনো মিশ্রিত করা হয় না। উভয়টি সম্পূর্ণ স্বতন্ত্র লেজারে সংরক্ষিত।
+                    </p>
+                  </div>
+                </div>
+              ) : null}
             </div>
 
             <div className="flex justify-end pt-2 border-t border-gray-100 shrink-0">

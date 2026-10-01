@@ -72,7 +72,8 @@ import {
 } from 'recharts';
 import { exportAllToExcel, createFullJsonBackup, restoreFromJsonBackup } from '../services/exportService';
 import { db } from '../db/indexedDb';
-import { UserRole, Sale, Purchase, PaymentRecord, Loan, Investor, CashBankAccount, JournalEntry, ClosedPeriod, Account, Animal, AnimalEvent, FishBatch, CropCycle } from '../types';
+import { UserRole, Sale, Purchase, PaymentRecord, Loan, Investor, CashBankAccount, JournalEntry, ClosedPeriod, Account, Animal, AnimalEvent, FishBatch, CropCycle, InvestorStatement } from '../types';
+import { generateInvestorStatement } from '../services/investorStatementService';
 import { generateAmortizationSchedule, addMonthsToDate } from '../accounting/amortizationService';
 import { StatusBadge, Card, IconTile, EmptyState, ErrorState } from './ui';
 
@@ -319,6 +320,7 @@ type ReportType =
   | 'cropProfitability'
   | 'aging'
   | 'cashFlow'
+  | 'investorStatement'
   | 'backup'
   | 'vatSummary'
   | 'yoyComparison'
@@ -351,6 +353,11 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
 
   // Cash Flow Report State
   const [cashFlowData, setCashFlowData] = useState<CashFlowReportData | null>(null);
+
+  // Investor Statement Report State (Prompt 35)
+  const [statementInvestors, setStatementInvestors] = useState<Investor[]>([]);
+  const [selectedStatementInvestorId, setSelectedStatementInvestorId] = useState<string>('');
+  const [statementData, setStatementData] = useState<InvestorStatement | null>(null);
 
   // Accounting Reconciliation State
   const [reconciliationReport, setReconciliationReport] = useState<FullReconciliationReport | null>(null);
@@ -846,6 +853,25 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
     setCashFlowData(cashFlowDataObj);
   };
 
+  const loadInvestorStatementReport = async () => {
+    const invs = await db.investors.toArray();
+    setStatementInvestors(invs);
+    const targetId = selectedStatementInvestorId || (invs[0]?.id || '');
+    if (targetId) {
+      if (!selectedStatementInvestorId) {
+        setSelectedStatementInvestorId(targetId);
+      }
+      const stmt = await generateInvestorStatement({
+        investorId: targetId,
+        periodStartDate: startDate || undefined,
+        periodEndDate: endDate || undefined
+      });
+      setStatementData(stmt);
+    } else {
+      setStatementData(null);
+    }
+  };
+
   const loadVatSummary = async () => {
     const [allSales, allPurchases] = await Promise.all([
       db.sales.toArray(),
@@ -1094,6 +1120,8 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
         await loadAgingReport(endDate);
       } else if (activeReport === 'cashFlow') {
         await loadCashFlowReport();
+      } else if (activeReport === 'investorStatement') {
+        await loadInvestorStatementReport();
       } else if (activeReport === 'vatSummary') {
         await loadVatSummary();
       } else if (activeReport === 'yoyComparison') {
@@ -2060,6 +2088,20 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
         >
           <Coins className="w-4 h-4 shrink-0" />
           <span>নগদ প্রবাহ</span>
+        </button>
+
+        <button
+          type="button"
+          id="tab-investor-statement"
+          onClick={() => setActiveReport('investorStatement')}
+          className={`flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg transition-all cursor-pointer min-h-[42px] text-center text-xs sm:text-[13px] font-bold ${
+            activeReport === 'investorStatement'
+              ? 'bg-purple-700 text-white shadow-xs border border-purple-700'
+              : 'bg-white dark:bg-slate-900/60 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800'
+          }`}
+        >
+          <FileSpreadsheet className="w-4 h-4 shrink-0" />
+          <span>অংশীদার বিবরণী</span>
         </button>
 
         {isVatRegistered && (
@@ -7347,6 +7389,161 @@ export const ReportsModule: React.FC<Props> = ({ role, currentUserId }) => {
               ২. কোনো ঐতিহাসিক লেনদেনের ডাটা পরিবর্তন বা রূপান্তর করা হয় না। যেকোনো অসঙ্গতির ক্ষেত্রে মূল ভাউচার বা খতিয়ান নিরীক্ষা করে কারণ নির্ণয় করা আবশ্যক।
             </p>
           </div>
+        </div>
+      )}
+
+      {/* ===================== REPORT: INVESTOR STATEMENT (PROMPT 35) ===================== */}
+      {activeReport === 'investorStatement' && (
+        <div id="investor-statement-report" className="bg-white border border-gray-200 rounded-2xl p-4 sm:p-6 space-y-6 shadow-xs">
+          {/* Header & Controls */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-gray-100 pb-4">
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="p-1.5 rounded-lg bg-emerald-100 text-emerald-800">
+                  <FileSpreadsheet className="w-5 h-5" />
+                </span>
+                <h3 className="text-base sm:text-lg font-bold text-gray-900 tracking-tight">
+                  অংশীদার বিবরণী (Investor Statement)
+                </h3>
+              </div>
+              <p className="text-xs sm:text-[13px] text-gray-500 mt-1">
+                মুদারাবা ও ইসলামিক অংশীদারিত্ব কাঠামোতে মূলধন সমন্বয় ও অর্জিত মুনাফা বিবরণী • সময়সীমা: {startDate || 'শুরু'} হতে {endDate || 'বর্তমান'}
+              </p>
+            </div>
+
+            {/* Investor Selector */}
+            {statementInvestors.length > 0 && (
+              <div className="flex items-center gap-2">
+                <label className="text-xs font-semibold text-gray-600 shrink-0">বিনিয়োগকারী:</label>
+                <select
+                  value={selectedStatementInvestorId}
+                  onChange={(e) => {
+                    setSelectedStatementInvestorId(e.target.value);
+                    loadInvestorStatementReport();
+                  }}
+                  className="px-3 py-1.5 bg-gray-50 border border-gray-300 rounded-xl text-xs sm:text-sm font-semibold text-gray-800 focus:outline-hidden focus:ring-2 focus:ring-emerald-600 min-h-[38px]"
+                >
+                  {statementInvestors.map((inv) => (
+                    <option key={inv.id} value={inv.id}>
+                      {inv.name} ({inv.profitSharingRatio ?? 40}%)
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+          </div>
+
+          {statementInvestors.length === 0 ? (
+            <div className="py-12 text-center text-gray-500 text-xs sm:text-sm space-y-2">
+              <FileSpreadsheet className="w-10 h-10 text-gray-300 mx-auto" />
+              <p>কোনো বিনিয়োগকারী বা অংশীদার পাওয়া যায়নি।</p>
+            </div>
+          ) : !statementData ? (
+            <div className="py-12 text-center text-gray-500 text-xs sm:text-sm">
+              বিবরণী লোড করা হচ্ছে...
+            </div>
+          ) : (
+            <div className="space-y-6 max-w-3xl mx-auto">
+              {/* Investor Profile Summary Banner */}
+              <div className="p-4 rounded-xl bg-[#F8FAFC] border border-gray-200 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+                <div>
+                  <h4 className="font-bold text-gray-900 text-base">{statementData.investorName}</h4>
+                  <p className="text-xs text-gray-500 mt-0.5">
+                    যোগদান: {statementData.joinedDate || 'অনুল্লিখিত'} | স্ট্যাটাস: {statementData.status}
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="px-3 py-1 rounded-full bg-emerald-100 text-emerald-800 font-mono text-xs font-bold border border-emerald-300">
+                    {statementData.profitSharingRatio}% লভ্যাংশ চুক্তি
+                  </span>
+                </div>
+              </div>
+
+              {/* Requirement 1: Capital Statement Table */}
+              <div className="p-4 rounded-xl border border-gray-200 bg-white space-y-3 shadow-2xs font-mono text-xs sm:text-[13px]">
+                <div className="flex items-center justify-between border-b pb-2">
+                  <span className="font-sans font-bold text-gray-900 text-sm flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-full bg-emerald-600"></span>
+                    ১. মূলধন হিসাব সমন্বয় সমীকরণ (Capital Reconciliation Equation)
+                  </span>
+                  <span className="text-[11px] font-sans text-emerald-700 font-bold bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                    {statementData.capitalSummary.isFormulaBalanced ? '✓ সঠিক ও সুষম' : 'অসুষম'}
+                  </span>
+                </div>
+
+                <div className="space-y-2 pt-1 text-gray-800">
+                  <div className="flex justify-between py-1 border-b border-gray-100">
+                    <span className="font-sans text-gray-600">প্রারম্ভিক মূলধন (Opening capital):</span>
+                    <span className="font-bold text-gray-900">{fmt(statementData.openingCapital)}</span>
+                  </div>
+                  <div className="flex justify-between py-1 border-b border-gray-100 text-emerald-700">
+                    <span className="font-sans">+ নতুন মূলধন সংযোজন (+ new capital):</span>
+                    <span className="font-bold">+{fmt(statementData.newCapital)}</span>
+                  </div>
+                  <div className="flex justify-between py-1 border-b border-gray-100 text-blue-700">
+                    <span className="font-sans">+ পুনর্বিনিয়োগকৃত লভ্যাংশ (+ reinvested profit):</span>
+                    <span className="font-bold">+{fmt(statementData.reinvestedProfit)}</span>
+                  </div>
+                  <div className="flex justify-between py-1 border-b border-gray-100 text-rose-700">
+                    <span className="font-sans">- মূলধন প্রত্যাহার (- capital withdrawals):</span>
+                    <span className="font-bold">-{fmt(statementData.capitalWithdrawals)}</span>
+                  </div>
+                  <div className="flex justify-between py-2 bg-emerald-50/70 rounded-lg px-3 font-bold text-sm text-emerald-950 border border-emerald-200">
+                    <span className="font-sans">= সমাপনী মূলধন স্থিতি (= closing capital):</span>
+                    <span>{fmt(statementData.closingCapital)}</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Requirement 2: Separate Profit, Mudarib & Position Disclosures */}
+              <div className="p-4 rounded-xl border border-gray-200 bg-white space-y-3 shadow-2xs font-mono text-xs sm:text-[13px]">
+                <div className="flex items-center justify-between border-b pb-2">
+                  <span className="font-sans font-bold text-gray-900 text-sm flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-full bg-purple-600"></span>
+                    ২. অর্থনৈতিক মুনাফা বণ্টন, মুদারিব অংশ ও উত্তোলন (Economic Profit & Distribution)
+                  </span>
+                </div>
+
+                <div className="space-y-2 pt-1 text-gray-800">
+                  <div className="flex justify-between py-1 border-b border-gray-100">
+                    <span className="font-sans text-gray-600">অর্থনৈতিক মুনাফা বণ্টন (Economic profit allocation):</span>
+                    <span className="font-bold text-purple-800">{fmt(statementData.economicProfitAllocation)}</span>
+                  </div>
+                  <div className="flex justify-between py-1 border-b border-gray-100">
+                    <span className="font-sans text-gray-600">চুক্তিভিত্তিক বিনিয়োগকারী মুনাফা (Contractual investor profit):</span>
+                    <span className="font-bold text-emerald-700">{fmt(statementData.contractualInvestorProfit)}</span>
+                  </div>
+                  <div className="flex justify-between py-1 border-b border-gray-100">
+                    <span className="font-sans text-gray-600">মুদারিবের অর্জিত অংশ (Mudarib share):</span>
+                    <span className="font-bold text-sky-700">{fmt(statementData.mudaribShare)}</span>
+                  </div>
+                  <div className="flex justify-between py-1 border-b border-gray-100">
+                    <span className="font-sans text-gray-600">মোট উত্তোলন ও পরিশোধ (Withdrawals - মূলধন ও মুনাফা পরিশোধ):</span>
+                    <span className="font-bold text-rose-700">{fmt(statementData.totalWithdrawals)}</span>
+                  </div>
+                  <div className="flex justify-between py-1 border-b border-gray-100">
+                    <span className="font-sans text-gray-600">মূলধনে পুনর্বিনিয়োগ (Reinvestment):</span>
+                    <span className="font-bold text-blue-700">{fmt(statementData.reinvestment)}</span>
+                  </div>
+                  <div className="flex justify-between py-2 bg-purple-50/70 rounded-lg px-3 font-bold text-sm text-purple-950 border border-purple-200">
+                    <span className="font-sans">বর্তমান সামগ্রিক অবস্থান (Current capital/economic position):</span>
+                    <span>{fmt(statementData.currentEconomicPosition)}</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Requirement 3: Do not combine Mudarib earnings with owner capital */}
+              <div className="p-3.5 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-950 space-y-1 font-sans">
+                <div className="font-bold flex items-center gap-1.5 text-amber-900">
+                  <CheckCircle2 className="w-4 h-4 text-amber-700 shrink-0" />
+                  <span>মুদারিব আয় বনাম মালিকের মূলধন কঠোর পৃথকীকরণ নীতি (Prompt 35 Invariant):</span>
+                </div>
+                <p className="leading-relaxed">
+                  মুদারিব বা কর্ম অংশীদারের অর্জিত পরিচালন ফি/লভ্যাংশ (হিসাব ৩০১৫/২০৬০) মালিকের মূলধন স্থিতির (হিসাব ৩০১০/৩০২০) সাথে কখনোই মিশ্রিত করা হয় না। উভয়টি সম্পূর্ণ স্বাধীন ও স্বতন্ত্র লেজারে সংরক্ষিত।
+                </p>
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>

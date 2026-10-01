@@ -2687,3 +2687,108 @@ export interface InspectCrashSafeFinalizationResult {
   trialBalanceBalanced: boolean;
   details: string;
 }
+
+// ==========================================
+// PHASE 6 — REPORTING AND PERIODIC VALUATION
+// PROMPT 35 — Investor Statement
+// ==========================================
+
+export interface InvestorStatementCapitalBreakdown {
+  openingCapital: number;
+  newCapital: number;
+  reinvestedProfit: number;
+  capitalWithdrawals: number;
+  closingCapital: number;
+  isFormulaBalanced: boolean;
+  formula: string;
+}
+
+export interface InvestorStatementProfitBreakdown {
+  economicProfitAllocation: number;
+  contractualInvestorProfit: number;
+  mudaribShare: number;
+  withdrawals: number;
+  reinvestment: number;
+  unpaidProfitPayable: number;
+}
+
+export interface InvestorStatementWithdrawalsBreakdown {
+  capitalWithdrawals: number;
+  profitWithdrawals: number;
+  totalWithdrawals: number;
+}
+
+export interface InvestorStatementPosition {
+  closingCapital: number;
+  profitPayable: number;
+  currentCapitalPosition: number;
+  currentEconomicPosition: number;
+}
+
+export interface InvestorStatementMudaribSeparation {
+  isMudaribCombinedWithCapital: boolean;
+  mudaribEarnings: number;
+  ownerCapitalBalance: number;
+  isSeparate: boolean;
+  notes: string;
+}
+
+export interface InvestorStatement {
+  investorId: string;
+  investorName: string;
+  phone?: string;
+  joinedDate?: string;
+  periodStartDate?: string;
+  periodEndDate?: string;
+  status: string;
+  profitSharingRatio: number;
+
+  // Primary Prompt 35 fields (direct root access)
+  openingCapital: number;
+  newCapital: number;
+  reinvestedProfit: number;
+  capitalWithdrawals: number;
+  closingCapital: number;
+
+  economicProfitAllocation: number;
+  contractualInvestorProfit: number;
+  mudaribShare: number;
+  withdrawals: number;
+  totalWithdrawals: number;
+  reinvestment: number;
+  currentCapitalPosition: number;
+  currentEconomicPosition: number;
+
+  // Breakdown sections
+  capitalSummary: InvestorStatementCapitalBreakdown;
+  profitSummary: InvestorStatementProfitBreakdown;
+  withdrawalsSummary: InvestorStatementWithdrawalsBreakdown;
+  positionSummary: InvestorStatementPosition;
+  mudaribSeparation: InvestorStatementMudaribSeparation;
+
+  // Detailed activity logs for the period
+  capitalMovements: InvestorCapitalMovement[];
+  journalEntries: any[];
+}
+
+export interface InspectInvestorStatementResult {
+  passed: boolean;
+  statement: InvestorStatement;
+  checks: {
+    hasOpeningCapital: boolean;
+    hasNewCapital: boolean;
+    hasReinvestedProfit: boolean;
+    hasCapitalWithdrawals: boolean;
+    hasClosingCapital: boolean;
+    isCapitalFormulaExact: boolean;
+    hasEconomicProfitAllocation: boolean;
+    hasContractualInvestorProfit: boolean;
+    hasMudaribShare: boolean;
+    hasWithdrawals: boolean;
+    hasReinvestment: boolean;
+    hasCurrentEconomicPosition: boolean;
+    mudaribEarningsSeparatedFromCapital: boolean;
+  };
+  discrepancies: string[];
+  summaryMessage: string;
+}
