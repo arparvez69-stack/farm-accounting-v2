@@ -123,6 +123,9 @@ export interface JournalEntry {
   attributionFlagReason?: string;
   legacyMigrated?: boolean;
   migratedAt?: string;
+  transactionType?: string;
+  capitalType?: string;
+  isOwnerCapital?: boolean;
 }
 
 export interface ClosedPeriod {

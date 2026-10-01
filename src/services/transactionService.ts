@@ -3511,6 +3511,7 @@ export async function executeInvestorTransaction(
     investorId?: string;
     investorName?: string;
     contribution: number;
+    amount?: number;
     profitShare?: number;
     profitSharingRatio?: number;
     targetAccountId: string;
@@ -5956,6 +5957,7 @@ export async function executeInvestorCapitalReturnTransaction(
     investorId: string;
     amount: number;
     sourceAccountId: string;
+    date?: string;
     returnDate?: string;
     returnReference?: string;
     reference?: string;
@@ -5981,7 +5983,7 @@ export async function executeInvestorCapitalReturnTransaction(
     notes,
     currentUserId
   } = params;
-  const dateStr = returnDate || new Date().toISOString().split('T')[0];
+  const dateStr = params.date || returnDate || new Date().toISOString().split('T')[0];
   const explicitReturnId = params.returnId || params.targetReturnId || params.journalEntryId;
   const explicitVoucher = params.voucherNumber;
   const refToCheck = returnReference || reference || params.paymentReference || idempotencyKey || explicitVoucher;
