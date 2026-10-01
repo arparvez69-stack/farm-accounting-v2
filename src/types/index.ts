@@ -2698,6 +2698,7 @@ export interface InvestorStatementCapitalBreakdown {
   newCapital: number;
   reinvestedProfit: number;
   capitalWithdrawals: number;
+  approvedCapitalAdjustments?: number;
   closingCapital: number;
   isFormulaBalanced: boolean;
   formula: string;
@@ -2748,6 +2749,7 @@ export interface InvestorStatement {
   newCapital: number;
   reinvestedProfit: number;
   capitalWithdrawals: number;
+  approvedCapitalAdjustments?: number;
   closingCapital: number;
 
   economicProfitAllocation: number;

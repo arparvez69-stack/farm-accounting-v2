@@ -35,6 +35,16 @@ export interface VerifyPinResponse {
   error?: string;
 }
 
+// Helper to convert Bengali numeral digits (০-৯) to standard ASCII digits (0-9)
+export function normalizeBengaliDigits(str: string): string {
+  if (!str || typeof str !== 'string') return '';
+  const bnToEnMap: Record<string, string> = {
+    '০': '0', '১': '1', '২': '2', '৩': '3', '৪': '4',
+    '৫': '5', '৬': '6', '৭': '7', '৮': '8', '৯': '9'
+  };
+  return str.replace(/[০-৯]/g, (char) => bnToEnMap[char] || char);
+}
+
 /**
  * Log access event both locally in IndexedDB and to server / Firestore
  */
@@ -133,7 +143,7 @@ export async function verifyOwnerSecretPin(
   pin: string
 ): Promise<VerifyPinResponse> {
   const normalized = email.trim().toLowerCase();
-  const cleanPin = pin.trim();
+  const cleanPin = normalizeBengaliDigits(pin.trim()).replace(/[\s\-_]/g, '');
 
   if (!normalized || !cleanPin) {
     return { success: false, error: 'ইমেইল এবং গোপন পিন উভয়ই আবশ্যক।' };

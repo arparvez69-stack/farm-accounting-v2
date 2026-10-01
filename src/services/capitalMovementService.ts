@@ -559,3 +559,8 @@ export async function executeApprovedCapitalAdjustmentTransaction(
     journalEntryId: journalId
   };
 }
+
+// Convenient aliases
+export const recordReinvestedProfitAsCapital = executeReinvestInvestorProfitTransaction;
+export const recordCapitalAdjustment = executeApprovedCapitalAdjustmentTransaction;
+

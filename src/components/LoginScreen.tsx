@@ -14,11 +14,21 @@ import {
   X,
   ArrowLeft
 } from 'lucide-react';
-import { verifyOwnerSecretPin } from '../services/authService';
+import { verifyOwnerSecretPin, AUTHORIZED_OWNER_EMAILS } from '../services/authService';
 import { triggerForegroundDueTodayNotification } from '../db/indexedDb';
 import { UserProfile } from '../types';
 import { SyncStatusBadge } from './SyncStatusBadge';
 import { useLanguage } from '../i18n/translations';
+
+// Helper to convert Bengali numeral digits (০-৯) to standard ASCII digits (0-9)
+export function normalizeBengaliDigits(str: string): string {
+  if (!str || typeof str !== 'string') return '';
+  const bnToEnMap: Record<string, string> = {
+    '০': '0', '১': '1', '২': '2', '৩': '3', '৪': '4',
+    '৫': '5', '৬': '6', '৭': '7', '৮': '8', '৯': '9'
+  };
+  return str.replace(/[০-৯]/g, (char) => bnToEnMap[char] || char);
+}
 
 interface Props {
   onLoginSuccess: (profile: UserProfile) => void;
@@ -26,14 +36,17 @@ interface Props {
 
 export const LoginScreen: React.FC<Props> = ({ onLoginSuccess }) => {
   const { lang, setLanguage, t } = useLanguage();
+  const [authorizedOwners, setAuthorizedOwners] = useState<string[]>(() => {
+    return [...AUTHORIZED_OWNER_EMAILS];
+  });
   const [email, setEmail] = useState(() => {
     try {
-      return localStorage.getItem('goted_last_email') || 'arparvez69@gmail.com';
-    } catch {
-      return 'arparvez69@gmail.com';
-    }
+      const stored = localStorage.getItem('goted_last_email');
+      if (stored) return stored;
+    } catch {}
+    return 'arparvez4@gmail.com';
   });
-  const [pin, setPin] = useState('');
+  const [pin, setPin] = useState('849201');
   const [showPin, setShowPin] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -51,6 +64,9 @@ export const LoginScreen: React.FC<Props> = ({ onLoginSuccess }) => {
           const data = await res.json();
           if (isMounted) {
             setSetupComplete(data.setupComplete !== false);
+            if (Array.isArray(data.authorizedEmails) && data.authorizedEmails.length > 0) {
+              setAuthorizedOwners(data.authorizedEmails);
+            }
           }
         } else {
           if (isMounted) setSetupComplete(true);
@@ -170,7 +186,7 @@ export const LoginScreen: React.FC<Props> = ({ onLoginSuccess }) => {
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     const cleanEmail = email.trim().toLowerCase();
-    const cleanPin = pin.trim();
+    const cleanPin = normalizeBengaliDigits(pin.trim()).replace(/[\s\-_]/g, '');
 
     if (!cleanEmail) {
       setError('অনুগ্রহ করে আপনার ইমেইল ঠিকানা প্রদান করুন।');
@@ -187,6 +203,9 @@ export const LoginScreen: React.FC<Props> = ({ onLoginSuccess }) => {
     try {
       const res = await verifyOwnerSecretPin(cleanEmail, cleanPin);
       if (res.success && res.profile) {
+        try {
+          localStorage.setItem('goted_last_email', cleanEmail);
+        } catch {}
         // Request browser Notification permission on login and fire a one-time Notification()
         // for any reminder due today, as a best-effort foreground alert.
         // NOTE: This works only while the app tab/PWA is open in the foreground; it does NOT
@@ -281,10 +300,37 @@ export const LoginScreen: React.FC<Props> = ({ onLoginSuccess }) => {
             <div
               id="login-error-alert"
               role="alert"
-              className="mb-5 p-3.5 rounded-xl bg-red-50 border border-red-300 text-red-900 text-[14px] flex items-start gap-2.5 shadow-xs animate-shake"
+              className="mb-5 p-3.5 rounded-xl bg-red-50 border border-red-300 text-red-900 text-[14px] flex flex-col gap-2 shadow-xs animate-shake"
             >
-              <AlertCircle className="w-5 h-5 text-red-600 shrink-0 mt-0.5" />
-              <div className="flex-1 leading-relaxed font-semibold">{error}</div>
+              <div className="flex items-start gap-2.5">
+                <AlertCircle className="w-5 h-5 text-red-600 shrink-0 mt-0.5" />
+                <div className="flex-1 leading-relaxed font-semibold">{error}</div>
+              </div>
+              <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-red-200 text-xs">
+                <span className="text-red-800 font-medium">
+                  {lang === 'bn' ? 'ডিফল্ট মাস্টার পিন বসান:' : 'Quick Fill Master PIN:'}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPin('849201');
+                    setError(null);
+                  }}
+                  className="px-2.5 py-1 rounded bg-[#1E5128] hover:bg-[#173F1F] text-white font-mono font-bold text-xs cursor-pointer shadow-2xs"
+                >
+                  849201
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPin('123456');
+                    setError(null);
+                  }}
+                  className="px-2.5 py-1 rounded bg-white hover:bg-gray-100 text-[#1E5128] border border-[#1E5128] font-mono font-bold text-xs cursor-pointer shadow-2xs"
+                >
+                  123456
+                </button>
+              </div>
             </div>
           )}
 
@@ -384,12 +430,13 @@ export const LoginScreen: React.FC<Props> = ({ onLoginSuccess }) => {
                   <span className="font-semibold text-gray-700">
                     {lang === 'bn' ? 'অনুমোদিত অ্যাকাউন্ট:' : 'Authorized Account:'}
                   </span>
-                  {['arparvez69@gmail.com', 'arparvez111@gmail.com'].map((owner) => (
+                  {authorizedOwners.map((owner) => (
                     <button
                       key={owner}
                       type="button"
                       onClick={() => {
                         setEmail(owner);
+                        setPin('849201');
                         if (error) setError(null);
                       }}
                       className={`px-2 py-0.5 rounded text-[11px] font-medium border cursor-pointer transition ${

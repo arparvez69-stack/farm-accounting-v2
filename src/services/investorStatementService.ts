@@ -137,6 +137,7 @@ export async function generateInvestorStatement(
   let newCapital = 0;
   let reinvestedProfit = 0;
   let capitalWithdrawals = 0;
+  let approvedCapitalAdjustments = 0;
 
   for (const m of periodMovements) {
     const amt = Number(m.amount || 0);
@@ -146,6 +147,12 @@ export async function generateInvestorStatement(
       (m.notes && m.notes.includes('পুনর্বিনিয়োগ'))
     ) {
       reinvestedProfit += amt;
+    } else if (m.movementType === 'ADJUSTMENT') {
+      if (m.direction === 'INFLOW') {
+        approvedCapitalAdjustments += amt;
+      } else {
+        approvedCapitalAdjustments -= amt;
+      }
     } else if (
       m.movementType === 'INITIAL_CONTRIBUTION' ||
       m.movementType === 'ADDITIONAL_CONTRIBUTION' ||
@@ -173,14 +180,24 @@ export async function generateInvestorStatement(
                   (other.accountCode === '2050' || other.accountCode === '3015' || other.accountCode === '2060') &&
                   (other.debit || 0) > 0
               );
+              const isAdj = (j.voucherNumber && j.voucherNumber.startsWith('ADJ-')) ||
+                (j.narration && j.narration.includes('মূলধন সমন্বয়'));
               if (isReinv) {
                 reinvestedProfit += l.credit;
+              } else if (isAdj) {
+                approvedCapitalAdjustments += l.credit;
               } else {
                 newCapital += l.credit;
               }
             }
             if ((l.debit || 0) > 0) {
-              capitalWithdrawals += l.debit;
+              const isAdj = (j.voucherNumber && j.voucherNumber.startsWith('ADJ-')) ||
+                (j.narration && j.narration.includes('মূলধন সমন্বয়'));
+              if (isAdj) {
+                approvedCapitalAdjustments -= l.debit;
+              } else {
+                capitalWithdrawals += l.debit;
+              }
             }
           }
         }
@@ -191,10 +208,11 @@ export async function generateInvestorStatement(
   newCapital = Math.round(newCapital * 100) / 100;
   reinvestedProfit = Math.round(reinvestedProfit * 100) / 100;
   capitalWithdrawals = Math.round(capitalWithdrawals * 100) / 100;
+  approvedCapitalAdjustments = Math.round(approvedCapitalAdjustments * 100) / 100;
 
-  // Capital Formula: Opening capital + new capital + reinvested profit - capital withdrawals = closing capital
+  // Capital Formula: Opening capital + new capital + reinvested profit - capital withdrawals +/- approved capital adjustments = closing capital
   const closingCapital =
-    Math.round((openingCapital + newCapital + reinvestedProfit - capitalWithdrawals) * 100) / 100;
+    Math.round((openingCapital + newCapital + reinvestedProfit - capitalWithdrawals + approvedCapitalAdjustments) * 100) / 100;
 
   // 6. Profit, Economic Allocation & Mudarib Share Calculations
   let economicProfitAllocation = params.economicProfitAllocation ?? 0;
@@ -314,12 +332,13 @@ export async function generateInvestorStatement(
     newCapital,
     reinvestedProfit,
     capitalWithdrawals,
+    approvedCapitalAdjustments,
     closingCapital,
     isFormulaBalanced:
       Math.abs(
-        closingCapital - (openingCapital + newCapital + reinvestedProfit - capitalWithdrawals)
+        closingCapital - (openingCapital + newCapital + reinvestedProfit - capitalWithdrawals + approvedCapitalAdjustments)
       ) < 0.01,
-    formula: `${openingCapital} (Opening) + ${newCapital} (New) + ${reinvestedProfit} (Reinvested) - ${capitalWithdrawals} (Withdrawals) = ${closingCapital} (Closing)`
+    formula: `${openingCapital} (Opening) + ${newCapital} (New) + ${reinvestedProfit} (Reinvested) - ${capitalWithdrawals} (Withdrawals)${approvedCapitalAdjustments !== 0 ? ` ${approvedCapitalAdjustments >= 0 ? '+' : '-'} ${Math.abs(approvedCapitalAdjustments)} (Adjustments)` : ''} = ${closingCapital} (Closing)`
   };
 
   const profitSummary: InvestorStatementProfitBreakdown = {
@@ -359,6 +378,7 @@ export async function generateInvestorStatement(
     newCapital,
     reinvestedProfit,
     capitalWithdrawals,
+    approvedCapitalAdjustments,
     closingCapital,
 
     economicProfitAllocation,
@@ -420,9 +440,10 @@ export function inspectInvestorStatement(
     discrepancies.push('Closing capital is missing or invalid.');
   }
 
-  // Check 6: Capital formula: Opening capital + new capital + reinvested profit - capital withdrawals = closing capital
+  // Check 6: Capital formula: Opening capital + new capital + reinvested profit - capital withdrawals +/- approved capital adjustments = closing capital
+  const adjustments = statement.approvedCapitalAdjustments || 0;
   const expectedClosing = Math.round(
-    (statement.openingCapital + statement.newCapital + statement.reinvestedProfit - statement.capitalWithdrawals) * 100
+    (statement.openingCapital + statement.newCapital + statement.reinvestedProfit - statement.capitalWithdrawals + adjustments) * 100
   ) / 100;
   const isCapitalFormulaExact = Math.abs(statement.closingCapital - expectedClosing) < 0.01;
   if (!isCapitalFormulaExact) {

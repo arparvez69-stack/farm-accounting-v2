@@ -245,9 +245,9 @@ export async function recordMudaribProfitDistribution(
         `মুদারিব / কর্ম অংশীদার হিসেবে অর্জিত মুনাফা: ${mudaribName} ৳${mudaribProfitAmount}${
           periodStartDate ? ` (${periodStartDate} হতে ${periodEndDate})` : ''
         }`,
-      reference: `MUD-PRF-${mudaribPersonId.slice(0, 8)}`,
-      relatedPerson: mudaribName,
-      investorId: mudaribPersonId,
+      reference: `MUD-PRF-${(mudaribPersonId || 'mudarib').slice(0, 8)}`,
+      relatedPerson: mudaribName || 'Farm Mudarib',
+      investorId: mudaribPersonId || 'mudarib',
       lines,
       createdBy: currentUserId,
       createdAt: new Date().toISOString()
