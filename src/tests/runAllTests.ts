@@ -96,6 +96,8 @@ import { runFinalTestECompleteGoldenScenario } from './testFinalTestECompleteGol
 import { runFinalTestFLateInvestorScenario } from './testFinalTestFLateInvestorScenario';
 import { runFinalTestGDuplicateCrashRetry } from './testFinalTestGDuplicateCrashRetry';
 import { runFinalTestHProductionFreeze } from './testFinalTestHProductionFreeze';
+import { runTask2InvestorProfitAllocationTests } from './testTask2InvestorProfitAllocation';
+import { runTask3NewInvestorAdmissionGateTests } from './testTask3NewInvestorAdmissionGate';
 
 interface SuiteResult {
   total: number;
@@ -228,6 +230,8 @@ async function main() {
   suiteResults.push(await runFinalTestFLateInvestorScenario());
   suiteResults.push(await runFinalTestGDuplicateCrashRetry());
   suiteResults.push(await runFinalTestHProductionFreeze());
+  suiteResults.push(await runTask2InvestorProfitAllocationTests());
+  suiteResults.push(await runTask3NewInvestorAdmissionGateTests());
 
   // Strictly aggregate actual executed assertions — no manual +10 or phantom counts
   const total = suiteResults.reduce((s, r) => s + (r.total || 0), 0);

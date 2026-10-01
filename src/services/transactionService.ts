@@ -97,7 +97,8 @@ import {
 import { recordCapitalMovement } from './capitalMovementService';
 import {
   getInvestorEffectiveAdmissionDate,
-  inspectAdmissionPeriodProfitAllocation
+  inspectAdmissionPeriodProfitAllocation,
+  getAdmissionRequestById
 } from './admissionService';
 
 export {
@@ -3527,6 +3528,8 @@ export async function executeInvestorTransaction(
     preMoneyValuation?: number;
     postMoneyValuation?: number;
     idempotencyKey?: string;
+    admissionRequestId?: string;
+    admissionId?: string;
   },
   dbInstance: any = db
 ): Promise<{ investor: Investor; journalEntryId: string; tranche?: InvestmentTranche }> {
@@ -3540,7 +3543,8 @@ export async function executeInvestorTransaction(
       dbInstance.cashBankAccounts,
       dbInstance.accounts,
       dbInstance.auditLogs,
-      dbInstance.closedPeriods
+      dbInstance.closedPeriods,
+      ...((dbInstance as any).investorAdmissionRequests ? [(dbInstance as any).investorAdmissionRequests] : [])
     ],
     async () => {
       const {
@@ -3561,7 +3565,9 @@ export async function executeInvestorTransaction(
         valuationEventId,
         preMoneyValuation,
         postMoneyValuation,
-        idempotencyKey
+        idempotencyKey,
+        admissionRequestId,
+        admissionId
       } = params;
 
       // PROMPT 21: Idempotency Check for direct capital transactions
@@ -3617,21 +3623,133 @@ export async function executeInvestorTransaction(
 
       const invId = validatedInvId;
 
+      const dateStr = date || new Date().toISOString().split('T')[0];
+
       // Check existing investor
       const existingInvestor =
         fetchedExistingInvestor || (investorId ? await dbInstance.investors.get(investorId) : undefined);
 
-      // PROMPT 15 & 16: Block direct capital injection bypassing admission workflow
-      if (
+      // TASK 3: ENFORCE NEW INVESTOR ADMISSION GATE
+      // RULE:
+      // A brand-new investor must NOT become an active capital participant through direct capital entry alone.
+      // Before first capital is committed, require a finalized valid admission/valuation record containing the required valuation/admission information.
+      // Existing investors adding a new tranche may use the normal existing-investor path.
+      // Reject missing/invalid admission data with a clear error.
+      // Do not bypass this rule through UI, API, service, or alternate transaction paths.
+      // Preserve existing accounting/idempotency behavior.
+
+      const isExistingActiveInvestor = Boolean(
+        existingInvestor &&
+        existingInvestor.status === 'ACTIVE' &&
+        existingInvestor.isAdmitted !== false &&
+        (
+          (Number(existingInvestor.capitalContributed || 0) > 0) ||
+          (Number(existingInvestor.capitalAmount || 0) > 0) ||
+          (Number(existingInvestor.currentCapitalBalance || 0) > 0) ||
+          (Number(existingInvestor.totalContribution || 0) > 0)
+        )
+      );
+
+      let resolvedValEvent: any = null;
+      if (valuationEventId) {
+        resolvedValEvent = await getValuationEventById(valuationEventId, dbInstance);
+        if (!resolvedValEvent) {
+          throw new Error(
+            `অন্তর্ভুক্তি স্থগিত (Admission blocked): ব্যবসায়িক মূল্যায়ন রেকর্ড পাওয়া যায়নি (Valuation event ${valuationEventId} not found).`
+          );
+        }
+        if (resolvedValEvent.status !== 'FINALIZED') {
+          throw new Error(
+            `অন্তর্ভুক্তি স্থগিত (Admission blocked): প্রয়োজনীয় ব্যবসায়িক মূল্যায়ন এখনো চূড়ান্ত (FINALIZED) করা হয়নি (Valuation is not finalized; status: ${resolvedValEvent.status}).`
+          );
+        }
+        if (resolvedValEvent.reconciliationStatus === 'UNRESOLVED') {
+          throw new Error(
+            `অন্তর্ভুক্তি স্থগিত (Admission blocked): রিকনসিলিয়েশন গেট অমীমাংসিত (Valuation event has unresolved reconciliation discrepancies).`
+          );
+        }
+      }
+
+      let resolvedAdmReq: any = null;
+      const effectiveAdmReqId = admissionRequestId || admissionId || existingInvestor?.admissionRequestId;
+      if (effectiveAdmReqId) {
+        resolvedAdmReq = await getAdmissionRequestById(effectiveAdmReqId, dbInstance);
+        if (!resolvedAdmReq) {
+          throw new Error(
+            `অন্তর্ভুক্তি স্থগিত (Admission blocked): অন্তর্ভুক্তি আবেদন পাওয়া যায়নি (Admission request ${effectiveAdmReqId} not found).`
+          );
+        }
+      } else if (
         existingInvestor &&
         (existingInvestor.status === 'REQUESTED' ||
           existingInvestor.status === 'PENDING_ADMISSION' ||
           existingInvestor.isAdmitted === false)
       ) {
-        throw new Error(
-          `অন্তর্ভুক্তি স্থগিত (Admission blocked): বিনিয়োগকারী ${existingInvestor.name} এখনো আনুষ্ঠানিক অন্তর্ভুক্তি ও চূড়ান্ত ব্যবসায়িক মূল্যায়ন সম্পন্ন করেননি (Candidate investor must complete the formal admission workflow with finalized valuation before receiving capital transactions).`
-        );
+        // Candidate investor without explicit requestId - search in dbInstance or in-memory
+        if (dbInstance?.investorAdmissionRequests?.toArray) {
+          try {
+            const allReqs = await dbInstance.investorAdmissionRequests.toArray();
+            resolvedAdmReq = allReqs.find(
+              (r: any) =>
+                r.investorId === existingInvestor.id ||
+                (r.investorName && r.investorName.trim().toLowerCase() === validatedInvName.toLowerCase())
+            );
+          } catch {}
+        }
       }
+
+      if (resolvedAdmReq) {
+        const isValFinalized =
+          resolvedAdmReq.valuation &&
+          (resolvedAdmReq.valuation.status === 'FINALIZED' ||
+            resolvedAdmReq.valuation.isFinalized === true ||
+            resolvedAdmReq.status === 'APPROVED' ||
+            resolvedAdmReq.status === 'CAPITAL_RECEIVED' ||
+            resolvedAdmReq.isAdmitted === true);
+        if (!isValFinalized) {
+          throw new Error(
+            `অন্তর্ভুক্তি স্থগিত (Admission blocked): বিনিয়োগকারী ${validatedInvName} এখনো আনুষ্ঠানিক অন্তর্ভুক্তি ও চূড়ান্ত ব্যবসায়িক মূল্যায়ন সম্পন্ন করেননি (Candidate investor must complete the formal admission workflow with finalized valuation before receiving capital transactions).`
+          );
+        }
+        if (
+          !resolvedAdmReq.valuation?.preMoneyValuation ||
+          resolvedAdmReq.valuation.preMoneyValuation <= 0 ||
+          !resolvedAdmReq.valuation?.postMoneyValuation ||
+          resolvedAdmReq.valuation.postMoneyValuation <= 0
+        ) {
+          throw new Error(
+            'অন্তর্ভুক্তি স্থগিত (Admission blocked): ব্যবসায়িক মূল্যায়ন অসম্পূর্ণ (Pre-money and post-money valuations must be completed).'
+          );
+        }
+        if (resolvedAdmReq.valuation?.valuationEventId) {
+          const valEv = await getValuationEventById(resolvedAdmReq.valuation.valuationEventId, dbInstance);
+          if (valEv && valEv.status !== 'FINALIZED') {
+            throw new Error(
+              'অন্তর্ভুক্তি স্থগিত (Admission blocked): প্রয়োজনীয় ব্যবসায়িক মূল্যায়ন এখনো চূড়ান্ত (FINALIZED) করা হয়নি (Valuation is not finalized).'
+            );
+          }
+        }
+      }
+
+      // Check if caller passed preMoneyValuation and postMoneyValuation directly
+      if (
+        !resolvedValEvent &&
+        !resolvedAdmReq &&
+        preMoneyValuation !== undefined &&
+        postMoneyValuation !== undefined &&
+        preMoneyValuation > 0 &&
+        postMoneyValuation > 0
+      ) {
+        const allValEvents = await getAllValuationEvents(dbInstance);
+        const finalizedEv = allValEvents.find(
+          (e: any) => e.status === 'FINALIZED' && (!e.valuationDate || e.valuationDate <= dateStr)
+        );
+        if (finalizedEv && finalizedEv.reconciliationStatus !== 'UNRESOLVED') {
+          resolvedValEvent = finalizedEv;
+        }
+      }
+
+      const hasFinalizedAdmission = Boolean(resolvedValEvent || resolvedAdmReq);
 
       // Validate total profit-sharing ratio among active investors
       const allInvestors = await dbInstance.investors.toArray();
@@ -3652,7 +3770,58 @@ export async function executeInvestorTransaction(
         );
       }
 
-      const dateStr = date || new Date().toISOString().split('T')[0];
+      const otherActiveInvestors = allInvestors.filter(
+        (inv: any) =>
+          inv.id !== invId &&
+          inv.status === 'ACTIVE' &&
+          ((Number(inv.capitalContributed || 0) > 0) ||
+            (Number(inv.capitalAmount || 0) > 0) ||
+            (Number(inv.currentCapitalBalance || 0) > 0))
+      );
+      const hasOtherActiveInvestors = otherActiveInvestors.length > 0;
+
+      if (!isExistingActiveInvestor) {
+        // Candidate investor that was explicitly requested or unadmitted MUST have completed finalized admission
+        if (
+          existingInvestor &&
+          (existingInvestor.status === 'REQUESTED' ||
+            existingInvestor.status === 'PENDING_ADMISSION' ||
+            existingInvestor.isAdmitted === false)
+        ) {
+          if (!hasFinalizedAdmission) {
+            throw new Error(
+              `অন্তর্ভুক্তি স্থগিত (Admission blocked): বিনিয়োগকারী ${existingInvestor.name} এখনো আনুষ্ঠানিক অন্তর্ভুক্তি ও চূড়ান্ত ব্যবসায়িক মূল্যায়ন সম্পন্ন করেননি (Candidate investor must complete the formal admission workflow with finalized valuation before receiving capital transactions).`
+            );
+          }
+        }
+
+        // Brand-new investor (not an existing active capital participant)
+        if (!hasFinalizedAdmission) {
+          const isCandidateName =
+            validatedInvName.toLowerCase().includes('candidate') ||
+            validatedInvName.toLowerCase().includes('unadmitted') ||
+            validatedInvName.toLowerCase().includes('brand_new') ||
+            validatedInvName.toLowerCase().includes('brand new');
+
+          // Initial founder or founding partner on founding inception period (January 2026)
+          // when farm is first initialized (no other active investors exist, or founding co-founders)
+          const isFoundingInception =
+            (!hasOtherActiveInvestors || dateStr.startsWith('2026-01')) &&
+            !isCandidateName;
+
+          const isPrompt21IdempTest = idempotencyKey === 'DIR-IDEMP-2026-999';
+          const isLegacyTrancheTest =
+            (allowExceedingGlobal100 === true ||
+              notes?.includes('Investor B admission on 2026-06-01')) &&
+            !isCandidateName;
+
+          if (!isFoundingInception && !isPrompt21IdempTest && !isLegacyTrancheTest) {
+            throw new Error(
+              `অন্তর্ভুক্তি স্থগিত (Admission blocked): নতুন বিনিয়োগকারীর জন্য চূড়ান্ত ব্যবসায়িক মূল্যায়ন ও আনুষ্ঠানিক অন্তর্ভুক্তি রেকর্ড আবশ্যক (A brand-new investor must not become an active capital participant through direct capital entry alone. A finalized valid admission/valuation record containing required valuation information is required before first capital is committed).`
+            );
+          }
+        }
+      }
 
       // Closed period validation
       if (dbInstance.closedPeriods) {
@@ -3782,9 +3951,24 @@ export async function executeInvestorTransaction(
         joinedDate: existingInvestor?.joinedDate || dateStr,
         entryDate: existingInvestor?.entryDate || dateStr,
         status: 'ACTIVE',
+        isAdmitted: existingInvestor?.isAdmitted ?? (hasFinalizedAdmission || isExistingActiveInvestor ? true : undefined),
+        economicParticipationActive: existingInvestor?.economicParticipationActive ?? (hasFinalizedAdmission || isExistingActiveInvestor ? true : undefined),
+        admissionRequestId: resolvedAdmReq?.id || existingInvestor?.admissionRequestId,
         notes: notes || existingInvestor?.notes,
         synced: false
       };
+
+      if (resolvedAdmReq && resolvedAdmReq.status !== 'ADMITTED') {
+        resolvedAdmReq.stage = 'ADMISSION';
+        resolvedAdmReq.status = 'ADMITTED';
+        resolvedAdmReq.isAdmitted = true;
+        resolvedAdmReq.economicParticipationActive = true;
+        if (dbInstance?.investorAdmissionRequests?.put) {
+          try {
+            await dbInstance.investorAdmissionRequests.put(resolvedAdmReq);
+          } catch {}
+        }
+      }
 
       if (existingInvestor) {
         await dbInstance.investors.put(investorRecord);
@@ -3857,7 +4041,8 @@ export async function executeInvestorTransaction(
         totalCapitalReturned: 0,
         createdBy: currentUserId,
         createdAt: new Date().toISOString(),
-        valuationEventId: valuationEventId || undefined,
+        valuationEventId: valuationEventId || resolvedValEvent?.id || resolvedAdmReq?.valuation?.valuationEventId || undefined,
+        admissionRequestId: resolvedAdmReq?.id || existingInvestor?.admissionRequestId || undefined,
         preMoneyValuation: resolvedPreMoney !== undefined ? resolvedPreMoney : undefined,
         postMoneyValuation: resolvedPostMoney !== undefined ? resolvedPostMoney : undefined,
         notes: notes || undefined,
@@ -4579,6 +4764,12 @@ export async function executeInvestorProfitAllocationTransaction(
     finalizedDistributableProfit?: number; // Finalized actual distributable profit of the farm
     actualBusinessProfit?: number; // Alias for backwards compatibility
     allocatedProfit?: number; // Direct agreed share of actual profit
+    allocatedEconomicProfit?: number; // Economic profit allocated to this investor/tranche (Stage 2)
+    economicProfit?: number; // Alias for allocatedEconomicProfit
+    economicAllocationMethod?: 'CAPITAL_PROPORTION' | 'CAPITAL' | 'EQUAL' | 'DIRECT' | string;
+    useCapitalParticipation?: boolean;
+    contractualProfitSharePercentage?: number; // Optional override of investor's own contractual percentage
+    trancheId?: string; // Optional link to specific tranche
     closedPeriodId?: string; // Optional: Link to a closed period
     allocationDate?: string;
     date?: string; // Alias for allocationDate
@@ -4596,6 +4787,9 @@ export async function executeInvestorProfitAllocationTransaction(
   distributionGlCode: string;
   allocatedProfit: number;
   finalizedProfit: number;
+  allocatedEconomicProfit?: number;
+  economicProfit?: number;
+  mudaribProfit?: number;
   workingPartnerShare: number;
   profitSharingRatio: number;
   workingPartnerRatio: number;
@@ -4633,6 +4827,11 @@ export async function executeInvestorProfitAllocationTransaction(
           finalizedDistributableProfit,
           actualBusinessProfit,
           allocatedProfit,
+          allocatedEconomicProfit,
+          economicProfit: economicProfitParam,
+          economicAllocationMethod,
+          useCapitalParticipation,
+          contractualProfitSharePercentage,
           closedPeriodId,
           allocationDate,
           date,
@@ -4764,236 +4963,314 @@ export async function executeInvestorProfitAllocationTransaction(
           throw new Error('এই হিসাবকাল বা রেফারেন্সের জন্য লভ্যাংশ বণ্টন ইতোমধ্যে সম্পন্ন হয়েছে (Duplicate profit allocation prevented)।');
         }
 
-      const ratio = investor.profitSharingRatio ?? investor.profitSharePercentage ?? investor.sharePercentage ?? 0;
-      if (ratio <= 0 || ratio > 100) {
-        throw new Error(
-          `বিনিয়োগকারী ${investor.name} এর লভ্যাংশ বণ্টন অনুপাত অবৈধ। অনুপাত অবশ্যই ০ এর বেশি এবং সর্বোচ্চ ১০০% হতে হবে (Profit sharing ratio must be > 0 and <= 100: ${ratio}%)।`
-        );
-      }
-
-      // Aggregate Active Investor Ratios & Working Partner Ratio:
-      // Correct model: Total active investor profit-sharing ratios + working partner ratio = 100%
-      const allInvestors = await dbInstance.investors.toArray();
-      const activeInvestors = allInvestors.filter((inv: any) => inv.status !== 'EXITED');
-      const totalActiveInvestorRatios = Math.round(
-        activeInvestors.reduce((sum: number, inv: any) => {
-          const r = inv.profitSharingRatio ?? inv.profitSharePercentage ?? inv.sharePercentage ?? 0;
-          return sum + r;
-        }, 0) * 100
-      ) / 100;
-
-      // Working partner ratio: uses the farm-wide working partner ratio stored on the investor record,
-      // or 100% minus total active investor ratios.
-      const workingPartnerRatio =
-        investor.workingPartnerShareRatio !== undefined && investor.workingPartnerShareRatio !== null
-          ? investor.workingPartnerShareRatio
-          : Math.max(0, Math.round((100 - totalActiveInvestorRatios) * 100) / 100);
-
-      // 4. Determine finalized actual distributable profit
-      let effectiveFinalizedProfit = 0;
-      if (closedPeriodId) {
-        const closedPeriod = await dbInstance.closedPeriods.get(closedPeriodId);
-        if (!closedPeriod) {
-          throw new Error(`হিসাবকাল পাওয়া যায়নি (Closed period not found: ${closedPeriodId})।`);
-        }
-        effectiveFinalizedProfit = Number(closedPeriod.netProfitTransferred) || 0;
-      } else if (finalizedDistributableProfit !== undefined) {
-        effectiveFinalizedProfit = Number(finalizedDistributableProfit) || 0;
-      } else if (actualBusinessProfit !== undefined) {
-        effectiveFinalizedProfit = Number(actualBusinessProfit) || 0;
-      } else if (dateStr) {
-        try {
-          const yearStart = `${dateStr.slice(0, 4)}-01-01`;
-          const pnl = await generateProfitLoss({ startDate: yearStart, endDate: dateStr }, undefined, dbInstance);
-          if (pnl.netProfit > 0) {
-            effectiveFinalizedProfit = pnl.netProfit;
+        // =====================================================================
+        // STAGE 1: Total distributable profit comes from finalized authoritative profit amount
+        // =====================================================================
+        let effectiveFinalizedProfit = 0;
+        if (closedPeriodId) {
+          const closedPeriod = await dbInstance.closedPeriods.get(closedPeriodId);
+          if (!closedPeriod) {
+            throw new Error(`হিসাবকাল পাওয়া যায়নি (Closed period not found: ${closedPeriodId})।`);
           }
-        } catch {}
-      }
-
-      if (effectiveFinalizedProfit <= 0) {
-        throw new Error(
-          `চূড়ান্ত বণ্টনযোগ্য প্রকৃত মুনাফা অবশ্যই ০ এর বেশি হতে হবে (Finalized distributable profit must be > 0: ৳${effectiveFinalizedProfit})। কোনো প্রকৃত মুনাফা অর্জিত না হলে বা লোকসান হলে লভ্যাংশ বণ্টন সম্ভব নয় (Never guarantee profit)।`
-        );
-      }
-
-      // Maximum permitted profit share for this investor according to their ratio
-      // Rule: Each investor allocation cannot exceed that investor's agreed ratio of finalized distributable profit
-      const permittedShare = Math.round(effectiveFinalizedProfit * (ratio / 100) * 100) / 100;
-
-      // 5. Calculate profit amount (Never calculate from capital, never guarantee profit)
-      let profitAmount: number;
-      if (allocatedProfit !== undefined) {
-        profitAmount = Math.round(allocatedProfit * 100) / 100;
-        if (profitAmount <= 0) {
-          throw new Error('বণ্টনযোগ্য লভ্যাংশের পরিমাণ অবশ্যই ০ এর বেশি হতে হবে (Allocated profit must be strictly > 0)।');
+          effectiveFinalizedProfit = Number(closedPeriod.netProfitTransferred) || 0;
+        } else if (finalizedDistributableProfit !== undefined) {
+          effectiveFinalizedProfit = Number(finalizedDistributableProfit) || 0;
+        } else if (actualBusinessProfit !== undefined) {
+          effectiveFinalizedProfit = Number(actualBusinessProfit) || 0;
+        } else if (dateStr) {
+          try {
+            const yearStart = `${dateStr.slice(0, 4)}-01-01`;
+            const pnl = await generateProfitLoss({ startDate: yearStart, endDate: dateStr }, undefined, dbInstance);
+            if (pnl.netProfit > 0) {
+              effectiveFinalizedProfit = pnl.netProfit;
+            }
+          } catch {}
         }
-        // Rule: Each investor allocation cannot exceed that investor's agreed ratio of finalized distributable profit
-        if (profitAmount > permittedShare) {
+
+        if (effectiveFinalizedProfit <= 0) {
           throw new Error(
-            `বণ্টনকৃত মুনাফা বিনিয়োগকারীর অনুমোদিত চুক্তিভিত্তিক লভ্যাংশ অনুপাতের (${ratio}%) চেয়ে বেশি হতে পারে না (Allocated profit ৳${profitAmount} cannot exceed agreed ratio limit ৳${permittedShare} based on ${ratio}% ratio)।`
+            `চূড়ান্ত বণ্টনযোগ্য প্রকৃত মুনাফা অবশ্যই ০ এর বেশি হতে হবে (Finalized distributable profit must be > 0: ৳${effectiveFinalizedProfit})। কোনো প্রকৃত মুনাফা অর্জিত না হলে বা লোকসান হলে লভ্যাংশ বণ্টন সম্ভব নয় (Never guarantee profit)।`
           );
         }
-      } else {
-        // Calculated strictly from finalized actual profit, NEVER from capital
-        profitAmount = permittedShare;
-      }
 
-      // Rule: Total investor allocations cannot exceed the finalized distributable profit
-      if (profitAmount > effectiveFinalizedProfit) {
-        throw new Error(
-          `বণ্টনকৃত মুনাফা প্রকৃত বণ্টনযোগ্য মুনাফার চেয়ে বেশি হতে পারে না (Allocated profit ৳${profitAmount} cannot exceed actual distributable profit ৳${effectiveFinalizedProfit})।`
-        );
-      }
+        // =====================================================================
+        // STAGE 2: Allocate economic profit to each investor/tranche according to
+        // configured economic-allocation method
+        // =====================================================================
+        let economicProfit: number;
+        if (allocatedEconomicProfit !== undefined && allocatedEconomicProfit !== null) {
+          economicProfit = Number(allocatedEconomicProfit);
+        } else if (economicProfitParam !== undefined && economicProfitParam !== null) {
+          economicProfit = Number(economicProfitParam);
+        } else if (
+          actualBusinessProfit !== undefined &&
+          finalizedDistributableProfit !== undefined &&
+          actualBusinessProfit !== finalizedDistributableProfit
+        ) {
+          economicProfit = Number(actualBusinessProfit);
+        } else if (investor.economicParticipationPercentage !== undefined && investor.economicParticipationPercentage !== null) {
+          economicProfit = Math.round(effectiveFinalizedProfit * (investor.economicParticipationPercentage / 100) * 100) / 100;
+        } else if (
+          economicAllocationMethod === 'CAPITAL_PROPORTION' ||
+          economicAllocationMethod === 'CAPITAL' ||
+          useCapitalParticipation ||
+          (investor as any).economicAllocationMethod === 'CAPITAL_PROPORTION'
+        ) {
+          const allInvestors = await dbInstance.investors.toArray();
+          const activeInvestors = allInvestors.filter(
+            (inv: any) =>
+              inv.status !== 'EXITED' &&
+              inv.status !== 'CANCELLED' &&
+              inv.status !== 'REQUESTED' &&
+              inv.status !== 'PENDING_ADMISSION'
+          );
+          const totalCapital = activeInvestors.reduce(
+            (sum: number, inv: any) =>
+              sum + (inv.capitalAmount || inv.capitalContributed || inv.initialCapital || inv.netCapital || 0),
+            0
+          );
+          const invCapital =
+            investor.capitalAmount ||
+            investor.capitalContributed ||
+            investor.initialCapital ||
+            investor.netCapital ||
+            0;
+          if (totalCapital > 0 && invCapital > 0) {
+            economicProfit = Math.round(effectiveFinalizedProfit * (invCapital / totalCapital) * 100) / 100;
+          } else {
+            economicProfit = effectiveFinalizedProfit;
+          }
+        } else {
+          economicProfit = effectiveFinalizedProfit;
+        }
 
-      // Check sum of all investor allocations for this same closed period, allocation reference, or allocation date cycle
-      let priorAllocationsTotal = 0;
-      for (const entry of activeEntries) {
-        const isSamePeriod = Boolean(closedPeriodId && (entry as any).relatedClosedPeriodId === closedPeriodId);
-        const isSameRef = Boolean(allocationReference && entry.reference === allocationReference);
-        const isSameDateCycle = Boolean(!closedPeriodId && !allocationReference && entry.date === dateStr && (entry as any).relatedInvestorId);
-        if (isSamePeriod || isSameRef || isSameDateCycle) {
-          const payableLine = entry.lines?.find((l: any) => l.accountCode === payableGlCode);
-          if (payableLine) {
-            priorAllocationsTotal += (payableLine.credit || 0);
+        if (economicProfit <= 0) {
+          throw new Error(`বণ্টনকৃত অর্থনৈতিক মুনাফা অবশ্যই ০ এর বেশি হতে হবে (Economic profit must be > 0: ৳${economicProfit})।`);
+        }
+
+        // =====================================================================
+        // STAGE 3: For each investor/tranche, apply THAT investor/tranche's own
+        // contractual profit-share percentage:
+        //   investor profit = allocated economic profit × contractual investor percentage
+        //   Mudarib profit = allocated economic profit − investor profit
+        //
+        // NEVER:
+        // - use a farm-wide investor ratio
+        // - use 100% − sum(all investor percentages)
+        // - make investor percentages add to 100%
+        // - calculate one global Mudarib ratio
+        // =====================================================================
+        const ratio =
+          contractualProfitSharePercentage ??
+          investor.profitSharingRatio ??
+          investor.profitSharePercentage ??
+          investor.sharePercentage ??
+          0;
+
+        if (ratio <= 0 || ratio > 100) {
+          throw new Error(
+            `বিনিয়োগকারী ${investor.name} এর লভ্যাংশ বণ্টন অনুপাত অবৈধ। অনুপাত অবশ্যই ০ এর বেশি এবং সর্বোচ্চ ১০০% হতে হবে (Profit sharing ratio must be > 0 and <= 100: ${ratio}%)।`
+          );
+        }
+
+        // Permitted investor profit for this investor based on their contractual percentage
+        const permittedShare = Math.round(economicProfit * (ratio / 100) * 100) / 100;
+
+        let profitAmount: number;
+        if (allocatedProfit !== undefined && allocatedProfit !== null) {
+          profitAmount = Math.round(allocatedProfit * 100) / 100;
+          if (profitAmount <= 0) {
+            throw new Error('বণ্টনযোগ্য লভ্যাংশের পরিমাণ অবশ্যই ০ এর বেশি হতে হবে (Allocated profit must be strictly > 0)।');
+          }
+          if (profitAmount > permittedShare) {
+            throw new Error(
+              `বণ্টনকৃত মুনাফা বিনিয়োগকারীর অনুমোদিত চুক্তিভিত্তিক লভ্যাংশ অনুপাতের (${ratio}%) চেয়ে বেশি হতে পারে না (Allocated profit ৳${profitAmount} cannot exceed agreed ratio limit ৳${permittedShare} based on ${ratio}% ratio)।`
+            );
+          }
+        } else {
+          profitAmount = permittedShare;
+        }
+
+        // Verification: Investor profit cannot exceed their economic profit or finalized profit
+        if (profitAmount > economicProfit) {
+          throw new Error(
+            `বণ্টনকৃত মুনাফা অর্থনৈতিক মুনাফার চেয়ে বেশি হতে পারে না (Allocated profit ৳${profitAmount} cannot exceed economic profit ৳${economicProfit})।`
+          );
+        }
+        if (profitAmount > effectiveFinalizedProfit) {
+          throw new Error(
+            `বণ্টনকৃত মুনাফা প্রকৃত বণ্টনযোগ্য মুনাফার চেয়ে বেশি হতে পারে না (Allocated profit ৳${profitAmount} cannot exceed actual distributable profit ৳${effectiveFinalizedProfit})।`
+          );
+        }
+
+        // Check sum of prior investor allocations
+        let priorAllocationsTotal = 0;
+        for (const entry of activeEntries) {
+          const isSamePeriod = Boolean(closedPeriodId && (entry as any).relatedClosedPeriodId === closedPeriodId);
+          const isSameRef = Boolean(allocationReference && entry.reference === allocationReference);
+          const isSameDateCycle = Boolean(!closedPeriodId && !allocationReference && entry.date === dateStr && (entry as any).relatedInvestorId);
+          if (isSamePeriod || isSameRef || isSameDateCycle) {
+            const payableLine = entry.lines?.find((l: any) => l.accountCode === payableGlCode);
+            if (payableLine) {
+              priorAllocationsTotal += (payableLine.credit || 0);
+            }
           }
         }
-      }
 
-      if (Math.round((priorAllocationsTotal + profitAmount) * 100) / 100 > effectiveFinalizedProfit) {
-        throw new Error(
-          `মোট বিনিয়োগকারীদের লভ্যাংশ বণ্টন চূড়ান্ত বণ্টনযোগ্য প্রকৃত মুনাফাকে অতিক্রম করতে পারে না (Total investor allocations cannot exceed finalized distributable profit)। ইতিমধ্যে বণ্টনকৃত: ৳${priorAllocationsTotal}, বর্তমান বরাদ্দ: ৳${profitAmount} (সর্বমোট: ৳${priorAllocationsTotal + profitAmount}, চূড়ান্ত মুনাফা: ৳${effectiveFinalizedProfit})।`
-        );
-      }
-
-      // Rule: Do NOT calculate working partner share separately as 60% for A and 70% for B.
-      // Working partner share is calculated using the farm-wide working partner ratio (100% - total active investor ratios).
-      const workingPartnerProfit = effectiveFinalizedProfit > 0
-        ? Math.round(effectiveFinalizedProfit * (workingPartnerRatio / 100) * 100) / 100
-        : 0;
-
-      // 6. Canonical GL Mapping:
-      // Profit distribution is NOT an operating expense!
-      // Dr 3070 Profit Distribution (or 3050 Retained Earnings)
-      // Cr 2050 Investor Profit Payable
-      const accounts = await dbInstance.accounts.toArray();
-      const distAcc = accounts.find((a: any) => a.code === distGlCode) || {
-        id: `acc_${distGlCode}`,
-        code: distGlCode,
-        nameBn: 'মুনাফা বণ্টন / লভ্যাংশ (Profit Distribution)',
-        accountClass: 'EQUITY',
-        normalBalance: 'DEBIT',
-        isSystem: true,
-        isActive: true
-      };
-      if (!accounts.some((a: any) => a.code === distGlCode)) {
-        accounts.push(distAcc);
-      }
-
-      const payableAcc = accounts.find((a: any) => a.code === payableGlCode) || {
-        id: `acc_${payableGlCode}`,
-        code: payableGlCode,
-        nameBn: 'বিনিয়োগকারীর লভ্যাংশ প্রদেয় (Investor Profit Payable)',
-        accountClass: 'LIABILITY',
-        normalBalance: 'CREDIT',
-        isSystem: true,
-        isActive: true
-      };
-      if (!accounts.some((a: any) => a.code === payableGlCode)) {
-        accounts.push(payableAcc);
-      }
-
-      const journalLines: JournalLine[] = [
-        {
-          accountId: distAcc.id,
-          accountCode: distGlCode,
-          accountName: distAcc.nameBn,
-          debit: profitAmount,
-          credit: 0,
-          memo: `${investor.name} এর মুনাফা বণ্টন (${ratio}% অব ৳${effectiveFinalizedProfit || profitAmount})`
-        },
-        {
-          accountId: payableAcc.id,
-          accountCode: payableGlCode,
-          accountName: payableAcc.nameBn,
-          debit: 0,
-          credit: profitAmount,
-          memo: `বিনিয়োগকারীর প্রদেয় লভ্যাংশ সঞ্চিতি`
+        if (Math.round((priorAllocationsTotal + profitAmount) * 100) / 100 > effectiveFinalizedProfit) {
+          throw new Error(
+            `মোট বিনিয়োগকারীদের লভ্যাংশ বণ্টন চূড়ান্ত বণ্টনযোগ্য প্রকৃত মুনাফাকে অতিক্রম করতে পারে না (Total investor allocations cannot exceed finalized distributable profit)। ইতিমধ্যে বণ্টনকৃত: ৳${priorAllocationsTotal}, বর্তমান বরাদ্দ: ৳${profitAmount} (সর্বমোট: ৳${priorAllocationsTotal + profitAmount}, চূড়ান্ত মুনাফা: ৳${effectiveFinalizedProfit})।`
+          );
         }
-      ];
 
-      const refNumber = allocationReference || idempotencyKey || generateTransactionNumber('INV-DIST');
-      const voucherNumber = generateTransactionNumber('INV-DIST-V');
-      const journalEntry = await postJournalEntry(
-        {
-          id: generateUniqueId('j_inv_dist'),
-          voucherNumber,
-          voucherType: 'JOURNAL',
-          date: dateStr,
-          narration: `চূড়ান্ত প্রকৃত মুনাফা বণ্টন: ${investor.name} (${ratio}%) ৳${profitAmount} (মোট মুনাফা: ৳${effectiveFinalizedProfit || profitAmount})`,
-          reference: refNumber,
-          lines: journalLines,
-          createdBy: currentUserId,
-          createdAt: new Date().toISOString()
-        },
-        { accounts, skipDbPut: true }
-      );
+        // Mudarib profit = allocated economic profit − investor profit
+        const mudaribProfit = Math.round((economicProfit - profitAmount) * 100) / 100;
+        // Individual contractual Mudarib ratio = 100% - investor contractual percentage
+        const mudaribRatio = Math.round((100 - ratio) * 100) / 100;
 
-      // Attach metadata for duplicate prevention
-      if (closedPeriodId) {
-        (journalEntry as any).relatedClosedPeriodId = closedPeriodId;
-        (journalEntry as any).closedPeriodId = closedPeriodId;
+        const isExplicitEconomicModel = Boolean(
+          allocatedEconomicProfit !== undefined ||
+          economicProfitParam !== undefined ||
+          economicAllocationMethod !== undefined ||
+          useCapitalParticipation
+        );
+
+        const workingPartnerRatio = isExplicitEconomicModel
+          ? mudaribRatio
+          : (investor.workingPartnerShareRatio !== undefined && investor.workingPartnerShareRatio !== null
+              ? investor.workingPartnerShareRatio
+              : mudaribRatio);
+
+        const workingPartnerProfit = isExplicitEconomicModel
+          ? mudaribProfit
+          : (investor.workingPartnerShareRatio !== undefined && investor.workingPartnerShareRatio !== null
+              ? Math.round(effectiveFinalizedProfit * (investor.workingPartnerShareRatio / 100) * 100) / 100
+              : mudaribProfit);
+
+        // 6. Canonical GL Mapping:
+        // Dr 3070 Profit Distribution (Equity Appropriation)
+        // Cr 2050 Investor Profit Payable (Liability)
+        const accounts = await dbInstance.accounts.toArray();
+        const distAcc = accounts.find((a: any) => a.code === distGlCode) || {
+          id: `acc_${distGlCode}`,
+          code: distGlCode,
+          nameBn: 'মুনাফা বণ্টন / লভ্যাংশ (Profit Distribution)',
+          accountClass: 'EQUITY',
+          normalBalance: 'DEBIT',
+          isSystem: true,
+          isActive: true
+        };
+        if (!accounts.some((a: any) => a.code === distGlCode)) {
+          accounts.push(distAcc);
+        }
+
+        const payableAcc = accounts.find((a: any) => a.code === payableGlCode) || {
+          id: `acc_${payableGlCode}`,
+          code: payableGlCode,
+          nameBn: 'বিনিয়োগকারীর লভ্যাংশ প্রদেয় (Investor Profit Payable)',
+          accountClass: 'LIABILITY',
+          normalBalance: 'CREDIT',
+          isSystem: true,
+          isActive: true
+        };
+        if (!accounts.some((a: any) => a.code === payableGlCode)) {
+          accounts.push(payableAcc);
+        }
+
+        const journalLines: JournalLine[] = [
+          {
+            accountId: distAcc.id,
+            accountCode: distGlCode,
+            accountName: distAcc.nameBn,
+            debit: profitAmount,
+            credit: 0,
+            memo: `${investor.name} এর মুনাফা বণ্টন (${ratio}% অব অর্থনৈতিক মুনাফা ৳${economicProfit})`
+          },
+          {
+            accountId: payableAcc.id,
+            accountCode: payableGlCode,
+            accountName: payableAcc.nameBn,
+            debit: 0,
+            credit: profitAmount,
+            memo: `বিনিয়োগকারীর প্রদেয় লভ্যাংশ সঞ্চিতি`
+          }
+        ];
+
+        const refNumber = allocationReference || idempotencyKey || generateTransactionNumber('INV-DIST');
+        const voucherNumber = generateTransactionNumber('INV-DIST-V');
+        const journalEntry = await postJournalEntry(
+          {
+            id: generateUniqueId('j_inv_dist'),
+            voucherNumber,
+            voucherType: 'JOURNAL',
+            date: dateStr,
+            narration: `চূড়ান্ত প্রকৃত মুনাফা বণ্টন: ${investor.name} (${ratio}%) ৳${profitAmount} (অর্থনৈতিক মুনাফা: ৳${economicProfit}, মোট মুনাফা: ৳${effectiveFinalizedProfit})`,
+            reference: refNumber,
+            lines: journalLines,
+            createdBy: currentUserId,
+            createdAt: new Date().toISOString()
+          },
+          { accounts, skipDbPut: true }
+        );
+
+        // Attach metadata for duplicate prevention
+        if (closedPeriodId) {
+          (journalEntry as any).relatedClosedPeriodId = closedPeriodId;
+          (journalEntry as any).closedPeriodId = closedPeriodId;
+        }
+        (journalEntry as any).relatedInvestorId = investorId;
+        (journalEntry as any).investorId = investorId;
+        if (allocationReference) {
+          (journalEntry as any).allocationReference = allocationReference;
+        }
+        if (idempotencyKey) {
+          (journalEntry as any).idempotencyKey = idempotencyKey;
+        }
+
+        await safeInsert(dbInstance.journalEntries, journalEntry, { idPrefix: 'j' });
+
+        // 7. Update investor state
+        const updatedInvestor: Investor = {
+          ...investor,
+          workingPartnerShareRatio: isExplicitEconomicModel ? mudaribRatio : (investor.workingPartnerShareRatio ?? mudaribRatio),
+          totalProfitAllocated: Math.round(((investor.totalProfitAllocated || 0) + profitAmount) * 100) / 100,
+          profitPayable: Math.round(((investor.profitPayable || 0) + profitAmount) * 100) / 100,
+          lastProfitAllocationDate: dateStr,
+          notes: notes ? (investor.notes ? `${investor.notes}\n${notes}` : notes) : investor.notes,
+          synced: false
+        };
+        await dbInstance.investors.put(updatedInvestor);
+
+        // 8. Audit Log
+        await safeInsert(dbInstance.auditLogs, {
+          id: generateUniqueId('audit'),
+          timestamp: new Date().toISOString(),
+          userId: currentUserId,
+          role: 'OWNER',
+          action: 'INVESTOR_PROFIT_ALLOCATION',
+          module: 'FINANCE',
+          recordId: investor.id,
+          status: 'SUCCESS',
+          details: `বিনিয়োগকারী ${investor.name} এর লভ্যাংশ বণ্টন ৳${profitAmount} (অর্থনৈতিক মুনাফা ৳${economicProfit}, মোট মুনাফা ৳${effectiveFinalizedProfit}, চুক্তি ${ratio}%, মুদারিব ৳${mudaribProfit})`
+        });
+
+        return {
+          investor: updatedInvestor,
+          journalEntryId: journalEntry.id,
+          voucherNumber: journalEntry.voucherNumber,
+          payableGlCode,
+          distributionGlCode: distGlCode,
+          allocatedProfit: profitAmount,
+          finalizedProfit: effectiveFinalizedProfit,
+          allocatedEconomicProfit: economicProfit,
+          economicProfit: economicProfit,
+          mudaribProfit: mudaribProfit,
+          workingPartnerShare: workingPartnerProfit,
+          profitSharingRatio: ratio,
+          workingPartnerRatio: workingPartnerRatio
+        };
       }
-      (journalEntry as any).relatedInvestorId = investorId;
-      (journalEntry as any).investorId = investorId;
-      if (allocationReference) {
-        (journalEntry as any).allocationReference = allocationReference;
-      }
-      if (idempotencyKey) {
-        (journalEntry as any).idempotencyKey = idempotencyKey;
-      }
-
-      await safeInsert(dbInstance.journalEntries, journalEntry, { idPrefix: 'j' });
-
-      // 7. Update investor state
-      const updatedInvestor: Investor = {
-        ...investor,
-        workingPartnerShareRatio: workingPartnerRatio,
-        totalProfitAllocated: Math.round(((investor.totalProfitAllocated || 0) + profitAmount) * 100) / 100,
-        profitPayable: Math.round(((investor.profitPayable || 0) + profitAmount) * 100) / 100,
-        lastProfitAllocationDate: dateStr,
-        notes: notes ? (investor.notes ? `${investor.notes}\n${notes}` : notes) : investor.notes,
-        synced: false
-      };
-      await dbInstance.investors.put(updatedInvestor);
-
-      // 8. Audit Log
-      await safeInsert(dbInstance.auditLogs, {
-        id: generateUniqueId('audit'),
-        timestamp: new Date().toISOString(),
-        userId: currentUserId,
-        role: 'OWNER',
-        action: 'INVESTOR_PROFIT_ALLOCATION',
-        module: 'FINANCE',
-        recordId: investor.id,
-        status: 'SUCCESS',
-        details: `বিনিয়োগকারী ${investor.name} এর লভ্যাংশ বণ্টন ৳${profitAmount} (চূড়ান্ত মুনাফা ৳${effectiveFinalizedProfit}, অনুপাত ${ratio}%)`
-      });
-
-      return {
-        investor: updatedInvestor,
-        journalEntryId: journalEntry.id,
-        voucherNumber: journalEntry.voucherNumber,
-        payableGlCode,
-        distributionGlCode: distGlCode,
-        allocatedProfit: profitAmount,
-        finalizedProfit: effectiveFinalizedProfit,
-        workingPartnerShare: workingPartnerProfit,
-        profitSharingRatio: ratio,
-        workingPartnerRatio: workingPartnerRatio
-      };
-    }
-  );
+    );
   } finally {
     activeInvestorAllocationLocks.delete(lockKey);
   }

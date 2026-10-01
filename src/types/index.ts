@@ -920,6 +920,7 @@ export interface InvestmentTranche {
   economicParticipationPercentage?: number;
   exactEconomicParticipationPercentage?: number;
   admissionAuditId?: string;
+  admissionRequestId?: string;
 
   // Optional withdrawal/closure information
   withdrawalDate?: string;
