@@ -2009,16 +2009,22 @@ export interface ParticipantEconomicAllocation {
   allocatedEconomicProfit: number; // Allocated BEFORE contractual percentages are applied
   contractualProfitSharingPercentage?: number;
   investorContractualProfit?: number; // Result after applying contractual % to allocatedEconomicProfit
+  investorProfit?: number; // Alias for investorContractualProfit
   workingPartnerShare?: number;
+  mudaribProfit?: number; // Alias for workingPartnerShare
   directContractualApplicationToTotalProfitBlocked?: boolean;
 }
 
 export interface EconomicAllocationByCapitalResult {
   distributableProfit: number;
+  totalProfit?: number;
   totalEligibleCapital: number;
   hasEqualEligibilityPeriods: boolean;
   allocations: ParticipantEconomicAllocation[];
   totalAllocatedEconomicProfit: number;
+  totalInvestorProfit?: number;
+  totalMudaribProfit?: number;
+  totalWorkingPartnerShare?: number;
   remainingEconomicProfit: number;
   isBeforeContractualPercentages: boolean;
   flatProfitSharingAntiPatternPrevented: boolean;
@@ -2041,6 +2047,282 @@ export interface EconomicAllocationInspectionResult {
   allocations: Record<string, number>;
   totalAllocated: number;
   distributableProfit: number;
+  details: string;
+}
+
+/**
+ * PROMPT 27 — Full 300 Profit Golden Calculation
+ * Evaluates the exact mathematical formula for:
+ * A capital = 100, B capital = 200, Total profit = 300
+ * A contract = 50%, B contract = 60%
+ * Expected economic allocation: A = 100, B = 200
+ * Expected investor profit: A = 50, B = 120
+ * Expected Mudarib profit: A = 50, B = 80
+ * Expected totals: Investor profit = 170, Mudarib profit = 130, Total = 300
+ */
+export interface GoldenProfitCalculationParticipant {
+  id?: string;
+  participantId?: string;
+  name?: string;
+  capital: number;
+  contractPercentage: number;
+}
+
+export interface GoldenProfitCalculationParticipantResult {
+  id: string;
+  name: string;
+  capital: number;
+  capitalProportionRatio: number;
+  capitalProportionPercentage: number;
+  contractPercentage: number;
+  economicAllocation: number;
+  investorProfit: number;
+  mudaribProfit: number;
+}
+
+export interface GoldenProfitCalculationResult {
+  totalProfit: number;
+  totalCapital: number;
+  participants: GoldenProfitCalculationParticipantResult[];
+  economicAllocations: Record<string, number>;
+  investorProfits: Record<string, number>;
+  mudaribProfits: Record<string, number>;
+  totalInvestorProfit: number;
+  totalMudaribProfit: number;
+  grandTotal: number;
+  passed: boolean;
+  formulaVerified: boolean;
+  details: string;
+}
+
+export interface GoldenProfitCalculationInspectionParams {
+  totalProfit: number;
+  participants: Array<{
+    id?: string;
+    participantId?: string;
+    name?: string;
+    capital: number;
+    contractPercentage: number;
+  }>;
+  expectedEconomicAllocations?: Record<string, number>;
+  expectedInvestorProfits?: Record<string, number>;
+  expectedMudaribProfits?: Record<string, number>;
+  expectedTotalInvestorProfit?: number;
+  expectedTotalMudaribProfit?: number;
+  expectedGrandTotal?: number;
+}
+
+export interface GoldenProfitCalculationInspectionResult {
+  passed: boolean;
+  exactGoldenExampleVerified: boolean;
+  formulaDerivedWithoutHardcoding: boolean;
+  economicAllocationsMatch: boolean;
+  investorProfitsMatch: boolean;
+  mudaribProfitsMatch: boolean;
+  totalsMatch: boolean;
+  result: GoldenProfitCalculationResult;
+  details: string;
+}
+
+/**
+ * PROMPT 28 — Loss Handling & Negative Period Result Configuration
+ * Requirements:
+ * - investor profit payable must not become negative;
+ * - Mudarib profit must not become negative;
+ * - the system must not manufacture profit;
+ * - loss must remain visible;
+ * - capital/economic balances must follow the configured loss policy.
+ * - Do not simply reuse the positive-profit formula for negative values.
+ * - Test a period with loss = 100 -> Expected investor profit = 0, Expected Mudarib profit = 0.
+ */
+export type LossPolicy =
+  | 'PRO_RATA_CAPITAL_IMPAIRMENT'
+  | 'RETAINED_DEFICIT_CARRY_FORWARD'
+  | 'CAPITAL_PROVIDER_ABSORPTION'
+  | 'WORKING_PARTNER_ABSORPTION';
+
+export interface ParticipantLossHandlingPosition {
+  id?: string;
+  participantId?: string;
+  name?: string;
+  capital: number;
+  contractPercentage?: number;
+}
+
+export interface ParticipantLossHandlingResult {
+  id: string;
+  name: string;
+  originalCapital: number;
+  capitalProportionRatio: number;
+  contractPercentage: number;
+  economicAllocation: number; // 0 for profit distribution, or negative capital impairment
+  investorProfit: number; // Strictly 0, never negative
+  investorProfitPayable: number; // Strictly 0, never negative
+  mudaribProfit: number; // Strictly 0, never negative
+  lossAbsorbed: number; // Loss absorbed according to loss policy
+  remainingCapital: number; // Capital after applying loss policy
+}
+
+export interface PeriodResultLossHandlingParams {
+  periodResult?: number; // e.g. -100 (negative for loss)
+  loss?: number; // e.g. 100 (positive number representing loss amount)
+  distributableProfit?: number; // if <= 0 treated as loss or zero
+  lossPolicy?: LossPolicy;
+  participants: ParticipantLossHandlingPosition[];
+  periodStartDate?: string;
+  periodEndDate?: string;
+  allowManufacturedProfit?: boolean;
+}
+
+export interface PeriodResultLossHandlingResult {
+  isLoss: boolean;
+  lossAmount: number; // e.g. 100
+  finalizedAccountingResult: number; // e.g. -100
+  distributableProfit: number; // Strictly 0 (no manufactured profit)
+  lossPolicy: LossPolicy;
+  participants: ParticipantLossHandlingResult[];
+  totalOriginalCapital: number;
+  totalLossAbsorbed: number;
+  totalRemainingCapital: number;
+  totalInvestorProfit: number; // Strictly 0
+  totalInvestorProfitPayable: number; // Strictly 0
+  totalMudaribProfit: number; // Strictly 0
+  grandTotalDistributedProfit: number; // Strictly 0
+  lossRemainsVisible: boolean;
+  positiveFormulaReusedAntiPatternPrevented: boolean;
+  passed: boolean;
+  details: string;
+}
+
+export interface NegativePeriodResultInspectionParams {
+  periodResult?: number;
+  loss?: number;
+  lossPolicy?: LossPolicy;
+  participants: ParticipantLossHandlingPosition[];
+  expectedInvestorProfit?: number; // expected 0
+  expectedMudaribProfit?: number; // expected 0
+  expectedLossAmount?: number; // expected 100
+}
+
+export interface NegativePeriodResultInspectionResult {
+  passed: boolean;
+  isLossVerified: boolean;
+  investorProfitNonNegative: boolean;
+  mudaribProfitNonNegative: boolean;
+  noManufacturedProfit: boolean;
+  lossRemainsVisible: boolean;
+  capitalBalancesFollowPolicy: boolean;
+  positiveFormulaNotReused: boolean;
+  expectedInvestorProfitMatches: boolean; // investor profit === 0
+  expectedMudaribProfitMatches: boolean; // mudarib profit === 0
+  result: PeriodResultLossHandlingResult;
+  details: string;
+}
+
+/**
+ * PHASE 5 — SETTLEMENT AND REINVESTMENT
+ * PROMPT 29 — Profit Settlement Preview
+ *
+ * Requirements:
+ * Inspect investor/Mudarib settlement.
+ * After allocation, settlement must first be PREVIEW only.
+ * Show:
+ * - allocated profit;
+ * - investor profit;
+ * - Mudarib profit;
+ * - amount to withdraw;
+ * - amount to reinvest;
+ * - resulting capital.
+ *
+ * Preview must not mutate financial records.
+ * Test preview and compare database state before and after.
+ * Expected: No financial mutation.
+ */
+export interface ParticipantSettlementChoice {
+  investorId: string;
+  name?: string;
+  currentCapital?: number;
+  allocatedProfit?: number; // economic allocation
+  investorProfit?: number; // contractual investor share
+  mudaribProfit?: number; // working partner share
+  amountToWithdraw?: number; // cash payout
+  amountToReinvest?: number; // reinvested into capital
+  reinvestPercentage?: number; // e.g. 50%
+}
+
+export interface ParticipantSettlementPreviewItem {
+  investorId: string;
+  investorName: string;
+  currentCapital: number;
+  allocatedProfit: number;
+  investorProfit: number;
+  mudaribProfit: number;
+  amountToWithdraw: number;
+  amountToReinvest: number;
+  resultingCapital: number;
+  resultingProfitPayable: number;
+  isValid: boolean;
+  notes?: string;
+}
+
+export interface MudaribSettlementPreviewItem {
+  partnerId: string;
+  partnerName: string;
+  currentCapitalOrEquity: number;
+  allocatedProfit: number;
+  mudaribProfit: number;
+  amountToWithdraw: number;
+  amountToReinvest: number;
+  resultingCapitalOrEquity: number;
+  notes?: string;
+}
+
+export interface SettlementPreviewResult {
+  previewOnly: true;
+  isMutating: false;
+  periodStartDate?: string;
+  periodEndDate?: string;
+  totalAllocatedProfit: number;
+  totalInvestorProfit: number;
+  totalMudaribProfit: number;
+  totalAmountToWithdraw: number;
+  totalAmountToReinvest: number;
+  totalCurrentCapital: number;
+  totalResultingCapital: number;
+  participants: ParticipantSettlementPreviewItem[];
+  mudarib: MudaribSettlementPreviewItem;
+  databaseMutated: false;
+  timestamp: string;
+  summary: string;
+}
+
+export interface SettlementPreviewParams {
+  periodStartDate?: string;
+  periodEndDate?: string;
+  allocationEventId?: string;
+  participants?: ParticipantSettlementChoice[];
+  defaultReinvestPercentage?: number; // e.g. 0 to 100
+  mudaribWithdrawPercentage?: number;
+  responsibleUser?: string;
+}
+
+export interface SettlementPreviewInspectionParams {
+  params: SettlementPreviewParams;
+  dbInstance?: any;
+}
+
+export interface SettlementPreviewInspectionResult {
+  passed: boolean;
+  previewOnlyVerified: boolean;
+  financialRecordsMutated: boolean; // Must be FALSE
+  allocatedProfitShown: boolean;
+  investorProfitShown: boolean;
+  mudaribProfitShown: boolean;
+  amountToWithdrawShown: boolean;
+  amountToReinvestShown: boolean;
+  resultingCapitalShown: boolean;
+  dbSnapshotMatchesBeforeAndAfter: boolean;
+  previewResult: SettlementPreviewResult;
   details: string;
 }
 

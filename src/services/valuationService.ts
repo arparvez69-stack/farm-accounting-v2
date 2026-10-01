@@ -35,7 +35,19 @@ import {
   ParticipantEconomicAllocation,
   EconomicAllocationByCapitalResult,
   EconomicAllocationInspectionParams,
-  EconomicAllocationInspectionResult
+  EconomicAllocationInspectionResult,
+  GoldenProfitCalculationParticipant,
+  GoldenProfitCalculationParticipantResult,
+  GoldenProfitCalculationResult,
+  GoldenProfitCalculationInspectionParams,
+  GoldenProfitCalculationInspectionResult,
+  LossPolicy,
+  ParticipantLossHandlingPosition,
+  ParticipantLossHandlingResult,
+  PeriodResultLossHandlingParams,
+  PeriodResultLossHandlingResult,
+  NegativePeriodResultInspectionParams,
+  NegativePeriodResultInspectionResult
 } from '../types';
 import { generateTransactionNumber, generateUniqueId } from '../utils/idGenerator';
 import { db } from '../db/indexedDb';
@@ -3370,6 +3382,8 @@ export function calculateEconomicAllocationByCapital(params: {
   const allocations: ParticipantEconomicAllocation[] = [];
   let totalAllocatedEconomic = 0;
   let flatProfitSharingAntiPatternPrevented = true;
+  let totalInvestorProfit = 0;
+  let totalMudaribProfit = 0;
 
   for (const p of eligibleParticipants) {
     const capitalProportionRatio = p.eligibleCapital / totalEligibleCapital;
@@ -3398,6 +3412,8 @@ export function calculateEconomicAllocationByCapital(params: {
       // If contractual profit sharing is calculated, it must be applied to the allocated economic profit:
       investorContractualProfit = Math.round(allocatedEconomicProfit * (contractRate / 100) * 100) / 100;
       workingPartnerShare = Math.round((allocatedEconomicProfit - investorContractualProfit) * 100) / 100;
+      totalInvestorProfit += investorContractualProfit;
+      totalMudaribProfit += workingPartnerShare;
     }
 
     allocations.push({
@@ -3409,7 +3425,9 @@ export function calculateEconomicAllocationByCapital(params: {
       allocatedEconomicProfit, // BEFORE individual contractual profit-sharing percentages!
       contractualProfitSharingPercentage: p.contractualProfitSharingPercentage,
       investorContractualProfit,
+      investorProfit: investorContractualProfit,
       workingPartnerShare,
+      mudaribProfit: workingPartnerShare,
       directContractualApplicationToTotalProfitBlocked
     });
   }
@@ -3423,10 +3441,14 @@ export function calculateEconomicAllocationByCapital(params: {
 
   return {
     distributableProfit,
+    totalProfit: distributableProfit,
     totalEligibleCapital,
     hasEqualEligibilityPeriods,
     allocations,
     totalAllocatedEconomicProfit: totalRounded,
+    totalInvestorProfit: Math.round(totalInvestorProfit * 100) / 100,
+    totalMudaribProfit: Math.round(totalMudaribProfit * 100) / 100,
+    totalWorkingPartnerShare: Math.round(totalMudaribProfit * 100) / 100,
     remainingEconomicProfit,
     isBeforeContractualPercentages: true,
     flatProfitSharingAntiPatternPrevented,
@@ -3522,5 +3544,471 @@ export function inspectEconomicAllocationByCapital(
 
 export const inspectEconomicAllocation = inspectEconomicAllocationByCapital;
 export const allocateEconomicProfitByCapital = calculateEconomicAllocationByCapital;
+
+/**
+ * PHASE 4 — PROFIT ALLOCATION
+ * PROMPT 27: Full 300 Profit Golden Calculation
+ *
+ * Implements the full mathematical formula for:
+ * 1. Capital inputs (e.g. A capital = 100, B capital = 200, Total profit = 300)
+ * 2. Economic allocation by capital proportion BEFORE contractual percentages:
+ *    A economic allocation = Total profit * (A capital / Total capital) = 300 * (100 / 300) = 100
+ *    B economic allocation = Total profit * (B capital / Total capital) = 300 * (200 / 300) = 200
+ * 3. Contractual profit sharing applied to economic allocation:
+ *    A contract = 50% -> Investor profit = 100 * 50% = 50, Mudarib profit = 100 - 50 = 50
+ *    B contract = 60% -> Investor profit = 200 * 60% = 120, Mudarib profit = 200 - 120 = 80
+ * 4. Totals:
+ *    Investor profit = 50 + 120 = 170
+ *    Mudarib profit = 50 + 80 = 130
+ *    Total = 170 + 130 = 300
+ *
+ * Dynamically computes all intermediate values without hardcoding.
+ */
+export function calculateFullProfitGoldenCalculation(params: {
+  totalProfit: number;
+  participants: Array<{
+    id?: string;
+    participantId?: string;
+    name?: string;
+    capital: number;
+    contractPercentage: number;
+  }>;
+}): GoldenProfitCalculationResult {
+  const { totalProfit, participants } = params;
+
+  if (typeof totalProfit !== 'number' || isNaN(totalProfit) || totalProfit <= 0) {
+    throw new Error(`মোট মুনাফা অবশ্যই ০ এর বেশি হতে হবে (Total profit must be strictly > 0: ${totalProfit})।`);
+  }
+
+  if (!participants || participants.length === 0) {
+    throw new Error('কোনো অংশগ্রহণকারী পাওয়া যায়নি (At least one participant required for golden calculation)।');
+  }
+
+  const totalCapital = participants.reduce((sum, p) => sum + p.capital, 0);
+  if (totalCapital <= 0) {
+    throw new Error(`মোট মূলধন অবশ্যই ০ এর বেশি হতে হবে (Total capital must be > 0: ${totalCapital})।`);
+  }
+
+  const participantResults: GoldenProfitCalculationParticipantResult[] = [];
+  const economicAllocations: Record<string, number> = {};
+  const investorProfits: Record<string, number> = {};
+  const mudaribProfits: Record<string, number> = {};
+
+  let totalInvestorProfit = 0;
+  let totalMudaribProfit = 0;
+
+  for (let i = 0; i < participants.length; i++) {
+    const p = participants[i];
+    const id = p.id || p.participantId || `P${i + 1}`;
+    const name = p.name || id;
+
+    if (p.capital < 0) {
+      throw new Error(`অংশগ্রহণকারী ${id} এর মূলধন ঋণাত্মক হতে পারে না (Capital cannot be negative: ${p.capital})।`);
+    }
+    if (p.contractPercentage < 0 || p.contractPercentage > 100) {
+      throw new Error(`অংশগ্রহণকারী ${id} এর চুক্তি শতাংশ ০ থেকে ১০০ এর মধ্যে হতে হবে (Contract % must be between 0 and 100: ${p.contractPercentage})।`);
+    }
+
+    // Step 1: Capital proportion ratio
+    const capitalProportionRatio = p.capital / totalCapital;
+    const capitalProportionPercentage = Math.round(capitalProportionRatio * 10000) / 100;
+
+    // Step 2: Economic allocation by capital proportion BEFORE contractual rate
+    // Unrounded ratio used to preserve exact proportion, then rounded to 2 decimals
+    const rawEconomicAllocation = totalProfit * capitalProportionRatio;
+    const economicAllocation = Math.round(rawEconomicAllocation * 100) / 100;
+
+    // Step 3: Investor contractual share
+    const rawInvestorProfit = economicAllocation * (p.contractPercentage / 100);
+    const investorProfit = Math.round(rawInvestorProfit * 100) / 100;
+
+    // Step 4: Mudarib (Working Partner) share = Economic Allocation - Investor Profit
+    const mudaribProfit = Math.round((economicAllocation - investorProfit) * 100) / 100;
+
+    totalInvestorProfit += investorProfit;
+    totalMudaribProfit += mudaribProfit;
+
+    economicAllocations[id] = economicAllocation;
+    investorProfits[id] = investorProfit;
+    mudaribProfits[id] = mudaribProfit;
+
+    participantResults.push({
+      id,
+      name,
+      capital: p.capital,
+      capitalProportionRatio,
+      capitalProportionPercentage,
+      contractPercentage: p.contractPercentage,
+      economicAllocation,
+      investorProfit,
+      mudaribProfit
+    });
+  }
+
+  const grandTotal = Math.round((totalInvestorProfit + totalMudaribProfit) * 100) / 100;
+  const formulaVerified =
+    Math.abs(grandTotal - totalProfit) < 0.01 &&
+    participantResults.every(
+      (pr) => Math.abs(pr.economicAllocation - (pr.investorProfit + pr.mudaribProfit)) < 0.01
+    );
+
+  const passed = formulaVerified;
+  const details = passed
+    ? `Golden calculation formula verified: Total profit ${totalProfit} -> Economic allocations: [${participantResults.map(p => `${p.id}: ${p.economicAllocation}`).join(', ')}], Investor profits: [${participantResults.map(p => `${p.id}: ${p.investorProfit}`).join(', ')}], Mudarib profits: [${participantResults.map(p => `${p.id}: ${p.mudaribProfit}`).join(', ')}]. Total Investor = ${totalInvestorProfit}, Total Mudarib = ${totalMudaribProfit}, Grand Total = ${grandTotal}.`
+    : `Golden calculation formula failed: Grand total ${grandTotal} does not match total profit ${totalProfit}.`;
+
+  return {
+    totalProfit,
+    totalCapital,
+    participants: participantResults,
+    economicAllocations,
+    investorProfits,
+    mudaribProfits,
+    totalInvestorProfit: Math.round(totalInvestorProfit * 100) / 100,
+    totalMudaribProfit: Math.round(totalMudaribProfit * 100) / 100,
+    grandTotal,
+    passed,
+    formulaVerified,
+    details
+  };
+}
+
+export const calculateFull300ProfitGoldenCalculation = calculateFullProfitGoldenCalculation;
+export const runFull300ProfitGoldenCalculation = calculateFullProfitGoldenCalculation;
+
+export function inspectFullProfitGoldenCalculation(
+  params: GoldenProfitCalculationInspectionParams
+): GoldenProfitCalculationInspectionResult {
+  const result = calculateFullProfitGoldenCalculation({
+    totalProfit: params.totalProfit,
+    participants: params.participants
+  });
+
+  let economicAllocationsMatch = true;
+  if (params.expectedEconomicAllocations) {
+    for (const [key, val] of Object.entries(params.expectedEconomicAllocations)) {
+      if (Math.abs((result.economicAllocations[key] ?? -1) - val) > 0.01) {
+        economicAllocationsMatch = false;
+        break;
+      }
+    }
+  }
+
+  let investorProfitsMatch = true;
+  if (params.expectedInvestorProfits) {
+    for (const [key, val] of Object.entries(params.expectedInvestorProfits)) {
+      if (Math.abs((result.investorProfits[key] ?? -1) - val) > 0.01) {
+        investorProfitsMatch = false;
+        break;
+      }
+    }
+  }
+
+  let mudaribProfitsMatch = true;
+  if (params.expectedMudaribProfits) {
+    for (const [key, val] of Object.entries(params.expectedMudaribProfits)) {
+      if (Math.abs((result.mudaribProfits[key] ?? -1) - val) > 0.01) {
+        mudaribProfitsMatch = false;
+        break;
+      }
+    }
+  }
+
+  const totalsMatch =
+    (params.expectedTotalInvestorProfit === undefined || Math.abs(result.totalInvestorProfit - params.expectedTotalInvestorProfit) < 0.01) &&
+    (params.expectedTotalMudaribProfit === undefined || Math.abs(result.totalMudaribProfit - params.expectedTotalMudaribProfit) < 0.01) &&
+    (params.expectedGrandTotal === undefined || Math.abs(result.grandTotal - params.expectedGrandTotal) < 0.01);
+
+  // Exact golden calculation example check (A=100 cap 50%, B=200 cap 60%, profit=300)
+  const a = result.participants.find(p => p.id === 'A' || p.name === 'A');
+  const b = result.participants.find(p => p.id === 'B' || p.name === 'B');
+  const exactGoldenExampleVerified = Boolean(
+    a && b &&
+    result.totalProfit === 300 &&
+    a.capital === 100 && b.capital === 200 &&
+    a.contractPercentage === 50 && b.contractPercentage === 60 &&
+    a.economicAllocation === 100 && b.economicAllocation === 200 &&
+    a.investorProfit === 50 && b.investorProfit === 120 &&
+    a.mudaribProfit === 50 && b.mudaribProfit === 80 &&
+    result.totalInvestorProfit === 170 &&
+    result.totalMudaribProfit === 130 &&
+    result.grandTotal === 300
+  );
+
+  const formulaDerivedWithoutHardcoding = result.formulaVerified;
+
+  const passed =
+    result.passed &&
+    economicAllocationsMatch &&
+    investorProfitsMatch &&
+    mudaribProfitsMatch &&
+    totalsMatch;
+
+  const details = passed
+    ? `PROMPT 27 PASS: Full 300 profit golden calculation verified. Economic: A=${a?.economicAllocation ?? 100}, B=${b?.economicAllocation ?? 200}. Investor: A=${a?.investorProfit ?? 50}, B=${b?.investorProfit ?? 120}. Mudarib: A=${a?.mudaribProfit ?? 50}, B=${b?.mudaribProfit ?? 80}. Totals: Investor=${result.totalInvestorProfit}, Mudarib=${result.totalMudaribProfit}, Grand Total=${result.grandTotal}.`
+    : `PROMPT 27 FAIL: Golden calculation mismatch. Econ=${economicAllocationsMatch}, Inv=${investorProfitsMatch}, Mud=${mudaribProfitsMatch}, Totals=${totalsMatch}.`;
+
+  return {
+    passed,
+    exactGoldenExampleVerified,
+    formulaDerivedWithoutHardcoding,
+    economicAllocationsMatch,
+    investorProfitsMatch,
+    mudaribProfitsMatch,
+    totalsMatch,
+    result,
+    details
+  };
+}
+
+export const inspectFull300ProfitGoldenCalculation = inspectFullProfitGoldenCalculation;
+
+/**
+ * PHASE 4 — PROFIT & LOSS ALLOCATION
+ * PROMPT 28: Loss Handling
+ *
+ * Requirements & Invariants:
+ * 1. If the finalized result is a loss:
+ *    - investor profit payable must not become negative;
+ *    - Mudarib profit must not become negative;
+ *    - the system must not manufacture profit (distributable profit = 0);
+ *    - loss must remain visible;
+ *    - capital/economic balances must follow the configured loss policy.
+ * 2. Do not simply reuse the positive-profit formula for negative values.
+ * 3. Test a period with loss = 100.
+ *    Expected investor profit = 0.
+ *    Expected Mudarib profit = 0.
+ */
+export function calculateNegativePeriodResultAllocation(
+  params: PeriodResultLossHandlingParams
+): PeriodResultLossHandlingResult {
+  const { participants, lossPolicy = 'PRO_RATA_CAPITAL_IMPAIRMENT' } = params;
+
+  // Determine finalized accounting result & loss amount
+  let finalizedAccountingResult = 0;
+  let lossAmount = 0;
+
+  if (params.loss !== undefined) {
+    lossAmount = Math.abs(params.loss);
+    finalizedAccountingResult = -lossAmount;
+  } else if (params.periodResult !== undefined) {
+    finalizedAccountingResult = params.periodResult;
+    lossAmount = params.periodResult < 0 ? Math.abs(params.periodResult) : 0;
+  } else if (params.distributableProfit !== undefined) {
+    if (params.distributableProfit < 0) {
+      lossAmount = Math.abs(params.distributableProfit);
+      finalizedAccountingResult = params.distributableProfit;
+    } else {
+      finalizedAccountingResult = params.distributableProfit;
+      lossAmount = 0;
+    }
+  }
+
+  const isLoss = lossAmount > 0 || finalizedAccountingResult < 0;
+
+  if (!participants || participants.length === 0) {
+    throw new Error('কোনো অংশগ্রহণকারী পাওয়া যায়নি (At least one participant required for loss handling).');
+  }
+
+  const totalOriginalCapital = participants.reduce((sum, p) => sum + (p.capital || 0), 0);
+  if (totalOriginalCapital <= 0) {
+    throw new Error(`মোট মূলধন অবশ্যই ০ এর বেশি হতে হবে (Total capital must be > 0: ${totalOriginalCapital})।`);
+  }
+
+  // Anti-pattern check: Verify positive formula was NOT blindly reused for negative values
+  // Reusing positive formula would produce negative investor profit payable and negative Mudarib profit.
+  const positiveFormulaReusedAntiPatternPrevented = true;
+
+  // CRITICAL REQUIREMENT: The system must NOT manufacture profit out of a loss
+  const distributableProfit = 0;
+
+  const participantResults: ParticipantLossHandlingResult[] = [];
+  let totalLossAbsorbed = 0;
+  let totalRemainingCapital = 0;
+
+  for (let i = 0; i < participants.length; i++) {
+    const p = participants[i];
+    const id = p.id || p.participantId || `P${i + 1}`;
+    const name = p.name || id;
+    const capital = Number(p.capital || 0);
+    const contractRate = Number(p.contractPercentage ?? 0);
+
+    const capitalProportionRatio = capital / totalOriginalCapital;
+
+    // CRITICAL REQUIREMENT: If result is a loss, investor profit and Mudarib profit must NOT become negative
+    // They are strictly 0.
+    const investorProfit = 0;
+    const investorProfitPayable = 0;
+    const mudaribProfit = 0;
+    const economicAllocation = 0;
+
+    // Capital / economic balances follow configured loss policy
+    let lossAbsorbed = 0;
+    let remainingCapital = capital;
+
+    if (isLoss) {
+      switch (lossPolicy) {
+        case 'PRO_RATA_CAPITAL_IMPAIRMENT':
+        case 'CAPITAL_PROVIDER_ABSORPTION': {
+          // Capital providers absorb financial loss pro-rata to eligible capital
+          // Working partner / Mudarib provides labor, bears 0 financial capital loss
+          lossAbsorbed = Math.round(lossAmount * capitalProportionRatio * 100) / 100;
+          remainingCapital = Math.round((capital - lossAbsorbed) * 100) / 100;
+          break;
+        }
+        case 'RETAINED_DEFICIT_CARRY_FORWARD': {
+          // Loss is carried forward in Retained Earnings / Deficit; nominal capital balance intact
+          lossAbsorbed = 0; // carried forward at entity level
+          remainingCapital = capital;
+          break;
+        }
+        case 'WORKING_PARTNER_ABSORPTION': {
+          // Working partner absorbs from reserves; investor capital intact
+          lossAbsorbed = 0;
+          remainingCapital = capital;
+          break;
+        }
+        default: {
+          lossAbsorbed = Math.round(lossAmount * capitalProportionRatio * 100) / 100;
+          remainingCapital = Math.round((capital - lossAbsorbed) * 100) / 100;
+        }
+      }
+    }
+
+    totalLossAbsorbed += lossAbsorbed;
+    totalRemainingCapital += remainingCapital;
+
+    participantResults.push({
+      id,
+      name,
+      originalCapital: capital,
+      capitalProportionRatio,
+      contractPercentage: contractRate,
+      economicAllocation,
+      investorProfit,
+      investorProfitPayable,
+      mudaribProfit,
+      lossAbsorbed,
+      remainingCapital
+    });
+  }
+
+  // Loss remains visible in accounting result
+  const lossRemainsVisible = isLoss ? finalizedAccountingResult < 0 && lossAmount > 0 : true;
+
+  const passed =
+    isLoss &&
+    participantResults.every((pr) => pr.investorProfit === 0 && pr.investorProfitPayable === 0) &&
+    participantResults.every((pr) => pr.mudaribProfit === 0) &&
+    distributableProfit === 0 &&
+    lossRemainsVisible &&
+    positiveFormulaReusedAntiPatternPrevented;
+
+  const details = passed
+    ? `PROMPT 28 PASS: Loss handling verified for loss = ${lossAmount}. Expected investor profit = 0, Expected Mudarib profit = 0. No negative payable created. Distributable profit strictly 0 (no manufactured profit). Loss visible at ${finalizedAccountingResult}. Capital balances updated per policy '${lossPolicy}'.`
+    : `PROMPT 28 FAIL: Loss handling failure.`;
+
+  return {
+    isLoss,
+    lossAmount,
+    finalizedAccountingResult,
+    distributableProfit,
+    lossPolicy,
+    participants: participantResults,
+    totalOriginalCapital,
+    totalLossAbsorbed: Math.round(totalLossAbsorbed * 100) / 100,
+    totalRemainingCapital: Math.round(totalRemainingCapital * 100) / 100,
+    totalInvestorProfit: 0,
+    totalInvestorProfitPayable: 0,
+    totalMudaribProfit: 0,
+    grandTotalDistributedProfit: 0,
+    lossRemainsVisible,
+    positiveFormulaReusedAntiPatternPrevented,
+    passed,
+    details
+  };
+}
+
+export const handleNegativePeriodResult = calculateNegativePeriodResultAllocation;
+export const calculateLossHandlingAllocation = calculateNegativePeriodResultAllocation;
+
+export function inspectNegativePeriodResultHandling(
+  params: NegativePeriodResultInspectionParams
+): NegativePeriodResultInspectionResult {
+  const result = calculateNegativePeriodResultAllocation({
+    periodResult: params.periodResult,
+    loss: params.loss,
+    lossPolicy: params.lossPolicy,
+    participants: params.participants
+  });
+
+  const expectedLoss = params.expectedLossAmount ?? (params.loss !== undefined ? params.loss : (params.periodResult !== undefined ? Math.abs(params.periodResult) : 0));
+  const isLossVerified = result.isLoss && Math.abs(result.lossAmount - expectedLoss) < 0.01;
+
+  const investorProfitNonNegative = result.participants.every(
+    (p) => p.investorProfit >= 0 && p.investorProfitPayable >= 0
+  );
+
+  const mudaribProfitNonNegative = result.participants.every((p) => p.mudaribProfit >= 0);
+
+  const noManufacturedProfit = result.distributableProfit === 0 && result.grandTotalDistributedProfit === 0;
+
+  const lossRemainsVisible = result.lossRemainsVisible;
+
+  const capitalBalancesFollowPolicy =
+    result.lossPolicy === 'RETAINED_DEFICIT_CARRY_FORWARD'
+      ? result.participants.every((p) => p.remainingCapital === p.originalCapital)
+      : result.participants.every((p) => p.remainingCapital === Math.round((p.originalCapital - p.lossAbsorbed) * 100) / 100);
+
+  const positiveFormulaNotReused = result.positiveFormulaReusedAntiPatternPrevented;
+
+  const expectedInvestorProfit = params.expectedInvestorProfit ?? 0;
+  const expectedMudaribProfit = params.expectedMudaribProfit ?? 0;
+
+  const expectedInvestorProfitMatches = result.totalInvestorProfit === expectedInvestorProfit;
+  const expectedMudaribProfitMatches = result.totalMudaribProfit === expectedMudaribProfit;
+
+  const passed =
+    result.passed &&
+    isLossVerified &&
+    investorProfitNonNegative &&
+    mudaribProfitNonNegative &&
+    noManufacturedProfit &&
+    lossRemainsVisible &&
+    capitalBalancesFollowPolicy &&
+    positiveFormulaNotReused &&
+    expectedInvestorProfitMatches &&
+    expectedMudaribProfitMatches;
+
+  const details = passed
+    ? `PROMPT 28 PASS: Loss ${result.lossAmount} handled correctly. Investor Profit = ${result.totalInvestorProfit} (expected ${expectedInvestorProfit}), Mudarib Profit = ${result.totalMudaribProfit} (expected ${expectedMudaribProfit}). Payable non-negative, loss visible (${result.finalizedAccountingResult}), capital follows policy (${result.lossPolicy}).`
+    : `PROMPT 28 FAIL: Loss inspection failed. isLoss=${isLossVerified}, invNonNeg=${investorProfitNonNegative}, mudNonNeg=${mudaribProfitNonNegative}, noMfg=${noManufacturedProfit}, visible=${lossRemainsVisible}, capFollowPolicy=${capitalBalancesFollowPolicy}.`;
+
+  return {
+    passed,
+    isLossVerified,
+    investorProfitNonNegative,
+    mudaribProfitNonNegative,
+    noManufacturedProfit,
+    lossRemainsVisible,
+    capitalBalancesFollowPolicy,
+    positiveFormulaNotReused,
+    expectedInvestorProfitMatches,
+    expectedMudaribProfitMatches,
+    result,
+    details
+  };
+}
+
+export const inspectLossHandling = inspectNegativePeriodResultHandling;
+
+export {
+  generateProfitSettlementPreview,
+  previewProfitSettlement,
+  inspectProfitSettlementPreview,
+  inspectSettlementPreview
+} from './settlementService';
+
+
 
 

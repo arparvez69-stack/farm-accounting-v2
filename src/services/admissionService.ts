@@ -2137,6 +2137,20 @@ export {
   calculateEconomicAllocationByCapital,
   allocateEconomicProfitByCapital,
   inspectEconomicAllocationByCapital,
-  inspectEconomicAllocation
+  inspectEconomicAllocation,
+  calculateFullProfitGoldenCalculation,
+  calculateFull300ProfitGoldenCalculation,
+  runFull300ProfitGoldenCalculation,
+  inspectFullProfitGoldenCalculation,
+  inspectFull300ProfitGoldenCalculation,
+  calculateNegativePeriodResultAllocation,
+  inspectNegativePeriodResultHandling,
+  handleNegativePeriodResult,
+  calculateLossHandlingAllocation,
+  inspectLossHandling,
+  generateProfitSettlementPreview,
+  previewProfitSettlement,
+  inspectProfitSettlementPreview,
+  inspectSettlementPreview
 } from './valuationService';
 
