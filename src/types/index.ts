@@ -775,6 +775,8 @@ export interface Investor {
   capitalAmount?: number;
   capitalContributed?: number;
   totalContribution?: number;
+  totalInvestment?: number;
+  currentCapital?: number;
   additionalCapital?: number;
 
   // 2. Agreed Profit-Sharing Ratio (Sleeping Partner vs Working Partner)
@@ -861,14 +863,19 @@ export interface ParticipantFinancialProfile {
     currentCapitalBalance: number;
     profitPayable: number;
     totalProfitAllocated: number;
+    capitalDerivedProfit?: number; // PROMPT 32: owner capital-derived profit
     glAccountCode: string; // '3010' for Owner personal capital or '3020' for Investor capital
   };
   workingPartnerBalance: {
-    mudaribProfitEarned: number; // e.g. Owner Mudarib profit = 170
+    mudaribProfitEarned: number; // e.g. Owner Mudarib profit = 170 (remains 170)
     mudaribProfitPayable: number;
     totalWithdrawn: number;
+    mudaribProfitReinvested?: number; // e.g. 100
     glAccountCode: string; // '3015' for Mudarib Profit Equity or '2060' for Mudarib Profit Payable
   };
+  ownerMudaribEarnings?: number; // alias for workingPartnerBalance.mudaribProfitEarned (170)
+  ownerCapital?: number; // alias for capitalProviderBalance.capitalAmount (100)
+  ownerCapitalDerivedProfit?: number; // alias for capitalProviderBalance.capitalDerivedProfit
   isSeparate: boolean;
 }
 
@@ -928,6 +935,19 @@ export interface InvestmentTranche {
   attributionStatus?: 'VERIFIED' | 'MISSING_ATTRIBUTION';
   attributionFlagReason?: string;
 
+  // PROMPT 31 & 32: Reinvestment Tranche & Traceability references
+  sourceProfitAllocationId?: string;
+  sourceProfitAllocation?: string;
+  settlementEventId?: string;
+  settlementEvent?: string;
+  isReinvestment?: boolean;
+  isOwnerTranche?: boolean;
+  sourceType?: 'INITIAL_INVESTMENT' | 'ADDITIONAL_CAPITAL' | 'PROFIT_REINVESTMENT' | 'ADMISSION';
+  amount?: number;
+
+  // PROMPT 33: Durable idempotency key
+  idempotencyKey?: string;
+
   synced?: boolean;
 }
 
@@ -941,21 +961,30 @@ export type CapitalMovementType =
 export interface InvestorCapitalMovement {
   id: string;
   investorId: string;
+  participantId?: string;
   investorName?: string;
   trancheId?: string;
   movementType: CapitalMovementType;
   amount: number;
   direction: 'INFLOW' | 'OUTFLOW';
   date: string;
+  effectiveDate?: string;
   journalEntryId: string;
   voucherNumber: string;
   sourceOrTargetAccountId?: string;
+  sourceProfitAllocationId?: string;
+  sourceProfitAllocation?: string;
+  settlementEventId?: string;
+  settlementEvent?: string;
+  isReinvestment?: boolean;
   notes?: string;
   balanceBefore?: number;
   balanceAfter?: number;
   approvedBy?: string;
   createdAt: string;
   createdBy: string;
+  // PROMPT 33: Durable idempotency key
+  idempotencyKey?: string;
   synced?: boolean;
 }
 
@@ -2369,27 +2398,84 @@ export interface ParticipantProfitRetentionResult {
 
 export interface ExecuteProfitSettlementParams {
   investorId: string;
+  participantId?: string;
   profit: number;
   reinvestPercentage?: number;
   reinvestAmount?: number;
   withdrawAmount?: number;
   bankAccountId?: string;
   date?: string;
+  effectiveDate?: string;
+  sourceProfitAllocationId?: string;
+  sourceProfitAllocation?: string;
+  settlementEventId?: string;
+  settlementEvent?: string;
+  contractualProfitSharePercentage?: number;
   currentUserId?: string;
   notes?: string;
+
+  // PROMPT 33: Durable idempotency key & duplicate protection
+  idempotencyKey?: string;
+  throwOnDuplicate?: boolean;
 }
 
 export interface ExecuteProfitSettlementResult {
   investorId: string;
+  participantId?: string;
   profit: number;
   reinvestPercentage: number;
   reinvestedCapital: number;
   withdrawableAmount: number;
+  futureCapitalPosition?: number;
+  reinvestTranche?: InvestmentTranche;
+  capitalMovement?: InvestorCapitalMovement;
   reinvestJournalEntryId?: string;
   withdrawJournalEntryId?: string;
+  settlementEventId?: string;
+  sourceProfitAllocationId?: string;
+  effectiveDate?: string;
   reinvestmentCreatedRevenue: false;
   withdrawalCreatedOperatingExpense: false;
   passed: boolean;
+  details: string;
+
+  // PROMPT 33: Settlement Idempotency tracking
+  idempotencyKey?: string;
+  isDuplicate?: boolean;
+  idempotentReplay?: boolean;
+}
+
+/**
+ * PROMPT 33: Settlement Idempotency Inspection Interfaces
+ */
+export interface InspectProfitSettlementIdempotencyParams {
+  investorId?: string;
+  investorName?: string;
+  profit?: number;
+  reinvestPercentage?: number;
+  reinvestAmount?: number;
+  withdrawAmount?: number;
+  bankAccountId?: string;
+  idempotencyKey?: string;
+  settlementEventId?: string;
+  sourceProfitAllocationId?: string;
+  date?: string;
+  effectiveDate?: string;
+  dbInstance?: any;
+}
+
+export interface InspectProfitSettlementIdempotencyResult {
+  passed: boolean;
+  idempotencyKey: string;
+  firstSettlement: ExecuteProfitSettlementResult;
+  secondSettlement: ExecuteProfitSettlementResult;
+  duplicatePrevented: boolean;
+  exactlyOneFinancialSettlement: boolean;
+  totalJournalsCreated: number;
+  totalTranchesCreated: number;
+  totalMovementsCreated: number;
+  bankDeductionCount: number;
+  capitalAdditionCount: number;
   details: string;
 }
 
@@ -2411,6 +2497,193 @@ export interface ProfitRetentionInspectionResult {
   details: string;
 }
 
+/**
+ * PROMPT 31: Reinvestment Creates New Capital Tranche Inspection Interfaces
+ */
+export interface InspectReinvestmentHandlingParams {
+  originalCapital?: number; // defaults to 100
+  reinvestedProfit?: number; // defaults to 50
+  effectiveDate?: string; // defaults to '2026-04-01'
+  sourceProfitAllocationId?: string;
+  sourceProfitAllocation?: string;
+  settlementEventId?: string;
+  settlementEvent?: string;
+  dbInstance?: any;
+}
 
+export interface InspectReinvestmentHandlingResult {
+  passed: boolean;
+  originalTrancheIntact: boolean;
+  historicalTrancheAmount: number;
+  reinvestedTrancheCreated: boolean;
+  reinvestedTrancheAmount: number;
+  capitalMovementRecorded: boolean;
+  referencesSourceProfitAllocation: boolean;
+  referencesParticipant: boolean;
+  referencesAmount: boolean;
+  referencesEffectiveDate: boolean;
+  referencesSettlementEvent: boolean;
+  noProfitDuplicated: boolean;
+  expectedFutureCapitalPosition: number;
+  actualFutureCapitalPosition: number;
+  totalTranchesCount: number;
+  futureEconomicParticipationVerified: boolean;
+  reinvestmentCreatedRevenue: false;
+  details: string;
+}
 
+/**
+ * PROMPT 32: Owner Mudarib Reinvestment Interfaces
+ */
+export interface ExecuteOwnerMudaribReinvestmentParams {
+  ownerPersonId: string;
+  ownerName: string;
+  mudaribProfitAmount: number; // e.g. 170
+  reinvestAmount: number; // e.g. 100
+  targetAccountId?: string;
+  date?: string;
+  effectiveDate?: string;
+  contractualProfitSharePercentage?: number;
+  sourceProfitAllocationId?: string;
+  settlementEventId?: string;
+  currentUserId: string;
+  notes?: string;
+}
 
+export interface ExecuteOwnerMudaribReinvestmentResult {
+  passed: boolean;
+  mudaribProfitEarned: number; // 170 (remains 170)
+  reinvestAmount: number; // 100
+  newOwnerCapitalContribution: number; // 100
+  remainingMudaribBalance: number; // 70
+  journalEntryId: string;
+  tranche?: InvestmentTranche;
+  capitalMovement?: InvestorCapitalMovement;
+  financialProfile: ParticipantFinancialProfile;
+  reinvestmentCreatedRevenue: false;
+  details: string;
+}
+
+export interface InspectOwnerMudaribReinvestmentParams {
+  mudaribProfit?: number; // default 170
+  reinvestAmount?: number; // default 100
+  ownerPersonId?: string;
+  ownerName?: string;
+  date?: string;
+  effectiveDate?: string;
+  dbInstance?: any;
+}
+
+export interface InspectOwnerMudaribReinvestmentResult {
+  passed: boolean;
+  mudaribProfitRemains170: boolean;
+  mudaribProfitEarned: number; // 170
+  newOwnerCapitalContribution: number; // 100
+  ownerCapitalAmount: number; // 100
+  ownerCapitalDerivedProfit: number;
+  ownerCapitalProviderParticipationCreated: boolean;
+  ownerTrancheId?: string;
+  ownerTrancheAmount?: number; // 100
+  noSecondProfitCounted: boolean;
+  pnlRevenueCreated: number; // 0
+  threeBucketsSeparated: boolean;
+  details: string;
+}
+
+/**
+ * PROMPT 34: Crash-Safe Finalization Interfaces
+ */
+export type FinalizationInterruptionStage =
+  | 'AFTER_ALLOCATION'
+  | 'AFTER_SETTLEMENT'
+  | 'AFTER_REINVESTMENT';
+
+export interface ExecuteFinalAllocationSettlementParams {
+  periodStartDate?: string;
+  periodEndDate: string;
+  totalDistributableProfit: number;
+  investorId: string;
+  investorName?: string;
+  participantId?: string;
+  investorSharePercentage?: number; // e.g. 50%
+  mudaribPersonId?: string;
+  mudaribName?: string;
+  mudaribSharePercentage?: number; // e.g. 50%
+  reinvestPercentage?: number; // e.g. 50%
+  bankAccountId?: string;
+  idempotencyKey?: string;
+  settlementEventId?: string;
+  sourceProfitAllocationId?: string;
+  date?: string;
+  effectiveDate?: string;
+  currentUserId?: string;
+  notes?: string;
+  simulateInterruptionAt?: FinalizationInterruptionStage;
+}
+
+export interface FinalAllocationSettlementStatus {
+  idempotencyKey: string;
+  committed: boolean;
+  status: 'COMMITTED' | 'NOT_COMMITTED';
+  allocationCommitted: boolean;
+  settlementCommitted: boolean;
+  reinvestmentCommitted: boolean;
+  reinvestJournalEntryId?: string;
+  withdrawJournalEntryId?: string;
+  allocationJournalEntryId?: string;
+  trancheId?: string;
+  capitalMovementId?: string;
+  investorCurrentCapital?: number;
+  bankBalance?: number;
+  details: string;
+}
+
+export interface ExecuteFinalAllocationSettlementResult {
+  passed: boolean;
+  idempotencyKey: string;
+  committed: boolean;
+  isDuplicate?: boolean;
+  idempotentReplay?: boolean;
+  totalDistributableProfit: number;
+  investorProfitAllocated: number;
+  mudaribProfitAllocated: number;
+  reinvestedCapital: number;
+  withdrawableAmount: number;
+  futureCapitalPosition: number;
+  allocationJournalEntryId?: string;
+  reinvestJournalEntryId?: string;
+  withdrawJournalEntryId?: string;
+  tranche?: InvestmentTranche;
+  capitalMovement?: InvestorCapitalMovement;
+  zeroPartialAccounting: boolean;
+  duplicateProfitCreated: boolean;
+  duplicateCapitalCreated: boolean;
+  reinvestmentCreatedRevenue: false;
+  withdrawalCreatedOperatingExpense: false;
+  details: string;
+}
+
+export interface InspectCrashSafeFinalizationParams {
+  totalDistributableProfit?: number; // defaults to 200 (100 investor, 100 mudarib)
+  reinvestPercentage?: number; // defaults to 50%
+  investorId?: string;
+  investorName?: string;
+  bankAccountId?: string;
+  idempotencyKey?: string;
+  dbInstance?: any;
+}
+
+export interface InspectCrashSafeFinalizationResult {
+  passed: boolean;
+  baselineFinalizationSuccessful: boolean;
+  interruptionAfterAllocationCleanRollback: boolean;
+  interruptionAfterSettlementCleanRollback: boolean;
+  interruptionDuringReinvestmentCleanRollback: boolean;
+  recoveryDeterminesCommitStatusAccurately: boolean;
+  recoveryReexecutionSuccessful: boolean;
+  noPartialAccountingVerified: boolean;
+  noDuplicateProfitVerified: boolean;
+  noDuplicateCapitalVerified: boolean;
+  trialBalanceBalanced: boolean;
+  details: string;
+}

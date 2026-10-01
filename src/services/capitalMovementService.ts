@@ -29,20 +29,28 @@ import {
 
 export interface RecordCapitalMovementParams {
   investorId: string;
+  participantId?: string;
   investorName?: string;
   trancheId?: string;
   movementType: CapitalMovementType;
   amount: number;
   direction: 'INFLOW' | 'OUTFLOW';
   date: string;
+  effectiveDate?: string;
   journalEntryId: string;
   voucherNumber: string;
   sourceOrTargetAccountId?: string;
+  sourceProfitAllocationId?: string;
+  sourceProfitAllocation?: string;
+  settlementEventId?: string;
+  settlementEvent?: string;
+  isReinvestment?: boolean;
   notes?: string;
   balanceBefore?: number;
   balanceAfter?: number;
   approvedBy?: string;
   currentUserId: string;
+  idempotencyKey?: string;
 }
 
 /**
@@ -54,44 +62,63 @@ export async function recordCapitalMovement(
 ): Promise<InvestorCapitalMovement> {
   const {
     investorId,
+    participantId,
     investorName,
     trancheId,
     movementType,
     amount,
     direction,
     date,
+    effectiveDate,
     journalEntryId,
     voucherNumber,
     sourceOrTargetAccountId,
+    sourceProfitAllocationId,
+    sourceProfitAllocation,
+    settlementEventId,
+    settlementEvent,
+    isReinvestment,
     notes,
     balanceBefore,
     balanceAfter,
     approvedBy,
-    currentUserId
+    currentUserId,
+    idempotencyKey
   } = params;
 
   if (amount <= 0) {
     throw new Error('Capital movement amount must be strictly greater than 0.');
   }
 
+  const effectiveAllocId = sourceProfitAllocationId || sourceProfitAllocation;
+  const effectiveSettleId = settlementEventId || settlementEvent;
+
   const movementRecord: InvestorCapitalMovement = {
     id: generateUniqueId('cap_mov'),
     investorId,
+    participantId: participantId || investorId,
     investorName,
     trancheId,
     movementType,
     amount,
     direction,
     date,
+    effectiveDate: effectiveDate || date,
     journalEntryId,
     voucherNumber,
     sourceOrTargetAccountId,
+    sourceProfitAllocationId: effectiveAllocId,
+    sourceProfitAllocation: effectiveAllocId,
+    settlementEventId: effectiveSettleId,
+    settlementEvent: effectiveSettleId,
+    isReinvestment: isReinvestment ?? (movementType === 'REINVESTED_PROFIT'),
     notes,
     balanceBefore,
     balanceAfter,
     approvedBy,
     createdAt: new Date().toISOString(),
     createdBy: currentUserId,
+    idempotencyKey,
     synced: false
   };
 
@@ -151,9 +178,15 @@ export async function getInvestorCapitalMovements(
 export async function executeReinvestInvestorProfitTransaction(
   params: {
     investorId: string;
+    participantId?: string;
     reinvestAmount: number;
     contractualProfitSharePercentage?: number;
     date?: string;
+    effectiveDate?: string;
+    sourceProfitAllocationId?: string;
+    sourceProfitAllocation?: string;
+    settlementEventId?: string;
+    settlementEvent?: string;
     currentUserId: string;
     notes?: string;
   },
@@ -166,9 +199,15 @@ export async function executeReinvestInvestorProfitTransaction(
 }> {
   const {
     investorId,
+    participantId,
     reinvestAmount,
     contractualProfitSharePercentage,
     date = new Date().toISOString().split('T')[0],
+    effectiveDate = date,
+    sourceProfitAllocationId,
+    sourceProfitAllocation,
+    settlementEventId,
+    settlementEvent,
     currentUserId,
     notes
   } = params;
@@ -176,6 +215,10 @@ export async function executeReinvestInvestorProfitTransaction(
   if (reinvestAmount <= 0) {
     throw new Error('Reinvestment amount must be strictly greater than 0.');
   }
+
+  const effectiveAlloc = sourceProfitAllocationId || sourceProfitAllocation || `alloc_${investorId}_${effectiveDate}`;
+  const effectiveSettle = settlementEventId || settlementEvent || `settle_${investorId}_${effectiveDate}`;
+  const effectiveParticipantId = participantId || investorId;
 
   const investor = await dbInstance.investors.get(investorId);
   if (!investor) {
@@ -253,7 +296,7 @@ export async function executeReinvestInvestorProfitTransaction(
     { dbInstance, accounts }
   );
 
-  const balanceBefore = Number(investor.currentCapitalBalance || investor.capitalAmount || 0);
+  const balanceBefore = Number(investor.currentCapitalBalance || investor.currentCapital || investor.capitalAmount || 0);
   const balanceAfter = Math.round((balanceBefore + reinvestAmount) * 100) / 100;
   const newPayable = Math.round((payable - reinvestAmount) * 100) / 100;
 
@@ -262,6 +305,8 @@ export async function executeReinvestInvestorProfitTransaction(
     profitPayable: newPayable,
     capitalAmount: balanceAfter,
     capitalContributed: balanceAfter,
+    currentCapital: balanceAfter,
+    totalInvestment: balanceAfter,
     currentCapitalBalance: balanceAfter,
     currentBalance: balanceAfter,
     currentEquityBalance: balanceAfter
@@ -279,13 +324,14 @@ export async function executeReinvestInvestorProfitTransaction(
       trancheId: tId,
       trancheNumber: tNum,
       investorId,
-      participantId: investorId,
+      participantId: effectiveParticipantId,
       investorName: investor.name,
       investmentAmount: reinvestAmount,
+      amount: reinvestAmount,
       originalCapital: reinvestAmount,
       investmentDate: date,
-      effectiveDate: date,
-      effectiveInvestmentDate: date,
+      effectiveDate,
+      effectiveInvestmentDate: effectiveDate,
       contractualProfitSharePercentage: shareRate,
       currency: 'BDT',
       status: 'ACTIVE',
@@ -294,7 +340,13 @@ export async function executeReinvestInvestorProfitTransaction(
       currentCapitalBalance: reinvestAmount,
       totalCapitalReturned: 0,
       journalEntryId: journalId,
-      notes: notes || 'লভ্যাংশ পুনর্বিনিয়োগ কিস্তি',
+      sourceProfitAllocationId: effectiveAlloc,
+      sourceProfitAllocation: effectiveAlloc,
+      settlementEventId: effectiveSettle,
+      settlementEvent: effectiveSettle,
+      isReinvestment: true,
+      sourceType: 'PROFIT_REINVESTMENT',
+      notes: notes || `লভ্যাংশ পুনর্বিনিয়োগ কিস্তি (Allocation: ${effectiveAlloc}, Settlement: ${effectiveSettle})`,
       createdBy: currentUserId,
       createdAt: new Date().toISOString(),
       synced: false
@@ -306,16 +358,23 @@ export async function executeReinvestInvestorProfitTransaction(
   const movement = await recordCapitalMovement(
     {
       investorId,
+      participantId: effectiveParticipantId,
       investorName: investor.name,
       trancheId: createdTranche?.id,
       movementType: 'REINVESTED_PROFIT',
       amount: reinvestAmount,
       direction: 'INFLOW',
       date,
+      effectiveDate,
       journalEntryId: journalId,
       voucherNumber,
       sourceOrTargetAccountId: payableAcc.id,
-      notes: notes || 'লভ্যাংশ পুনর্বিনিয়োগ মূলধন বৃদ্ধি',
+      sourceProfitAllocationId: effectiveAlloc,
+      sourceProfitAllocation: effectiveAlloc,
+      settlementEventId: effectiveSettle,
+      settlementEvent: effectiveSettle,
+      isReinvestment: true,
+      notes: notes || `লভ্যাংশ পুনর্বিনিয়োগ মূলধন বৃদ্ধি (Settlement: ${effectiveSettle})`,
       balanceBefore,
       balanceAfter,
       currentUserId
