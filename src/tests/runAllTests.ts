@@ -92,6 +92,8 @@ import { runFinalTestACapitalReconciliation } from './testFinalTestACapitalRecon
 import { runFinalTestBProfitReconciliation } from './testFinalTestBProfitReconciliation';
 import { runFinalTestCNavReconciliation } from './testFinalTestCNavReconciliation';
 import { runFinalTestDHistoricalProtection } from './testFinalTestDHistoricalProtection';
+import { runFinalTestECompleteGoldenScenario } from './testFinalTestECompleteGoldenScenario';
+import { runFinalTestFLateInvestorScenario } from './testFinalTestFLateInvestorScenario';
 
 interface SuiteResult {
   total: number;
@@ -220,6 +222,8 @@ async function main() {
   suiteResults.push(await runFinalTestBProfitReconciliation());
   suiteResults.push(await runFinalTestCNavReconciliation());
   suiteResults.push(await runFinalTestDHistoricalProtection());
+  suiteResults.push(await runFinalTestECompleteGoldenScenario());
+  suiteResults.push(await runFinalTestFLateInvestorScenario());
 
   // Strictly aggregate actual executed assertions — no manual +10 or phantom counts
   const total = suiteResults.reduce((s, r) => s + (r.total || 0), 0);

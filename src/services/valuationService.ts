@@ -2362,6 +2362,9 @@ export function calculateCapitalParticipationAllocation(params: {
     contractualProfitSharePercentage: number;
     economicParticipationPercentage?: number;
     status?: string;
+    effectiveDate?: string;
+    effectiveInvestmentDate?: string;
+    investmentDate?: string;
   }>;
   totalValuationBasis?: number;
   allocationId?: string;
@@ -2481,15 +2484,17 @@ export function calculateCapitalParticipationAllocation(params: {
 
     // 1. Determine eligible investor participation according to approved investment/valuation structure
     let economicParticipationPercentage: number;
+    let economicParticipationRatio: number;
     if (typeof t.economicParticipationPercentage === 'number' && t.economicParticipationPercentage > 0) {
       economicParticipationPercentage = t.economicParticipationPercentage;
+      economicParticipationRatio = economicParticipationPercentage / 100;
     } else if (effectiveValuationBasis > 0) {
-      economicParticipationPercentage = Math.round((t.investmentAmount / effectiveValuationBasis) * 10000) / 100;
+      economicParticipationRatio = t.investmentAmount / effectiveValuationBasis;
+      economicParticipationPercentage = Math.round(economicParticipationRatio * 10000) / 100;
     } else {
       economicParticipationPercentage = 0;
+      economicParticipationRatio = 0;
     }
-
-    const economicParticipationRatio = economicParticipationPercentage / 100;
 
     // 2. Allocate applicable business profit according to that participation
     const applicableBusinessProfit = Math.round(finalizedBusinessProfit * economicParticipationRatio * 100) / 100;
