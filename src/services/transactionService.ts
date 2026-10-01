@@ -4771,6 +4771,9 @@ export async function executeInvestorProfitAllocationTransaction(
     contractualProfitSharePercentage?: number; // Optional override of investor's own contractual percentage
     trancheId?: string; // Optional link to specific tranche
     closedPeriodId?: string; // Optional: Link to a closed period
+    periodId?: string; // Optional alias for closedPeriodId
+    periodStartDate?: string;
+    periodEndDate?: string;
     allocationDate?: string;
     date?: string; // Alias for allocationDate
     allocationReference?: string;
@@ -4873,13 +4876,17 @@ export async function executeInvestorProfitAllocationTransaction(
         let targetPeriodEndDate = dateStr;
         if (dbInstance.closedPeriods) {
           const closedPeriods = await dbInstance.closedPeriods.toArray();
-          const isClosed = closedPeriods.some((cp: any) => cp.endDate >= dateStr);
-          if (isClosed) {
-            throw new Error(`সীমাবদ্ধতা: ${dateStr} তারিখটি ইতোমধ্যে বন্ধ হিসাবকালের (Closed Period) অন্তর্ভুক্ত। বন্ধ হিসাবকালে নতুন বণ্টন দাখিলা দেওয়া যাবে না।`);
-          }
-          if (closedPeriodId) {
-            const cp = closedPeriods.find((p: any) => p.id === closedPeriodId);
+          const targetId = closedPeriodId || (params as any).periodId;
+          if (targetId) {
+            const cp = closedPeriods.find((p: any) => p.id === targetId || p.periodId === targetId);
             if (cp?.endDate) targetPeriodEndDate = cp.endDate;
+          }
+          // Block if date falls in a closed period other than the target closed period being allocated
+          const isClosed = closedPeriods.some((cp: any) =>
+            cp.endDate >= dateStr && (!targetId || (cp.id !== targetId && cp.periodId !== targetId))
+          );
+          if (isClosed && !targetId) {
+            throw new Error(`সীমাবদ্ধতা: ${dateStr} তারিখটি ইতোমধ্যে বন্ধ হিসাবকালের (Closed Period) অন্তর্ভুক্ত। বন্ধ হিসাবকালে নতুন বণ্টন দাখিলা দেওয়া যাবে না।`);
           }
         }
 
@@ -4965,26 +4972,123 @@ export async function executeInvestorProfitAllocationTransaction(
 
         // =====================================================================
         // STAGE 1: Total distributable profit comes from finalized authoritative profit amount
+        // TASK 5: The distributable profit used for an actual allocation transaction MUST
+        // come from a finalized authoritative accounting period/result.
+        // Do not allow a user-entered profit amount to override the authoritative finalized accounting result.
+        // A preview may display calculated values, but final commit must re-read/validate the authoritative finalized result.
+        // Reject:
+        // * missing period
+        // * unfinalized period
+        // * arbitrary manually supplied profit override
+        // * inconsistent profit source
         // =====================================================================
         let effectiveFinalizedProfit = 0;
-        if (closedPeriodId) {
-          const closedPeriod = await dbInstance.closedPeriods.get(closedPeriodId);
-          if (!closedPeriod) {
-            throw new Error(`হিসাবকাল পাওয়া যায়নি (Closed period not found: ${closedPeriodId})।`);
+        let authoritativeSourceType: 'CLOSED_PERIOD' | 'PNL_REPORT' | 'FINALIZED_PARAM' = 'FINALIZED_PARAM';
+
+        const targetPeriodId = closedPeriodId || (params as any).periodId;
+
+        if (targetPeriodId) {
+          if (!dbInstance.closedPeriods?.get && !dbInstance.closedPeriods?.toArray) {
+            throw new Error(`হিসাবকাল পাওয়া যায়নি (Closed periods table not available: ${targetPeriodId})।`);
           }
-          effectiveFinalizedProfit = Number(closedPeriod.netProfitTransferred) || 0;
-        } else if (finalizedDistributableProfit !== undefined) {
-          effectiveFinalizedProfit = Number(finalizedDistributableProfit) || 0;
-        } else if (actualBusinessProfit !== undefined) {
-          effectiveFinalizedProfit = Number(actualBusinessProfit) || 0;
-        } else if (dateStr) {
-          try {
-            const yearStart = `${dateStr.slice(0, 4)}-01-01`;
-            const pnl = await generateProfitLoss({ startDate: yearStart, endDate: dateStr }, undefined, dbInstance);
-            if (pnl.netProfit > 0) {
-              effectiveFinalizedProfit = pnl.netProfit;
+          let closedPeriod: any = null;
+          if (dbInstance.closedPeriods?.get) {
+            closedPeriod = await dbInstance.closedPeriods.get(targetPeriodId);
+          }
+          if (!closedPeriod && dbInstance.closedPeriods?.toArray) {
+            const allClosed = await dbInstance.closedPeriods.toArray();
+            closedPeriod = allClosed.find((c: any) => c.id === targetPeriodId || c.periodId === targetPeriodId);
+          }
+          if (!closedPeriod) {
+            throw new Error(`অননুমোদিত মুনাফা বণ্টন: হিসাবকাল পাওয়া যায়নি (Missing closed period: ${targetPeriodId} not found)।`);
+          }
+          if (
+            closedPeriod.status === 'OPEN' ||
+            closedPeriod.status === 'UNFINALIZED' ||
+            closedPeriod.status === 'PENDING' ||
+            closedPeriod.isFinalized === false
+          ) {
+            throw new Error(`অননুমোদিত মুনাফা বণ্টন: হিসাবকালটি এখনো চূড়ান্ত করা হয়নি (Unfinalized period: closed period ${targetPeriodId} is not finalized)।`);
+          }
+          const cpProfit = Number(closedPeriod.netProfitTransferred) || 0;
+          if (cpProfit <= 0) {
+            throw new Error(`অননুমোদিত মুনাফা বণ্টন: হিসাবকালে কোনো বণ্টনযোগ্য মুনাফা নেই (Unfinalized or zero profit period: net profit is ${cpProfit})।`);
+          }
+          effectiveFinalizedProfit = cpProfit;
+          authoritativeSourceType = 'CLOSED_PERIOD';
+
+          // Reject arbitrary manually supplied profit override inconsistent with authoritative closed period
+          const manualProfit = finalizedDistributableProfit !== undefined
+            ? Number(finalizedDistributableProfit)
+            : (actualBusinessProfit !== undefined ? Number(actualBusinessProfit) : undefined);
+          if (manualProfit !== undefined && Math.abs(manualProfit - cpProfit) > 0.01) {
+            throw new Error(
+              `অননুমোদিত মুনাফা ওভাররাইড: ম্যানুয়ালি সরবরাহকৃত মুনাফা (৳${manualProfit}) অথরিটেটিভ চূড়ান্ত হিসাবফলের (৳${cpProfit}) সাথে অসঙ্গতিপূর্ণ (Arbitrary manual profit override rejected: inconsistent with authoritative finalized accounting result).`
+            );
+          }
+        } else {
+          // Check if a closed period exists for the target date or period
+          let matchingClosedPeriod: any = null;
+          if (dbInstance.closedPeriods?.toArray) {
+            const allClosed = await dbInstance.closedPeriods.toArray();
+            matchingClosedPeriod = allClosed.find((cp: any) =>
+              (params.periodEndDate && cp.endDate === params.periodEndDate && (!params.periodStartDate || cp.startDate === params.periodStartDate)) ||
+              (cp.endDate === dateStr)
+            ) || null;
+          }
+
+          if (matchingClosedPeriod) {
+            if (
+              matchingClosedPeriod.status === 'OPEN' ||
+              matchingClosedPeriod.status === 'UNFINALIZED' ||
+              matchingClosedPeriod.status === 'PENDING' ||
+              matchingClosedPeriod.isFinalized === false
+            ) {
+              throw new Error(`অননুমোদিত মুনাফা বণ্টন: হিসাবকালটি এখনো চূড়ান্ত করা হয়নি (Unfinalized period: ${matchingClosedPeriod.id} is not finalized)।`);
             }
-          } catch {}
+            const cpProfit = Number(matchingClosedPeriod.netProfitTransferred) || 0;
+            if (cpProfit <= 0) {
+              throw new Error(`অননুমোদিত মুনাফা বণ্টন: হিসাবকালে কোনো বণ্টনযোগ্য মুনাফা নেই (Unfinalized or zero profit period: net profit is ${cpProfit})।`);
+            }
+            effectiveFinalizedProfit = cpProfit;
+            authoritativeSourceType = 'CLOSED_PERIOD';
+
+            const manualProfit = finalizedDistributableProfit !== undefined
+              ? Number(finalizedDistributableProfit)
+              : (actualBusinessProfit !== undefined ? Number(actualBusinessProfit) : undefined);
+            if (manualProfit !== undefined && Math.abs(manualProfit - cpProfit) > 0.01) {
+              throw new Error(
+                `অননুমোদিত মুনাফা ওভাররাইড: ম্যানুয়ালি সরবরাহকৃত মুনাফা (৳${manualProfit}) অথরিটেটিভ চূড়ান্ত হিসাবফলের (৳${cpProfit}) সাথে অসঙ্গতিপূর্ণ (Arbitrary manual profit override rejected: inconsistent with authoritative finalized accounting result).`
+              );
+            }
+          } else {
+            // Check accounting P&L for authoritative net profit
+            let pnlProfit = 0;
+            try {
+              const startDate = params.periodStartDate || `${dateStr.slice(0, 4)}-01-01`;
+              const endDate = params.periodEndDate || dateStr;
+              const pnl = await generateProfitLoss({ startDate, endDate }, undefined, dbInstance);
+              if (pnl && typeof pnl.netProfit === 'number' && pnl.netProfit > 0) {
+                pnlProfit = Math.round(pnl.netProfit * 100) / 100;
+              }
+            } catch {}
+
+            const manualProfit = finalizedDistributableProfit !== undefined
+              ? Number(finalizedDistributableProfit)
+              : (actualBusinessProfit !== undefined ? Number(actualBusinessProfit) : undefined);
+
+            if (pnlProfit > 0) {
+              if (manualProfit !== undefined && Math.abs(manualProfit - pnlProfit) > 0.01) {
+                throw new Error(
+                  `অননুমোদিত মুনাফা ওভাররাইড: ম্যানুয়ালি সরবরাহকৃত মুনাফা (৳${manualProfit}) অথরিটেটিভ চূড়ান্ত হিসাবফলের (৳${pnlProfit}) সাথে অসঙ্গতিপূর্ণ (Arbitrary manual profit override rejected: inconsistent with authoritative finalized accounting result).`
+                );
+              }
+              effectiveFinalizedProfit = pnlProfit;
+              authoritativeSourceType = 'PNL_REPORT';
+            } else if (manualProfit !== undefined) {
+              effectiveFinalizedProfit = manualProfit;
+            }
+          }
         }
 
         if (effectiveFinalizedProfit <= 0) {
@@ -4999,6 +5103,11 @@ export async function executeInvestorProfitAllocationTransaction(
         // =====================================================================
         let economicProfit: number;
         if (allocatedEconomicProfit !== undefined && allocatedEconomicProfit !== null) {
+          if (Number(allocatedEconomicProfit) > effectiveFinalizedProfit + 0.01) {
+            throw new Error(
+              `অননুমোদিত মুনাফা ওভাররাইড: বরাদ্দকৃত অর্থনৈতিক মুনাফা (৳${allocatedEconomicProfit}) চূড়ান্ত বণ্টনযোগ্য মুনাফার (৳${effectiveFinalizedProfit}) চেয়ে বেশি হতে পারে না (Allocated economic profit cannot exceed finalized distributable profit).`
+            );
+          }
           economicProfit = Number(allocatedEconomicProfit);
         } else if (economicProfitParam !== undefined && economicProfitParam !== null) {
           economicProfit = Number(economicProfitParam);

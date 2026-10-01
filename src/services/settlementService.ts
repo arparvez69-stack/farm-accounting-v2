@@ -1578,6 +1578,69 @@ export async function executeFinalAllocationAndSettlement(
   const settlementEventId = params.settlementEventId || `settle_${idempotencyKey}`;
   const sourceProfitAllocationId = params.sourceProfitAllocationId || `alloc_${idempotencyKey}`;
 
+  // TASK 5: Authoritative profit source validation
+  let effectiveDistributableProfit = totalDistributableProfit;
+  const targetPeriodId = (params as any).closedPeriodId || (params as any).periodId;
+
+  if (targetPeriodId) {
+    let closedPeriod: any = null;
+    if (targetDb.closedPeriods?.get) {
+      closedPeriod = await targetDb.closedPeriods.get(targetPeriodId);
+    }
+    if (!closedPeriod && targetDb.closedPeriods?.toArray) {
+      const all = await targetDb.closedPeriods.toArray();
+      closedPeriod = all.find((c: any) => c.id === targetPeriodId || c.periodId === targetPeriodId);
+    }
+    if (!closedPeriod) {
+      throw new Error(`অননুমোদিত মুনাফা বণ্টন: হিসাবকাল পাওয়া যায়নি (Missing closed period: ${targetPeriodId} not found)।`);
+    }
+    if (
+      closedPeriod.status === 'OPEN' ||
+      closedPeriod.status === 'UNFINALIZED' ||
+      closedPeriod.status === 'PENDING' ||
+      closedPeriod.isFinalized === false
+    ) {
+      throw new Error(`অননুমোদিত মুনাফা বণ্টন: হিসাবকালটি এখনো চূড়ান্ত করা হয়নি (Unfinalized period: closed period ${targetPeriodId} is not finalized)।`);
+    }
+    const cpProfit = Number(closedPeriod.netProfitTransferred) || 0;
+    if (cpProfit <= 0) {
+      throw new Error(`অননুমোদিত মুনাফা বণ্টন: হিসাবকালে কোনো বণ্টনযোগ্য মুনাফা নেই (Unfinalized or zero profit period: net profit is ${cpProfit})।`);
+    }
+    if (totalDistributableProfit !== undefined && Math.abs(totalDistributableProfit - cpProfit) > 0.01) {
+      throw new Error(
+        `অননুমোদিত মুনাফা ওভাররাইড: ম্যানুয়ালি সরবরাহকৃত মুনাফা (৳${totalDistributableProfit}) অথরিটেটিভ চূড়ান্ত হিসাবফলের (৳${cpProfit}) সাথে অসঙ্গতিপূর্ণ (Arbitrary manual profit override rejected: inconsistent with authoritative finalized accounting result).`
+      );
+    }
+    effectiveDistributableProfit = cpProfit;
+  } else if (targetDb.closedPeriods?.toArray) {
+    const all = await targetDb.closedPeriods.toArray();
+    const matching = all.find((c: any) =>
+      (periodEndDate && c.endDate === periodEndDate && (!periodStartDate || c.startDate === periodStartDate)) ||
+      (periodEndDate && c.endDate === periodEndDate) ||
+      (date && c.endDate === date)
+    );
+    if (matching) {
+      if (
+        matching.status === 'OPEN' ||
+        matching.status === 'UNFINALIZED' ||
+        matching.status === 'PENDING' ||
+        matching.isFinalized === false
+      ) {
+        throw new Error(`অননুমোদিত মুনাফা বণ্টন: হিসাবকালটি এখনো চূড়ান্ত করা হয়নি (Unfinalized period: ${matching.id} is not finalized)।`);
+      }
+      const cpProfit = Number(matching.netProfitTransferred) || 0;
+      if (cpProfit <= 0) {
+        throw new Error(`অননুমোদিত মুনাফা বণ্টন: হিসাবকালে কোনো বণ্টনযোগ্য মুনাফা নেই (Unfinalized or zero profit period: net profit is ${cpProfit})।`);
+      }
+      if (totalDistributableProfit !== undefined && Math.abs(totalDistributableProfit - cpProfit) > 0.01) {
+        throw new Error(
+          `অননুমোদিত মুনাফা ওভাররাইড: ম্যানুয়ালি সরবরাহকৃত মুনাফা (৳${totalDistributableProfit}) অথরিটেটিভ চূড়ান্ত হিসাবফলের (৳${cpProfit}) সাথে অসঙ্গতিপূর্ণ (Arbitrary manual profit override rejected: inconsistent with authoritative finalized accounting result).`
+        );
+      }
+      effectiveDistributableProfit = cpProfit;
+    }
+  }
+
   // Idempotency check: if already committed, return idempotently
   const statusBefore = await checkFinalAllocationSettlementStatus(idempotencyKey, targetDb);
   if (statusBefore.committed) {
@@ -1585,9 +1648,9 @@ export async function executeFinalAllocationAndSettlement(
     const invCapital = Number(existingInv?.currentCapital || existingInv?.totalInvestment || 0);
 
     const investorProfitAllocated =
-      Math.round(totalDistributableProfit * (investorSharePercentage / 100) * 100) / 100;
+      Math.round(effectiveDistributableProfit * (investorSharePercentage / 100) * 100) / 100;
     const mudaribProfitAllocated =
-      Math.round(totalDistributableProfit * (mudaribSharePercentage / 100) * 100) / 100;
+      Math.round(effectiveDistributableProfit * (mudaribSharePercentage / 100) * 100) / 100;
     const reinvestedCapital =
       Math.round(investorProfitAllocated * (reinvestPercentage / 100) * 100) / 100;
     const withdrawableAmount = Math.round((investorProfitAllocated - reinvestedCapital) * 100) / 100;
@@ -1598,7 +1661,7 @@ export async function executeFinalAllocationAndSettlement(
       committed: true,
       isDuplicate: true,
       idempotentReplay: true,
-      totalDistributableProfit,
+      totalDistributableProfit: effectiveDistributableProfit,
       investorProfitAllocated,
       mudaribProfitAllocated,
       reinvestedCapital,
@@ -1624,9 +1687,9 @@ export async function executeFinalAllocationAndSettlement(
   );
 
   const investorProfitAllocated =
-    Math.round(totalDistributableProfit * (investorSharePercentage / 100) * 100) / 100;
+    Math.round(effectiveDistributableProfit * (investorSharePercentage / 100) * 100) / 100;
   const mudaribProfitAllocated =
-    Math.round(totalDistributableProfit * (mudaribSharePercentage / 100) * 100) / 100;
+    Math.round(effectiveDistributableProfit * (mudaribSharePercentage / 100) * 100) / 100;
   const reinvestedCapital =
     Math.round(investorProfitAllocated * (reinvestPercentage / 100) * 100) / 100;
   const withdrawableAmount = Math.round((investorProfitAllocated - reinvestedCapital) * 100) / 100;

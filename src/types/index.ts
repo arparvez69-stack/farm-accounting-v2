@@ -2026,11 +2026,22 @@ export interface ParticipantCapitalPosition {
   eligibleCapital?: number;
   capitalAmount?: number;
   investmentAmount?: number;
+  capital?: number;
   contractualProfitSharingPercentage?: number; // e.g. A = 50%, B = 60%
   contractualProfitSharePercentage?: number;
+  contractualPercentage?: number;
   profitSharingRatio?: number;
   eligibilityPeriodStart?: string;
   eligibilityPeriodEnd?: string;
+  startDate?: string;
+  endDate?: string;
+  entryDate?: string;
+  exitDate?: string;
+  effectiveInvestmentDate?: string;
+  effectiveDate?: string;
+  investmentDate?: string;
+  admissionDate?: string;
+  allocationMethod?: 'OWNERSHIP_BASED' | 'CAPITAL_BASED' | 'TIME_WEIGHTED' | 'AGREEMENT_BASED' | string;
   status?: string;
 }
 
@@ -2047,6 +2058,9 @@ export interface ParticipantEconomicAllocation {
   workingPartnerShare?: number;
   mudaribProfit?: number; // Alias for workingPartnerShare
   directContractualApplicationToTotalProfitBlocked?: boolean;
+  eligibleDays?: number;
+  capitalDaysWeight?: number;
+  allocationMethod?: string;
 }
 
 export interface EconomicAllocationByCapitalResult {
@@ -2064,12 +2078,17 @@ export interface EconomicAllocationByCapitalResult {
   flatProfitSharingAntiPatternPrevented: boolean;
   proportionsSumToOne: boolean;
   notes?: string;
+  allocationMethod?: 'CAPITAL_BASED' | 'TIME_WEIGHTED' | string;
+  totalCapitalDaysWeight?: number;
 }
 
 export interface EconomicAllocationInspectionParams {
   distributableProfit: number;
   participants: ParticipantCapitalPosition[];
   expectedEconomicAllocations?: Record<string, number>;
+  periodStartDate?: string;
+  periodEndDate?: string;
+  allocationMethod?: 'OWNERSHIP_BASED' | 'CAPITAL_BASED' | 'TIME_WEIGHTED' | 'AGREEMENT_BASED' | string;
 }
 
 export interface EconomicAllocationInspectionResult {
@@ -2610,6 +2629,8 @@ export type FinalizationInterruptionStage =
   | 'AFTER_REINVESTMENT';
 
 export interface ExecuteFinalAllocationSettlementParams {
+  closedPeriodId?: string;
+  periodId?: string;
   periodStartDate?: string;
   periodEndDate: string;
   totalDistributableProfit?: number;

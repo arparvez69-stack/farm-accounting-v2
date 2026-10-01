@@ -59,9 +59,14 @@ export interface RunProfitReconciliationParams {
     name: string;
     capital: number;
     contractualPercentage: number;
+    entryDate?: string;
+    eligibilityPeriodStart?: string;
+    eligibilityPeriodEnd?: string;
+    allocationMethod?: 'OWNERSHIP_BASED' | 'CAPITAL_BASED' | 'TIME_WEIGHTED' | 'AGREEMENT_BASED' | string;
   }>;
   periodStartDate?: string;
   periodEndDate?: string;
+  allocationMethod?: 'OWNERSHIP_BASED' | 'CAPITAL_BASED' | 'TIME_WEIGHTED' | 'AGREEMENT_BASED' | string;
   postAppropriationToLedger?: boolean;
   currentUserId?: string;
 }
@@ -118,11 +123,13 @@ export async function runCompleteProfitReconciliation(
       participantName: p.name,
       eligibleCapital: p.capital,
       contractualProfitSharingPercentage: p.contractualPercentage,
-      eligibilityPeriodStart: periodStartDate,
-      eligibilityPeriodEnd: periodEndDate
+      eligibilityPeriodStart: p.eligibilityPeriodStart || p.entryDate || periodStartDate,
+      eligibilityPeriodEnd: p.eligibilityPeriodEnd || periodEndDate,
+      allocationMethod: p.allocationMethod
     })),
     periodStartDate,
-    periodEndDate
+    periodEndDate,
+    allocationMethod: params.allocationMethod
   });
 
   const participantBreakdowns: ParticipantProfitBreakdown[] = [];

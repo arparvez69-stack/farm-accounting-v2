@@ -41,7 +41,7 @@ import {
   executeOwnerDrawingTransaction
 } from '../services/transactionService';
 import { generateAmortizationSchedule } from '../accounting/amortizationService';
-import { AmortizationScheduleItem, CashBankAccount, Investor, Loan, UserRole, JournalEntry, InvestorAdmissionRequest, AdmissionStage } from '../types';
+import { AmortizationScheduleItem, CashBankAccount, Investor, Loan, UserRole, JournalEntry, InvestorAdmissionRequest, AdmissionStage, ClosedPeriod } from '../types';
 import { generateTransactionNumber, generateUniqueId, safeInsert } from '../utils/idGenerator';
 import {
   createAdmissionRequest,
@@ -169,6 +169,8 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
 
   // Profit Allocation, Payment & Capital Return Modals
   const [allocatingInvestor, setAllocatingInvestor] = useState<Investor | null>(null);
+  const [closedPeriodsList, setClosedPeriodsList] = useState<ClosedPeriod[]>([]);
+  const [selectedClosedPeriodId, setSelectedClosedPeriodId] = useState<string>('');
   const [finalizedFarmProfit, setFinalizedFarmProfit] = useState('');
   const [allocationDate, setAllocationDate] = useState(new Date().toISOString().split('T')[0]);
   const [allocationNotes, setAllocationNotes] = useState('');
@@ -363,6 +365,12 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
         try {
           const reqs = await getAllAdmissionRequests();
           setAdmissionRequests(reqs);
+        } catch {}
+        try {
+          if (db.closedPeriods) {
+            const cpList = await db.closedPeriods.toArray();
+            setClosedPeriodsList(cpList.sort((a: ClosedPeriod, b: ClosedPeriod) => (b.endDate || '').localeCompare(a.endDate || '')));
+          }
         } catch {}
       } else if (tab === 'owner') {
         const jEntries = await db.journalEntries.toArray();
@@ -662,6 +670,11 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
     e.preventDefault();
     if (!allocatingInvestor) return;
 
+    if (closedPeriodsList.length > 0 && !selectedClosedPeriodId) {
+      setMsg({ type: 'error', text: 'মুনাফা বণ্টনের জন্য একটি চূড়ান্ত হিসাবকাল (Closed Period) নির্বাচন করা আবশ্যক।' });
+      return;
+    }
+
     const profit = parseFloat(finalizedFarmProfit) || 0;
     if (profit <= 0) {
       setMsg({ type: 'error', text: 'চূড়ান্ত বণ্টনযোগ্য প্রকৃত মুনাফার পরিমাণ ০ থেকে বেশি হতে হবে।' });
@@ -672,6 +685,7 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
     try {
       const res = await executeInvestorProfitAllocationTransaction({
         investorId: allocatingInvestor.id,
+        closedPeriodId: selectedClosedPeriodId || undefined,
         finalizedDistributableProfit: profit,
         allocationDate,
         notes: allocationNotes,
@@ -683,6 +697,7 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
         text: `বিনিয়োগকারী ${res.investor.name} এর লভ্যাংশ ৳${res.allocatedProfit.toLocaleString()} (${res.profitSharingRatio}%) সফলভাবে বণ্টন ও জাবেদায় পোস্ট করা হয়েছে!`
       });
       setAllocatingInvestor(null);
+      setSelectedClosedPeriodId('');
       setFinalizedFarmProfit('');
       setAllocationNotes('');
       window.dispatchEvent(new CustomEvent('accounting_entry_posted'));
@@ -2676,6 +2691,40 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
                 </div>
 
                 <form onSubmit={handleExecuteProfitAllocation} className="space-y-3.5 text-sm">
+                  {closedPeriodsList.length > 0 ? (
+                    <div>
+                      <label className="block text-xs sm:text-[13px] font-semibold text-gray-700 mb-1.5">
+                        চূড়ান্ত হিসাবকাল (Authoritative Finalized Accounting Period) <span className="text-red-500">*</span>
+                      </label>
+                      <select
+                        value={selectedClosedPeriodId}
+                        onChange={(e) => {
+                          const pId = e.target.value;
+                          setSelectedClosedPeriodId(pId);
+                          const cp = closedPeriodsList.find((p) => p.id === pId);
+                          if (cp) {
+                            setFinalizedFarmProfit(String(cp.netProfitTransferred));
+                            if (cp.endDate) setAllocationDate(cp.endDate);
+                          }
+                        }}
+                        className="w-full px-3.5 py-2.5 border border-gray-300 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:outline-hidden text-sm sm:text-[15px] min-h-[44px]"
+                        required
+                      >
+                        <option value="">-- চূড়ান্ত হিসাবকাল নির্বাচন করুন --</option>
+                        {closedPeriodsList.map((cp) => (
+                          <option key={cp.id} value={cp.id}>
+                            {cp.endDate} সমাপ্ত হিসাবকাল (অথরিটেটিভ নিট মুনাফা: ৳{Number(cp.netProfitTransferred || 0).toLocaleString()})
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  ) : (
+                    <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-900">
+                      <p className="font-semibold">⚠️ চূড়ান্ত হিসাবকাল পাওয়া যায়নি</p>
+                      <p>প্রকৃত মুনাফা বণ্টনের পূর্বে হিসাব মডিউল থেকে হিসাবকাল চূড়ান্ত ও সমাপ্ত (Close Period) করা আবশ্যক।</p>
+                    </div>
+                  )}
+
                   <div>
                     <label className="block text-xs sm:text-[13px] font-semibold text-gray-700 mb-1.5">
                       ফার্মের চূড়ান্ত বণ্টনযোগ্য প্রকৃত নিট মুনাফা (৳) <span className="text-red-500">*</span>
@@ -2689,8 +2738,16 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
                       placeholder="উদাঃ 200000"
                       value={finalizedFarmProfit}
                       onChange={(e) => setFinalizedFarmProfit(e.target.value)}
-                      className="w-full px-3.5 py-2.5 border border-gray-300 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:outline-hidden font-mono text-sm sm:text-[15px] min-h-[44px]"
+                      readOnly={Boolean(selectedClosedPeriodId)}
+                      className={`w-full px-3.5 py-2.5 border border-gray-300 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:outline-hidden font-mono text-sm sm:text-[15px] min-h-[44px] ${
+                        selectedClosedPeriodId ? 'bg-gray-100 text-gray-700 cursor-not-allowed' : ''
+                      }`}
                     />
+                    {selectedClosedPeriodId && (
+                      <p className="text-[11px] text-emerald-700 mt-1">
+                        ✓ নির্বাচিত অথরিটেটিভ হিসাবকাল থেকে নিট মুনাফার পরিমাণ লক করা হয়েছে।
+                      </p>
+                    )}
                   </div>
 
                   {Number(finalizedFarmProfit) > 0 && (() => {

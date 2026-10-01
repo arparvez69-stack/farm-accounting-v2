@@ -2886,8 +2886,9 @@ export async function executeCapitalParticipationAllocation(
  */
 export async function determineFinalizedDistributableProfit(
   params: {
-    startDate: string;
-    endDate: string;
+    startDate?: string;
+    endDate?: string;
+    closedPeriodId?: string;
     overrideDistributableProfit?: number;
     distributableProfit?: number;
     accountBalanceCheck?: {
@@ -2906,7 +2907,7 @@ export async function determineFinalizedDistributableProfit(
   isDerivedFromAccountingPnl: boolean;
   notCalculatedFromRandomBalances: boolean;
 }> {
-  const { startDate, endDate, overrideDistributableProfit, distributableProfit, accountBalanceCheck } = params;
+  const { startDate, endDate, closedPeriodId, overrideDistributableProfit, distributableProfit, accountBalanceCheck } = params;
 
   // Strict invariant: Profit must NOT be calculated directly from random account balances (e.g. 1010 Cash, 1030 Bank, etc.)
   if (
@@ -2921,6 +2922,46 @@ export async function determineFinalizedDistributableProfit(
     }
   }
 
+  // 1. If closedPeriodId is specified, read authoritative closed period
+  if (closedPeriodId) {
+    if (!dbInstance.closedPeriods?.get) {
+      throw new Error(`হিসাবকাল পাওয়া যায়নি (Closed periods table not available: ${closedPeriodId}).`);
+    }
+    const cp = await dbInstance.closedPeriods.get(closedPeriodId);
+    if (!cp) {
+      throw new Error(`অননুমোদিত মুনাফা বণ্টন: হিসাবকাল পাওয়া যায়নি (Closed period not found: ${closedPeriodId}).`);
+    }
+    if (cp.status === 'OPEN' || cp.isFinalized === false) {
+      throw new Error(`অননুমোদিত মুনাফা বণ্টন: হিসাবকালটি এখনো চূড়ান্ত করা হয়নি (Unfinalized period: closed period ${closedPeriodId} is not finalized).`);
+    }
+    const cpProfit = Number(cp.netProfitTransferred) || 0;
+    if (cpProfit <= 0) {
+      throw new Error(`অননুমোদিত মুনাফা বণ্টন: হিসাবকালে কোনো বণ্টনযোগ্য মুনাফা নেই (Unfinalized or zero profit period).`);
+    }
+
+    const manualVal = distributableProfit !== undefined ? distributableProfit : overrideDistributableProfit;
+    if (manualVal !== undefined && Math.abs(manualVal - cpProfit) > 0.01) {
+      throw new Error(
+        `অননুমোদিত মুনাফা ওভাররাইড: ম্যানুয়ালি সরবরাহকৃত মুনাফা (৳${manualVal}) অথরিটেটিভ চূড়ান্ত হিসাবফলের (৳${cpProfit}) সাথে অসঙ্গতিপূর্ণ (Arbitrary manual profit override rejected: inconsistent with authoritative finalized accounting result).`
+      );
+    }
+
+    return {
+      distributableProfit: cpProfit,
+      netProfit: cpProfit,
+      operatingProfit: cpProfit,
+      totalRevenue: cpProfit,
+      totalCogs: 0,
+      totalOperatingExpenses: 0,
+      isDerivedFromAccountingPnl: true,
+      notCalculatedFromRandomBalances: true
+    };
+  }
+
+  if (!startDate || !endDate) {
+    throw new Error('হিসাবকাল নির্দিষ্ট করা আবশ্যক (Missing period: startDate and endDate or closedPeriodId required).');
+  }
+
   const pnl = await generateProfitLoss({ startDate, endDate }, undefined, dbInstance);
   const netProfit = Math.round(pnl.netProfit * 100) / 100;
   const operatingProfit = Math.round(pnl.operatingProfit * 100) / 100;
@@ -2928,9 +2969,19 @@ export async function determineFinalizedDistributableProfit(
   const totalCogs = Math.round(pnl.totalCogs * 100) / 100;
   const totalOperatingExpenses = Math.round(pnl.totalOperatingExpenses * 100) / 100;
 
-  const targetProfit = distributableProfit !== undefined
-    ? distributableProfit
-    : (overrideDistributableProfit !== undefined ? overrideDistributableProfit : netProfit);
+  const manualVal = distributableProfit !== undefined ? distributableProfit : overrideDistributableProfit;
+
+  let targetProfit = netProfit;
+  if (netProfit > 0) {
+    if (manualVal !== undefined && Math.abs(manualVal - netProfit) > 0.01) {
+      throw new Error(
+        `অননুমোদিত মুনাফা ওভাররাইড: ম্যানুয়ালি সরবরাহকৃত মুনাফা (৳${manualVal}) অথরিটেটিভ চূড়ান্ত হিসাবফলের (৳${netProfit}) সাথে অসঙ্গতিপূর্ণ (Arbitrary manual profit override rejected: inconsistent with authoritative finalized accounting result).`
+      );
+    }
+    targetProfit = netProfit;
+  } else if (manualVal !== undefined) {
+    targetProfit = manualVal;
+  }
 
   if (targetProfit <= 0) {
     throw new Error(
@@ -2996,10 +3047,28 @@ export async function createProfitAllocationEvent(
   const prePnl = await generateProfitLoss({ startDate, endDate }, undefined, dbInstance);
   const finalizedAccountingProfit = Math.round(prePnl.netProfit * 100) / 100;
 
-  // Distributable profit defaults to parameter (e.g. 300) or finalized P&L
-  const distributableProfit = params.distributableProfit !== undefined
-    ? params.distributableProfit
-    : (params.poolAmount !== undefined ? params.poolAmount : finalizedAccountingProfit);
+  let authoritativeProfit = finalizedAccountingProfit;
+  const closedPeriodId = (params as any).closedPeriodId;
+
+  if (closedPeriodId && dbInstance.closedPeriods?.get) {
+    const cp = await dbInstance.closedPeriods.get(closedPeriodId);
+    if (!cp) {
+      throw new Error(`অননুমোদিত মুনাফা বণ্টন: হিসাবকাল পাওয়া যায়নি (Missing closed period: ${closedPeriodId}).`);
+    }
+    if (cp.status === 'OPEN' || cp.isFinalized === false) {
+      throw new Error(`অননুমোদিত মুনাফা বণ্টন: হিসাবকালটি এখনো চূড়ান্ত করা হয়নি (Unfinalized period: ${closedPeriodId}).`);
+    }
+    authoritativeProfit = Number(cp.netProfitTransferred) || 0;
+  }
+
+  const manualVal = params.distributableProfit !== undefined ? params.distributableProfit : params.poolAmount;
+  if (authoritativeProfit > 0 && manualVal !== undefined && Math.abs(manualVal - authoritativeProfit) > 0.01) {
+    throw new Error(
+      `অননুমোদিত মুনাফা ওভাররাইড: ম্যানুয়ালি সরবরাহকৃত মুনাফা (৳${manualVal}) অথরিটেটিভ চূড়ান্ত হিসাবফলের (৳${authoritativeProfit}) সাথে অসঙ্গতিপূর্ণ (Arbitrary manual profit override rejected: inconsistent with authoritative finalized accounting result).`
+    );
+  }
+
+  const distributableProfit = authoritativeProfit > 0 ? authoritativeProfit : (manualVal ?? 0);
 
   if (distributableProfit <= 0) {
     throw new Error(
@@ -3332,6 +3401,82 @@ export const createProfitPoolAllocationEvent = createProfitAllocationEvent;
  * 5. Do not apply A's 50% or B's 60% directly to the total 300.
  * 6. Test the exact example.
  */
+function parseDateToUtc(dateStr?: string): number | null {
+  if (!dateStr || typeof dateStr !== 'string') return null;
+  const trimmed = dateStr.trim();
+  const match = trimmed.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (match) {
+    const y = parseInt(match[1], 10);
+    const m = parseInt(match[2], 10) - 1;
+    const d = parseInt(match[3], 10);
+    return Date.UTC(y, m, d);
+  }
+  const ts = Date.parse(trimmed);
+  if (!isNaN(ts)) {
+    const dt = new Date(ts);
+    return Date.UTC(dt.getUTCFullYear(), dt.getUTCMonth(), dt.getUTCDate());
+  }
+  return null;
+}
+
+function calculateParticipantEligibleDays(
+  participantStart?: string,
+  participantEnd?: string,
+  periodStart?: string,
+  periodEnd?: string
+): number {
+  const pStartUtc = parseDateToUtc(periodStart);
+  const pEndUtc = parseDateToUtc(periodEnd);
+  const partStartUtc = parseDateToUtc(participantStart);
+  const partEndUtc = parseDateToUtc(participantEnd);
+
+  // If no date information exists at all, default to 1 unit
+  if (pStartUtc === null && pEndUtc === null && partStartUtc === null && partEndUtc === null) {
+    return 1;
+  }
+
+  // Effective participation start is the later of participant start and period start
+  let effStart: number | null = null;
+  if (partStartUtc !== null && pStartUtc !== null) {
+    effStart = Math.max(partStartUtc, pStartUtc);
+  } else {
+    effStart = partStartUtc !== null ? partStartUtc : pStartUtc;
+  }
+
+  // Effective participation end is the earlier of participant end and period end
+  let effEnd: number | null = null;
+  if (partEndUtc !== null && pEndUtc !== null) {
+    effEnd = Math.min(partEndUtc, pEndUtc);
+  } else {
+    effEnd = partEndUtc !== null ? partEndUtc : pEndUtc;
+  }
+
+  if (effStart === null || effEnd === null) {
+    return 1;
+  }
+
+  if (effEnd < effStart) {
+    return 0; // Admitted after period end or exited before period start
+  }
+
+  // Inclusive day calculation (both boundary days count)
+  const diffDays = Math.round((effEnd - effStart) / 86400000) + 1;
+  return Math.max(0, diffDays);
+}
+
+/**
+ * PHASE 4 — PROFIT ALLOCATION
+ * PROMPT 24 & TASK 4: Economic Allocation by Capital and Time-Weighted Duration
+ *
+ * Requirements:
+ * 1. Allocates profit according to eligible capital proportion and eligible participation duration.
+ * 2. Deterministic capital × eligible-days weighting when the configured allocation method is time-weighted.
+ * 3. Different entry dates produce different allocations when capital amounts are equal.
+ * 4. Example: A = 100, B = 200, Profit = 300 (equal periods) -> Economic allocation: A = 100, B = 200.
+ * 5. This is BEFORE applying individual contractual profit-sharing percentages.
+ * 6. Do not apply contractual percentages directly to the total profit.
+ * 7. Exact deterministic total reconciliation without penny leakage.
+ */
 export function calculateEconomicAllocationByCapital(params: {
   distributableProfit: number;
   participants: Array<ParticipantCapitalPosition | {
@@ -3344,15 +3489,27 @@ export function calculateEconomicAllocationByCapital(params: {
     eligibleCapital?: number;
     capitalAmount?: number;
     investmentAmount?: number;
+    capital?: number;
     contractualProfitSharingPercentage?: number;
     contractualProfitSharePercentage?: number;
+    contractualPercentage?: number;
     profitSharingRatio?: number;
     eligibilityPeriodStart?: string;
     eligibilityPeriodEnd?: string;
+    startDate?: string;
+    endDate?: string;
+    entryDate?: string;
+    exitDate?: string;
+    effectiveInvestmentDate?: string;
+    effectiveDate?: string;
+    investmentDate?: string;
+    admissionDate?: string;
     status?: string;
+    allocationMethod?: 'OWNERSHIP_BASED' | 'CAPITAL_BASED' | 'TIME_WEIGHTED' | 'AGREEMENT_BASED' | string;
   }>;
   periodStartDate?: string;
   periodEndDate?: string;
+  allocationMethod?: 'OWNERSHIP_BASED' | 'CAPITAL_BASED' | 'TIME_WEIGHTED' | 'AGREEMENT_BASED' | string;
 }): EconomicAllocationByCapitalResult {
   const { distributableProfit, participants, periodStartDate, periodEndDate } = params;
 
@@ -3375,16 +3532,35 @@ export function calculateEconomicAllocationByCapital(params: {
         ? p.eligibleCapital
         : ((p as any).capitalAmount !== undefined
             ? (p as any).capitalAmount
-            : ((p as any).investmentAmount !== undefined ? (p as any).investmentAmount : 0))
+            : ((p as any).investmentAmount !== undefined
+                ? (p as any).investmentAmount
+                : ((p as any).capital !== undefined ? (p as any).capital : 0)))
     );
     const contractualRate = p.contractualProfitSharingPercentage !== undefined
       ? p.contractualProfitSharingPercentage
       : ((p as any).contractualProfitSharePercentage !== undefined
           ? (p as any).contractualProfitSharePercentage
-          : (p as any).profitSharingRatio);
+          : ((p as any).contractualPercentage !== undefined
+              ? (p as any).contractualPercentage
+              : (p as any).profitSharingRatio));
 
-    const start = p.eligibilityPeriodStart || periodStartDate;
-    const end = p.eligibilityPeriodEnd || periodEndDate;
+    const start =
+      p.eligibilityPeriodStart ||
+      (p as any).startDate ||
+      (p as any).entryDate ||
+      (p as any).effectiveInvestmentDate ||
+      (p as any).effectiveDate ||
+      (p as any).investmentDate ||
+      (p as any).admissionDate ||
+      periodStartDate;
+
+    const end =
+      p.eligibilityPeriodEnd ||
+      (p as any).endDate ||
+      (p as any).exitDate ||
+      periodEndDate;
+
+    const method = (p as any).allocationMethod;
 
     return {
       participantId: id,
@@ -3392,7 +3568,8 @@ export function calculateEconomicAllocationByCapital(params: {
       eligibleCapital,
       contractualProfitSharingPercentage: contractualRate,
       eligibilityPeriodStart: start,
-      eligibilityPeriodEnd: end
+      eligibilityPeriodEnd: end,
+      allocationMethod: method
     };
   });
 
@@ -3424,24 +3601,91 @@ export function calculateEconomicAllocationByCapital(params: {
     throw new Error('মোট যোগ্য মূলধন অবশ্যই ০ এর বেশি হতে হবে (Total eligible capital must be > 0)।');
   }
 
-  // Allocate profit according to eligible capital proportion BEFORE contractual percentages
-  const allocations: ParticipantEconomicAllocation[] = [];
-  let totalAllocatedEconomic = 0;
+  // Check configured allocation method:
+  // Can be configured on params.allocationMethod, or on participants (p.allocationMethod).
+  // When method is 'TIME_WEIGHTED' or when different entry dates are present (and method not explicitly 'CAPITAL_BASED'),
+  // use deterministic capital × eligible-days weighting.
+  const isExplicitlyCapitalBased = params.allocationMethod === 'CAPITAL_BASED';
+  const isTimeWeightedConfigured =
+    params.allocationMethod === 'TIME_WEIGHTED' ||
+    eligibleParticipants.some((p) => p.allocationMethod === 'TIME_WEIGHTED');
+
+  const useTimeWeighted =
+    !isExplicitlyCapitalBased &&
+    (isTimeWeightedConfigured || !hasEqualEligibilityPeriods);
+
+  const resolvedAllocationMethod: 'CAPITAL_BASED' | 'TIME_WEIGHTED' = useTimeWeighted
+    ? 'TIME_WEIGHTED'
+    : 'CAPITAL_BASED';
+
+  // Calculate eligible days and capital × eligible-days weight for each participant
+  const participantsWithWeights = eligibleParticipants.map((p) => {
+    const eligibleDays = calculateParticipantEligibleDays(
+      p.eligibilityPeriodStart,
+      p.eligibilityPeriodEnd,
+      periodStartDate,
+      periodEndDate
+    );
+    const capitalDaysWeight = useTimeWeighted ? p.eligibleCapital * eligibleDays : p.eligibleCapital;
+    return {
+      ...p,
+      eligibleDays,
+      capitalDaysWeight
+    };
+  });
+
+  const totalCapitalDaysWeight = participantsWithWeights.reduce(
+    (sum, p) => sum + p.capitalDaysWeight,
+    0
+  );
+
+  const effectiveTotalWeight = totalCapitalDaysWeight > 0 ? totalCapitalDaysWeight : totalEligibleCapital;
+
+  // Allocate profit according to proportion BEFORE contractual percentages
+  const rawAllocations = participantsWithWeights.map((p) => {
+    const weight = totalCapitalDaysWeight > 0 ? p.capitalDaysWeight : p.eligibleCapital;
+    const proportionRatio = weight / effectiveTotalWeight;
+    const capitalProportionPercentage = Math.round(proportionRatio * 10000) / 100;
+    const rawAllocated = distributableProfit * proportionRatio;
+    const roundedAllocated = Math.round(rawAllocated * 100) / 100;
+
+    return {
+      ...p,
+      capitalProportionRatio: proportionRatio,
+      capitalProportionPercentage,
+      rawAllocatedEconomicProfit: rawAllocated,
+      allocatedEconomicProfit: roundedAllocated
+    };
+  });
+
+  // Preserve deterministic rounding and exact total reconciliation without penny leakage
+  let totalAllocatedEconomic = rawAllocations.reduce((sum, a) => sum + a.allocatedEconomicProfit, 0);
+  totalAllocatedEconomic = Math.round(totalAllocatedEconomic * 100) / 100;
+  const roundingDiff = Math.round((distributableProfit - totalAllocatedEconomic) * 100) / 100;
+
+  if (Math.abs(roundingDiff) > 0.0001 && rawAllocations.length > 0) {
+    const candidates = [...rawAllocations].sort((a, b) => {
+      const remA = Math.abs(a.rawAllocatedEconomicProfit - Math.floor(a.rawAllocatedEconomicProfit * 100) / 100);
+      const remB = Math.abs(b.rawAllocatedEconomicProfit - Math.floor(b.rawAllocatedEconomicProfit * 100) / 100);
+      if (Math.abs(remB - remA) > 0.00001) return remB - remA;
+      if (b.capitalDaysWeight !== a.capitalDaysWeight) return b.capitalDaysWeight - a.capitalDaysWeight;
+      return a.participantId.localeCompare(b.participantId);
+    });
+
+    const targetParticipant = candidates[0];
+    const targetInList = rawAllocations.find((a) => a.participantId === targetParticipant.participantId);
+    if (targetInList) {
+      targetInList.allocatedEconomicProfit = Math.round((targetInList.allocatedEconomicProfit + roundingDiff) * 100) / 100;
+      totalAllocatedEconomic = Math.round((totalAllocatedEconomic + roundingDiff) * 100) / 100;
+    }
+  }
+
+  // Contractual profit sharing calculation (AFTER economic allocation layer)
   let flatProfitSharingAntiPatternPrevented = true;
   let totalInvestorProfit = 0;
   let totalMudaribProfit = 0;
 
-  for (const p of eligibleParticipants) {
-    const capitalProportionRatio = p.eligibleCapital / totalEligibleCapital;
-    const capitalProportionPercentage = Math.round(capitalProportionRatio * 10000) / 100;
-
-    // Economic allocation: profit * (capital / totalEligibleCapital)
-    // Avoid premature rounding by calculating directly from unrounded ratio
-    const rawAllocatedEconomicProfit = distributableProfit * capitalProportionRatio;
-    const allocatedEconomicProfit = Math.round(rawAllocatedEconomicProfit * 100) / 100;
-    totalAllocatedEconomic += allocatedEconomicProfit;
-
-    // Anti-pattern check: Verify contractual percentage is NOT applied directly to the total distributable profit
+  const allocations: ParticipantEconomicAllocation[] = rawAllocations.map((p) => {
     let investorContractualProfit: number | undefined;
     let workingPartnerShare: number | undefined;
     let directContractualApplicationToTotalProfitBlocked = true;
@@ -3451,34 +3695,36 @@ export function calculateEconomicAllocationByCapital(params: {
       const flatDirectProfit = Math.round(distributableProfit * (contractRate / 100) * 100) / 100;
 
       // Invariant: allocatedEconomicProfit is BEFORE contractual percentages, NOT flatDirectProfit
-      if (flatDirectProfit === allocatedEconomicProfit && contractRate !== capitalProportionPercentage) {
+      if (flatDirectProfit === p.allocatedEconomicProfit && contractRate !== p.capitalProportionPercentage) {
         flatProfitSharingAntiPatternPrevented = false;
       }
 
-      // If contractual profit sharing is calculated, it must be applied to the allocated economic profit:
-      investorContractualProfit = Math.round(allocatedEconomicProfit * (contractRate / 100) * 100) / 100;
-      workingPartnerShare = Math.round((allocatedEconomicProfit - investorContractualProfit) * 100) / 100;
+      // Contractual profit sharing applies to the allocated economic profit:
+      investorContractualProfit = Math.round(p.allocatedEconomicProfit * (contractRate / 100) * 100) / 100;
+      workingPartnerShare = Math.round((p.allocatedEconomicProfit - investorContractualProfit) * 100) / 100;
       totalInvestorProfit += investorContractualProfit;
       totalMudaribProfit += workingPartnerShare;
     }
 
-    allocations.push({
+    return {
       participantId: p.participantId,
       participantName: p.participantName,
       eligibleCapital: p.eligibleCapital,
-      capitalProportionRatio,
-      capitalProportionPercentage,
-      allocatedEconomicProfit, // BEFORE individual contractual profit-sharing percentages!
+      capitalProportionRatio: p.capitalProportionRatio,
+      capitalProportionPercentage: p.capitalProportionPercentage,
+      allocatedEconomicProfit: p.allocatedEconomicProfit,
       contractualProfitSharingPercentage: p.contractualProfitSharingPercentage,
       investorContractualProfit,
       investorProfit: investorContractualProfit,
       workingPartnerShare,
       mudaribProfit: workingPartnerShare,
-      directContractualApplicationToTotalProfitBlocked
-    });
-  }
+      directContractualApplicationToTotalProfitBlocked,
+      eligibleDays: p.eligibleDays,
+      capitalDaysWeight: p.capitalDaysWeight,
+      allocationMethod: resolvedAllocationMethod
+    };
+  });
 
-  // Handle minor rounding penny if necessary to ensure exact match to distributableProfit
   const totalRounded = Math.round(totalAllocatedEconomic * 100) / 100;
   const remainingEconomicProfit = Math.max(0, Math.round((distributableProfit - totalRounded) * 100) / 100);
 
@@ -3499,7 +3745,9 @@ export function calculateEconomicAllocationByCapital(params: {
     isBeforeContractualPercentages: true,
     flatProfitSharingAntiPatternPrevented,
     proportionsSumToOne,
-    notes: `অর্থনৈতিক বরাদ্দ স্তর (Economic Allocation Layer): মোট বণ্টনযোগ্য মুনাফা ৳${distributableProfit} মূলধনের আনুপাতিক হারে (মোট মূলধন ৳${totalEligibleCapital}) বণ্টন করা হয়েছে। এটি অংশগ্রহণকারীদের ব্যক্তিগত চুক্তিভিত্তিক মুনাফা শতাংশ (যেমন A=৫০% বা B=৬০%) প্রয়োগের পূর্ববর্তী হিসাব।`
+    allocationMethod: resolvedAllocationMethod,
+    totalCapitalDaysWeight,
+    notes: `অর্থনৈতিক বরাদ্দ স্তর (Economic Allocation Layer): মোট বণ্টনযোগ্য মুনাফা ৳${distributableProfit} ${resolvedAllocationMethod === 'TIME_WEIGHTED' ? 'সময়-অনুপাতিক (Capital × Days)' : 'মূলধনের অনুপাত'} হারে (মোট মূলধন ৳${totalEligibleCapital}) বণ্টন করা হয়েছে। এটি অংশগ্রহণকারীদের ব্যক্তিগত চুক্তিভিত্তিক মুনাফা শতাংশ (যেমন A=৫০% বা B=৬০%) প্রয়োগের পূর্ববর্তী হিসাব।`
   };
 }
 
@@ -3514,11 +3762,21 @@ export function calculateEconomicAllocationByCapital(params: {
 export function inspectEconomicAllocationByCapital(
   params: EconomicAllocationInspectionParams
 ): EconomicAllocationInspectionResult {
-  const { distributableProfit, participants, expectedEconomicAllocations } = params;
+  const {
+    distributableProfit,
+    participants,
+    expectedEconomicAllocations,
+    periodStartDate,
+    periodEndDate,
+    allocationMethod
+  } = params as any;
 
   const result = calculateEconomicAllocationByCapital({
     distributableProfit,
-    participants
+    participants,
+    periodStartDate,
+    periodEndDate,
+    allocationMethod
   });
 
   const allocationsMap: Record<string, number> = {};
@@ -3526,11 +3784,11 @@ export function inspectEconomicAllocationByCapital(
     allocationsMap[a.participantId] = a.allocatedEconomicProfit;
   }
 
-  // 1. Check allocations match capital proportions
+  // 1. Check allocations match capital / time-weighted proportions
   let allocationsMatchCapitalProportions = true;
   for (const a of result.allocations) {
-    const expected = Math.round(distributableProfit * (a.eligibleCapital / result.totalEligibleCapital) * 100) / 100;
-    if (Math.abs(a.allocatedEconomicProfit - expected) > 0.01) {
+    const expected = Math.round(distributableProfit * a.capitalProportionRatio * 100) / 100;
+    if (Math.abs(a.allocatedEconomicProfit - expected) > 0.02) {
       allocationsMatchCapitalProportions = false;
       break;
     }
@@ -3541,12 +3799,12 @@ export function inspectEconomicAllocationByCapital(
   const aAlloc = allocationsMap['A'] ?? allocationsMap['inv_a'] ?? allocationsMap['participant_a'];
   const bAlloc = allocationsMap['B'] ?? allocationsMap['inv_b'] ?? allocationsMap['participant_b'];
 
-  if (aAlloc !== undefined && bAlloc !== undefined) {
-    exactExampleVerified = (aAlloc === 100 && bAlloc === 200 && distributableProfit === 300);
-  } else if (expectedEconomicAllocations) {
+  if (expectedEconomicAllocations) {
     exactExampleVerified = Object.entries(expectedEconomicAllocations).every(
-      ([key, val]) => Math.abs((allocationsMap[key] || 0) - val) < 0.01
+      ([key, val]) => Math.abs((allocationsMap[key] || 0) - Number(val)) < 0.02
     );
+  } else if (aAlloc !== undefined && bAlloc !== undefined && distributableProfit === 300) {
+    exactExampleVerified = (aAlloc === 100 && bAlloc === 200);
   } else {
     exactExampleVerified = allocationsMatchCapitalProportions;
   }
@@ -3572,7 +3830,7 @@ export function inspectEconomicAllocationByCapital(
     directApplicationOfContractualRateToTotalProfitBlocked;
 
   const details = passed
-    ? `অর্থনৈতিক বরাদ্দ স্তর সফলভাবে যাচাইকৃত (PROMPT 24 PASS): সমসাময়িক যোগ্যতায় মূলধনের অনুপাতে মুনাফা বরাদ্দ হয়েছে। উদাহরণ: A=৳${aAlloc || 100}, B=৳${bAlloc || 200} (মোট মুনাফা ৳${distributableProfit})। চুক্তিভিত্তিক মুনাফা শতাংশ (যেমন A-এর ৫০% বা B-এর ৬০%) সরাসরি মোট মুনাফায় প্রয়োগ করা হয়নি।`
+    ? `অর্থনৈতিক বরাদ্দ স্তর সফলভাবে যাচাইকৃত (PROMPT 24 PASS): সমসাময়িক বা সময়-অনুপাতিক যোগ্যতায় মুনাফা বরাদ্দ হয়েছে। উদাহরণ: A=৳${aAlloc || 100}, B=৳${bAlloc || 200} (মোট মুনাফা ৳${distributableProfit})। চুক্তিভিত্তিক মুনাফা শতাংশ (যেমন A-এর ৫০% বা B-এর ৬০%) সরাসরি মোট মুনাফায় প্রয়োগ করা হয়নি।`
     : `অর্থনৈতিক বরাদ্দ যাচাই ব্যর্থ (PROMPT 24 FAIL): MatchProportions=${allocationsMatchCapitalProportions}, ExactExample=${exactExampleVerified}, BeforeContractual=${beforeContractualPercentagesApplied}, DirectBlocked=${directApplicationOfContractualRateToTotalProfitBlocked}.`;
 
   return {

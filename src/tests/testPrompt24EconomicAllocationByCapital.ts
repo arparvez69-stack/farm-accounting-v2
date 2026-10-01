@@ -298,6 +298,64 @@ export async function runPrompt24EconomicAllocationByCapitalTests(): Promise<Ass
   }
   assert(noParticipantsError, 'Empty participants array is strictly rejected');
 
+  // ===========================================================================
+  // STEP 8: Task 4 Regression Test — Equal Capital, Different Entry Dates (Time-Weighted)
+  // ===========================================================================
+  console.log('\n--- Step 8: Task 4 — Equal Capital, Different Entry Dates (Time-Weighted Allocation) ---');
+
+  const t4DistributableProfit = 300;
+  const t4PeriodStart = '2026-01-01';
+  const t4PeriodEnd = '2026-03-31'; // 90 days total
+
+  const t4Participants = [
+    {
+      id: 'inv_early',
+      name: 'Early Investor',
+      eligibleCapital: 100, // Equal capital: ৳100
+      contractualProfitSharingPercentage: 50,
+      eligibilityPeriodStart: '2026-01-01',
+      eligibilityPeriodEnd: '2026-03-31'
+    },
+    {
+      id: 'inv_late',
+      name: 'Late Investor',
+      eligibleCapital: 100, // Equal capital: ৳100
+      contractualProfitSharingPercentage: 60,
+      eligibilityPeriodStart: '2026-02-15', // 45 days in period
+      eligibilityPeriodEnd: '2026-03-31'
+    }
+  ];
+
+  const t4AllocResult = calculateEconomicAllocationByCapital({
+    distributableProfit: t4DistributableProfit,
+    participants: t4Participants,
+    periodStartDate: t4PeriodStart,
+    periodEndDate: t4PeriodEnd,
+    allocationMethod: 'TIME_WEIGHTED'
+  });
+
+  const earlyAlloc = t4AllocResult.allocations.find((a) => a.participantId === 'inv_early')!;
+  const lateAlloc = t4AllocResult.allocations.find((a) => a.participantId === 'inv_late')!;
+
+  assert(earlyAlloc.eligibleCapital === lateAlloc.eligibleCapital, 'Task 4: Equal capital verified (৳100 === ৳100)');
+  assert(earlyAlloc.eligibleDays === 90, 'Task 4: Early investor has 90 eligible days');
+  assert(lateAlloc.eligibleDays === 45, 'Task 4: Late investor has 45 eligible days');
+  assert(
+    lateAlloc.allocatedEconomicProfit !== earlyAlloc.allocatedEconomicProfit,
+    `Task 4 PROOF: Later investor cannot receive same allocation as earlier investor (${lateAlloc.allocatedEconomicProfit} !== ${earlyAlloc.allocatedEconomicProfit})`
+  );
+  assert(
+    lateAlloc.allocatedEconomicProfit < earlyAlloc.allocatedEconomicProfit,
+    `Task 4 PROOF: Later investor receives strictly less allocation (৳${lateAlloc.allocatedEconomicProfit} < ৳${earlyAlloc.allocatedEconomicProfit})`
+  );
+  assert(earlyAlloc.allocatedEconomicProfit === 200, 'Task 4: Early investor receives ৳200 (2/3 of ৳300)');
+  assert(lateAlloc.allocatedEconomicProfit === 100, 'Task 4: Late investor receives ৳100 (1/3 of ৳300)');
+  assert(
+    earlyAlloc.allocatedEconomicProfit + lateAlloc.allocatedEconomicProfit === 300,
+    'Task 4: Exact total reconciliation: 200 + 100 = 300'
+  );
+  assert(t4AllocResult.remainingEconomicProfit === 0, 'Task 4: Zero remaining economic profit');
+
   // Summary
   console.log('\n================================================================');
   console.log('PROMPT 24 TEST SUMMARY:');

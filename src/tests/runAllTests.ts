@@ -78,6 +78,7 @@ import { runPrompt21CapitalReceiptTests } from './testPrompt21CapitalReceipt';
 import { runPrompt22FinalizeAdmissionAtomicallyTests } from './testPrompt22FinalizeAdmissionAtomically';
 import { runPrompt23CreateProfitPoolTests } from './testPrompt23CreateProfitPool';
 import { runPrompt24EconomicAllocationByCapitalTests } from './testPrompt24EconomicAllocationByCapital';
+import { runTask4InvestorEconomicAllocationTests } from './testTask4InvestorEconomicAllocation';
 import { runPrompt27Full300ProfitGoldenCalculationTests } from './testPrompt27Full300ProfitGoldenCalculation';
 import { runPrompt28LossHandlingTests } from './testPrompt28LossHandling';
 import { runPrompt29ProfitSettlementPreviewTests } from './testPrompt29ProfitSettlementPreview';
@@ -98,6 +99,7 @@ import { runFinalTestGDuplicateCrashRetry } from './testFinalTestGDuplicateCrash
 import { runFinalTestHProductionFreeze } from './testFinalTestHProductionFreeze';
 import { runTask2InvestorProfitAllocationTests } from './testTask2InvestorProfitAllocation';
 import { runTask3NewInvestorAdmissionGateTests } from './testTask3NewInvestorAdmissionGate';
+import { runTask5AuthoritativeProfitSourceTests } from './testTask5AuthoritativeProfitSource';
 
 interface SuiteResult {
   total: number;
@@ -212,6 +214,7 @@ async function main() {
   suiteResults.push(await runPrompt22FinalizeAdmissionAtomicallyTests());
   suiteResults.push(await runPrompt23CreateProfitPoolTests());
   suiteResults.push(await runPrompt24EconomicAllocationByCapitalTests());
+  suiteResults.push(await runTask4InvestorEconomicAllocationTests());
   suiteResults.push(await runPrompt27Full300ProfitGoldenCalculationTests());
   suiteResults.push(await runPrompt28LossHandlingTests());
   suiteResults.push(await runPrompt29ProfitSettlementPreviewTests());
@@ -232,6 +235,7 @@ async function main() {
   suiteResults.push(await runFinalTestHProductionFreeze());
   suiteResults.push(await runTask2InvestorProfitAllocationTests());
   suiteResults.push(await runTask3NewInvestorAdmissionGateTests());
+  suiteResults.push(await runTask5AuthoritativeProfitSourceTests());
 
   // Strictly aggregate actual executed assertions — no manual +10 or phantom counts
   const total = suiteResults.reduce((s, r) => s + (r.total || 0), 0);
