@@ -4006,7 +4006,12 @@ export {
   generateProfitSettlementPreview,
   previewProfitSettlement,
   inspectProfitSettlementPreview,
-  inspectSettlementPreview
+  inspectSettlementPreview,
+  calculateParticipantProfitRetention,
+  calculateProfitRetention,
+  executeParticipantProfitSettlement,
+  inspectParticipantProfitRetention,
+  inspectProfitRetention
 } from './settlementService';
 
 

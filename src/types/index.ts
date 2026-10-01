@@ -2326,6 +2326,91 @@ export interface SettlementPreviewInspectionResult {
   details: string;
 }
 
+/**
+ * PROMPT 30 — Partial Reinvestment & Participant Profit Retention
+ *
+ * Requirements:
+ * Implement or repair participant profit retention.
+ * Allow:
+ * - 0% reinvest;
+ * - 100% reinvest;
+ * - any percentage between them.
+ * Example:
+ * Profit = 100
+ * Reinvest = 50%
+ * Expected:
+ * Reinvested capital = 50
+ * Withdrawable/settlement amount = 50
+ * Reinvestment must NOT create new revenue.
+ * Withdrawal must NOT create operating expense.
+ * Test exactly.
+ * Return PASS.
+ */
+export interface ParticipantProfitRetentionParams {
+  profit: number; // e.g. 100
+  reinvestPercentage?: number; // 0 to 100 (e.g. 50%)
+  reinvestAmount?: number;
+  withdrawAmount?: number;
+}
+
+export interface ParticipantProfitRetentionResult {
+  profit: number;
+  reinvestPercentage: number;
+  reinvestedCapital: number;
+  withdrawableAmount: number;
+  settlementAmount: number; // alias for withdrawableAmount
+  isValid: boolean;
+  zeroPercentAllowed: boolean;
+  hundredPercentAllowed: boolean;
+  arbitraryPercentAllowed: boolean;
+  reinvestmentCreatedRevenue: false;
+  withdrawalCreatedOperatingExpense: false;
+}
+
+export interface ExecuteProfitSettlementParams {
+  investorId: string;
+  profit: number;
+  reinvestPercentage?: number;
+  reinvestAmount?: number;
+  withdrawAmount?: number;
+  bankAccountId?: string;
+  date?: string;
+  currentUserId?: string;
+  notes?: string;
+}
+
+export interface ExecuteProfitSettlementResult {
+  investorId: string;
+  profit: number;
+  reinvestPercentage: number;
+  reinvestedCapital: number;
+  withdrawableAmount: number;
+  reinvestJournalEntryId?: string;
+  withdrawJournalEntryId?: string;
+  reinvestmentCreatedRevenue: false;
+  withdrawalCreatedOperatingExpense: false;
+  passed: boolean;
+  details: string;
+}
+
+export interface ProfitRetentionInspectionParams {
+  profit?: number; // defaults to 100
+  reinvestPercentage?: number; // defaults to 50
+  dbInstance?: any;
+}
+
+export interface ProfitRetentionInspectionResult {
+  passed: boolean;
+  exactExampleVerified: boolean; // Profit=100, Reinvest=50% -> Reinvested=50, Withdrawable=50
+  zeroPercentAllowed: boolean; // 0% reinvest allowed
+  hundredPercentAllowed: boolean; // 100% reinvest allowed
+  arbitraryPercentAllowed: boolean; // arbitrary % allowed
+  reinvestmentCreatedRevenue: false;
+  withdrawalCreatedOperatingExpense: false;
+  pnlUnaffected: boolean;
+  details: string;
+}
+
 
 
 

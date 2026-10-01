@@ -81,6 +81,7 @@ import { runPrompt24EconomicAllocationByCapitalTests } from './testPrompt24Econo
 import { runPrompt27Full300ProfitGoldenCalculationTests } from './testPrompt27Full300ProfitGoldenCalculation';
 import { runPrompt28LossHandlingTests } from './testPrompt28LossHandling';
 import { runPrompt29ProfitSettlementPreviewTests } from './testPrompt29ProfitSettlementPreview';
+import { runPrompt30PartialReinvestmentTests } from './testPrompt30PartialReinvestment';
 
 interface SuiteResult {
   total: number;
@@ -198,6 +199,7 @@ async function main() {
   suiteResults.push(await runPrompt27Full300ProfitGoldenCalculationTests());
   suiteResults.push(await runPrompt28LossHandlingTests());
   suiteResults.push(await runPrompt29ProfitSettlementPreviewTests());
+  suiteResults.push(await runPrompt30PartialReinvestmentTests());
 
   // Strictly aggregate actual executed assertions — no manual +10 or phantom counts
   const total = suiteResults.reduce((s, r) => s + (r.total || 0), 0);
