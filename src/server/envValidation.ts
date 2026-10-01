@@ -53,11 +53,25 @@ export function isStrongSessionSecret(secret: string | undefined | null): boolea
   return true;
 }
 
+export const INSECURE_DEFAULT_PINS: readonly string[] = Object.freeze([
+  '849201',
+  '123456',
+  '1234',
+  '12345',
+  '654321',
+  '0000',
+  '000000',
+  '1111',
+  '111111',
+  '112233'
+]);
+
 /**
  * Reads configured raw PIN from environment using supported aliases.
+ * Rejects any known insecure/default PIN literals (e.g. 123456, 849201).
  */
 export function extractRawPinFromEnv(env: NodeJS.ProcessEnv = process.env): string {
-  return (
+  const pin = (
     env.INITIAL_PIN?.trim() ||
     env.MASTER_PIN?.trim() ||
     env.INITIAL_MASTER_PIN?.trim() ||
@@ -67,6 +81,10 @@ export function extractRawPinFromEnv(env: NodeJS.ProcessEnv = process.env): stri
     env.pin?.trim() ||
     ''
   );
+  if (INSECURE_DEFAULT_PINS.includes(pin)) {
+    return '';
+  }
+  return pin;
 }
 
 /**

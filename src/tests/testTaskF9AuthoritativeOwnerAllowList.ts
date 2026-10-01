@@ -153,7 +153,7 @@ export async function runTaskF9AuthoritativeOwnerAllowListTests(): Promise<Asser
     const loginRes = await fetch(`${serverBaseUrl}/api/verify-login-code`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: obsoleteEmail1, code: '123456' })
+      body: JSON.stringify({ email: obsoleteEmail1, code: 'test_probe_dummy' })
     });
     assert(loginRes.status === 401 || loginRes.status === 429, `Login API rejects obsolete email with HTTP 401/429 (got ${loginRes.status})`);
 
@@ -161,7 +161,7 @@ export async function runTaskF9AuthoritativeOwnerAllowListTests(): Promise<Asser
     const changePinRes = await fetch(`${serverBaseUrl}/api/change-pin`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: obsoleteEmail1, currentPin: '123456', newPin: '654321' })
+      body: JSON.stringify({ email: obsoleteEmail1, currentPin: 'test_current_dummy', newPin: 'test_new_dummy_pin' })
     });
     assert(changePinRes.status === 403, `Change PIN API rejects obsolete email with HTTP 403 (got ${changePinRes.status})`);
 

@@ -102,7 +102,7 @@ export async function runProductionSmokeTests(): Promise<AssertionResult> {
   // Obtain configured owner email and secret PIN
   const approvedOwners = getApprovedOwnerEmails();
   const ownerEmail = approvedOwners[0] || 'owner@example.com';
-  const ownerPin = extractRawPinFromEnv(process.env) || '849201';
+  const ownerPin = extractRawPinFromEnv(process.env) || '95817283';
   const rawSessionSecret = process.env.SESSION_SECRET || resolveSessionSecret() || '';
 
   // Collected server responses to verify no secrets are ever exposed
