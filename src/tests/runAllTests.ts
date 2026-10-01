@@ -105,6 +105,7 @@ import { runPermanentPinSecurityGuards } from './testPermanentPinSecurityGuards'
 import { runNoUnauthenticatedAllowListDisclosureTest } from './testNoUnauthenticatedAllowListDisclosure';
 import { runEnforceOwnerVsInvestorCapitalSeparationTest } from './testEnforceOwnerVsInvestorCapitalSeparation';
 import { runPermanentInvestorAccountingInvariantsTests } from './testPermanentInvestorAccountingInvariants';
+import { runInvestorProfitAllocationDeterminismTests } from './testInvestorProfitAllocationDeterminism';
 
 interface SuiteResult {
   total: number;
@@ -246,6 +247,7 @@ async function main() {
   suiteResults.push(await runNoUnauthenticatedAllowListDisclosureTest());
   suiteResults.push(await runEnforceOwnerVsInvestorCapitalSeparationTest());
   suiteResults.push(await runPermanentInvestorAccountingInvariantsTests());
+  suiteResults.push(await runInvestorProfitAllocationDeterminismTests());
 
   // Strictly aggregate actual executed assertions — no manual +10 or phantom counts
   const total = suiteResults.reduce((s, r) => s + (r.total || 0), 0);

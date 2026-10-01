@@ -2416,19 +2416,13 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
                     className="w-full bg-white border border-gray-300 rounded-xl px-3.5 py-2.5 text-sm sm:text-[15px] text-gray-900 font-mono font-bold text-sky-700 focus:outline-none focus:border-[#1E5128] focus:ring-2 focus:ring-[#1E5128]/20 min-h-[44px]"
                   />
                   {(() => {
-                    const activeInvestors = investors.filter((i) => i.status !== 'EXITED');
-                    const existingActiveRatios = activeInvestors.reduce(
-                      (sum, i) => sum + (i.profitSharingRatio ?? i.profitSharePercentage ?? i.sharePercentage ?? 0),
-                      0
-                    );
                     const newShare = parseFloat(investorSharePct) || 0;
-                    const combinedRatio = Math.round((existingActiveRatios + newShare) * 100) / 100;
-                    const projectedWorkingPartnerRatio = Math.max(0, Math.round((100 - combinedRatio) * 100) / 100);
+                    const contractualWorkingPartnerRatio = Math.max(0, Math.round((100 - newShare) * 100) / 100);
                     return (
                       <div className="text-[11px] text-gray-600 mt-1 flex justify-between bg-sky-50 px-2 py-1 rounded-md border border-sky-200">
                         <span>স্লিপিং পার্টনার: <strong>{newShare}%</strong></span>
-                        <span className={`font-semibold ${combinedRatio > 100 ? 'text-rose-700' : 'text-emerald-800'}`}>
-                          ওয়ার্কিং পার্টনার: {projectedWorkingPartnerRatio}% {combinedRatio > 100 ? '(মোট অনুপাত ১০০% অতিক্রম করেছে)' : ''}
+                        <span className="font-semibold text-emerald-800">
+                          চুক্তিভিত্তিক ওয়ার্কিং পার্টনার: {contractualWorkingPartnerRatio}%
                         </span>
                       </div>
                     );
@@ -2463,15 +2457,6 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
           )}
 
           {(() => {
-            const activeInvestors = investors.filter((i) => i.status !== 'EXITED');
-            const totalActiveInvestorRatio = Math.round(
-              activeInvestors.reduce(
-                (sum, i) => sum + (i.profitSharingRatio ?? i.profitSharePercentage ?? i.sharePercentage ?? 0),
-                0
-              ) * 100
-            ) / 100;
-            const farmWorkingPartnerRatio = Math.max(0, Math.round((100 - totalActiveInvestorRatio) * 100) / 100);
-
             if (investors.length === 0) {
               return (
                 <EmptyState
@@ -2498,7 +2483,7 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
                 {investors.map((inv) => {
                   const currentCap = inv.currentCapitalBalance ?? inv.capitalAmount ?? 0;
                   const ratio = inv.profitSharingRatio ?? inv.profitSharePercentage ?? inv.sharePercentage ?? 0;
-                  const workingRatio = inv.status === 'EXITED' ? 0 : farmWorkingPartnerRatio;
+                  const workingRatio = inv.status === 'EXITED' ? 0 : Math.max(0, Math.round((100 - ratio) * 100) / 100);
                   const payable = inv.profitPayable || 0;
 
                   return (
@@ -2751,18 +2736,10 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
                   </div>
 
                   {Number(finalizedFarmProfit) > 0 && (() => {
-                    const activeInvestors = investors.filter((i) => i.status !== 'EXITED');
-                    const totalActiveRatio = Math.round(
-                      activeInvestors.reduce(
-                        (sum, i) => sum + (i.profitSharingRatio ?? i.profitSharePercentage ?? i.sharePercentage ?? 0),
-                        0
-                      ) * 100
-                    ) / 100;
-                    const farmWorkingRatio = Math.max(0, Math.round((100 - totalActiveRatio) * 100) / 100);
                     const invRatio = allocatingInvestor.profitSharingRatio ?? allocatingInvestor.profitSharePercentage ?? allocatingInvestor.sharePercentage ?? 0;
                     const invShare = Math.round(Number(finalizedFarmProfit) * (invRatio / 100));
-                    const workingPartnerShare = Math.round(Number(finalizedFarmProfit) * (farmWorkingRatio / 100));
-                    const totalActiveInvestorsShare = Math.round(Number(finalizedFarmProfit) * (totalActiveRatio / 100));
+                    const workingRatio = Math.max(0, Math.round((100 - invRatio) * 100) / 100);
+                    const workingPartnerShare = Math.round(Number(finalizedFarmProfit) * (workingRatio / 100));
 
                     return (
                       <div className="bg-gray-50 border border-gray-200 rounded-xl p-3 space-y-2 text-xs">
@@ -2772,16 +2749,8 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
                             ৳{invShare.toLocaleString()}
                           </strong>
                         </div>
-                        {activeInvestors.length > 1 && (
-                          <div className="flex justify-between text-gray-500 text-[11px]">
-                            <span>সকল সক্রিয় বিনিয়োগকারীদের মোট অংশ ({totalActiveRatio}%):</span>
-                            <span className="font-mono">
-                              ৳{totalActiveInvestorsShare.toLocaleString()}
-                            </span>
-                          </div>
-                        )}
                         <div className="flex justify-between text-gray-700">
-                          <span>ওয়ার্কিং পার্টনার / খামার মালিকের অংশ ({farmWorkingRatio}%):</span>
+                          <span>ওয়ার্কিং পার্টনার / খামার মালিকের অংশ ({workingRatio}%):</span>
                           <span className="font-mono font-semibold text-emerald-800">
                             ৳{workingPartnerShare.toLocaleString()}
                           </span>
@@ -3802,15 +3771,8 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
             <div className="overflow-y-auto flex-1 space-y-3.5 pr-1 text-xs">
               {/* Partnership Model Box */}
               {(() => {
-                const activeInvestors = investors.filter((i) => i.status !== 'EXITED');
-                const totalActiveRatio = Math.round(
-                  activeInvestors.reduce(
-                    (sum, i) => sum + (i.profitSharingRatio ?? i.profitSharePercentage ?? i.sharePercentage ?? 0),
-                    0
-                  ) * 100
-                ) / 100;
-                const farmWorkingRatio = Math.max(0, Math.round((100 - totalActiveRatio) * 100) / 100);
                 const invRatio = selectedInvestor.profitSharingRatio ?? selectedInvestor.profitSharePercentage ?? selectedInvestor.sharePercentage ?? 0;
+                const workingRatio = selectedInvestor.status === 'EXITED' ? 0 : Math.max(0, Math.round((100 - invRatio) * 100) / 100);
 
                 return (
                   <div className="bg-emerald-50/70 border border-emerald-200 rounded-xl p-3.5 text-emerald-950 space-y-1.5">
@@ -3826,15 +3788,9 @@ export const BankingInvestorsModule: React.FC<Props> = ({ role, currentUserId })
                       <div className="bg-white/80 p-2 rounded-lg border border-emerald-200">
                         <span className="font-sans text-gray-600 block text-[11px]">ওয়ার্কিং পার্টনার (খামার মালিক):</span>
                         <strong className="text-emerald-800 text-sm">
-                          {selectedInvestor.status === 'EXITED' ? 0 : farmWorkingRatio}%
+                          {workingRatio}%
                         </strong>
                       </div>
-                      {activeInvestors.length > 1 && (
-                        <div className="col-span-2 bg-white/80 p-2 rounded-lg border border-emerald-200 flex justify-between">
-                          <span className="font-sans text-gray-600 text-[11px]">সকল সক্রিয় বিনিয়োগকারীদের মোট অনুপাত:</span>
-                          <strong className="text-emerald-900 text-xs font-mono">{totalActiveRatio}%</strong>
-                        </div>
-                      )}
                     </div>
                     <p className="text-[11px] text-emerald-800 pt-1">
                       • কোনো নির্দিষ্ট সুদ বা ঋণের কিস্তি নেই। শুধুমাত্র খামারের অর্জিত প্রকৃত নিট বণ্টনযোগ্য মুনাফা থেকে চুক্তি অনুযায়ী লভ্যাংশ বণ্টন হবে।

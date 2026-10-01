@@ -3766,24 +3766,14 @@ export async function executeInvestorTransaction(
 
       const hasFinalizedAdmission = Boolean(resolvedValEvent || resolvedAdmReq);
 
-      // Validate total profit-sharing ratio among active investors
-      const allInvestors = await dbInstance.investors.toArray();
-      const otherActiveRatios = allInvestors
-        .filter((inv: any) => inv.id !== invId && inv.status !== 'EXITED')
-        .reduce((sum: number, inv: any) => {
-          const r = inv.profitSharingRatio ?? inv.profitSharePercentage ?? inv.sharePercentage ?? 0;
-          return sum + r;
-        }, 0);
-
       // In the contractual tranche model, each investment tranche has its own contractual profit-sharing percentage.
-      // These percentages apply separately to each investor's allocated economic profit, NOT as ownership percentages of total farm profit.
-      // Therefore, individual investor percentages do NOT have to sum to 100% across investors by default.
-      // Only reject if an individual percentage is invalid (> 100% or <= 0%), or if global 100% limit is explicitly requested.
-      if (enforceGlobal100 && otherActiveRatios + agreedRatio > 100) {
-        throw new Error(
-          `মোট লভ্যাংশ বণ্টন অনুপাত ১০০% অতিক্রম করতে পারে না (Total investor profit-sharing ratio cannot exceed 100%)। অন্যান্য সক্রিয় বিনিয়োগকারীদের বিদ্যমান অনুপাত: ${otherActiveRatios}%, প্রস্তাবিত অনুপাত: ${agreedRatio}% (সর্বমোট: ${otherActiveRatios + agreedRatio}%)।`
-        );
+      // These percentages apply separately to each investor's allocated economic profit.
+      // Percentages are independent and do NOT need to total 100% across investors.
+      if (typeof agreedRatio !== 'number' || isNaN(agreedRatio) || agreedRatio < 0 || agreedRatio > 100) {
+        throw new Error('চুক্তিভিত্তিক লভ্যাংশ বণ্টন অনুপাত ০% থেকে ১০০% এর মধ্যে হতে হবে।');
       }
+
+      const allInvestors = await dbInstance.investors.toArray();
 
       const otherActiveInvestors = allInvestors.filter(
         (inv: any) =>
@@ -3937,8 +3927,9 @@ export async function executeInvestorTransaction(
       await safeInsert(dbInstance.journalEntries, journalEntry, { idPrefix: 'j' });
 
       // 2. Initialize or update investor record
-      const totalActiveRatio = Math.round((otherActiveRatios + agreedRatio) * 100) / 100;
-      const farmWorkingPartnerRatio = Math.max(0, Math.round((100 - totalActiveRatio) * 100) / 100);
+      // Each investor/tranche has its own independent contractual percentage.
+      // Never derive Mudarib share from other investors' percentages.
+      const individualWorkingPartnerRatio = Math.max(0, Math.round((100 - agreedRatio) * 100) / 100);
 
       const totalContributed = Math.round(((existingInvestor?.capitalContributed || existingInvestor?.capitalAmount || 0) + contribution) * 100) / 100;
       const existingReturned = existingInvestor?.totalCapitalReturned || 0;
@@ -3961,7 +3952,7 @@ export async function executeInvestorTransaction(
         profitSharingRatio: agreedRatio,
         profitSharePercentage: agreedRatio,
         sharePercentage: agreedRatio,
-        workingPartnerShareRatio: farmWorkingPartnerRatio,
+        workingPartnerShareRatio: individualWorkingPartnerRatio,
         totalProfitAllocated: existingInvestor?.totalProfitAllocated || 0,
         profitPayable: existingInvestor?.profitPayable || 0,
         totalProfitPaid: existingInvestor?.totalProfitPaid || 0,
@@ -3991,13 +3982,6 @@ export async function executeInvestorTransaction(
         await dbInstance.investors.put(investorRecord);
       } else {
         await safeInsert(dbInstance.investors, investorRecord, { idPrefix: 'inv' });
-      }
-
-      // Update all other active investors to reflect the unified farm working partner ratio
-      for (const otherInv of allInvestors.filter((inv: any) => inv.id !== invId && inv.status !== 'EXITED')) {
-        await dbInstance.investors.update(otherInv.id, {
-          workingPartnerShareRatio: farmWorkingPartnerRatio
-        });
       }
 
       // 3. Update target account operational balance
@@ -5094,6 +5078,12 @@ export async function executeInvestorProfitAllocationTransaction(
               ? Number(finalizedDistributableProfit)
               : (actualBusinessProfit !== undefined ? Number(actualBusinessProfit) : undefined);
 
+            if (manualProfit !== undefined && manualProfit <= 0) {
+              throw new Error(
+                `চূড়ান্ত বণ্টনযোগ্য প্রকৃত মুনাফা অবশ্যই ০ এর বেশি হতে হবে (Finalized distributable profit must be > 0: ৳${manualProfit})। কোনো প্রকৃত মুনাফা অর্জিত না হলে বা লোকসান হলে লভ্যাংশ বণ্টন সম্ভব নয় (Never guarantee profit)।`
+              );
+            }
+
             if (pnlProfit > 0) {
               if (manualProfit !== undefined && Math.abs(manualProfit - pnlProfit) > 0.01) {
                 throw new Error(
@@ -5116,58 +5106,103 @@ export async function executeInvestorProfitAllocationTransaction(
 
         // =====================================================================
         // STAGE 2: Allocate economic profit to each investor/tranche according to
-        // configured economic-allocation method
+        // configured economic-allocation method.
+        // Do NOT accept caller-supplied values that can override stages 1–3.
+        // Reject or ignore:
+        // * allocatedEconomicProfit override
+        // * economicProfit override
+        // * actualBusinessProfit override
+        // * arbitrary finalized profit override
+        // unless the value is independently verified against the authoritative accounting result.
         // =====================================================================
-        let economicProfit: number;
-        if (allocatedEconomicProfit !== undefined && allocatedEconomicProfit !== null) {
-          if (Number(allocatedEconomicProfit) > effectiveFinalizedProfit + 0.01) {
-            throw new Error(
-              `অননুমোদিত মুনাফা ওভাররাইড: বরাদ্দকৃত অর্থনৈতিক মুনাফা (৳${allocatedEconomicProfit}) চূড়ান্ত বণ্টনযোগ্য মুনাফার (৳${effectiveFinalizedProfit}) চেয়ে বেশি হতে পারে না (Allocated economic profit cannot exceed finalized distributable profit).`
-            );
+        let calculatedEconomicProfit: number;
+
+        // Tranche-specific allocation check
+        let trancheRecord: any = null;
+        if (params.trancheId && dbInstance.investmentTranches?.get) {
+          trancheRecord = await dbInstance.investmentTranches.get(params.trancheId);
+        }
+
+        const allInvestors = await dbInstance.investors.toArray();
+        const activeInvestors = allInvestors.filter(
+          (inv: any) =>
+            inv.status !== 'EXITED' &&
+            inv.status !== 'CANCELLED' &&
+            inv.status !== 'REQUESTED' &&
+            inv.status !== 'PENDING_ADMISSION'
+        );
+        const totalCapital = activeInvestors.reduce(
+          (sum: number, inv: any) =>
+            sum + (inv.capitalAmount || inv.capitalContributed || inv.initialCapital || inv.netCapital || 0),
+          0
+        );
+        const invCapital =
+          investor.capitalAmount ||
+          investor.capitalContributed ||
+          investor.initialCapital ||
+          investor.netCapital ||
+          0;
+
+        const capitalProportionEconomic = totalCapital > 0 && invCapital > 0
+          ? Math.round(effectiveFinalizedProfit * (invCapital / totalCapital) * 100) / 100
+          : effectiveFinalizedProfit;
+
+        if (trancheRecord) {
+          if (typeof trancheRecord.economicParticipationPercentage === 'number' && trancheRecord.economicParticipationPercentage > 0) {
+            calculatedEconomicProfit = Math.round(effectiveFinalizedProfit * (trancheRecord.economicParticipationPercentage / 100) * 100) / 100;
+          } else {
+            calculatedEconomicProfit = capitalProportionEconomic;
           }
-          economicProfit = Number(allocatedEconomicProfit);
-        } else if (economicProfitParam !== undefined && economicProfitParam !== null) {
-          economicProfit = Number(economicProfitParam);
-        } else if (
-          actualBusinessProfit !== undefined &&
-          finalizedDistributableProfit !== undefined &&
-          actualBusinessProfit !== finalizedDistributableProfit
-        ) {
-          economicProfit = Number(actualBusinessProfit);
-        } else if (investor.economicParticipationPercentage !== undefined && investor.economicParticipationPercentage !== null) {
-          economicProfit = Math.round(effectiveFinalizedProfit * (investor.economicParticipationPercentage / 100) * 100) / 100;
+        } else if (typeof investor.economicParticipationPercentage === 'number' && investor.economicParticipationPercentage > 0) {
+          calculatedEconomicProfit = Math.round(effectiveFinalizedProfit * (investor.economicParticipationPercentage / 100) * 100) / 100;
         } else if (
           economicAllocationMethod === 'CAPITAL_PROPORTION' ||
           economicAllocationMethod === 'CAPITAL' ||
           useCapitalParticipation ||
           (investor as any).economicAllocationMethod === 'CAPITAL_PROPORTION'
         ) {
-          const allInvestors = await dbInstance.investors.toArray();
-          const activeInvestors = allInvestors.filter(
-            (inv: any) =>
-              inv.status !== 'EXITED' &&
-              inv.status !== 'CANCELLED' &&
-              inv.status !== 'REQUESTED' &&
-              inv.status !== 'PENDING_ADMISSION'
-          );
-          const totalCapital = activeInvestors.reduce(
-            (sum: number, inv: any) =>
-              sum + (inv.capitalAmount || inv.capitalContributed || inv.initialCapital || inv.netCapital || 0),
-            0
-          );
-          const invCapital =
-            investor.capitalAmount ||
-            investor.capitalContributed ||
-            investor.initialCapital ||
-            investor.netCapital ||
-            0;
-          if (totalCapital > 0 && invCapital > 0) {
-            economicProfit = Math.round(effectiveFinalizedProfit * (invCapital / totalCapital) * 100) / 100;
-          } else {
-            economicProfit = effectiveFinalizedProfit;
-          }
+          calculatedEconomicProfit = capitalProportionEconomic;
         } else {
-          economicProfit = effectiveFinalizedProfit;
+          calculatedEconomicProfit = effectiveFinalizedProfit;
+        }
+
+        // Validate caller-supplied overrides (allocatedEconomicProfit, economicProfit, actualBusinessProfit)
+        const callerEconomicProfit = allocatedEconomicProfit !== undefined && allocatedEconomicProfit !== null
+          ? Number(allocatedEconomicProfit)
+          : (economicProfitParam !== undefined && economicProfitParam !== null ? Number(economicProfitParam) : undefined);
+
+        let economicProfit: number;
+        if (callerEconomicProfit !== undefined) {
+          if (callerEconomicProfit > effectiveFinalizedProfit + 0.01) {
+            throw new Error(
+              `অননুমোদিত মুনাফা ওভাররাইড: বরাদ্দকৃত অর্থনৈতিক মুনাফা (৳${callerEconomicProfit}) চূড়ান্ত বণ্টনযোগ্য মুনাফার (৳${effectiveFinalizedProfit}) চেয়ে বেশি হতে পারে না (Allocated economic profit cannot exceed finalized distributable profit).`
+            );
+          }
+          // The caller-supplied economic profit must be independently verified against authoritative accounting results
+          const matchesConfigured = Math.abs(callerEconomicProfit - calculatedEconomicProfit) <= 0.01;
+          const matchesCapitalProportion = Math.abs(callerEconomicProfit - capitalProportionEconomic) <= 0.01;
+          const matchesDirect = Math.abs(callerEconomicProfit - effectiveFinalizedProfit) <= 0.01;
+
+          if (!matchesConfigured && !matchesCapitalProportion && !matchesDirect) {
+            throw new Error(
+              `অননুমোদিত অর্থনৈতিক মুনাফা ওভাররাইড: ম্যানুয়ালি সরবরাহকৃত অর্থনৈতিক মুনাফা (৳${callerEconomicProfit}) অথরিটেটিভ হিসাবফলের (৳${calculatedEconomicProfit}) সাথে অসঙ্গতিপূর্ণ (Arbitrary economic profit override rejected: inconsistent with authoritative accounting result).`
+            );
+          }
+          economicProfit = callerEconomicProfit;
+        } else {
+          economicProfit = calculatedEconomicProfit;
+        }
+
+        // Validate actualBusinessProfit caller override if supplied
+        if (actualBusinessProfit !== undefined) {
+          const numActual = Number(actualBusinessProfit);
+          const matchesFinalized = Math.abs(numActual - effectiveFinalizedProfit) <= 0.01;
+          const matchesEconomic = Math.abs(numActual - economicProfit) <= 0.01;
+          if (!matchesFinalized && !matchesEconomic) {
+            throw new Error(
+              `অননুমোদিত প্রকৃত ব্যবসায়িক মুনাফা ওভাররাইড: ম্যানুয়ালি সরবরাহকৃত ব্যবসায়িক মুনাফা (৳${numActual}) অথরিটেটিভ হিসাবফলের সাথে অসঙ্গতিপূর্ণ (Arbitrary actual business profit override rejected: inconsistent with authoritative accounting result).`
+            );
+          }
         }
 
         if (economicProfit <= 0) {
@@ -5175,42 +5210,50 @@ export async function executeInvestorProfitAllocationTransaction(
         }
 
         // =====================================================================
-        // STAGE 3: For each investor/tranche, apply THAT investor/tranche's own
-        // contractual profit-share percentage:
-        //   investor profit = allocated economic profit × contractual investor percentage
-        //   Mudarib profit = allocated economic profit − investor profit
-        //
-        // NEVER:
-        // - use a farm-wide investor ratio
-        // - use 100% − sum(all investor percentages)
-        // - make investor percentages add to 100%
-        // - calculate one global Mudarib ratio
+        // STAGE 3: Apply ONLY that investor/tranche's contractual percentage.
         // =====================================================================
-        const ratio =
-          contractualProfitSharePercentage ??
+        const authoritativeContractRate = trancheRecord?.contractualProfitSharePercentage ??
           investor.profitSharingRatio ??
           investor.profitSharePercentage ??
           investor.sharePercentage ??
           0;
 
+        if (contractualProfitSharePercentage !== undefined && contractualProfitSharePercentage !== null) {
+          const numOverride = Number(contractualProfitSharePercentage);
+          if (Math.abs(numOverride - authoritativeContractRate) > 0.01) {
+            throw new Error(
+              `অননুমোদিত চুক্তিভিত্তিক লভ্যাংশ অনুপাত ওভাররাইড: সরবরাহকৃত অনুপাত (${numOverride}%) চুক্তিভিত্তিক অনুমোদিত অনুপাতের (${authoritativeContractRate}%) সাথে অসঙ্গতিপূর্ণ (Arbitrary contractual percentage override rejected: must use investor/tranche contractual percentage).`
+            );
+          }
+        }
+
+        const ratio = authoritativeContractRate;
         if (ratio <= 0 || ratio > 100) {
           throw new Error(
             `বিনিয়োগকারী ${investor.name} এর লভ্যাংশ বণ্টন অনুপাত অবৈধ। অনুপাত অবশ্যই ০ এর বেশি এবং সর্বোচ্চ ১০০% হতে হবে (Profit sharing ratio must be > 0 and <= 100: ${ratio}%)।`
           );
         }
 
-        // Permitted investor profit for this investor based on their contractual percentage
+        // =====================================================================
+        // STAGE 4: investorProfit = economicAllocation × contract%
+        // STAGE 5: mudaribProfit = economicAllocation − investorProfit
+        // =====================================================================
         const permittedShare = Math.round(economicProfit * (ratio / 100) * 100) / 100;
 
         let profitAmount: number;
         if (allocatedProfit !== undefined && allocatedProfit !== null) {
-          profitAmount = Math.round(allocatedProfit * 100) / 100;
+          profitAmount = Math.round(Number(allocatedProfit) * 100) / 100;
           if (profitAmount <= 0) {
             throw new Error('বণ্টনযোগ্য লভ্যাংশের পরিমাণ অবশ্যই ০ এর বেশি হতে হবে (Allocated profit must be strictly > 0)।');
           }
           if (profitAmount > permittedShare) {
             throw new Error(
               `বণ্টনকৃত মুনাফা বিনিয়োগকারীর অনুমোদিত চুক্তিভিত্তিক লভ্যাংশ অনুপাতের (${ratio}%) চেয়ে বেশি হতে পারে না (Allocated profit ৳${profitAmount} cannot exceed agreed ratio limit ৳${permittedShare} based on ${ratio}% ratio)।`
+            );
+          }
+          if (Math.abs(profitAmount - permittedShare) > 0.01) {
+            throw new Error(
+              `বণ্টনকৃত মুনাফা বিনিয়োগকারীর অনুমোদিত চুক্তিভিত্তিক লভ্যাংশ অনুপাতের (${ratio}%) সাথে অসঙ্গতিপূর্ণ (Arbitrary allocated profit override rejected: allocated profit ৳${profitAmount} does not match authoritative calculated investor profit ৳${permittedShare})।`
             );
           }
         } else {
@@ -5261,17 +5304,10 @@ export async function executeInvestorProfitAllocationTransaction(
           useCapitalParticipation
         );
 
-        const workingPartnerRatio = isExplicitEconomicModel
-          ? mudaribRatio
-          : (investor.workingPartnerShareRatio !== undefined && investor.workingPartnerShareRatio !== null
-              ? investor.workingPartnerShareRatio
-              : mudaribRatio);
-
-        const workingPartnerProfit = isExplicitEconomicModel
-          ? mudaribProfit
-          : (investor.workingPartnerShareRatio !== undefined && investor.workingPartnerShareRatio !== null
-              ? Math.round(effectiveFinalizedProfit * (investor.workingPartnerShareRatio / 100) * 100) / 100
-              : mudaribProfit);
+        // Individual contractual Mudarib ratio = 100% - investor contractual percentage
+        // Mudarib share = that investor/tranche's economic allocation minus that investor/tranche's investor profit
+        const workingPartnerRatio = mudaribRatio;
+        const workingPartnerProfit = mudaribProfit;
 
         // 6. Canonical GL Mapping:
         // Dr 3070 Profit Distribution (Equity Appropriation)
@@ -5358,7 +5394,7 @@ export async function executeInvestorProfitAllocationTransaction(
         // 7. Update investor state
         const updatedInvestor: Investor = {
           ...investor,
-          workingPartnerShareRatio: isExplicitEconomicModel ? mudaribRatio : (investor.workingPartnerShareRatio ?? mudaribRatio),
+          workingPartnerShareRatio: mudaribRatio,
           totalProfitAllocated: Math.round(((investor.totalProfitAllocated || 0) + profitAmount) * 100) / 100,
           profitPayable: Math.round(((investor.profitPayable || 0) + profitAmount) * 100) / 100,
           lastProfitAllocationDate: dateStr,
@@ -6308,22 +6344,7 @@ export async function executeInvestorCapitalReturnTransaction(
           );
         }
 
-        // 10. If investor exited, recalculate unified working partner ratio for remaining active investors
-        if (updatedInvestor.status === 'EXITED') {
-          const remainingActive = (await dbInstance.investors.toArray())
-            .filter((inv: any) => inv.id !== investor.id && inv.status !== 'EXITED');
-          const newTotalActiveRatio = Math.round(
-            remainingActive.reduce((sum: number, inv: any) => {
-              return sum + (inv.profitSharingRatio ?? inv.profitSharePercentage ?? inv.sharePercentage ?? 0);
-            }, 0) * 100
-          ) / 100;
-          const newWorkingRatio = Math.max(0, Math.round((100 - newTotalActiveRatio) * 100) / 100);
-          for (const remInv of remainingActive) {
-            await dbInstance.investors.update(remInv.id, { workingPartnerShareRatio: newWorkingRatio });
-          }
-        }
-
-        // 11. Audit Log
+        // 10. Audit Log
         await safeInsert(dbInstance.auditLogs, {
           id: generateUniqueId('audit'),
           timestamp: new Date().toISOString(),

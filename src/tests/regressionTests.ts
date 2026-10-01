@@ -5136,12 +5136,13 @@ async function runRegressionTestsInternal(): Promise<TestResult> {
     // =========================================================================
     // TASK 4: MULTIPLE INVESTOR PROFIT SHARING VERIFICATION
     // Rules:
-    // 1. Total active investor profit-sharing ratios + working partner ratio = 100%.
-    // 2. Working partner ratio = 100% - total active investor ratios.
-    // 3. Do NOT calculate working partner share separately as 60% for A and 70% for B.
-    // 4. Total active investor ratios cannot exceed 100%.
-    // 5. Each investor allocation cannot exceed that investor's agreed ratio of finalized distributable profit.
-    // 6. Total investor allocations cannot exceed the finalized distributable profit.
+    // 1. Each investor/tranche has its own contractual percentage.
+    // 2. Percentages are independent and do NOT need to total 100%.
+    // 3. Never derive Mudarib share from other investors' percentages.
+    // 4. Never update Investor A because Investor B was added.
+    // 5. Mudarib share = that investor/tranche's economic allocation minus that investor/tranche's investor profit.
+    // 6. Each investor allocation cannot exceed that investor's agreed ratio of finalized distributable profit.
+    // 7. Total investor allocations cannot exceed the finalized distributable profit.
     // 7. Do not change capital accounting.
     // 8. Do not treat profit share as operating expense.
     // 9. No interest.
@@ -5255,13 +5256,13 @@ async function runRegressionTestsInternal(): Promise<TestResult> {
       t4Db2
     );
 
-    // Verify aggregate active ratios and working partner ratio
+    // Verify independent contractual ratios and individual working partner ratio
     const invA_2_record = await t4Db2.investors.get(invA_2.investor.id);
     const invB_2_record = await t4Db2.investors.get(invB_2.investor.id);
     assert(invA_2_record?.profitSharingRatio === 40, 'T4 Scenario 2: Investor A ratio = 40%.');
     assert(invB_2_record?.profitSharingRatio === 30, 'T4 Scenario 2: Investor B ratio = 30%.');
-    assert(invA_2_record?.workingPartnerShareRatio === 30, 'T4 Scenario 2: Investor A record updated to farm working partner ratio = 30%.');
-    assert(invB_2_record?.workingPartnerShareRatio === 30, 'T4 Scenario 2: Investor B record reflects farm working partner ratio = 30%.');
+    assert(invA_2_record?.workingPartnerShareRatio === 60, 'T4 Scenario 2: Investor A maintains independent working partner ratio = 60% (100% - 40%).');
+    assert(invB_2_record?.workingPartnerShareRatio === 70, 'T4 Scenario 2: Investor B maintains independent working partner ratio = 70% (100% - 30%).');
 
     // Distributable Profit: ৳200,000
     // Allocate for Investor A (40% of 200,000 = ৳80,000)
@@ -5277,8 +5278,8 @@ async function runRegressionTestsInternal(): Promise<TestResult> {
     );
 
     assert(t4Alloc2_A.allocatedProfit === 80000, 'T4 Scenario 2: Investor A allocated profit must be ৳80,000 (40% of ৳200,000).');
-    assert(t4Alloc2_A.workingPartnerRatio === 30, 'T4 Scenario 2: Working partner ratio for Investor A allocation must be 30% (NOT 60%).');
-    assert(t4Alloc2_A.workingPartnerShare === 60000, 'T4 Scenario 2: Working partner share must be ৳60,000 (30% of ৳200,000, NOT ৳120,000).');
+    assert(t4Alloc2_A.workingPartnerRatio === 60, 'T4 Scenario 2: Working partner ratio for Investor A allocation is 60% (100% - 40%).');
+    assert(t4Alloc2_A.workingPartnerShare === 120000, 'T4 Scenario 2: Working partner share is ৳120,000 (60% of ৳200,000).');
 
     // Allocate for Investor B (30% of 200,000 = ৳60,000)
     const t4Alloc2_B = await executeInvestorProfitAllocationTransaction(
@@ -5293,17 +5294,12 @@ async function runRegressionTestsInternal(): Promise<TestResult> {
     );
 
     assert(t4Alloc2_B.allocatedProfit === 60000, 'T4 Scenario 2: Investor B allocated profit must be ৳60,000 (30% of ৳200,000).');
-    assert(t4Alloc2_B.workingPartnerRatio === 30, 'T4 Scenario 2: Working partner ratio for Investor B allocation must be 30% (NOT 70%).');
-    assert(t4Alloc2_B.workingPartnerShare === 60000, 'T4 Scenario 2: Working partner share must be ৳60,000 (30% of ৳200,000, NOT ৳140,000).');
+    assert(t4Alloc2_B.workingPartnerRatio === 70, 'T4 Scenario 2: Working partner ratio for Investor B allocation is 70% (100% - 30%).');
+    assert(t4Alloc2_B.workingPartnerShare === 140000, 'T4 Scenario 2: Working partner share is ৳140,000 (70% of ৳200,000).');
 
-    // Total active investor profit-sharing ratios + working partner ratio = 100%
-    const totalActiveRatio2 = (invA_2_record?.profitSharingRatio || 0) + (invB_2_record?.profitSharingRatio || 0);
-    assert(totalActiveRatio2 + t4Alloc2_A.workingPartnerRatio === 100, 'T4 Scenario 2: 40% + 30% + 30% = 100%.');
-
-    // Total investor allocations + working partner share = finalized distributable profit
+    // Total investor allocations
     const totalAllocations2 = t4Alloc2_A.allocatedProfit + t4Alloc2_B.allocatedProfit;
     assert(totalAllocations2 === 140000, 'T4 Scenario 2: Total investor allocations = ৳80,000 + ৳60,000 = ৳140,000.');
-    assert(totalAllocations2 + t4Alloc2_A.workingPartnerShare === 200000, 'T4 Scenario 2: Total allocations (৳140,000) + working partner share (৳60,000) = ৳200,000.');
     assert(totalAllocations2 <= 200000, 'T4 Scenario 2: Total investor allocations cannot exceed finalized distributable profit.');
 
     // Capital accounting untouched
@@ -5414,14 +5410,16 @@ async function runRegressionTestsInternal(): Promise<TestResult> {
       t4Db3
     );
 
-    // Verify 3 investors ratio sum = 80%, working partner = 20%
+    // Verify 3 investors independent ratios
     const invA_3_rec = await t4Db3.investors.get(invA_3.investor.id);
     const invB_3_rec = await t4Db3.investors.get(invB_3.investor.id);
     const invC_3_rec = await t4Db3.investors.get(invC_3.investor.id);
-    const totalActiveRatio3 = (invA_3_rec?.profitSharingRatio || 0) + (invB_3_rec?.profitSharingRatio || 0) + (invC_3_rec?.profitSharingRatio || 0);
-    assert(totalActiveRatio3 === 80, 'T4 Scenario 3: Total active investor ratio = 40% + 30% + 10% = 80%.');
-    assert(invC_3_rec?.workingPartnerShareRatio === 20, 'T4 Scenario 3: Working partner ratio = 100% - 80% = 20%.');
-    assert(totalActiveRatio3 + (invC_3_rec?.workingPartnerShareRatio || 0) === 100, 'T4 Scenario 3: 80% + 20% = 100%.');
+    assert(invA_3_rec?.profitSharingRatio === 40, 'T4 Scenario 3: Investor A ratio = 40%.');
+    assert(invB_3_rec?.profitSharingRatio === 30, 'T4 Scenario 3: Investor B ratio = 30%.');
+    assert(invC_3_rec?.profitSharingRatio === 10, 'T4 Scenario 3: Investor C ratio = 10%.');
+    assert(invA_3_rec?.workingPartnerShareRatio === 60, 'T4 Scenario 3: Working partner ratio for A = 100% - 40% = 60%.');
+    assert(invB_3_rec?.workingPartnerShareRatio === 70, 'T4 Scenario 3: Working partner ratio for B = 100% - 30% = 70%.');
+    assert(invC_3_rec?.workingPartnerShareRatio === 90, 'T4 Scenario 3: Working partner ratio for C = 100% - 10% = 90%.');
 
     // Finalized Distributable Profit: ৳300,000
     // Allocate for Investor A (40% = ৳120,000)
@@ -5465,18 +5463,17 @@ async function runRegressionTestsInternal(): Promise<TestResult> {
     assert(t4Alloc3_B.allocatedProfit === 90000, 'T4 Scenario 3: Investor B allocated ৳90,000 (30% of ৳300,000).');
     assert(t4Alloc3_C.allocatedProfit === 30000, 'T4 Scenario 3: Investor C allocated ৳30,000 (10% of ৳300,000).');
 
-    // Assert working partner share is strictly 20% across all 3 allocations
-    assert(t4Alloc3_A.workingPartnerRatio === 20, 'T4 Scenario 3: Working partner ratio is 20% on A allocation.');
-    assert(t4Alloc3_B.workingPartnerRatio === 20, 'T4 Scenario 3: Working partner ratio is 20% on B allocation.');
-    assert(t4Alloc3_C.workingPartnerRatio === 20, 'T4 Scenario 3: Working partner ratio is 20% on C allocation.');
-    assert(t4Alloc3_A.workingPartnerShare === 60000, 'T4 Scenario 3: Working partner share is ৳60,000 (20% of ৳300,000).');
-    assert(t4Alloc3_B.workingPartnerShare === 60000, 'T4 Scenario 3: Working partner share is ৳60,000 (20% of ৳300,000).');
-    assert(t4Alloc3_C.workingPartnerShare === 60000, 'T4 Scenario 3: Working partner share is ৳60,000 (20% of ৳300,000).');
+    // Assert working partner share is individual per-investor
+    assert(t4Alloc3_A.workingPartnerRatio === 60, 'T4 Scenario 3: Working partner ratio is 60% on A allocation (100% - 40%).');
+    assert(t4Alloc3_B.workingPartnerRatio === 70, 'T4 Scenario 3: Working partner ratio is 70% on B allocation (100% - 30%).');
+    assert(t4Alloc3_C.workingPartnerRatio === 90, 'T4 Scenario 3: Working partner ratio is 90% on C allocation (100% - 10%).');
+    assert(t4Alloc3_A.workingPartnerShare === 180000, 'T4 Scenario 3: Working partner share is ৳180,000 (60% of ৳300,000).');
+    assert(t4Alloc3_B.workingPartnerShare === 210000, 'T4 Scenario 3: Working partner share is ৳210,000 (70% of ৳300,000).');
+    assert(t4Alloc3_C.workingPartnerShare === 270000, 'T4 Scenario 3: Working partner share is ৳270,000 (90% of ৳300,000).');
 
     // Total investor allocations
     const totalAllocations3 = t4Alloc3_A.allocatedProfit + t4Alloc3_B.allocatedProfit + t4Alloc3_C.allocatedProfit;
     assert(totalAllocations3 === 240000, 'T4 Scenario 3: Total investor allocations = ৳120,000 + ৳90,000 + ৳30,000 = ৳240,000.');
-    assert(totalAllocations3 + t4Alloc3_A.workingPartnerShare === 300000, 'T4 Scenario 3: Total allocations (৳240,000) + working partner share (৳60,000) = ৳300,000.');
     assert(totalAllocations3 <= 300000, 'T4 Scenario 3: Total investor allocations cannot exceed finalized distributable profit.');
 
     // Capital accounting strictly preserved
@@ -5495,28 +5492,23 @@ async function runRegressionTestsInternal(): Promise<TestResult> {
     assert(!hasOpExpenseC, 'T4 Scenario 3: Profit share must not be treated as operating expense.');
     assert(!hasInterestC, 'T4 Scenario 3: No interest accounts allowed in profit share.');
 
-    // Constraint Rule: Total active investor ratios cannot exceed 100%
-    let t4Exceed100RatioCaught = false;
-    try {
-      await executeInvestorTransaction(
-        {
-          investorName: 'Investor D (Exceeding 100%)',
-          phone: '01711000007',
-          contribution: 50000,
-          profitShare: 25, // 80% + 25% = 105% > 100%
-          profitSharingRatio: 25,
-          targetAccountId: 'cb_bank_t4_3',
-          date: '2026-02-01',
-          currentUserId: 'usr_owner',
-          enforceGlobal100: true
-        },
-        t4Db3
-      );
-    } catch (err: any) {
-      t4Exceed100RatioCaught = true;
-      assert(err.message.includes('১০০% অতিক্রম করতে পারে না'), 'Total investor ratios > 100% must be rejected.');
-    }
-    assert(t4Exceed100RatioCaught, 'T4 Scenario 3: Ratio sum exceeding 100% was caught.');
+    // Permanent Rule: Investor percentages are independent and do NOT need to total 100%
+    const invD_3 = await executeInvestorTransaction(
+      {
+        investorName: 'Investor D (Exceeding 100%)',
+        phone: '01711000007',
+        contribution: 50000,
+        profitShare: 25, // 40% + 30% + 10% + 25% = 105% > 100%
+        profitSharingRatio: 25,
+        targetAccountId: 'cb_bank_t4_3',
+        date: '2026-01-20',
+        currentUserId: 'usr_owner'
+      },
+      t4Db3
+    );
+    assert(Boolean(invD_3?.investor?.id), 'T4 Scenario 3: Adding investor that brings total percentage over 100% is allowed (rates are independent).');
+    assert(invD_3.investor.profitSharingRatio === 25, 'Investor D ratio = 25%.');
+    assert(invD_3.investor.workingPartnerShareRatio === 75, 'Investor D working partner ratio = 75% (100% - 25%).');
 
     // =========================================================================
     // TASK 5: INVESTOR CAPITAL RETURN ACCOUNTING REGRESSION SUITE
