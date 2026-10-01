@@ -69,6 +69,17 @@ export async function recordOwnerPersonalCapital(
     notes
   } = params;
 
+  // TASK 9: Never silently map investor capital into owner capital
+  if (
+    (params as any).investorId ||
+    (params as any).trancheId ||
+    ((params as any).capitalType && (params as any).capitalType.toString().toUpperCase() === 'INVESTOR') ||
+    ((params as any).sourceType && (params as any).sourceType.toString().toUpperCase() === 'INVESTOR') ||
+    ((params as any).transactionType && (params as any).transactionType.toString().toUpperCase().includes('INVESTOR'))
+  ) {
+    throw new Error('Cross-mapping rejected: Investor capital cannot be recorded in owner personal capital.');
+  }
+
   if (amount <= 0) {
     throw new Error('Owner personal capital amount must be strictly greater than 0.');
   }
@@ -129,6 +140,8 @@ export async function recordOwnerPersonalCapital(
       id: journalId,
       voucherNumber,
       voucherType: 'RECEIPT',
+      transactionType: 'OWNER_CAPITAL',
+      capitalType: 'OWNER',
       date,
       narration: notes || `মালিকের ব্যক্তিগত মূলধন সংযোজন: ${ownerName} ৳${amount}`,
       reference: `OWN-CAP-${ownerPersonId.slice(0, 8)}`,

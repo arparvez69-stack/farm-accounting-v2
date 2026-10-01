@@ -4202,16 +4202,42 @@ app.get('/api/ready', (req, res) => {
 });
 
 // Farm status endpoint
-app.get('/api/farm-info', (req, res) => {
+// Task 8: Do not expose the complete owner allow-list to unauthenticated callers.
+// Authenticated owners may still receive the list via verified session token.
+app.get('/api/farm-info', async (req, res) => {
   const setupComplete = isSetupComplete();
   const authorizedEmails = getApprovedOwnerEmails();
-  res.json({
+  let isAuthOwner = false;
+  try {
+    const owner = await authenticateOwnerRequest(req);
+    if (owner) isAuthOwner = true;
+  } catch {}
+
+  const response: Record<string, any> = {
     farmName: 'The Goated Farm',
     mode: 'single-tenant',
     setupComplete,
-    authorizedOwnersCount: authorizedEmails.length,
-    authorizedEmails
-  });
+    authorizedOwnersCount: authorizedEmails.length
+  };
+
+  if (isAuthOwner) {
+    response.authorizedEmails = authorizedEmails;
+  }
+
+  res.json(response);
+});
+
+// Direct root HTML handler (fallback for test environments importing express app directly)
+app.get('/', (req, res, next) => {
+  const distHtml = path.join(process.cwd(), 'dist', 'index.html');
+  if (fs.existsSync(distHtml)) {
+    return res.sendFile(distHtml);
+  }
+  const rootHtml = path.join(process.cwd(), 'index.html');
+  if (fs.existsSync(rootHtml)) {
+    return res.sendFile(rootHtml);
+  }
+  next();
 });
 
 // 404 handler for unhandled /api/* routes

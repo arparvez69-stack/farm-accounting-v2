@@ -316,43 +316,145 @@ export async function postJournalEntry(
     throw new Error('লেনদেনের পরিমাণ শূন্য বা ঋণাত্মক হতে পারে না (Zero or negative amount not allowed).');
   }
 
-  // Strict Investor Attribution check for Capital transactions (3020 Investor Capital)
-  const isInvestorCapitalEntry = entry.lines?.some(
-    (l) => (l.accountCode === '3020' || l.accountCode === 'acc-3020') && (Number(l.credit) || 0) > 0
-  );
-  if (isInvestorCapitalEntry && !entry.legacyMigrated && !entry.missingAttribution) {
-    const invRef = (entry as any).investorId || entry.relatedPerson || (entry as any).investorReference;
-    if (!invRef || typeof invRef !== 'string' || !invRef.trim()) {
+  // =========================================================================
+  // TASK 9: ENFORCE OWNER VS INVESTOR CAPITAL SEPARATION
+  // =========================================================================
+  const ownerCapLines = entry.lines?.filter((l) => {
+    const code = (l.accountCode || '').replace(/^acc[-_]/, '');
+    return code === '3010' || code === '3040';
+  }) || [];
+
+  const investorCapLines = entry.lines?.filter((l) => {
+    const code = (l.accountCode || '').replace(/^acc[-_]/, '');
+    return code === '3020';
+  }) || [];
+
+  const hasOwnerCap = ownerCapLines.length > 0;
+  const hasInvestorCap = investorCapLines.length > 0;
+
+  // 1. Mixing owner and investor capital in the same entry is strictly rejected
+  if (hasOwnerCap && hasInvestorCap) {
+    throw new Error(
+      'Cross-mapping rejected: Cannot mix Owner Capital (3010/3040) and Investor Capital (3020) in the same journal transaction.'
+    );
+  }
+
+  const rawCapType = ((entry as any).capitalType || (entry as any).sourceType || '').toString().trim().toUpperCase();
+  const rawTxType = ((entry as any).transactionType || (entry as any).type || '').toString().trim().toUpperCase();
+
+  // 2. Reject ambiguous or unknown capital types / transaction types when touching capital accounts
+  const prohibitedTypes = ['UNKNOWN', 'DEFAULT', 'ANONYMOUS', 'UNASSIGNED', 'UNSPECIFIED', 'AMBIGUOUS', 'NONE', 'NULL'];
+  if (rawCapType && prohibitedTypes.includes(rawCapType)) {
+    throw new Error(`Ambiguous capital source: Explicit capital source (OWNER or INVESTOR) is required (got "${rawCapType}").`);
+  }
+  if (rawTxType && prohibitedTypes.includes(rawTxType)) {
+    throw new Error(`Ambiguous transaction type: Explicit transaction type is required (got "${rawTxType}").`);
+  }
+
+  // 3. OWNER CAPITAL VALIDATION (Accounts 3010 & 3040)
+  if (hasOwnerCap) {
+    // A. Rejection of investor capital cross-mapped into owner capital
+    if (rawCapType === 'INVESTOR') {
       throw new Error(
-        'Investor attribution required: every investor capital transaction must identify the exact investor.'
+        'Cross-mapping rejected: Investor capital cannot be recorded in owner capital accounts (3010/3040). Must use investor capital account (3020).'
       );
     }
-    const cleanRef = invRef.trim().toLowerCase();
-    const prohibited = [
-      'unknown',
-      'default',
-      'unknown investor',
-      'default investor',
-      'anonymous',
-      'anonymous investor',
-      'system',
-      'system investor',
-      'unassigned',
-      'unattributed',
-      'none',
-      'n/a',
-      'null',
-      'undefined'
+    const investorTxTypes = [
+      'INVESTOR_CONTRIBUTION',
+      'INVESTOR_CAPITAL',
+      'INVESTOR_CAPITAL_RETURN',
+      'INVESTOR_WITHDRAWAL',
+      'INVESTOR_PROFIT_REINVESTMENT',
+      'INVESTOR_CAPITAL_ADJUSTMENT',
+      'INVESTOR_ADMISSION'
     ];
-    if (prohibited.includes(cleanRef) || cleanRef.startsWith('default_') || cleanRef.startsWith('unknown_')) {
+    if (rawTxType && investorTxTypes.includes(rawTxType)) {
       throw new Error(
-        `Cannot silently assign an unknown or default investor ("${invRef}"). Exact investor attribution is required.`
+        `Cross-mapping rejected: Investor transaction type "${rawTxType}" cannot use owner capital accounts (3010/3040).`
       );
     }
-    if ((entry as any).createdBy && cleanRef === (entry as any).createdBy.trim().toLowerCase() && !(entry as any).isExplicitInvestor) {
+
+    // B. Check investor attribution on owner accounts (excluding owner's own mudarib reinvestment)
+    const isOwnerMudaribReinv =
+      Boolean((entry as any).isOwnerMudaribReinvestment) ||
+      Boolean(entry.reference?.startsWith('MUD-REINV')) ||
+      Boolean(entry.voucherNumber?.startsWith('OWN-MUD-REINV')) ||
+      Boolean(entry.narration?.includes('মুদারিব'));
+
+    if (!isOwnerMudaribReinv) {
+      const entryInvId = ((entry as any).investorId || (entry as any).trancheId || '').toString().trim();
+      const lineInv = entry.lines?.some((l: any) => Boolean((l.investorId || l.trancheId)?.toString().trim()));
+      if (entryInvId || lineInv) {
+        throw new Error(
+          'Cross-mapping rejected: Investor capital attribution cannot be attached to owner capital accounts (3010/3040). Use investor capital account (3020).'
+        );
+      }
+    }
+  }
+
+  // 4. INVESTOR CAPITAL VALIDATION (Account 3020)
+  if (hasInvestorCap) {
+    // A. Rejection of owner capital cross-mapped into investor capital
+    if (rawCapType === 'OWNER') {
       throw new Error(
-        'Investor cannot be inferred from the currently logged-in user. Every capital transaction must explicitly identify an exact investor.'
+        'Cross-mapping rejected: Owner capital cannot be recorded in investor capital account (3020). Must use owner capital account (3010/3040).'
       );
+    }
+    const ownerTxTypes = [
+      'OWNER_CAPITAL',
+      'OWNER_CAPITAL_ADDED',
+      'OWNER_DRAWING',
+      'OWNER_DRAWINGS',
+      'OWNER_WITHDRAWAL',
+      'OWN_CAP',
+      'OWNER_EQUITY'
+    ];
+    if (rawTxType && ownerTxTypes.includes(rawTxType)) {
+      throw new Error(
+        `Cross-mapping rejected: Owner transaction type "${rawTxType}" cannot use investor capital account (3020).`
+      );
+    }
+    if ((entry as any).isOwnerCapital === true) {
+      throw new Error(
+        'Cross-mapping rejected: Owner capital flag detected on investor capital account (3020). Must use owner capital account (3010).'
+      );
+    }
+
+    // B. Strict investor attribution check for both credit and debit on 3020
+    if (!entry.legacyMigrated && !entry.missingAttribution) {
+      const invRef = (entry as any).investorId || entry.relatedPerson || (entry as any).investorReference;
+      if (!invRef || typeof invRef !== 'string' || !invRef.trim()) {
+        throw new Error(
+          'Investor attribution required: every investor capital transaction must identify the exact investor.'
+        );
+      }
+      const cleanRef = invRef.trim().toLowerCase();
+      const prohibited = [
+        'unknown',
+        'default',
+        'unknown investor',
+        'default investor',
+        'anonymous',
+        'anonymous investor',
+        'system',
+        'system investor',
+        'unassigned',
+        'unattributed',
+        'none',
+        'n/a',
+        'null',
+        'undefined'
+      ];
+      if (prohibited.includes(cleanRef) || cleanRef.startsWith('default_') || cleanRef.startsWith('unknown_')) {
+        throw new Error(
+          `Cannot silently assign an unknown or default investor ("${invRef}"). Exact investor attribution is required.`
+        );
+      }
+      if ((entry as any).createdBy && cleanRef === (entry as any).createdBy.trim().toLowerCase() && !(entry as any).isExplicitInvestor) {
+        throw new Error(
+          'Investor cannot be inferred from the currently logged-in user. Every capital transaction must explicitly identify an exact investor.'
+        );
+      }
     }
   }
 

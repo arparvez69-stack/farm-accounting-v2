@@ -102,6 +102,8 @@ import { runTask3NewInvestorAdmissionGateTests } from './testTask3NewInvestorAdm
 import { runTask5AuthoritativeProfitSourceTests } from './testTask5AuthoritativeProfitSource';
 import { runDefaultPinRejectionRegressionTest } from './testDefaultPinRejectionRegression';
 import { runPermanentPinSecurityGuards } from './testPermanentPinSecurityGuards';
+import { runNoUnauthenticatedAllowListDisclosureTest } from './testNoUnauthenticatedAllowListDisclosure';
+import { runEnforceOwnerVsInvestorCapitalSeparationTest } from './testEnforceOwnerVsInvestorCapitalSeparation';
 
 interface SuiteResult {
   total: number;
@@ -240,6 +242,7 @@ async function main() {
   suiteResults.push(await runTask5AuthoritativeProfitSourceTests());
   suiteResults.push(await runDefaultPinRejectionRegressionTest());
   suiteResults.push(await runPermanentPinSecurityGuards());
+  suiteResults.push(await runNoUnauthenticatedAllowListDisclosureTest());
 
   // Strictly aggregate actual executed assertions — no manual +10 or phantom counts
   const total = suiteResults.reduce((s, r) => s + (r.total || 0), 0);

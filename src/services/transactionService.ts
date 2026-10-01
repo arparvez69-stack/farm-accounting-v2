@@ -3550,7 +3550,7 @@ export async function executeInvestorTransaction(
       const {
         investorId,
         investorName,
-        contribution,
+        contribution: rawContribution,
         profitShare = 0,
         profitSharingRatio,
         targetAccountId,
@@ -3569,6 +3569,20 @@ export async function executeInvestorTransaction(
         admissionRequestId,
         admissionId
       } = params;
+
+      const contribution = rawContribution ?? (params as any).amount;
+
+      // TASK 9: Never silently map owner capital into investor capital
+      if (
+        ((params as any).capitalType && (params as any).capitalType.toString().toUpperCase() === 'OWNER') ||
+        ((params as any).sourceType && (params as any).sourceType.toString().toUpperCase() === 'OWNER') ||
+        ((params as any).transactionType && (params as any).transactionType.toString().toUpperCase().includes('OWNER')) ||
+        (params as any).isOwnerCapital === true
+      ) {
+        throw new Error(
+          'Cross-mapping rejected: Owner capital cannot be processed through investor transaction. Use executeOwnerCapitalTransaction with owner capital account 3010.'
+        );
+      }
 
       // PROMPT 21: Idempotency Check for direct capital transactions
       if (idempotencyKey && dbInstance.journalEntries?.toArray) {
@@ -3909,6 +3923,8 @@ export async function executeInvestorTransaction(
           investorId: invId,
           attributionStatus: 'VERIFIED',
           missingAttribution: false,
+          transactionType: 'INVESTOR_CONTRIBUTION',
+          capitalType: 'INVESTOR',
           lines: journalLines,
           createdBy: currentUserId,
           createdAt: new Date().toISOString()
@@ -6003,6 +6019,18 @@ export async function executeInvestorCapitalReturnTransaction(
           throw new Error('মূলধন ফেরতের পরিমাণ অবশ্যই ০ এর বেশি হতে হবে (Return amount must be > 0).');
         }
 
+        // TASK 9: Never silently map owner drawing into investor capital return
+        if (
+          ((params as any).capitalType && (params as any).capitalType.toString().toUpperCase() === 'OWNER') ||
+          ((params as any).sourceType && (params as any).sourceType.toString().toUpperCase() === 'OWNER') ||
+          ((params as any).transactionType && (params as any).transactionType.toString().toUpperCase().includes('OWNER')) ||
+          (params as any).isOwnerCapital === true
+        ) {
+          throw new Error(
+            'Cross-mapping rejected: Owner drawing/withdrawal cannot be processed through investor capital return. Use executeOwnerDrawingTransaction with owner drawings account 3040.'
+          );
+        }
+
         // 2. Investor validation
         const investor = await dbInstance.investors.get(investorId);
         if (!investor) {
@@ -6169,7 +6197,8 @@ export async function executeInvestorCapitalReturnTransaction(
             accountName: equityAcc.nameBn,
             debit: amount,
             credit: 0,
-            memo: `${investor.name} কে মূলধন ফেরত`
+            memo: `${investor.name} কে মূলধন ফেরত`,
+            investorId: investorId
           },
           {
             accountId: assetAcc.id,
@@ -6191,6 +6220,10 @@ export async function executeInvestorCapitalReturnTransaction(
             date: dateStr,
             narration: `বিনিয়োগকারীর মূলধন ফেরত: ${investor.name} কে ফেরত ৳${amount}`,
             reference: refNumber,
+            relatedPerson: investor.name,
+            investorId: investorId,
+            transactionType: 'INVESTOR_CAPITAL_RETURN',
+            capitalType: 'INVESTOR',
             lines: journalLines,
             createdBy: currentUserId,
             createdAt: new Date().toISOString()
@@ -10023,12 +10056,25 @@ export async function executeOwnerCapitalTransaction(
     async () => {
       const { amount, targetAccountId, currentUserId, date, notes } = params;
 
+      // TASK 9: Never silently map investor capital into owner capital
+      if (
+        (params as any).investorId ||
+        (params as any).trancheId ||
+        ((params as any).capitalType && (params as any).capitalType.toString().toUpperCase() === 'INVESTOR') ||
+        ((params as any).sourceType && (params as any).sourceType.toString().toUpperCase() === 'INVESTOR') ||
+        ((params as any).transactionType && (params as any).transactionType.toString().toUpperCase().includes('INVESTOR'))
+      ) {
+        throw new Error(
+          'Cross-mapping rejected: Investor capital cannot be processed through owner capital entry. Use executeInvestorTransaction with investor capital account 3020.'
+        );
+      }
+
       if (!targetAccountId) {
         throw new Error('জমার জন্য ক্যাশ বা ব্যাংক হিসাব নির্বাচন করা আবশ্যক।');
       }
 
       if (amount <= 0) {
-        throw new Error('মূলধনের পরিমাণ ০ থেকে বেশি হতে হবে (Capital amount must be strictly greater than 0).');
+        throw new Error('মূলধনের পরিমাণ ০ থেকে বেশি হতে باشد (Capital amount must be strictly greater than 0).');
       }
 
       const cleanAmount = Math.round(amount * 100) / 100;
@@ -10079,6 +10125,8 @@ export async function executeOwnerCapitalTransaction(
           id: generateUniqueId('j_cap'),
           voucherNumber,
           voucherType: 'RECEIPT',
+          transactionType: 'OWNER_CAPITAL',
+          capitalType: 'OWNER',
           date: dateStr,
           narration: `মালিকের মূলধন জমা: ৳${cleanAmount} (${targetAccName})${notes ? ` - ${notes.trim()}` : ''}`,
           reference: voucherNumber,
@@ -10146,6 +10194,19 @@ export async function executeOwnerDrawingTransaction(
     async () => {
       const { amount, sourceAccountId, currentUserId, date, notes } = params;
 
+      // TASK 9: Never silently map investor capital withdrawal into owner drawings
+      if (
+        (params as any).investorId ||
+        (params as any).trancheId ||
+        ((params as any).capitalType && (params as any).capitalType.toString().toUpperCase() === 'INVESTOR') ||
+        ((params as any).sourceType && (params as any).sourceType.toString().toUpperCase() === 'INVESTOR') ||
+        ((params as any).transactionType && (params as any).transactionType.toString().toUpperCase().includes('INVESTOR'))
+      ) {
+        throw new Error(
+          'Cross-mapping rejected: Investor capital withdrawal cannot be processed through owner drawings. Use executeInvestorCapitalReturnTransaction with investor capital account 3020.'
+        );
+      }
+
       if (!sourceAccountId) {
         throw new Error('উৎস তহবিল/ব্যাংক অ্যাকাউন্ট নির্বাচন করা আবশ্যক।');
       }
@@ -10209,6 +10270,8 @@ export async function executeOwnerDrawingTransaction(
           id: generateUniqueId('j_draw'),
           voucherNumber,
           voucherType: 'PAYMENT',
+          transactionType: 'OWNER_DRAWING',
+          capitalType: 'OWNER',
           date: dateStr,
           narration: `মালিকের ব্যক্তিগত উত্তোলন: ৳${cleanAmount} (${sourceAccName})${notes ? ` - ${notes.trim()}` : ''}`,
           reference: voucherNumber,

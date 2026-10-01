@@ -14,7 +14,7 @@ import {
   X,
   ArrowLeft
 } from 'lucide-react';
-import { verifyOwnerSecretPin, AUTHORIZED_OWNER_EMAILS } from '../services/authService';
+import { verifyOwnerSecretPin } from '../services/authService';
 import { triggerForegroundDueTodayNotification } from '../db/indexedDb';
 import { UserProfile } from '../types';
 import { SyncStatusBadge } from './SyncStatusBadge';
@@ -36,15 +36,12 @@ interface Props {
 
 export const LoginScreen: React.FC<Props> = ({ onLoginSuccess }) => {
   const { lang, setLanguage, t } = useLanguage();
-  const [authorizedOwners, setAuthorizedOwners] = useState<string[]>(() => {
-    return [...AUTHORIZED_OWNER_EMAILS];
-  });
   const [email, setEmail] = useState(() => {
     try {
       const stored = localStorage.getItem('goted_last_email');
       if (stored) return stored;
     } catch {}
-    return 'arparvez4@gmail.com';
+    return '';
   });
   const [pin, setPin] = useState('');
   const [showPin, setShowPin] = useState(false);
@@ -64,9 +61,6 @@ export const LoginScreen: React.FC<Props> = ({ onLoginSuccess }) => {
           const data = await res.json();
           if (isMounted) {
             setSetupComplete(data.setupComplete !== false);
-            if (Array.isArray(data.authorizedEmails) && data.authorizedEmails.length > 0) {
-              setAuthorizedOwners(data.authorizedEmails);
-            }
           }
         } else {
           if (isMounted) setSetupComplete(true);
@@ -399,29 +393,6 @@ export const LoginScreen: React.FC<Props> = ({ onLoginSuccess }) => {
                     disabled={loading}
                     className="w-full pl-11 pr-3.5 py-3 rounded-xl bg-[#F8FAFC] border border-gray-300 focus:border-[#1E5128] focus:ring-2 focus:ring-[#1E5128]/20 text-gray-900 placeholder-gray-400 text-[16px] sm:text-[15px] transition outline-none"
                   />
-                </div>
-                {/* Quick Owner Email Selectors */}
-                <div className="flex flex-wrap items-center gap-1.5 mt-2 text-[12px] text-gray-500">
-                  <span className="font-semibold text-gray-700">
-                    {lang === 'bn' ? 'অনুমোদিত অ্যাকাউন্ট:' : 'Authorized Account:'}
-                  </span>
-                  {authorizedOwners.map((owner) => (
-                    <button
-                      key={owner}
-                      type="button"
-                      onClick={() => {
-                        setEmail(owner);
-                        if (error) setError(null);
-                      }}
-                      className={`px-2 py-0.5 rounded text-[11px] font-medium border cursor-pointer transition ${
-                        email === owner
-                          ? 'bg-[#1E5128] text-white border-[#1E5128]'
-                          : 'bg-gray-50 hover:bg-gray-100 text-gray-700 border-gray-200'
-                      }`}
-                    >
-                      {owner}
-                    </button>
-                  ))}
                 </div>
               </div>
 

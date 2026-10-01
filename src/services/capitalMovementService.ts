@@ -232,6 +232,16 @@ export async function executeReinvestInvestorProfitTransaction(
     throw new Error('Reinvestment amount must be strictly greater than 0.');
   }
 
+  // TASK 9: Never silently map owner capital into investor capital
+  if (
+    ((params as any).capitalType && (params as any).capitalType.toString().toUpperCase() === 'OWNER') ||
+    ((params as any).sourceType && (params as any).sourceType.toString().toUpperCase() === 'OWNER') ||
+    ((params as any).transactionType && (params as any).transactionType.toString().toUpperCase().includes('OWNER')) ||
+    (params as any).isOwnerCapital === true
+  ) {
+    throw new Error('Cross-mapping rejected: Owner capital cannot be processed through investor profit reinvestment. Use owner capital account 3010.');
+  }
+
   const effectiveAlloc = sourceProfitAllocationId || sourceProfitAllocation || `alloc_${investorId}_${effectiveDate}`;
   const effectiveSettle = settlementEventId || settlementEvent || `settle_${investorId}_${effectiveDate}`;
   const effectiveParticipantId = participantId || investorId;
@@ -305,6 +315,8 @@ export async function executeReinvestInvestorProfitTransaction(
       reference: `REINV-${investorId.slice(0, 8)}`,
       relatedPerson: investor.name,
       investorId,
+      transactionType: 'INVESTOR_PROFIT_REINVESTMENT',
+      capitalType: 'INVESTOR',
       lines,
       createdBy: currentUserId,
       createdAt: new Date().toISOString()
@@ -441,6 +453,16 @@ export async function executeApprovedCapitalAdjustmentTransaction(
     throw new Error('Adjustment amount must be strictly greater than 0.');
   }
 
+  // TASK 9: Never silently map owner capital into investor capital
+  if (
+    ((params as any).capitalType && (params as any).capitalType.toString().toUpperCase() === 'OWNER') ||
+    ((params as any).sourceType && (params as any).sourceType.toString().toUpperCase() === 'OWNER') ||
+    ((params as any).transactionType && (params as any).transactionType.toString().toUpperCase().includes('OWNER')) ||
+    (params as any).isOwnerCapital === true
+  ) {
+    throw new Error('Cross-mapping rejected: Owner capital cannot be processed through investor capital adjustment. Use owner capital account 3010.');
+  }
+
   const investor = await dbInstance.investors.get(investorId);
   if (!investor) {
     throw new Error(`Investor not found: ${investorId}`);
@@ -533,6 +555,8 @@ export async function executeApprovedCapitalAdjustmentTransaction(
       reference: `ADJ-${investorId.slice(0, 8)}`,
       relatedPerson: investor.name,
       investorId,
+      transactionType: 'INVESTOR_CAPITAL_ADJUSTMENT',
+      capitalType: 'INVESTOR',
       lines,
       createdBy: currentUserId,
       createdAt: new Date().toISOString()

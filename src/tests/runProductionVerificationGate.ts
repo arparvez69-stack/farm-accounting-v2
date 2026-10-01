@@ -6,6 +6,7 @@ import {
   assertProductionEnvironmentValid
 } from '../server/envValidation';
 import { runPermanentPinSecurityGuards } from './testPermanentPinSecurityGuards';
+import { runNoUnauthenticatedAllowListDisclosureTest } from './testNoUnauthenticatedAllowListDisclosure';
 
 interface GateResult {
   step: number;
@@ -161,7 +162,13 @@ async function runProductionVerificationGate() {
       throw new Error(`Permanent PIN security guards failed: ${guardResults.failures.join(', ')}`);
     }
 
-    recordResult(6, 'Required production environment validation works', true, 'Passes on valid secrets, strictly rejects missing/weak/default secrets, and permanent PIN guards verified');
+    // F: Execute no unauthenticated allow-list disclosure suite (Task 8)
+    const disclosureResults = await runNoUnauthenticatedAllowListDisclosureTest();
+    if (disclosureResults.failed > 0) {
+      throw new Error(`Unauthenticated allow-list disclosure test failed: ${disclosureResults.failures.join(', ')}`);
+    }
+
+    recordResult(6, 'Required production environment validation works', true, 'Passes on valid secrets, strictly rejects missing/weak/default secrets, permanent PIN guards verified, and zero allow-list disclosure');
   } catch (err: any) {
     recordResult(6, 'Required production environment validation works', false, undefined, err.message);
   }

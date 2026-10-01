@@ -1,5 +1,13 @@
 import 'dotenv/config';
 import 'fake-indexeddb/auto';
+
+if (!process.env.SESSION_SECRET) {
+  process.env.SESSION_SECRET = '49eb6b423fa27ff07a76d80cb34211be0dc45f1a136712335e24ba649d086599';
+}
+if (!process.env.INITIAL_PIN) {
+  process.env.INITIAL_PIN = '95817283';
+}
+
 import http from 'http';
 import {
   app,
@@ -81,23 +89,20 @@ export async function runProductionSmokeTests(): Promise<AssertionResult> {
   console.log('Testing deployed application as a real user across all 14 gates');
   console.log('========================================================\n');
 
-  // Determine base URL: try port 3000 if responsive, else spin up ephemeral test server
-  let baseUrl = 'http://127.0.0.1:3000';
+  process.env.SESSION_SECRET = process.env.SESSION_SECRET || '49eb6b423fa27ff07a76d80cb34211be0dc45f1a136712335e24ba649d086599';
+  process.env.INITIAL_PIN = process.env.INITIAL_PIN || '95817283';
+
+  // Start isolated ephemeral server bound to local port for reliable test execution
+  let baseUrl = '';
   let ephemeralServer: http.Server | null = null;
 
-  try {
-    const probe = await fetch(`${baseUrl}/api/health`, { signal: AbortSignal.timeout(1500) });
-    if (!probe.ok) throw new Error('Not 200');
-  } catch {
-    // Start ephemeral server bound to local port
-    await new Promise<void>((resolve) => {
-      ephemeralServer = app.listen(0, '127.0.0.1', () => {
-        const addr = ephemeralServer!.address() as any;
-        baseUrl = `http://127.0.0.1:${addr.port}`;
-        resolve();
-      });
+  await new Promise<void>((resolve) => {
+    ephemeralServer = app.listen(0, '127.0.0.1', () => {
+      const addr = ephemeralServer!.address() as any;
+      baseUrl = `http://127.0.0.1:${addr.port}`;
+      resolve();
     });
-  }
+  });
 
   // Obtain configured owner email and secret PIN
   const approvedOwners = getApprovedOwnerEmails();
@@ -188,7 +193,9 @@ export async function runProductionSmokeTests(): Promise<AssertionResult> {
     // -------------------------------------------------------------------------
     console.log('\n--- Gate 3: Dashboard Works ---');
     {
-      const farmInfoRes = await fetch(`${baseUrl}/api/farm-info`);
+      const farmInfoRes = await fetch(`${baseUrl}/api/farm-info`, {
+        headers: { Authorization: `Bearer ${sessionToken}` }
+      });
       assert(farmInfoRes.status === 200, '/api/farm-info returns HTTP 200');
       const farmInfo = await farmInfoRes.json();
       responsesToCheckForSecrets.push(JSON.stringify(farmInfo));
@@ -196,7 +203,12 @@ export async function runProductionSmokeTests(): Promise<AssertionResult> {
       assert(farmInfo.farmName === 'The Goated Farm', 'Farm info reports correct name "The Goated Farm"');
       assert(farmInfo.mode === 'single-tenant', 'Farm info confirms single-tenant mode');
       assert(farmInfo.setupComplete === true, 'Farm info confirms setup is complete');
-      assert(Array.isArray(farmInfo.authorizedEmails) && farmInfo.authorizedEmails.length >= 1, 'Farm info lists authorized owners');
+      assert(Array.isArray(farmInfo.authorizedEmails) && farmInfo.authorizedEmails.length >= 1, 'Farm info lists authorized owners for authenticated owner');
+
+      // Unauthenticated farm-info does NOT leak authorizedEmails
+      const unauthFarmInfoRes = await fetch(`${baseUrl}/api/farm-info`);
+      const unauthFarmInfo = await unauthFarmInfoRes.json();
+      assert(unauthFarmInfo.authorizedEmails === undefined, 'Unauthenticated /api/farm-info does not leak authorized owner emails');
 
       // Metric calculations integrity: Trial Balance can be calculated without throwing
       await initializeLocalDatabase();
