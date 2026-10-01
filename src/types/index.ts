@@ -369,6 +369,8 @@ export interface InventoryItem {
     | 'PACKAGING';
   unit: string;
   currentStock: number;
+  quantityOnHand?: number;
+  costPerUnit?: number;
   reorderLevel?: number;
   avgCostPrice: number;
   costPrice?: number;
@@ -1151,6 +1153,7 @@ export interface InvestmentValuationEvent {
   };
 
   notes?: string;
+  idempotencyKey?: string;
   synced?: boolean;
 }
 
@@ -1416,6 +1419,7 @@ export interface InvestorAdmissionRequest {
   }>;
 
   notes?: string;
+  idempotencyKey?: string;
   createdBy: string;
   createdAt: string;
   updatedAt?: string;
@@ -2176,6 +2180,7 @@ export interface ParticipantLossHandlingPosition {
   name?: string;
   capital: number;
   contractPercentage?: number;
+  contractualPercentage?: number;
 }
 
 export interface ParticipantLossHandlingResult {
@@ -2195,6 +2200,8 @@ export interface ParticipantLossHandlingResult {
 export interface PeriodResultLossHandlingParams {
   periodResult?: number; // e.g. -100 (negative for loss)
   loss?: number; // e.g. 100 (positive number representing loss amount)
+  netLossAmount?: number;
+  lossAmount?: number;
   distributableProfit?: number; // if <= 0 treated as loss or zero
   lossPolicy?: LossPolicy;
   participants: ParticipantLossHandlingPosition[];
@@ -2206,6 +2213,7 @@ export interface PeriodResultLossHandlingParams {
 export interface PeriodResultLossHandlingResult {
   isLoss: boolean;
   lossAmount: number; // e.g. 100
+  visibleLossAmount?: number;
   finalizedAccountingResult: number; // e.g. -100
   distributableProfit: number; // Strictly 0 (no manufactured profit)
   lossPolicy: LossPolicy;
@@ -2219,6 +2227,7 @@ export interface PeriodResultLossHandlingResult {
   grandTotalDistributedProfit: number; // Strictly 0
   lossRemainsVisible: boolean;
   positiveFormulaReusedAntiPatternPrevented: boolean;
+  artificialProfitCreated?: boolean;
   passed: boolean;
   details: string;
 }
@@ -2426,6 +2435,7 @@ export interface ExecuteProfitSettlementResult {
   reinvestPercentage: number;
   reinvestedCapital: number;
   withdrawableAmount: number;
+  withdrawnAmount?: number;
   futureCapitalPosition?: number;
   reinvestTranche?: InvestmentTranche;
   capitalMovement?: InvestorCapitalMovement;
@@ -2601,8 +2611,12 @@ export type FinalizationInterruptionStage =
 export interface ExecuteFinalAllocationSettlementParams {
   periodStartDate?: string;
   periodEndDate: string;
-  totalDistributableProfit: number;
-  investorId: string;
+  totalDistributableProfit?: number;
+  distributableProfit?: number;
+  settlementDate?: string;
+  participants?: any[];
+  simulateCrashAtCheckpoint?: string;
+  investorId?: string;
   investorName?: string;
   participantId?: string;
   investorSharePercentage?: number; // e.g. 50%
@@ -2706,6 +2720,7 @@ export interface InvestorStatementCapitalBreakdown {
 
 export interface InvestorStatementProfitBreakdown {
   economicProfitAllocation: number;
+  allocatedEconomicProfit?: number;
   contractualInvestorProfit: number;
   mudaribShare: number;
   withdrawals: number;
@@ -2729,6 +2744,7 @@ export interface InvestorStatementPosition {
 export interface InvestorStatementMudaribSeparation {
   isMudaribCombinedWithCapital: boolean;
   mudaribEarnings: number;
+  mudaribProfitRetainedByFarm?: number;
   ownerCapitalBalance: number;
   isSeparate: boolean;
   notes: string;
@@ -2764,6 +2780,8 @@ export interface InvestorStatement {
   // Breakdown sections
   capitalSummary: InvestorStatementCapitalBreakdown;
   profitSummary: InvestorStatementProfitBreakdown;
+  capitalBreakdown?: InvestorStatementCapitalBreakdown;
+  profitBreakdown?: InvestorStatementProfitBreakdown;
   withdrawalsSummary: InvestorStatementWithdrawalsBreakdown;
   positionSummary: InvestorStatementPosition;
   mudaribSeparation: InvestorStatementMudaribSeparation;
@@ -2901,6 +2919,8 @@ export interface PeriodEndValuationResult {
   status: 'DRAFT' | 'FINALIZED';
   createdAt: string;
   notes?: string;
+  valuationEvent?: any;
+  netAssetValue?: number;
 }
 
 export interface InspectPeriodEndValuationResult {

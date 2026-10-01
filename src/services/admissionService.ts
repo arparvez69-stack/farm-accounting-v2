@@ -43,11 +43,13 @@ import { recordCapitalMovement } from './capitalMovementService';
 
 // In-memory store for admission requests
 const inMemoryAdmissionRequests = new Map<string, InvestorAdmissionRequest>();
+const activeAdmissionLocks = new Set<string>();
 
 /**
  * Resets the in-memory admission requests for test isolation
  */
 export function clearAdmissionRequestsForTest(): void {
+  activeAdmissionLocks.clear();
   inMemoryAdmissionRequests.clear();
   try {
     if (typeof localStorage !== 'undefined') {
@@ -98,6 +100,7 @@ export async function createAdmissionRequest(
     currentUserId: string;
     linkExistingInvestorId?: string;
     createCandidateInvestorRecord?: boolean;
+    idempotencyKey?: string;
   },
   dbInstance: any = db
 ): Promise<InvestorAdmissionRequest> {
@@ -110,7 +113,8 @@ export async function createAdmissionRequest(
     notes,
     currentUserId,
     linkExistingInvestorId,
-    createCandidateInvestorRecord = true
+    createCandidateInvestorRecord = true,
+    idempotencyKey
   } = params;
 
   if (!investorName || !investorName.trim()) {
@@ -131,113 +135,169 @@ export async function createAdmissionRequest(
   }
 
   const cleanDate = requestDate.split('T')[0].trim();
-  const requestId = `adm_req_${Date.now()}_${generateUniqueId('ar').slice(0, 6)}`;
-  const requestNumber = `AR-${cleanDate.slice(0, 4)}-${generateUniqueId('req').slice(0, 4).toUpperCase()}`;
-  const nowIso = new Date().toISOString();
+  const lockKey = idempotencyKey || `${investorName.trim().toLowerCase()}_${cleanDate}`;
 
-  let linkedInvestorId = linkExistingInvestorId;
+  // Concurrency lock to prevent simultaneous double-click race conditions
+  while (activeAdmissionLocks.has(lockKey)) {
+    await new Promise((r) => setTimeout(r, 10));
+  }
+  activeAdmissionLocks.add(lockKey);
 
-  // If requested and no existing investor linked, create a candidate investor record with status 'REQUESTED'
-  // Guarantee: Candidate investor record has ZERO capital and is NOT active in economic participation.
-  if (!linkedInvestorId && createCandidateInvestorRecord && dbInstance?.investors) {
-    const candidateId = generateUniqueId('inv_cand');
-    const candidateInvestor: Investor = {
-      id: candidateId,
-      name: investorName.trim(),
+  try {
+    // Deduplication & Idempotency: Check if an identical admission request already exists
+    if (idempotencyKey) {
+      for (const req of inMemoryAdmissionRequests.values()) {
+        if ((req as any).idempotencyKey === idempotencyKey || req.id === idempotencyKey) {
+          return req;
+        }
+      }
+    }
+    if (dbInstance?.investorAdmissionRequests?.toArray) {
+      try {
+        const allReqs = await dbInstance.investorAdmissionRequests.toArray();
+        const existingReq = allReqs.find(
+          (r: any) =>
+            (idempotencyKey && ((r as any).idempotencyKey === idempotencyKey || r.id === idempotencyKey)) ||
+            (r.status === 'REQUESTED' &&
+              r.investorName?.trim().toLowerCase() === investorName.trim().toLowerCase() &&
+              r.proposedContribution === proposedContribution &&
+              r.requestDate === cleanDate)
+        );
+        if (existingReq) {
+          inMemoryAdmissionRequests.set(existingReq.id, existingReq);
+          return existingReq;
+        }
+      } catch {}
+    }
+
+    const requestId = `adm_req_${Date.now()}_${generateUniqueId('ar').slice(0, 6)}`;
+    const requestNumber = `AR-${cleanDate.slice(0, 4)}-${generateUniqueId('req').slice(0, 4).toUpperCase()}`;
+    const nowIso = new Date().toISOString();
+
+    let linkedInvestorId = linkExistingInvestorId;
+
+    // If requested and no existing investor linked, create a candidate investor record with status 'REQUESTED'
+    // Guarantee: Candidate investor record has ZERO capital and is NOT active in economic participation.
+    if (!linkedInvestorId && createCandidateInvestorRecord && dbInstance?.investors) {
+      // Check if candidate investor with same name or admission request already exists
+      let existingCandidate: any = null;
+      if (dbInstance.investors.toArray) {
+        try {
+          const invs = await dbInstance.investors.toArray();
+          existingCandidate = invs.find(
+            (inv: any) =>
+              inv.status === 'REQUESTED' &&
+              inv.name?.trim().toLowerCase() === investorName.trim().toLowerCase()
+          );
+        } catch {}
+      }
+
+      if (existingCandidate) {
+        linkedInvestorId = existingCandidate.id;
+      } else {
+        const candidateId = generateUniqueId('inv_cand');
+        const candidateInvestor: Investor = {
+          id: candidateId,
+          name: investorName.trim(),
+          phone: phone ? phone.trim() : undefined,
+          status: 'REQUESTED',
+          entryDate: cleanDate,
+          joinedDate: cleanDate,
+          capitalAmount: 0,
+          capitalContributed: 0,
+          currentCapitalBalance: 0,
+          profitSharingRatio: 0,
+          profitPayable: 0,
+          totalProfitAllocated: 0,
+          totalProfitPaid: 0,
+          totalCapitalReturned: 0,
+          admissionRequestId: requestId,
+          isAdmitted: false,
+          economicParticipationActive: false,
+          notes: `অন্তর্ভুক্তি আবেদনাধীন: ${requestNumber}`,
+          synced: false
+        };
+        try {
+          await safeInsert(dbInstance.investors, candidateInvestor, { idPrefix: 'inv' });
+          linkedInvestorId = candidateId;
+        } catch {}
+      }
+    }
+
+    const admissionRequest: InvestorAdmissionRequest = {
+      id: requestId,
+      requestNumber,
+      investorName: investorName.trim(),
       phone: phone ? phone.trim() : undefined,
+      proposedContribution,
+      proposedProfitSharingRatio,
+      requestDate: cleanDate,
+      stage: 'REQUEST',
       status: 'REQUESTED',
-      entryDate: cleanDate,
-      joinedDate: cleanDate,
-      capitalAmount: 0,
-      capitalContributed: 0,
-      currentCapitalBalance: 0,
-      profitSharingRatio: 0,
-      profitPayable: 0,
-      totalProfitAllocated: 0,
-      totalProfitPaid: 0,
-      totalCapitalReturned: 0,
-      admissionRequestId: requestId,
       isAdmitted: false,
       economicParticipationActive: false,
-      notes: `অন্তর্ভুক্তি আবেদনাধীন: ${requestNumber}`,
+      investorId: linkedInvestorId,
+      requestDetails: {
+        requestedBy: currentUserId,
+        requestedAt: nowIso,
+        notes: notes ? notes.trim() : undefined
+      },
+      reconciliation: {
+        status: 'PENDING'
+      },
+      valuation: {
+        status: 'PENDING'
+      },
+      review: {
+        status: 'PENDING'
+      },
+      approval: {
+        status: 'PENDING'
+      },
+      capitalReceipt: {
+        status: 'PENDING'
+      },
+      admission: {
+        status: 'PENDING'
+      },
+      auditTrail: [
+        {
+          stage: 'REQUEST',
+          action: 'INVESTOR_ADMISSION_REQUEST_INITIATED',
+          timestamp: nowIso,
+          performedBy: currentUserId,
+          details: `নতুন বিনিয়োগকারী অন্তর্ভুক্তি আবেদন নিবন্ধিত হয়েছে (${requestNumber}): ${investorName.trim()}, প্রস্তাবিত মূলধন ৳${proposedContribution.toLocaleString()}, মুনাফা অনুপাত ${proposedProfitSharingRatio}% (পর্যায়: REQUEST, অর্থনৈতিক অংশগ্রহণ: নিষ্ক্রিয়)`
+        }
+      ],
+      notes: notes ? notes.trim() : undefined,
+      createdBy: currentUserId,
+      createdAt: nowIso,
+      idempotencyKey,
       synced: false
     };
-    try {
-      await safeInsert(dbInstance.investors, candidateInvestor, { idPrefix: 'inv' });
-      linkedInvestorId = candidateId;
-    } catch {}
+
+    await persistAdmissionRequest(admissionRequest, dbInstance);
+
+    if (dbInstance?.auditLogs) {
+      try {
+        await dbInstance.auditLogs.put({
+          id: generateUniqueId('audit'),
+          timestamp: nowIso,
+          userId: currentUserId,
+          role: 'OWNER',
+          action: 'INVESTOR_ADMISSION_REQUEST_CREATED',
+          module: 'FINANCE',
+          recordId: requestId,
+          status: 'SUCCESS',
+          details: `নতুন বিনিয়োগকারী অন্তর্ভুক্তি আবেদন ${requestNumber}: ${investorName.trim()}`
+        });
+      } catch {}
+    }
+
+    return admissionRequest;
+  } finally {
+    activeAdmissionLocks.delete(lockKey);
   }
-
-  const admissionRequest: InvestorAdmissionRequest = {
-    id: requestId,
-    requestNumber,
-    investorName: investorName.trim(),
-    phone: phone ? phone.trim() : undefined,
-    proposedContribution,
-    proposedProfitSharingRatio,
-    requestDate: cleanDate,
-    stage: 'REQUEST',
-    status: 'REQUESTED',
-    isAdmitted: false,
-    economicParticipationActive: false,
-    investorId: linkedInvestorId,
-    requestDetails: {
-      requestedBy: currentUserId,
-      requestedAt: nowIso,
-      notes: notes ? notes.trim() : undefined
-    },
-    reconciliation: {
-      status: 'PENDING'
-    },
-    valuation: {
-      status: 'PENDING'
-    },
-    review: {
-      status: 'PENDING'
-    },
-    approval: {
-      status: 'PENDING'
-    },
-    capitalReceipt: {
-      status: 'PENDING'
-    },
-    admission: {
-      status: 'PENDING'
-    },
-    auditTrail: [
-      {
-        stage: 'REQUEST',
-        action: 'INVESTOR_ADMISSION_REQUEST_INITIATED',
-        timestamp: nowIso,
-        performedBy: currentUserId,
-        details: `নতুন বিনিয়োগকারী অন্তর্ভুক্তি আবেদন নিবন্ধিত হয়েছে (${requestNumber}): ${investorName.trim()}, প্রস্তাবিত মূলধন ৳${proposedContribution.toLocaleString()}, মুনাফা অনুপাত ${proposedProfitSharingRatio}% (পর্যায়: REQUEST, অর্থনৈতিক অংশগ্রহণ: নিষ্ক্রিয়)`
-      }
-    ],
-    notes: notes ? notes.trim() : undefined,
-    createdBy: currentUserId,
-    createdAt: nowIso,
-    synced: false
-  };
-
-  await persistAdmissionRequest(admissionRequest, dbInstance);
-
-  if (dbInstance?.auditLogs) {
-    try {
-      await dbInstance.auditLogs.put({
-        id: generateUniqueId('audit'),
-        timestamp: nowIso,
-        userId: currentUserId,
-        role: 'OWNER',
-        action: 'INVESTOR_ADMISSION_REQUEST_CREATED',
-        module: 'FINANCE',
-        recordId: requestId,
-        status: 'SUCCESS',
-        details: `নতুন বিনিয়োগকারী অন্তর্ভুক্তি আবেদন ${requestNumber}: ${investorName.trim()}`
-      });
-    } catch {}
-  }
-
-  return admissionRequest;
 }
 
 /**
@@ -250,6 +310,7 @@ export async function executeAdmissionReconciliation(
     responsibleUser: string;
     bypassReconciliationForTest?: boolean;
     notes?: string;
+    reconciliationDate?: string;
   },
   dbInstance: any = db
 ): Promise<InvestorAdmissionRequest> {
@@ -892,6 +953,30 @@ export async function executeAdmissionFinalization(
   const request = await getAdmissionRequestById(requestId, dbInstance);
   if (!request) {
     throw new Error(`অন্তর্ভুক্তি আবেদন পাওয়া যায়নি (Admission request not found: ${requestId})।`);
+  }
+
+  // Idempotency check: if admission was ALREADY completed, return the committed records idempotently!
+  if (request.stage === 'ADMISSION' && request.status === 'ADMITTED') {
+    let admittedInvestor: any = undefined;
+    if (request.investorId && dbInstance?.investors?.get) {
+      admittedInvestor = await dbInstance.investors.get(request.investorId);
+    }
+    let admittedTranche: any = undefined;
+    if (request.admission?.admittedTrancheId && dbInstance?.investmentTranches?.get) {
+      admittedTranche = await dbInstance.investmentTranches.get(request.admission.admittedTrancheId);
+    }
+    let admissionAudit: any = undefined;
+    if (request.admission?.admissionAuditId) {
+      admissionAudit = await getAdmissionAuditById(request.admission.admissionAuditId, dbInstance);
+    }
+    if (admittedInvestor && admittedTranche) {
+      return {
+        request,
+        investor: admittedInvestor,
+        tranche: admittedTranche,
+        admissionAudit: admissionAudit || ({} as any)
+      };
+    }
   }
 
   if (request.stage !== 'CAPITAL_RECEIPT' || request.status !== 'CAPITAL_RECEIVED') {
@@ -2112,6 +2197,10 @@ export async function inspectFinalAdmissionCommit(
 
 export const inspectAdmissionCommit = inspectFinalAdmissionCommit;
 export const inspectAtomicAdmissionFinalization = inspectFinalAdmissionCommit;
+
+export const approveAdmissionRequest = executeAdmissionApproval;
+export const recordAdmissionCapitalReceipt = executeAdmissionCapitalReceipt;
+export const executeAdmissionCapitalReceiptAlias = executeAdmissionCapitalReceipt;
 
 export {
   calculatePostMoneyNav,

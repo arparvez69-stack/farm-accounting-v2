@@ -321,6 +321,7 @@ export async function generateInvestorStatement(
   const mudaribSeparation: InvestorStatementMudaribSeparation = {
     isMudaribCombinedWithCapital,
     mudaribEarnings: Math.round(mudaribEarnings * 100) / 100,
+    mudaribProfitRetainedByFarm: Math.round(mudaribShare * 100) / 100,
     ownerCapitalBalance: Math.round(ownerCapitalBalance * 100) / 100,
     isSeparate: true,
     notes:
@@ -343,6 +344,7 @@ export async function generateInvestorStatement(
 
   const profitSummary: InvestorStatementProfitBreakdown = {
     economicProfitAllocation,
+    allocatedEconomicProfit: economicProfitAllocation,
     contractualInvestorProfit,
     mudaribShare,
     withdrawals: profitWithdrawals,
@@ -392,6 +394,8 @@ export async function generateInvestorStatement(
 
     capitalSummary,
     profitSummary,
+    capitalBreakdown: capitalSummary,
+    profitBreakdown: profitSummary,
     withdrawalsSummary,
     positionSummary,
     mudaribSeparation,

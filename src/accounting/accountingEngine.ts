@@ -356,16 +356,30 @@ export async function postJournalEntry(
     }
   }
 
-  // STABILITY TASK 40: Post-save error recovery without duplicate posting
-  // If an entry with this explicit ID was already durably posted, return it idempotently.
-  if (entry.id && !options?.skipDbPut && targetDb.journalEntries?.get) {
-    try {
-      const existing = await targetDb.journalEntries.get(entry.id);
-      if (existing) {
-        return existing;
-      }
-    } catch {
-      // Proceed to safe insert
+  // STABILITY TASK 40 & FINAL TEST G: Post-save error recovery and idempotency without duplicate posting
+  // If an entry with this explicit ID or idempotency key was already durably posted, return it idempotently.
+  if (!options?.skipDbPut) {
+    if (entry.id && targetDb.journalEntries?.get) {
+      try {
+        const existing = await targetDb.journalEntries.get(entry.id);
+        if (existing) {
+          return existing;
+        }
+      } catch {}
+    }
+    const entryIdemp = (entry as any).idempotencyKey;
+    if (entryIdemp && targetDb.journalEntries?.toArray) {
+      try {
+        const allJournals = await targetDb.journalEntries.toArray();
+        const existingIdemp = allJournals.find(
+          (j: any) =>
+            j.status !== 'REVERSED' &&
+            (j.idempotencyKey === entryIdemp || j.reference === entryIdemp)
+        );
+        if (existingIdemp) {
+          return existingIdemp;
+        }
+      } catch {}
     }
   }
 

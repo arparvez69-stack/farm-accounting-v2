@@ -430,12 +430,13 @@ export async function executeParticipantProfitSettlement(
     params.settlementEvent ||
     `settle_${investorId}_${effectiveDate}`;
 
-  // PROMPT 33: Durable idempotency key resolution
+  // PROMPT 33 & FINAL TEST G: Durable idempotency key resolution
   const idempotencyKey =
     params.idempotencyKey ||
     params.settlementEventId ||
     params.settlementEvent ||
-    (params.sourceProfitAllocationId ? `idemp_settle_${params.sourceProfitAllocationId}` : undefined);
+    (params.sourceProfitAllocationId ? `idemp_settle_${params.sourceProfitAllocationId}` : undefined) ||
+    `idemp_settle_nat_${investorId}_${effectiveDate}_${profit}_${reinvestedCapital}_${withdrawableAmount}`;
 
   // 0. Concurrency lock to prevent simultaneous double-click race conditions
   if (idempotencyKey && activeProfitSettlementLocks.has(idempotencyKey)) {
@@ -533,7 +534,7 @@ export async function executeParticipantProfitSettlement(
 
         const currentInv = targetDb.investors?.get ? await targetDb.investors.get(investorId) : null;
         const futureCap = Number(
-          currentInv?.currentCapital || currentInv?.totalInvestment || 0
+          currentInv?.currentCapitalBalance ?? currentInv?.currentCapital ?? currentInv?.capitalAmount ?? currentInv?.totalInvestment ?? 0
         );
 
         return {
@@ -543,6 +544,7 @@ export async function executeParticipantProfitSettlement(
           reinvestPercentage: retention.reinvestPercentage,
           reinvestedCapital: retention.reinvestedCapital,
           withdrawableAmount: retention.withdrawableAmount,
+          withdrawnAmount: retention.withdrawableAmount,
           futureCapitalPosition: futureCap,
           reinvestTranche: matchedTranche,
           capitalMovement: matchedMovement,
@@ -666,7 +668,9 @@ export async function executeParticipantProfitSettlement(
       }
 
       // PROMPT 31: Record traceable capital movement in the dedicated ledger
-      const currentCap = Number(investor?.currentCapital || investor?.totalInvestment || 0);
+      const currentCap = Number(
+        investor?.currentCapitalBalance ?? investor?.currentCapital ?? investor?.capitalAmount ?? investor?.totalInvestment ?? 0
+      );
       const newCapital = Math.round((currentCap + reinvestedCapital) * 100) / 100;
 
       if (targetDb.investorCapitalMovements) {
@@ -708,6 +712,7 @@ export async function executeParticipantProfitSettlement(
           totalInvestment: newCapital,
           capitalContributed: newCapital,
           currentCapitalBalance: newCapital,
+          capitalAmount: newCapital,
           profitPayable: Math.max(0, Math.round((currentPayable - reinvestedCapital) * 100) / 100)
         });
       }
@@ -849,6 +854,7 @@ export async function executeParticipantProfitSettlement(
       reinvestPercentage,
       reinvestedCapital,
       withdrawableAmount,
+      withdrawnAmount: withdrawableAmount,
       futureCapitalPosition,
       reinvestTranche: createdTranche,
       capitalMovement,

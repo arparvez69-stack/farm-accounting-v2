@@ -93,6 +93,22 @@ export async function recordCapitalMovement(
   const effectiveAllocId = sourceProfitAllocationId || sourceProfitAllocation;
   const effectiveSettleId = settlementEventId || settlementEvent;
 
+  // Deduplication & Idempotency: Prevent duplicate capital movement records
+  if (dbInstance.investorCapitalMovements?.toArray) {
+    try {
+      const existingMovements: InvestorCapitalMovement[] = await dbInstance.investorCapitalMovements.toArray();
+      const duplicate = existingMovements.find(
+        (m: any) =>
+          (idempotencyKey && m.idempotencyKey === idempotencyKey) ||
+          (trancheId && m.trancheId === trancheId && m.movementType === movementType) ||
+          (journalEntryId && m.journalEntryId === journalEntryId && m.movementType === movementType)
+      );
+      if (duplicate) {
+        return duplicate;
+      }
+    } catch {}
+  }
+
   const movementRecord: InvestorCapitalMovement = {
     id: generateUniqueId('cap_mov'),
     investorId,

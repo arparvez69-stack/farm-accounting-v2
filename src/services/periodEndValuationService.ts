@@ -314,7 +314,7 @@ export async function executePeriodEndValuation(
   const valId = generateUniqueId('val_period_end');
 
   // Persist into valuation event ledger
-  await createValuationEvent(
+  const valuationEvt = await createValuationEvent(
     {
       valuationDate: cleanEndDate,
       responsibleUser,
@@ -334,6 +334,8 @@ export async function executePeriodEndValuation(
 
   return {
     id: valId,
+    valuationEvent: valuationEvt,
+    netAssetValue: nav.netAssetValue,
     valuationDate: cleanEndDate,
     periodStartDate: cleanStartDate,
     periodEndDate: cleanEndDate,
