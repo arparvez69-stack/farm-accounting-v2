@@ -3651,6 +3651,12 @@ export function calculateFullProfitGoldenCalculation(params: {
     if (p.capital < 0) {
       throw new Error(`অংশগ্রহণকারী ${id} এর মূলধন ঋণাত্মক হতে পারে না (Capital cannot be negative: ${p.capital})।`);
     }
+    // INVARIANT FREEZE — BUSINESS RULES (MUST NOT BE CHANGED):
+    // 1. Each investor has their own capital/tranche(s).
+    // 2. Each tranche has its own amount, effective date, and contractual profit-share percentage.
+    // 3. Contract percentages are NOT farm-wide percentages and do NOT need to total 100%.
+    // 4. Do NOT calculate Mudarib/working-partner share as (100% - total investor percentages).
+    // 5. Never use active investor percentages as a farm-wide ratio.
     if (p.contractPercentage < 0 || p.contractPercentage > 100) {
       throw new Error(`অংশগ্রহণকারী ${id} এর চুক্তি শতাংশ ০ থেকে ১০০ এর মধ্যে হতে হবে (Contract % must be between 0 and 100: ${p.contractPercentage})।`);
     }
