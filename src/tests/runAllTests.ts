@@ -124,7 +124,7 @@ if (!process.env.SESSION_SECRET) {
   }
 }
 if (!process.env.INITIAL_PIN) {
-  process.env.INITIAL_PIN = '849201';
+  process.env.INITIAL_PIN = '95817283';
 }
 
 async function main() {

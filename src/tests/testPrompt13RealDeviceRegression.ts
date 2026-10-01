@@ -158,7 +158,7 @@ export async function runRealDeviceRegressionTests(): Promise<AssertionResult> {
   // Credentials
   const approvedOwners = getApprovedOwnerEmails();
   const ownerEmail = approvedOwners[0] || 'owner@example.com';
-  const ownerPin = extractRawPinFromEnv(process.env) || '849201';
+  const ownerPin = extractRawPinFromEnv(process.env) || '95817283';
 
   // Seed local DB
   await initializeLocalDatabase();

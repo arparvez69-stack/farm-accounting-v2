@@ -46,7 +46,7 @@ export const LoginScreen: React.FC<Props> = ({ onLoginSuccess }) => {
     } catch {}
     return 'arparvez4@gmail.com';
   });
-  const [pin, setPin] = useState('849201');
+  const [pin, setPin] = useState('');
   const [showPin, setShowPin] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -306,31 +306,6 @@ export const LoginScreen: React.FC<Props> = ({ onLoginSuccess }) => {
                 <AlertCircle className="w-5 h-5 text-red-600 shrink-0 mt-0.5" />
                 <div className="flex-1 leading-relaxed font-semibold">{error}</div>
               </div>
-              <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-red-200 text-xs">
-                <span className="text-red-800 font-medium">
-                  {lang === 'bn' ? 'ডিফল্ট মাস্টার পিন বসান:' : 'Quick Fill Master PIN:'}
-                </span>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setPin('849201');
-                    setError(null);
-                  }}
-                  className="px-2.5 py-1 rounded bg-[#1E5128] hover:bg-[#173F1F] text-white font-mono font-bold text-xs cursor-pointer shadow-2xs"
-                >
-                  849201
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setPin('123456');
-                    setError(null);
-                  }}
-                  className="px-2.5 py-1 rounded bg-white hover:bg-gray-100 text-[#1E5128] border border-[#1E5128] font-mono font-bold text-xs cursor-pointer shadow-2xs"
-                >
-                  123456
-                </button>
-              </div>
             </div>
           )}
 
@@ -436,7 +411,6 @@ export const LoginScreen: React.FC<Props> = ({ onLoginSuccess }) => {
                       type="button"
                       onClick={() => {
                         setEmail(owner);
-                        setPin('849201');
                         if (error) setError(null);
                       }}
                       className={`px-2 py-0.5 rounded text-[11px] font-medium border cursor-pointer transition ${
@@ -489,7 +463,7 @@ export const LoginScreen: React.FC<Props> = ({ onLoginSuccess }) => {
                     inputMode="numeric"
                     maxLength={12}
                     required
-                    placeholder={lang === 'bn' ? 'গোপন পিন দিন (যেমন: 849201)...' : 'Enter secret PIN (e.g. 849201)...'}
+                    placeholder={lang === 'bn' ? 'গোপন পিন দিন...' : 'Enter secret PIN...'}
                     value={pin}
                     onChange={(e) => {
                       setPin(e.target.value);
@@ -505,32 +479,6 @@ export const LoginScreen: React.FC<Props> = ({ onLoginSuccess }) => {
                     className="absolute inset-y-0 right-0 pr-3.5 flex items-center text-gray-500 hover:text-gray-800 cursor-pointer min-h-[44px] min-w-[44px] justify-center focus-visible:ring-2 focus-visible:ring-[#1E5128] rounded-r-xl"
                   >
                     {showPin ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
-                  </button>
-                </div>
-                {/* Quick PIN Auto-fill Helpers */}
-                <div className="flex flex-wrap items-center gap-1.5 mt-2 text-[12px] text-gray-500">
-                  <span className="font-semibold text-gray-700">
-                    {lang === 'bn' ? 'মাস্টার পিন পূরণ করুন:' : 'Fill Master PIN:'}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setPin('849201');
-                      if (error) setError(null);
-                    }}
-                    className="px-2 py-0.5 rounded bg-emerald-50 hover:bg-emerald-100 text-[#1E5128] font-mono font-bold border border-emerald-200 cursor-pointer transition text-[11px]"
-                  >
-                    849201
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setPin('123456');
-                      if (error) setError(null);
-                    }}
-                    className="px-2 py-0.5 rounded bg-emerald-50 hover:bg-emerald-100 text-[#1E5128] font-mono font-bold border border-emerald-200 cursor-pointer transition text-[11px]"
-                  >
-                    123456
                   </button>
                 </div>
               </div>

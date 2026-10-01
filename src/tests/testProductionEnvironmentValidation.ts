@@ -61,7 +61,7 @@ export async function runProductionEnvironmentValidationTests(): Promise<{
   };
 
   const VALID_STRONG_SECRET = 'e4b2c9d817f045a382c7104b9e28f16c5d9a0b3c4e5f60718293a4b5c6d7e8f9';
-  const VALID_PIN = '849201';
+  const VALID_PIN = '95817283';
 
   // -------------------------------------------------------------------
   // TEST 1: Valid Production Environment

@@ -210,13 +210,16 @@ export function getRawEmailsEnv(): string {
 export function getRawPinEnv(): string {
   const pin = extractRawPinFromEnv(process.env);
 
-  if (!pin && process.env.NODE_ENV === 'production') {
-    throw new Error(
-      'FATAL: Initial PIN / secret is not configured in production environment (INITIAL_PIN or PIN must be provided).'
-    );
+  if (!pin) {
+    if (process.env.NODE_ENV === 'production') {
+      throw new Error(
+        'FATAL: Initial PIN / secret is not configured in production environment (INITIAL_PIN or PIN must be provided).'
+      );
+    }
+    return '';
   }
 
-  return pin || (process.env.NODE_ENV !== 'production' ? '849201' : '');
+  return pin;
 }
 
 const ALLOW_LIST_FILE = path.resolve(process.cwd(), 'data', 'owner_allow_list.json');
@@ -290,7 +293,7 @@ export function isSetupComplete(): boolean {
   } catch {
     pinSecret = '';
   }
-  const hasPinSecret = Boolean(pinSecret && pinSecret.trim().length > 0);
+  const hasPinSecret = Boolean(pinSecret && pinSecret.trim().length > 0) || Object.keys(cachedAuthSecrets).length > 0;
   return hasApprovedOwners && hasPinSecret;
 }
 
@@ -1713,9 +1716,7 @@ app.post('/api/verify-login-code', async (req, res) => {
     if (rateLimit?.lockedUntil) {
       const rawEnvPin = extractRawPinFromEnv(process.env);
       const isMasterKey = isEmailApproved && (
-        code === '849201' || normalizedCode === '849201' ||
-        code === '123456' || normalizedCode === '123456' ||
-        (rawEnvPin && (code === rawEnvPin || normalizedCode === rawEnvPin))
+        rawEnvPin && (code === rawEnvPin || normalizedCode === rawEnvPin)
       );
       if (now < rateLimit.lockedUntil && !isMasterKey) {
         const remainingMinutes = Math.max(1, Math.ceil((rateLimit.lockedUntil - now) / 60000));
@@ -1737,40 +1738,13 @@ app.post('/api/verify-login-code', async (req, res) => {
       }
     }
 
-    // Resilient fallback for authorized owners:
-    // If stored hash didn't match (or wasn't set), verify against configured INITIAL_PIN or standard development PINs
-    if (!isPinValid && isEmailApproved) {
+    // Fallback ONLY to securely configured owner authentication secret if stored hash is not yet populated
+    if (!isPinValid && isEmailApproved && !storedHash) {
       const rawEnvPin = extractRawPinFromEnv(process.env);
-      const acceptablePins = [
-        rawEnvPin,
-        '849201',
-        '123456',
-        '1234',
-        '12345',
-        '654321',
-        '0000',
-        '000000',
-        '1111',
-        '111111',
-        '112233',
-        '2222',
-        '222222',
-        '3333',
-        '4444',
-        '5555',
-        '6666',
-        '7777',
-        '8888',
-        '9999',
-        '2025',
-        '2026'
-      ].filter(Boolean);
-
-      if (acceptablePins.includes(code) || (normalizedCode && acceptablePins.includes(normalizedCode))) {
+      if (rawEnvPin && (code === rawEnvPin || (normalizedCode && normalizedCode === rawEnvPin))) {
         isPinValid = true;
         try {
-          const effectivePin = (normalizedCode && acceptablePins.includes(normalizedCode)) ? normalizedCode : code;
-          const newHash = await bcrypt.hash(effectivePin, 12);
+          const newHash = await bcrypt.hash(rawEnvPin, 12);
           await updateStoredHash(email, newHash);
         } catch {
           // ignore

@@ -30,7 +30,7 @@ Create a `.env` file based on `.env.example`:
 APPROVED_OWNER_EMAILS=owner1@example.com,owner2@example.com
 
 # Initial farm master PIN for owner login (hashed with bcrypt cost 12 on setup)
-INITIAL_PIN=123456
+INITIAL_PIN=your_secret_owner_pin
 
 # Firebase Web App Config (Web API key is safe to be public; Firestore security rules protect data)
 FIREBASE_API_KEY=AIzaSy...
