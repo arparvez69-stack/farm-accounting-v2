@@ -6,6 +6,7 @@ import {
   executeFinalizedBusinessProfitAllocationToInvestors
 } from '../services/transactionService';
 import { postJournalEntry, generateProfitLoss, generateTrialBalance } from '../accounting/accountingEngine';
+import { MOCK_FINALIZED_VALUATION_FIXTURE } from './testFixtures';
 
 export interface AssertionResult {
   total: number;
@@ -95,7 +96,8 @@ export async function runTaskCInvestorProfitCalculationTests(): Promise<Assertio
       targetAccountId: cashAccId,
       currentUserId: testUserId,
       date: '2026-01-01',
-      notes: 'Participant A (100 capital, 50% contract)'
+      notes: 'Participant A (100 capital, 50% contract)',
+      valuationRecord: MOCK_FINALIZED_VALUATION_FIXTURE
     },
     mDb
   );
@@ -110,7 +112,8 @@ export async function runTaskCInvestorProfitCalculationTests(): Promise<Assertio
       targetAccountId: cashAccId,
       currentUserId: testUserId,
       date: '2026-01-01',
-      notes: 'Participant B (200 capital, 60% contract)'
+      notes: 'Participant B (200 capital, 60% contract)',
+      valuationRecord: MOCK_FINALIZED_VALUATION_FIXTURE
     },
     mDb
   );

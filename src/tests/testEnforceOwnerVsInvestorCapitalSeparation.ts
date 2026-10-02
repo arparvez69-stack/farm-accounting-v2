@@ -13,6 +13,7 @@ import {
   executeReinvestInvestorProfitTransaction
 } from '../services/capitalMovementService';
 import { JournalLine } from '../types';
+import { MOCK_FINALIZED_VALUATION_FIXTURE } from './testFixtures';
 
 export interface TestSuiteResult {
   name: string;
@@ -189,7 +190,8 @@ export async function runEnforceOwnerVsInvestorCapitalSeparationTest(): Promise<
         profitSharingRatio: 30,
         date: '2026-03-02',
         currentUserId,
-        notes: 'Initial partner investment'
+        notes: 'Initial partner investment',
+        valuationRecord: MOCK_FINALIZED_VALUATION_FIXTURE
       },
       db
     );

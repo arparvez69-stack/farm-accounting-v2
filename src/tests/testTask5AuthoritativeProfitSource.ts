@@ -4,6 +4,7 @@ import { DEFAULT_CHART_OF_ACCOUNTS } from '../accounting/defaultAccounts';
 import { postJournalEntry, closePeriod, generateProfitLoss } from '../accounting/accountingEngine';
 import { executeInvestorTransaction, executeInvestorProfitAllocationTransaction } from '../services/transactionService';
 import { executeFinalAllocationAndSettlement } from '../services/settlementService';
+import { MOCK_FINALIZED_VALUATION_FIXTURE } from './testFixtures';
 
 export interface AssertionResult {
   total: number;
@@ -81,7 +82,8 @@ export async function runTask5AuthoritativeProfitSourceTests(): Promise<Assertio
       targetAccountId: bankAccId,
       currentUserId: testUserId,
       date: '2026-01-01',
-      notes: 'Initial Capital 100, Contract 50%'
+      notes: 'Initial Capital 100, Contract 50%',
+      valuationRecord: MOCK_FINALIZED_VALUATION_FIXTURE
     },
     mDb
   );

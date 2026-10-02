@@ -5,6 +5,7 @@ import {
   executeInvestorTransaction,
   executeInvestorProfitAllocationTransaction
 } from '../services/transactionService';
+import { MOCK_FINALIZED_VALUATION_FIXTURE } from './testFixtures';
 
 interface TestSummary {
   name: string;
@@ -66,7 +67,8 @@ export async function runInvestorProfitAllocationDeterminismTests(): Promise<Tes
         profitSharingRatio: 50,
         targetAccountId: 'bank_det_01',
         date: '2026-01-01',
-        currentUserId: testUserId
+        currentUserId: testUserId,
+        valuationRecord: MOCK_FINALIZED_VALUATION_FIXTURE
       },
       db
     );
@@ -79,7 +81,8 @@ export async function runInvestorProfitAllocationDeterminismTests(): Promise<Tes
         profitSharingRatio: 60,
         targetAccountId: 'bank_det_01',
         date: '2026-01-01',
-        currentUserId: testUserId
+        currentUserId: testUserId,
+        valuationRecord: MOCK_FINALIZED_VALUATION_FIXTURE
       },
       db
     );

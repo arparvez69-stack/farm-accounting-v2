@@ -9,6 +9,7 @@ import {
   executeInvestorTransaction
 } from '../services/transactionService';
 import { synchronizePendingData } from '../firebase/firebaseClient';
+import { MOCK_FINALIZED_VALUATION_FIXTURE } from './testFixtures';
 
 export interface AssertionResult {
   total: number;
@@ -573,7 +574,8 @@ export async function runTaskF10ValidateCalculatedFieldsOnNewRecordsTests(): Pro
     profitSharingRatio: 10,
     targetAccountId: 'cash_main_f10',
     currentUserId: 'test-user-f10',
-    date: '2026-09-24'
+    date: '2026-09-24',
+    valuationRecord: MOCK_FINALIZED_VALUATION_FIXTURE
   });
   assert(localInvResult.investor !== undefined, 'Local investor created via domain transaction');
 

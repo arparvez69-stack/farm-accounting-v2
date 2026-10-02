@@ -1,6 +1,7 @@
 import 'fake-indexeddb/auto';
 import { db } from '../db/indexedDb';
 import { DEFAULT_CHART_OF_ACCOUNTS } from '../accounting/defaultAccounts';
+import { MOCK_FINALIZED_VALUATION_FIXTURE } from './testFixtures';
 import {
   postJournalEntry,
   generateTrialBalance,
@@ -150,7 +151,8 @@ export async function runCompleteAccountingLifecycleRegression() {
     targetAccountId: 'cb_bank',
     currentUserId,
     date: '2026-01-02',
-    notes: 'Investor equity share 20%'
+    notes: 'Investor equity share 20%',
+    valuationRecord: MOCK_FINALIZED_VALUATION_FIXTURE
   }, db);
   const bank2 = await db.cashBankAccounts.get('cb_bank');
   assert(bank2?.currentBalance === 200000, 'Bank balance updated to 200,000');

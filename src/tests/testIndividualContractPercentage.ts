@@ -10,6 +10,7 @@ import {
   executeCapitalParticipationAllocation
 } from '../services/valuationService';
 import { DEFAULT_CHART_OF_ACCOUNTS } from '../accounting/defaultAccounts';
+import { MOCK_FINALIZED_VALUATION_FIXTURE } from './testFixtures';
 
 export interface AssertionResult {
   total: number;
@@ -88,7 +89,8 @@ export async function runIndividualContractPercentageTests(): Promise<AssertionR
         targetAccountId: bankAccId,
         currentUserId: testUserId,
         date: '2026-01-01',
-        notes: 'Prompt 04 Investor A 50%'
+        notes: 'Prompt 04 Investor A 50%',
+        valuationRecord: MOCK_FINALIZED_VALUATION_FIXTURE
       },
       mDb
     );
@@ -116,7 +118,8 @@ export async function runIndividualContractPercentageTests(): Promise<AssertionR
         targetAccountId: bankAccId,
         currentUserId: testUserId,
         date: '2026-01-01',
-        notes: 'Prompt 04 Investor B 60%'
+        notes: 'Prompt 04 Investor B 60%',
+        valuationRecord: MOCK_FINALIZED_VALUATION_FIXTURE
       },
       mDb
     );

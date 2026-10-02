@@ -19,6 +19,7 @@ import {
   executeFixedAssetDisposalTransaction
 } from '../accounting/depreciationService';
 import { InventoryItem } from '../types';
+import { MOCK_FINALIZED_VALUATION_FIXTURE } from './testFixtures';
 
 function assert(condition: boolean, message: string) {
   if (!condition) {
@@ -118,7 +119,8 @@ export async function runTaskB2Tests() {
     profitShare: 20,
     date: '2026-03-01',
     targetAccountId: 'cba-cash-01',
-    currentUserId: 'usr-b2'
+    currentUserId: 'usr-b2',
+    valuationRecord: MOCK_FINALIZED_VALUATION_FIXTURE
   });
   const investorId = investRes.investor.id;
   const investJournalId = investRes.journalEntryId;

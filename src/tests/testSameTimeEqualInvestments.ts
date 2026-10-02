@@ -16,6 +16,7 @@ import {
   postJournalEntry
 } from '../accounting/accountingEngine';
 import { DEFAULT_CHART_OF_ACCOUNTS } from '../accounting/defaultAccounts';
+import { MOCK_FINALIZED_VALUATION_FIXTURE } from './testFixtures';
 
 export interface AssertionResult {
   total: number;
@@ -197,7 +198,8 @@ export async function runSameTimeEqualInvestmentsTests(): Promise<AssertionResul
         targetAccountId: 'cash_main_p12',
         currentUserId: testUserId,
         date: '2026-01-01',
-        notes: 'Prompt 12 Investor A ৳100 investment'
+        notes: 'Prompt 12 Investor A ৳100 investment',
+        valuationRecord: MOCK_FINALIZED_VALUATION_FIXTURE
       },
       mDb
     );
@@ -212,7 +214,8 @@ export async function runSameTimeEqualInvestmentsTests(): Promise<AssertionResul
         targetAccountId: 'cash_main_p12',
         currentUserId: testUserId,
         date: '2026-01-01',
-        notes: 'Prompt 12 Investor B ৳100 investment'
+        notes: 'Prompt 12 Investor B ৳100 investment',
+        valuationRecord: MOCK_FINALIZED_VALUATION_FIXTURE
       },
       mDb
     );
@@ -330,7 +333,8 @@ export async function runSameTimeEqualInvestmentsTests(): Promise<AssertionResul
         profitSharingRatio: 40,
         targetAccountId: 'cash_main_step3',
         currentUserId: testUserId,
-        date: '2026-01-01'
+        date: '2026-01-01',
+        valuationRecord: MOCK_FINALIZED_VALUATION_FIXTURE
       },
       mDb
     );
@@ -343,7 +347,8 @@ export async function runSameTimeEqualInvestmentsTests(): Promise<AssertionResul
         profitSharingRatio: 40,
         targetAccountId: 'cash_main_step3',
         currentUserId: testUserId,
-        date: '2026-01-01'
+        date: '2026-01-01',
+        valuationRecord: MOCK_FINALIZED_VALUATION_FIXTURE
       },
       mDb
     );

@@ -7,6 +7,7 @@ import {
   getAllInvestmentTranches
 } from '../services/transactionService';
 import { DEFAULT_CHART_OF_ACCOUNTS } from '../accounting/defaultAccounts';
+import { MOCK_FINALIZED_VALUATION_FIXTURE } from './testFixtures';
 
 export interface AssertionResult {
   total: number;
@@ -89,7 +90,8 @@ export async function runPrompt02TrancheStructureTests(): Promise<AssertionResul
       targetAccountId: bankAccId,
       currentUserId: testUserId,
       date: '2026-01-15',
-      notes: 'Initial tranche: ৳100 in January'
+      notes: 'Initial tranche: ৳100 in January',
+      valuationRecord: MOCK_FINALIZED_VALUATION_FIXTURE
     },
     mDb
   );
