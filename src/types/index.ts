@@ -1435,6 +1435,10 @@ export interface InvestorAllocationDistributionItem {
   investorName: string;
   profitSharingRatio: number;
   allocatedProfitAmount: number;
+  allocatedEconomicProfit?: number;
+  economicProfit?: number;
+  mudaribProfit?: number;
+  workingPartnerShare?: number;
   journalEntryId: string;
   voucherNumber: string;
   payableGlCode: string;

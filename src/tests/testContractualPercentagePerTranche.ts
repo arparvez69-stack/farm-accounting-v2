@@ -8,6 +8,7 @@ import {
 } from '../services/transactionService';
 import { DEFAULT_CHART_OF_ACCOUNTS } from '../accounting/defaultAccounts';
 import { InvestmentTranche, Investor } from '../types';
+import { MOCK_FINALIZED_VALUATION_FIXTURE } from './testFixtures';
 
 export interface AssertionResult {
   total: number;
@@ -101,7 +102,8 @@ export async function runContractualPercentagePerTrancheTests(): Promise<Asserti
         targetAccountId: bankAccId,
         currentUserId: testUserId,
         date: '2026-06-01',
-        notes: 'Initial tranche investment at 40% rate'
+        notes: 'Initial tranche investment at 40% rate',
+        valuationRecord: MOCK_FINALIZED_VALUATION_FIXTURE
       },
       mDb
     );
@@ -227,7 +229,8 @@ export async function runContractualPercentagePerTrancheTests(): Promise<Asserti
         targetAccountId: bankAccId,
         currentUserId: testUserId,
         allowExceedingGlobal100: true,
-        date: '2026-06-15'
+        date: '2026-06-15',
+        valuationRecord: MOCK_FINALIZED_VALUATION_FIXTURE
       },
       mDb
     );
@@ -247,7 +250,8 @@ export async function runContractualPercentagePerTrancheTests(): Promise<Asserti
         targetAccountId: bankAccId,
         currentUserId: testUserId,
         allowExceedingGlobal100: true,
-        date: '2026-07-01'
+        date: '2026-07-01',
+        valuationRecord: MOCK_FINALIZED_VALUATION_FIXTURE
       },
       mDb
     );

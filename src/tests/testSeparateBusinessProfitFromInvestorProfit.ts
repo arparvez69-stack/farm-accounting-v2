@@ -8,6 +8,7 @@ import {
 } from '../services/transactionService';
 import { postJournalEntry, generateProfitLoss, generateTrialBalance } from '../accounting/accountingEngine';
 import { DEFAULT_CHART_OF_ACCOUNTS } from '../accounting/defaultAccounts';
+import { MOCK_FINALIZED_VALUATION_FIXTURE } from './testFixtures';
 
 export interface AssertionResult {
   total: number;
@@ -90,33 +91,35 @@ export async function runSeparateBusinessProfitFromInvestorProfitTests(): Promis
   // ---------------------------------------------------------------------------
   console.log('--- Step 1: Setting Up Active Investors & Capital ---');
 
-  // Investor 1: Tariqul Islam (Capital ৳300,000, 30% approved participation)
+  // Investor 1: Tariqul Islam (Capital ৳300,000, 50% contractual profit split on ৳120,000 economic share = ৳60,000)
   const inv1 = await executeInvestorTransaction(
     {
       investorName: 'Tariqul Islam',
       phone: '01711000001',
       contribution: 300000,
-      profitSharingRatio: 30,
+      profitSharingRatio: 50,
       targetAccountId: bankAccId,
       currentUserId: testUserId,
       date: '2026-01-01',
-      notes: 'Partner 1'
+      notes: 'Partner 1',
+      valuationRecord: MOCK_FINALIZED_VALUATION_FIXTURE
     },
     mDb
   );
 
-  // Investor 2: Farhana Yasmin (Capital ৳200,000, 20% approved participation)
+  // Investor 2: Farhana Yasmin (Capital ৳200,000, 50% contractual profit split on ৳80,000 economic share = ৳40,000)
   const inv2 = await executeInvestorTransaction(
     {
       investorName: 'Farhana Yasmin',
       phone: '01911000002',
       contribution: 200000,
-      profitSharingRatio: 20,
+      profitSharingRatio: 50,
       targetAccountId: bankAccId,
       currentUserId: testUserId,
       allowExceedingGlobal100: true,
       date: '2026-01-05',
-      notes: 'Partner 2'
+      notes: 'Partner 2',
+      valuationRecord: MOCK_FINALIZED_VALUATION_FIXTURE
     },
     mDb
   );
@@ -271,8 +274,8 @@ export async function runSeparateBusinessProfitFromInvestorProfitTests(): Promis
   // ---------------------------------------------------------------------------
   console.log('\n--- Step 5: Executing Formal Investor Profit Allocation ---');
 
-  // Investor 1: 30% of ৳200,000 = ৳60,000
-  // Investor 2: 20% of ৳200,000 = ৳40,000
+  // Investor 1: 50% contract of ৳120,000 economic allocation (60% capital) = ৳60,000 (Mudarib: ৳60,000)
+  // Investor 2: 50% contract of ৳80,000 economic allocation (40% capital) = ৳40,000 (Mudarib: ৳40,000)
   // Total allocated to investors = ৳100,000
   // Retained farm business profit = ৳100,000 (Working partner / retained earnings)
   const allocResult = await executeFinalizedBusinessProfitAllocationToInvestors(
@@ -291,10 +294,10 @@ export async function runSeparateBusinessProfitFromInvestorProfitTests(): Promis
   assert(allocResult.allocations.length === 2, 'Two investor allocations created');
 
   const inv1Alloc = allocResult.allocations.find((a) => a.investorId === inv1.investor.id);
-  assert(inv1Alloc !== undefined && inv1Alloc.allocatedProfitAmount === 60000, 'Investor 1 allocated exactly ৳60,000 (30% of 200k)');
+  assert(inv1Alloc !== undefined && inv1Alloc.allocatedProfitAmount === 60000, 'Investor 1 allocated exactly ৳60,000 (50% of 120k economic share)');
 
   const inv2Alloc = allocResult.allocations.find((a) => a.investorId === inv2.investor.id);
-  assert(inv2Alloc !== undefined && inv2Alloc.allocatedProfitAmount === 40000, 'Investor 2 allocated exactly ৳40,000 (20% of 200k)');
+  assert(inv2Alloc !== undefined && inv2Alloc.allocatedProfitAmount === 40000, 'Investor 2 allocated exactly ৳40,000 (50% of 80k economic share)');
 
   // ---------------------------------------------------------------------------
   // STEP 6: CRITICAL REGRESSION PROOF — OPERATING P&L IS 100% UNTOUCHED

@@ -26,6 +26,7 @@ import {
   calculateNetAssetValuation
 } from '../services/valuationService';
 import { postJournalEntry } from '../accounting/accountingEngine';
+import { MOCK_FINALIZED_VALUATION_FIXTURE } from './testFixtures';
 
 export interface AssertionResult {
   total: number;
@@ -114,7 +115,8 @@ export async function runPrompt17PreMoneyNavAdmissionValuationTests(): Promise<A
       targetAccountId: bankAccId,
       currentUserId: testUserId,
       date: '2026-01-01',
-      notes: 'প্রতিষ্ঠাতা মূলধন: ৳৩০০ (Original nominal capital = ৳300)'
+      notes: 'প্রতিষ্ঠাতা মূলধন: ৳৩০০ (Original nominal capital = ৳300)',
+      valuationRecord: MOCK_FINALIZED_VALUATION_FIXTURE
     } as any,
     mDb
   );

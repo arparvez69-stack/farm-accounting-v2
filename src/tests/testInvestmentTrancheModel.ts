@@ -9,6 +9,7 @@ import {
 import { DEFAULT_CHART_OF_ACCOUNTS } from '../accounting/defaultAccounts';
 import { CANONICAL_ACCOUNTS } from '../accounting/accountMapping';
 import { InvestmentTranche, Investor } from '../types';
+import { MOCK_FINALIZED_VALUATION_FIXTURE } from './testFixtures';
 
 export interface AssertionResult {
   total: number;
@@ -100,7 +101,8 @@ export async function runInvestmentTrancheModelTests(): Promise<AssertionResult>
         targetAccountId: bankAccId,
         currentUserId: testUserId,
         date: '2026-06-01',
-        notes: 'Initial seed capital partner admission'
+        notes: 'Initial seed capital partner admission',
+        valuationRecord: MOCK_FINALIZED_VALUATION_FIXTURE
       },
       mDb
     );
@@ -230,7 +232,8 @@ export async function runInvestmentTrancheModelTests(): Promise<AssertionResult>
         currentUserId: testUserId,
         date: '2026-07-01',
         allowExceedingGlobal100: true,
-        notes: 'Dairy processing unit capital partner'
+        notes: 'Dairy processing unit capital partner',
+        valuationRecord: MOCK_FINALIZED_VALUATION_FIXTURE
       },
       mDb
     );
@@ -248,7 +251,8 @@ export async function runInvestmentTrancheModelTests(): Promise<AssertionResult>
         currentUserId: testUserId,
         date: '2026-08-01',
         allowExceedingGlobal100: true,
-        notes: 'Solar cold-storage infrastructure partner'
+        notes: 'Solar cold-storage infrastructure partner',
+        valuationRecord: MOCK_FINALIZED_VALUATION_FIXTURE
       },
       mDb
     );

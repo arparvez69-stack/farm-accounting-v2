@@ -85,7 +85,28 @@ export async function runTask3NewInvestorAdmissionGateTests(): Promise<Assertion
   const baselineDate = '2026-01-01';
   const opDate = '2026-06-15';
 
-  // 1. Establish initial active founder
+  // 1. Establish initial active founder with explicit valuation fixture
+  const founderVal = await createValuationEvent(
+    {
+      valuationDate: baselineDate,
+      responsibleUser: testUserId,
+      valuationMethodology: 'NET_ASSET_VALUE',
+      totalBusinessAssetsIncluded: 1000,
+      relevantLiabilities: 0,
+      notes: 'Initial Founding Valuation Fixture'
+    },
+    mDb
+  );
+  const finalizedFounderVal = await finalizeValuationEvent(
+    {
+      valuationEventId: founderVal.id,
+      responsibleUser: testUserId,
+      notes: 'Initial Founding Valuation Finalized',
+      bypassReconciliationForTest: true
+    },
+    mDb
+  );
+
   const founderTx = await executeInvestorTransaction(
     {
       investorName: 'Founder Tariqul',
@@ -95,6 +116,9 @@ export async function runTask3NewInvestorAdmissionGateTests(): Promise<Assertion
       targetAccountId: bankAccId,
       currentUserId: testUserId,
       date: baselineDate,
+      valuationEventId: finalizedFounderVal.id,
+      preMoneyValuation: 1000,
+      postMoneyValuation: 2000,
       notes: 'Initial founding capital'
     },
     mDb

@@ -1026,7 +1026,7 @@ export async function executeAdmissionFinalization(
     }
   }
 
-  if (!isValFinalized && !(params as any).bypassValuationCheckForTest) {
+  if (!isValFinalized) {
     throw new Error(
       'অন্তর্ভুক্তি স্থগিত (Admission blocked): প্রয়োজনীয় ব্যবসায়িক মূল্যায়ন এখনো চূড়ান্ত (FINALIZED) করা হয়নি (Valuation is not finalized). নতুন বিনিয়োগকারী অর্থনৈতিকভাবে সক্রিয় হতে পারবেন না যতক্ষণ না মূল্যায়ন চূড়ান্ত অনুমোদন পায় (Reason: A new investor must not become economically active until the required valuation is finalized).'
     );

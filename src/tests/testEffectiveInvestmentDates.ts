@@ -80,6 +80,23 @@ export async function runEffectiveInvestmentDatesTests(): Promise<AssertionResul
   // STEP 1: Investor A enters on January 1, 2026
   // ---------------------------------------------------------------------------
   console.log('--- Step 1: Investor A enters January 1 (2026-01-01) ---');
+
+  // Explicit test fixture: Valid admission request with finalized valuation for Investor A
+  await mDb.investorAdmissionRequests.put({
+    id: 'adm_req_eff_a',
+    investorName: 'Investor A',
+    phone: '01711100001',
+    status: 'APPROVED',
+    isAdmitted: true,
+    valuation: {
+      status: 'FINALIZED',
+      isFinalized: true,
+      preMoneyValuation: 1000,
+      postMoneyValuation: 1100,
+      valuationDate: '2026-01-01'
+    }
+  });
+
   const resA = await executeInvestorTransaction(
     {
       investorName: 'Investor A',
@@ -103,6 +120,23 @@ export async function runEffectiveInvestmentDatesTests(): Promise<AssertionResul
   // STEP 2: Investor B enters on June 1, 2026
   // ---------------------------------------------------------------------------
   console.log('\n--- Step 2: Investor B enters June 1 (2026-06-01) ---');
+
+  // Explicit test fixture: Valid admission request with finalized valuation for Investor B
+  await mDb.investorAdmissionRequests.put({
+    id: 'adm_req_eff_b',
+    investorName: 'Investor B',
+    phone: '01711100002',
+    status: 'APPROVED',
+    isAdmitted: true,
+    valuation: {
+      status: 'FINALIZED',
+      isFinalized: true,
+      preMoneyValuation: 2000,
+      postMoneyValuation: 2100,
+      valuationDate: '2026-06-01'
+    }
+  });
+
   const resB = await executeInvestorTransaction(
     {
       investorName: 'Investor B',

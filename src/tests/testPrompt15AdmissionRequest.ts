@@ -22,6 +22,7 @@ import {
   executeCapitalParticipationAllocation,
   clearValuationEventsForTest
 } from '../services/valuationService';
+import { MOCK_FINALIZED_VALUATION_FIXTURE } from './testFixtures';
 
 export interface AssertionResult {
   total: number;
@@ -100,7 +101,8 @@ export async function runPrompt15AdmissionRequestTests(): Promise<AssertionResul
       profitSharingRatio: 40,
       targetAccountId: bankAccId,
       currentUserId: testUserId,
-      date: '2026-01-01'
+      date: '2026-01-01',
+      valuationRecord: MOCK_FINALIZED_VALUATION_FIXTURE
     },
     mDb
   );

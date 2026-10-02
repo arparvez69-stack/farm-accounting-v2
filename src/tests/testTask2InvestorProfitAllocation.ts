@@ -5,6 +5,7 @@ import {
   executeInvestorTransaction,
   executeInvestorProfitAllocationTransaction
 } from '../services/transactionService';
+import { MOCK_FINALIZED_VALUATION_FIXTURE } from './testFixtures';
 
 export interface AssertionResult {
   total: number;
@@ -97,7 +98,8 @@ export async function runTask2InvestorProfitAllocationTests(): Promise<Assertion
       targetAccountId: bankAccId1,
       currentUserId: testUserId,
       date: '2026-01-01',
-      notes: 'Investor A Capital 100, Contract 50%'
+      notes: 'Investor A Capital 100, Contract 50%',
+      valuationRecord: MOCK_FINALIZED_VALUATION_FIXTURE
     },
     mDb1
   );
@@ -112,7 +114,8 @@ export async function runTask2InvestorProfitAllocationTests(): Promise<Assertion
       targetAccountId: bankAccId1,
       currentUserId: testUserId,
       date: '2026-01-01',
-      notes: 'Investor B Capital 200, Contract 60%'
+      notes: 'Investor B Capital 200, Contract 60%',
+      valuationRecord: MOCK_FINALIZED_VALUATION_FIXTURE
     },
     mDb1
   );
@@ -208,7 +211,8 @@ export async function runTask2InvestorProfitAllocationTests(): Promise<Assertion
       targetAccountId: bankAccId2,
       currentUserId: testUserId,
       date: '2026-01-01',
-      notes: 'Capital 100'
+      notes: 'Capital 100',
+      valuationRecord: MOCK_FINALIZED_VALUATION_FIXTURE
     },
     mDb2
   );
@@ -222,7 +226,8 @@ export async function runTask2InvestorProfitAllocationTests(): Promise<Assertion
       targetAccountId: bankAccId2,
       currentUserId: testUserId,
       date: '2026-01-01',
-      notes: 'Capital 200'
+      notes: 'Capital 200',
+      valuationRecord: MOCK_FINALIZED_VALUATION_FIXTURE
     },
     mDb2
   );

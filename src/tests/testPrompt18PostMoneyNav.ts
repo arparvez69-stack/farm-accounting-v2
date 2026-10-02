@@ -28,6 +28,7 @@ import {
   calculateAdmissionParticipation
 } from '../services/valuationService';
 import { postJournalEntry } from '../accounting/accountingEngine';
+import { MOCK_FINALIZED_VALUATION_FIXTURE } from './testFixtures';
 import { CANONICAL_ACCOUNTS } from '../accounting/accountMapping';
 
 export interface AssertionResult {
@@ -232,7 +233,8 @@ export async function runPrompt18PostMoneyNavTests(): Promise<AssertionResult> {
       targetAccountId: bankAccId,
       currentUserId: testUserId,
       date: '2026-01-01',
-      notes: 'Initial founder equity contribution'
+      notes: 'Initial founder equity contribution',
+      valuationRecord: MOCK_FINALIZED_VALUATION_FIXTURE
     },
     mDb
   );

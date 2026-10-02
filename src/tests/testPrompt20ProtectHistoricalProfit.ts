@@ -21,6 +21,7 @@ import {
 } from '../services/transactionService';
 import { postJournalEntry } from '../accounting/accountingEngine';
 import { CANONICAL_ACCOUNTS } from '../accounting/accountMapping';
+import { MOCK_FINALIZED_VALUATION_FIXTURE } from './testFixtures';
 
 export interface AssertionResult {
   total: number;
@@ -114,7 +115,8 @@ export async function runPrompt20ProtectHistoricalProfitTests(): Promise<Asserti
       targetAccountId: bankAccId,
       currentUserId: testUserId,
       date: '2026-01-01',
-      notes: 'Investor A initial investment (January 2026)'
+      notes: 'Investor A initial investment (January 2026)',
+      valuationRecord: MOCK_FINALIZED_VALUATION_FIXTURE
     },
     mDb
   );

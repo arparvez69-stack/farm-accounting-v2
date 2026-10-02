@@ -355,6 +355,22 @@ export async function runPrompt21CapitalReceiptTests(): Promise<AssertionResult>
   // ===========================================================================
   console.log('\n--- Step 6: Direct Investor Capital Transaction Idempotency ---');
 
+  // Explicit test fixture: Valid admission request with finalized valuation
+  await mDb.investorAdmissionRequests.put({
+    id: 'adm_req_direct_alpha',
+    investorName: 'Investor Direct Alpha',
+    phone: '01711000005',
+    status: 'APPROVED',
+    isAdmitted: true,
+    valuation: {
+      status: 'FINALIZED',
+      isFinalized: true,
+      preMoneyValuation: 5000,
+      postMoneyValuation: 5500,
+      valuationDate: '2026-07-10'
+    }
+  });
+
   const directIdempKey = 'DIR-IDEMP-2026-999';
   const directTx1 = await executeInvestorTransaction(
     {
